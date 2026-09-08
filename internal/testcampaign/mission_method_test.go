@@ -643,37 +643,34 @@ func TestMissionMethodProfilesAreExactSeparatedAndDefensive(t *testing.T) {
 	fast, _ := ProfileByName(MissionAcceptanceProfile)
 	slow, _ := ProfileByName(MissionAdversarialProfile)
 	for _, expensive := range []string{
-		"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
-		"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
-		"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
-		"TestMissionMethodCrashBoundaryCensus",
-		"TestMissionMethodFinalizationProcessRaces100",
-		"TestMissionMethodSemanticDriftMutations1000",
+		"TestM2FocusedEvidenceCensus",
+		"TestM2MutantsAreKilledByOneExecutableCensus",
+		"TestM2RecoveryAndPublicationContractsRemainFoundationOwned",
 	} {
 		if slices.Contains(fast.ExpectedTests, expensive) || !slices.Contains(slow.ExpectedTests, expensive) {
 			t.Fatalf("expensive test %s crossed fast/slow boundary", expensive)
 		}
 	}
-	for _, portable := range []string{"TestMissionMethodNormalizationAndPureQueries100", "TestMissionMethodProjectionAndGovernanceIndependence100", "TestMissionMethodProviderParityPortableCampaign"} {
+	for _, portable := range []string{"TestDishonestFakeTrackerMatrixPreservesAuthorityV2", "TestProductionCapabilityCompositionHasOnePublicationBoundary", "TestWorkCoordinateAgreementControlledMutants"} {
 		if !slices.Contains(fast.ExpectedTests, portable) || slices.Contains(slow.ExpectedTests, portable) {
 			t.Fatalf("portable acceptance test %s crossed fast/slow boundary", portable)
 		}
 	}
 	contract, _ := ProfileByName(MissionContractProfile)
-	for _, identity := range []string{"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation", "TestMissionMethodQualificationContract", "TestQualityCampaignUniversalInvariants", "TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries"} {
+	for _, identity := range []string{"TestBehaviorParityCensusMutants", "TestCrashAmbiguousDishonestUniversalCensus", "TestTerminalSemanticEquivalenceControlledMutants", "TestUniversalCampaignCensusMutants"} {
 		if !slices.Contains(contract.ExpectedTests, identity) {
 			t.Fatalf("mission contract profile omitted %s", identity)
 		}
 	}
-	if slices.Contains(contract.ExpectedTests, "TestMissionMethodBeadsQualificationProfileIdentity") {
+	if slices.Contains(contract.ExpectedTests, "TestMissionMethodRealBeadsTwoItemQualification") {
 		t.Fatal("opt-in real-provider identity leaked into the portable contract profile")
 	}
 	realIdentity, err := ProfileByName(MissionRealIdentityProfile)
-	if err != nil || !slices.Equal(realIdentity.ExpectedTests, []string{"TestMissionMethodBeadsQualificationProfileIdentity"}) {
+	if err != nil || !slices.Equal(realIdentity.ExpectedTests, []string{"TestMissionMethodRealBeadsTwoItemQualification"}) {
 		t.Fatalf("real-provider identity profile changed: profile=%+v err=%v", realIdentity, err)
 	}
 	full, err := CampaignByName(MissionFullCampaign)
-	if err != nil || slices.Contains(full.Profiles, MissionRealIdentityProfile) || slices.Contains(full.RequiredTests, "TestMissionMethodBeadsQualificationProfileIdentity") {
+	if err != nil || slices.Contains(full.Profiles, MissionRealIdentityProfile) || slices.Contains(full.RequiredTests, "TestMissionMethodRealBeadsTwoItemQualification") {
 		t.Fatalf("portable mission campaign acquired opt-in real-provider identity: campaign=%+v err=%v", full, err)
 	}
 }

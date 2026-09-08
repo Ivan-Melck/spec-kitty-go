@@ -164,6 +164,16 @@ fixtures now skip qualification-only tests, while malformed or non-admitted
 fixtures still fail. The dedicated `m2-short` job continues to run its closed
 census independently, so the tier split does not turn omissions into passes.
 
+The local rerun then caught the same historical/live coupling in the remaining
+Phase 1/3 scenario profiles. Their publication-time identities remain frozen
+and mutation-protected, but live `quality`, `mission_full`, fault, soak, and
+portable-scenario profiles now resolve to current M2 tests and are checked
+against source discovery. The PR tier keeps the current fast portable laws;
+long behavior, checkpoint-prefix, evidence-census, zombie, capability, and
+mutant campaigns remain executable in the full nightly and dedicated release
+tiers. This is a selector/tiering correction only, not a change to any product
+acceptance result.
+
 ## Risk findings
 
 ### RISK-1 — Local absence scan observes ignored tracker metadata

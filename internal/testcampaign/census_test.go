@@ -113,7 +113,7 @@ func TestVerifyRejectsProcessAndJSONVerdictDisagreement(t *testing.T) {
 }
 
 func TestCampaignManifestsAreValidAndDefensiveCopies(t *testing.T) {
-	for _, name := range []string{"acceptance", "architecture", "scope", "fault", "soak", "full-scenario", "provider-portable", "provider-adversarial", "provider-real"} {
+	for _, name := range []string{"acceptance", "architecture", "scope", "fault", "soak", "full-scenario", "portable-scenario", "provider-portable", "provider-adversarial", "provider-real"} {
 		profile, err := ProfileByName(name)
 		if err != nil {
 			t.Fatalf("profile %s: %v", name, err)
@@ -214,6 +214,37 @@ func TestProviderProfilesMatchAcceptedTopLevelTests(t *testing.T) {
 			selected := slices.DeleteFunc(append([]string(nil), all...), func(name string) bool { return !selector.MatchString(name) })
 			if !slices.Equal(selected, profile.ExpectedTests) {
 				t.Fatalf("profile selector is not exact\nexpected=%v\nselected=%v", profile.ExpectedTests, selected)
+			}
+		})
+	}
+}
+
+func TestCurrentMissionProfilesResolveToExactTopLevelTests(t *testing.T) {
+	root := campaignRepositoryRoot(t)
+	profiles := []struct {
+		name      string
+		directory string
+	}{
+		{"acceptance", filepath.Join(root, "internal", "scenario")},
+		{"fault", filepath.Join(root, "internal", "controlstore", "gapdb")},
+		{MissionAcceptanceProfile, filepath.Join(root, "internal", "scenario")},
+		{MissionAdversarialProfile, filepath.Join(root, "internal", "architecture")},
+		{MissionContractProfile, filepath.Join(root, "internal", "scenario")},
+		{MissionRealIdentityProfile, filepath.Join(root, "internal", "tracker", "beads")},
+		{"portable-scenario", filepath.Join(root, "internal", "scenario")},
+		{"scope", filepath.Join(root, "internal", "scenario")},
+		{"soak", filepath.Join(root, "internal", "controlstore", "gapdb")},
+	}
+	for _, candidate := range profiles {
+		t.Run(candidate.name, func(t *testing.T) {
+			profile, err := ProfileByName(candidate.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selector := regexp.MustCompile(profile.Pattern)
+			discovered := discoverTopLevelTests(t, candidate.directory, selector.MatchString)
+			if err = compareExactCensus(profile.ExpectedTests, discovered); err != nil {
+				t.Fatalf("live profile census drifted: %v", err)
 			}
 		})
 	}

@@ -70,38 +70,35 @@ var phase3ArchitectureTests = []string{
 var missionProfiles = map[string]Profile{
 	MissionContractProfile: {
 		Name: MissionContractProfile, Package: "./internal/scenario",
-		Pattern: "^(TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation|TestMissionMethodQualificationContract|TestQualityCampaignUniversalInvariants|TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries)$",
+		Pattern: "^(TestBehaviorParityCensusMutants|TestCrashAmbiguousDishonestUniversalCensus|TestTerminalSemanticEquivalenceControlledMutants|TestUniversalCampaignCensusMutants)$",
 		ExpectedTests: []string{
-			"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation",
-			"TestMissionMethodQualificationContract",
-			"TestQualityCampaignUniversalInvariants",
-			"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
+			"TestBehaviorParityCensusMutants",
+			"TestCrashAmbiguousDishonestUniversalCensus",
+			"TestTerminalSemanticEquivalenceControlledMutants",
+			"TestUniversalCampaignCensusMutants",
 		},
 	},
 	MissionRealIdentityProfile: {
-		Name: MissionRealIdentityProfile, Package: "./internal/scenario",
-		Pattern:       "^(TestMissionMethodBeadsQualificationProfileIdentity)$",
-		ExpectedTests: []string{"TestMissionMethodBeadsQualificationProfileIdentity"},
+		Name: MissionRealIdentityProfile, Package: "./internal/tracker/beads",
+		Pattern:       "^(TestMissionMethodRealBeadsTwoItemQualification)$",
+		ExpectedTests: []string{"TestMissionMethodRealBeadsTwoItemQualification"},
 	},
 	MissionAcceptanceProfile: {
 		Name: MissionAcceptanceProfile, Package: "./internal/scenario",
-		Pattern: "^(TestMissionMethodNormalizationAndPureQueries100|TestMissionMethodProjectionAndGovernanceIndependence100|TestMissionMethodProviderParityPortableCampaign)$",
+		Pattern: "^(TestDishonestFakeTrackerMatrixPreservesAuthorityV2|TestProductionCapabilityCompositionHasOnePublicationBoundary|TestWorkCoordinateAgreementControlledMutants)$",
 		ExpectedTests: []string{
-			"TestMissionMethodNormalizationAndPureQueries100",
-			"TestMissionMethodProjectionAndGovernanceIndependence100",
-			"TestMissionMethodProviderParityPortableCampaign",
+			"TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
+			"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+			"TestWorkCoordinateAgreementControlledMutants",
 		},
 	},
 	MissionAdversarialProfile: {
-		Name: MissionAdversarialProfile, Package: "./internal/scenario",
-		Pattern: "^(TestDishonestMissionAuthorityDetectsSameCountOutboxMutation|TestMissionMethodBeadsDishonestProviderRefusesBeforePublication|TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse|TestMissionMethodCrashBoundaryCensus|TestMissionMethodFinalizationProcessRaces100|TestMissionMethodSemanticDriftMutations1000)$",
+		Name: MissionAdversarialProfile, Package: "./internal/architecture",
+		Pattern: "^(TestM2FocusedEvidenceCensus|TestM2MutantsAreKilledByOneExecutableCensus|TestM2RecoveryAndPublicationContractsRemainFoundationOwned)$",
 		ExpectedTests: []string{
-			"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
-			"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
-			"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
-			"TestMissionMethodCrashBoundaryCensus",
-			"TestMissionMethodFinalizationProcessRaces100",
-			"TestMissionMethodSemanticDriftMutations1000",
+			"TestM2FocusedEvidenceCensus",
+			"TestM2MutantsAreKilledByOneExecutableCensus",
+			"TestM2RecoveryAndPublicationContractsRemainFoundationOwned",
 		},
 	},
 }
@@ -131,21 +128,18 @@ func init() {
 		Name:             MissionFullCampaign,
 		Profiles:         []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile},
 		RequiredProfiles: []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile},
-		UniversalTest:    "TestQualityCampaignUniversalInvariants",
+		UniversalTest:    "TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
 		RequiredTests: []string{
-			"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
-			"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation",
-			"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
-			"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
-			"TestMissionMethodCrashBoundaryCensus",
-			"TestMissionMethodFinalizationProcessRaces100",
-			"TestMissionMethodNormalizationAndPureQueries100",
-			"TestMissionMethodProjectionAndGovernanceIndependence100",
-			"TestMissionMethodProviderParityPortableCampaign",
-			"TestMissionMethodQualificationContract",
-			"TestMissionMethodSemanticDriftMutations1000",
-			"TestQualityCampaignUniversalInvariants",
-			"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
+			"TestBehaviorParityCensusMutants",
+			"TestCrashAmbiguousDishonestUniversalCensus",
+			"TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
+			"TestM2FocusedEvidenceCensus",
+			"TestM2MutantsAreKilledByOneExecutableCensus",
+			"TestM2RecoveryAndPublicationContractsRemainFoundationOwned",
+			"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+			"TestTerminalSemanticEquivalenceControlledMutants",
+			"TestUniversalCampaignCensusMutants",
+			"TestWorkCoordinateAgreementControlledMutants",
 		},
 		RequireUniversal: true, RequireStaleProbe: true,
 	}
@@ -155,26 +149,23 @@ func init() {
 	campaigns[MissionFullCampaign] = campaign
 }
 
-// ValidateMissionCampaign freezes the Phase 3 selector census. Generic
-// campaign validation proves internal consistency; this additional check
-// prevents a simultaneously weakened profile and required-test list from
-// silently redefining qualification.
+// ValidateMissionCampaign freezes the current portable mission selector
+// census. Historical Phase 3 evidence has separate immutable commitments;
+// this check prevents a simultaneously weakened live profile and required-test
+// list from silently redefining today's qualification.
 func ValidateMissionCampaign(campaign Campaign) error {
 	wantProfiles := []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile}
 	wantTests := []string{
-		"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
-		"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation",
-		"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
-		"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
-		"TestMissionMethodCrashBoundaryCensus",
-		"TestMissionMethodFinalizationProcessRaces100",
-		"TestMissionMethodNormalizationAndPureQueries100",
-		"TestMissionMethodProjectionAndGovernanceIndependence100",
-		"TestMissionMethodProviderParityPortableCampaign",
-		"TestMissionMethodQualificationContract",
-		"TestMissionMethodSemanticDriftMutations1000",
-		"TestQualityCampaignUniversalInvariants",
-		"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
+		"TestBehaviorParityCensusMutants",
+		"TestCrashAmbiguousDishonestUniversalCensus",
+		"TestDishonestFakeTrackerMatrixPreservesAuthorityV2",
+		"TestM2FocusedEvidenceCensus",
+		"TestM2MutantsAreKilledByOneExecutableCensus",
+		"TestM2RecoveryAndPublicationContractsRemainFoundationOwned",
+		"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+		"TestTerminalSemanticEquivalenceControlledMutants",
+		"TestUniversalCampaignCensusMutants",
+		"TestWorkCoordinateAgreementControlledMutants",
 	}
 	if campaign.Name != MissionFullCampaign || !slices.Equal(campaign.Profiles, wantProfiles) || !slices.Equal(campaign.RequiredProfiles, wantProfiles) {
 		return fmt.Errorf("mission campaign profile census changed")
@@ -182,7 +173,7 @@ func ValidateMissionCampaign(campaign Campaign) error {
 	if !slices.Equal(campaign.RequiredTests, wantTests) {
 		return fmt.Errorf("mission campaign test census changed")
 	}
-	if campaign.UniversalTest != "TestQualityCampaignUniversalInvariants" || !campaign.RequireUniversal || !campaign.RequireStaleProbe {
+	if campaign.UniversalTest != "TestDishonestFakeTrackerMatrixPreservesAuthorityV2" || !campaign.RequireUniversal || !campaign.RequireStaleProbe {
 		return fmt.Errorf("mission campaign universal invariant changed")
 	}
 	return ValidateCampaign(campaign)
