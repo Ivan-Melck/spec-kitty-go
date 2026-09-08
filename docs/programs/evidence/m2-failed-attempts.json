@@ -261,6 +261,27 @@
       "performance_artifact_sha256": "5418cb78b13ddb2062e0ae811c387269808cb853693498b758e45648b7a7d4be",
       "attempt_events_sha256": "54c4077a3c194bf4c73f2cebd70fffeb40ea53c869241915a01eedf9c3f40e4b",
       "terminal_sha256": "360530e8729636847ccde464fa36c31213a18d12ebbf2d9980e90aacf44db1db"
+    },
+    {
+      "run_id": "wp17-qualification-67a4f1e6-cycle2-final22",
+      "source_commit": "67a4f1e6b0e59a7a4377f79e913cf39b365260ca",
+      "source_tree": "e69a9c553eae9780b25f6f6f3317a7da1a09dfb7",
+      "outcome": "fail",
+      "reason": "all 45 campaigns, nested WP16 absence, and exact race passed; the admitted reference environment load1 was 3.84, but mutation and recovery p95 exceeded the unchanged thresholds while query p95 passed",
+      "transcript_path": "/tmp/go-kitty3-qualification-67a4f1e6-cycle2-final22/m2/wp17-qualification-67a4f1e6-cycle2-final22/evidence/performance.json.events.jsonl",
+      "transcript_sha256": "c928a67dfcfd50e7346357165086ac5142e4b31060fec24f39041e88e0d632de",
+      "transcript_bytes": 6261,
+      "performance_artifact_sha256": "58feef51d2b45e7d99725fe7ec6c2c3bfdd66855498189c4b0c349e87b8ed7a2",
+      "attempt_events_sha256": "f8b74075fc2e59294ec321c20f2954d0feda2fd30a444dafd2b307aa310bf156",
+      "terminal_sha256": "fd29ff34a2c0b14e950cfea089f1c1fba692f48e189de3222d46fc20f0073bff",
+      "statistics": {
+        "mutation_p95_ms": 8.252977,
+        "mutation_limit_ms": 8,
+        "query_p95_ms": 1.935238,
+        "query_limit_ms": 2,
+        "recovery_p95_ms": 2159.4667,
+        "recovery_limit_ms": 2000
+      }
     }
   ]
 }
