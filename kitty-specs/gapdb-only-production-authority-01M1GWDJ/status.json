@@ -1,7 +1,7 @@
 {
-  "event_count": 641,
-  "last_event_id": "01M1W5X0Y68W1Q4V3XNGBDRGNH",
-  "materialized_at": "2026-09-06T20:17:35.162656+00:00",
+  "event_count": 642,
+  "last_event_id": "01M1ZDCKPJACJJFXHMDGBD2MSV",
+  "materialized_at": "2026-09-08T02:26:09.234703+00:00",
   "mission_number": "",
   "mission_slug": "gapdb-only-production-authority-01M1GWDJ",
   "mission_type": "software-dev",
@@ -11,8 +11,8 @@
     "canceled": 0,
     "claimed": 0,
     "done": 10,
-    "for_review": 0,
-    "in_progress": 1,
+    "for_review": 1,
+    "in_progress": 0,
     "in_review": 0,
     "planned": 0
   },
@@ -778,10 +778,10 @@
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 1,
-      "lane": "in_progress",
-      "last_event_id": "01M1W5X0Y68W1Q4V3XNGBDRGNH",
-      "last_transition_at": "2026-09-06T20:17:35.162656+00:00",
+      "force_count": 2,
+      "lane": "for_review",
+      "last_event_id": "01M1ZDCKPJACJJFXHMDGBD2MSV",
+      "last_transition_at": "2026-09-08T02:26:09.234703+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Recovered allocator-created blocked state after verified manual dependency merge; no WP17 implementation began and no guard is bypassed."
@@ -798,13 +798,13 @@
       "shell_pid": null,
       "shell_pid_created_at": null,
       "subtasks": {
-        "T086": "planned",
-        "T087": "planned",
-        "T088": "planned",
-        "T089": "planned",
-        "T090": "planned",
-        "T091": "planned",
-        "T092": "planned"
+        "T086": "done",
+        "T087": "done",
+        "T088": "done",
+        "T089": "done",
+        "T090": "done",
+        "T091": "done",
+        "T092": "done"
       }
     },
     "WP18": {
