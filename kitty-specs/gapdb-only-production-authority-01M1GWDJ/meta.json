@@ -25,6 +25,7 @@
   "purpose_context": "The accountable maintainer has accepted the exact M1 GapDB journal, checkpoint, epoch, sidecar, recovery, and adoption evidence. This mission migrates every production authority capability onto that event/CAS substrate while preserving the frozen Phase 1-3 behavior and refusal contracts, then proves that no SQLite implementation, dependency, fallback, dual write, automatic importer, configuration mode, or binary residue remains in production.",
   "purpose_tldr": "Replace every production authority capability with GapDB and eliminate SQLite.",
   "slug": "gapdb-only-production-authority-01M1GWDJ",
+  "status_phase": "1",
   "target_branch": "feat/gapdb-only-production-authority",
   "topology": "coord",
   "vcs": "git",
