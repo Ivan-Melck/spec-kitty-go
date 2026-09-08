@@ -28,6 +28,9 @@ type workspacePlanCaptureV2 struct {
 }
 
 func TestWorkspaceProductionZombieReplacementCampaignV2(t *testing.T) {
+	if testing.Short() {
+		t.Skip("100-trial production zombie campaign is reserved for full qualification")
+	}
 	repositoryPath, managedRoot, base := workspaceGitRepositoryV2(t)
 	repository, err := gitrepo.Bind(t.Context(), gitrepo.Runner{}, "repository-zombie", "project-gapdb", repositoryPath, managedRoot, "refs/heads/main", time.Now())
 	if err != nil {

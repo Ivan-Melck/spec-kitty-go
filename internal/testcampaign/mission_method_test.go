@@ -32,6 +32,7 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 		"mission-contract:", "-profile mission-contract", "mission-acceptance:", "-profile mission-acceptance",
 		"mission-adversarial:", "-profile mission-adversarial", "-campaign mission_full",
 		"phase3-publication:", "$(GO) run ./internal/testcampaign/cmd/campaign", "-publication-root", "-payload-commit", "-attestation-commit",
+		"contract-full:", "$(GO) test -short", "race-full:", "full-campaign: contract-full race-full quality",
 		"quality-core: preflight contract mission-contract mission-acceptance race static dependencies",
 		"quality: beads-contract quality-core",
 	} {

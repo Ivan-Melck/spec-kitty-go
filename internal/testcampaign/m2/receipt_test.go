@@ -221,8 +221,14 @@ func TestExecutingIterationReceiptsRejectMissingDuplicateAndForgedFacts(t *testi
 }
 
 func TestExecutingIterationReceiptParsesRealCampaignTranscript(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real 100-iteration child campaigns are reserved for full qualification")
+	}
 	for _, definitionID := range []string{"behavior/serialized-integration", "behavior/zombie-workspace-isolation"} {
 		t.Run(safeID(definitionID), func(t *testing.T) {
+			if definitionID == "behavior/zombie-workspace-isolation" && os.Getenv("SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE") == "" {
+				t.Skip("set SPEC_KITTY_WP14_AUTHORITY_EXECUTABLE to run the production zombie campaign")
+			}
 			definition := FrozenDefinitions()[0]
 			for _, candidate := range FrozenDefinitions() {
 				if candidate.ID == definitionID {

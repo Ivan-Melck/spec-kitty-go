@@ -57,6 +57,9 @@ type m2MutantCase struct {
 type m2ImportObservation struct{ Source, Target string }
 
 func TestM2MutantsAreKilledByOneExecutableCensus(t *testing.T) {
+	if testing.Short() {
+		t.Skip("complete executable mutant census is reserved for the M2 and full qualification tiers")
+	}
 	verifyM2ExecutableMutants(t)
 }
 

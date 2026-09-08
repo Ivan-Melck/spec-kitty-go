@@ -152,6 +152,18 @@ they do not change production authority, runtime behavior, the qualified M2
 source commit, or the release archive. The corrected bounded campaign and
 `m2-short` are rerun on the correction commit before PR merge.
 
+The next hosted run exposed a separate tiering defect: the target described as
+the bounded PR contract still executed every non-scenario test, including
+long M2 evidence campaigns and qualification-only tests whose admitted GapDB
+sidecar is supplied only by the release runner. CI timed out at 15 minutes
+after reporting the long tests' successful work and the two absent-fixture
+refusals. The PR target now uses Go's explicit short-test contract; only the
+measured long campaigns opt out, and `contract-full` plus `race-full` preserve
+their exhaustive execution in the nightly workflow. Missing optional release
+fixtures now skip qualification-only tests, while malformed or non-admitted
+fixtures still fail. The dedicated `m2-short` job continues to run its closed
+census independently, so the tier split does not turn omissions into passes.
+
 ## Risk findings
 
 ### RISK-1 — Local absence scan observes ignored tracker metadata

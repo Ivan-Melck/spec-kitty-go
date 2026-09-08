@@ -28,7 +28,7 @@ M2_PROFILE_DOCUMENT ?= $(CURDIR)/docs/programs/evidence/m2-producer-profile.json
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
 
-.PHONY: help tools preflight contract acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all m2-contract m2-capabilities m2-recovery m2-race-smoke m2-race m2-fault m2-mutants-smoke m2-mutants m2-absence-source m2-absence m2-sbom m2-build-candidate m2-performance m2-short m2-qualification m2-verify-evidence
+.PHONY: help tools preflight contract contract-full acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 race-full static dependencies quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all m2-contract m2-capabilities m2-recovery m2-race-smoke m2-race m2-fault m2-mutants-smoke m2-mutants m2-absence-source m2-absence m2-sbom m2-build-candidate m2-performance m2-short m2-qualification m2-verify-evidence
 
 help: ## Show the canonical local and CI validation targets.
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -55,6 +55,11 @@ preflight: tools fmt-check build ## Check required local tools, formatting, and 
 	@printf 'preflight passed: go=%s artifacts=%s\n' "$$($(GO) version)" "$(ARTIFACT_DIR)"
 
 contract: ## Run unit and portable contract packages, excluding expensive scenarios.
+	@packages="$$( $(GO) list ./internal/... | awk '$$0 !~ /\/scenario$$/' )"; \
+	test -n "$$packages" || { echo "no contract packages discovered"; exit 1; }; \
+	$(GO) test -short -p=$(GO_TEST_PARALLEL) -count=1 $$packages
+
+contract-full: ## Run every non-scenario unit and portable contract test for nightly qualification.
 	@packages="$$( $(GO) list ./internal/... | awk '$$0 !~ /\/scenario$$/' )"; \
 	test -n "$$packages" || { echo "no contract packages discovered"; exit 1; }; \
 	$(GO) test -p=$(GO_TEST_PARALLEL) -count=1 $$packages
@@ -94,6 +99,9 @@ race-m1: ## Run the bounded concurrency-sensitive M1 package census under the ra
 		./cmd/spk-m1-proving-ground
 
 race: race-m1 ## Run the authority-critical packages under the race detector.
+	$(GO) test -short -race -p=1 -count=1 ./internal/mission ./internal/artifact ./internal/workgraph ./internal/governancecontext ./internal/tracker/fake ./internal/controlstore/gapdb ./internal/productionruntime ./internal/sidecar/gapdb ./internal/execution ./internal/helpercmd ./internal/testcampaign
+
+race-full: race-m1 ## Run the exhaustive authority-critical race suite for nightly qualification.
 	$(GO) test -race -p=1 -count=1 ./internal/mission ./internal/artifact ./internal/workgraph ./internal/governancecontext ./internal/tracker/fake ./internal/controlstore/gapdb ./internal/productionruntime ./internal/sidecar/gapdb ./internal/execution ./internal/helpercmd ./internal/testcampaign
 
 static: ## Run vet and staticcheck over all packages.
@@ -153,7 +161,7 @@ soak: ## Run the repeated contention and serialization profile once.
 scenario-full: ## Run every scenario with an exact top-level JSON census.
 	$(GO) run ./internal/testcampaign/cmd/campaign -profile full-scenario -artifact-dir "$(ARTIFACT_DIR)" -timeout 60m
 
-full-campaign: quality ## Run quality plus the exhaustive scenario/fault/soak campaign.
+full-campaign: contract-full race-full quality ## Run full contracts/races plus the exhaustive scenario/fault/soak campaign.
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign full_campaign -artifact-dir "$(ARTIFACT_DIR)" -timeout 60m
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign mission_full -artifact-dir "$(ARTIFACT_DIR)" -timeout 20m
 	@printf 'full campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"

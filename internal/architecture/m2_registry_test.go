@@ -823,6 +823,9 @@ func TestM2RepositoryHasNoGenericRawKeyAuthority(t *testing.T) {
 }
 
 func TestM2RecoveryAndPublicationContractsRemainFoundationOwned(t *testing.T) {
+	if testing.Short() {
+		t.Skip("whole-module foundation ownership scan is reserved for full qualification")
+	}
 	if err := inspectM2FoundationContractOwnership(t.Context(), m2RepositoryRoot(t), m2ModulePath); err != nil {
 		t.Fatal(err)
 	}
@@ -1347,6 +1350,9 @@ type Store interface {
 }
 
 func TestM2FocusedEvidenceCensus(t *testing.T) {
+	if testing.Short() {
+		t.Skip("complete focused-evidence mutation census is reserved for full qualification")
+	}
 	results := executeM2EvidenceProbes(t, m2EvidenceProbes())
 	if err := validateM2Evidence(results); err != nil {
 		t.Fatal(err)

@@ -182,6 +182,9 @@ func TestPerformanceRuntimeHostIsBoundOnlyToObservedRecovery(t *testing.T) {
 }
 
 func TestManifestCensusAndArtifactMutantsFailClosed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("complete archive and census mutant matrix is exercised by m2-short and full qualification")
+	}
 	root := repositoryRoot(t)
 	schema := filepath.Join(root, "kitty-specs/gapdb-only-production-authority-01M1GWDJ/contracts/m2-qualification-v1.schema.json")
 	tests := map[string]func(*Manifest, *Census, *[]ArtifactInput){
