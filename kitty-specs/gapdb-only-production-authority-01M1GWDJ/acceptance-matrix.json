@@ -177,11 +177,11 @@
     {
       "criterion_id": "FR-018",
       "description": "Verify FR-018 is satisfied",
-      "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "proof_type": "independent_release_review",
+      "evidence": "M2 release sha256:098fa8d3fae6f33e227ce290530fc172f820c961ffd326adb820a26aa44e2414 final-acceptance-matrix.json#FR-018; source 416138f490ad6d908fc445c12b91440ca66ef18c; review a35f944548bd766887344192f59c36fd6002519d88588e07e3cdc48989510e50",
+      "pass_fail": "pass",
+      "verified_by": "codex",
+      "verified_at": "2026-09-08T15:38:34.868553+00:00",
       "notes": "TODO: replace with a real acceptance criterion"
     },
     {
