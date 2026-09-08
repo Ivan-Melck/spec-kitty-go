@@ -20,7 +20,7 @@ func TestSubmitEvaluatesCanonicalCriteriaBeforeAtomicCommit(t *testing.T) {
 		CriterionIDs: []string{"criterion-a", "criterion-b"},
 	}}
 	hook := &recordingHook{}
-	result, err := NewService(store).WithFaults(hook).Submit(context.Background(), request)
+	result, err := NewService(store).WithEligibilityFacts(&recordingEligibilityReader{fact: request.ExpectedEligibility}).WithFaults(hook).Submit(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestApprovedVerdictRequiresEveryCanonicalCriterionToPass(t *testing.T) {
 	request := validRequest(time.Now().UTC())
 	request.Criteria = request.Criteria[:1]
 	store := &recordingStore{scope: Scope{Handoff: handoff.Record{HandoffID: request.HandoffID, Candidate: request.Candidate}, CriterionIDs: []string{"criterion-a", "criterion-b"}}}
-	_, err := NewService(store).Submit(context.Background(), request)
+	_, err := NewService(store).WithEligibilityFacts(&recordingEligibilityReader{fact: request.ExpectedEligibility}).Submit(context.Background(), request)
 	if !IsKind(err, KindInvalid) {
 		t.Fatalf("partial criteria error=%v", err)
 	}
@@ -61,10 +61,12 @@ func TestSubmitReturnsDurableReplayBeforeReviewEligibility(t *testing.T) {
 
 func TestSubmitRefusesReconciledWorkBeforeFaultInspectAndMutation(t *testing.T) {
 	request := validRequest(time.Now().UTC())
+	denied := mustEligibilityFact("reconciliation-review", "revision-1", "revision-2", request.WorkID, workgraph.StatusHandedOff, workgraph.Invalidate, workgraph.EligibilityReview)
+	request.ExpectedEligibility = denied
 	store := &recordingStore{eligibility: workgraph.Consequence{Reason: "invalidated handoff cannot be reviewed"}, eligibilityID: "reconciliation-review"}
 	hook := &recordingHook{}
-	_, err := NewService(store).WithFaults(hook).Submit(context.Background(), request)
-	if !IsKind(err, KindRevisionIneligible) || !store.eligibilityRead || store.inspected || store.committed || len(hook.boundaries) != 0 {
+	_, err := NewService(store).WithEligibilityFacts(&recordingEligibilityReader{fact: denied}).WithFaults(hook).Submit(context.Background(), request)
+	if !IsKind(err, KindRevisionIneligible) || store.eligibilityRead || store.inspected || store.committed || len(hook.boundaries) != 0 {
 		t.Fatalf("error=%v eligibility=%v inspect=%v commit=%v boundaries=%v", err, store.eligibilityRead, store.inspected, store.committed, hook.boundaries)
 	}
 }
@@ -149,9 +151,11 @@ func TestCompleteReviewEligibilityConfigurationCannotBeDowngraded(t *testing.T) 
 	}
 	assertRefused := func(t *testing.T, service *Service, legacy *recordingStore, reader *recordingEligibilityReader) {
 		t.Helper()
-		_, err := service.WithEligibilityFacts(nil).Submit(context.Background(), validRequest(time.Date(2026, 8, 28, 21, 0, 0, 0, time.UTC)))
-		if !IsKind(err, KindRevisionIneligible) || service.mode != eligibilityComplete || service.eligibility == nil || legacy.eligibilityRead || legacy.inspected || legacy.committed || reader.calls != 0 {
-			t.Fatalf("error=%v mode=%v full=%v full_reads=%d legacy=%v inspect=%v commit=%v", err, service.mode, service.eligibility != nil, reader.calls, legacy.eligibilityRead, legacy.inspected, legacy.committed)
+		request := validRequest(time.Date(2026, 8, 28, 21, 0, 0, 0, time.UTC))
+		request.ExpectedEligibility = denied
+		_, err := service.WithEligibilityFacts(nil).Submit(context.Background(), request)
+		if !IsKind(err, KindRevisionIneligible) || service.eligibility == nil || legacy.eligibilityRead || legacy.inspected || legacy.committed || reader.calls != 1 {
+			t.Fatalf("error=%v full=%v full_reads=%d legacy=%v inspect=%v commit=%v", err, service.eligibility != nil, reader.calls, legacy.eligibilityRead, legacy.inspected, legacy.committed)
 		}
 	}
 	t.Run("auto-detected reader survives nil", func(t *testing.T) {
@@ -179,7 +183,7 @@ func TestCompleteReviewEligibilityConfigurationCannotBeDowngraded(t *testing.T) 
 }
 
 func validRequest(now time.Time) Request {
-	return Request{
+	request := Request{
 		SchemaVersion: 1, CorrelationID: "correlation-review-1", OperationID: "operation-review-1",
 		ReviewID: "review-1", HandoffID: "handoff-1", WorkRevisionID: "revision-1", WorkID: "work-1",
 		LeaseID: "lease-1", LeaseGeneration: 1, Token: "secret-token",
@@ -187,6 +191,16 @@ func validRequest(now time.Time) Request {
 		Verdict: Approved, EvidenceDigest: digest('f'), SubmittedAt: now,
 		Criteria: []CriterionResult{{CriterionID: "criterion-a", Status: Passed, Evidence: "test A"}, {CriterionID: "criterion-b", Status: Passed, Evidence: "test B"}},
 	}
+	request.ExpectedEligibility = mustEligibilityFact("reconciliation-review-default", request.WorkRevisionID, "revision-2", request.WorkID, workgraph.StatusHandedOff, workgraph.Fork, workgraph.EligibilityReview)
+	return request
+}
+
+func mustEligibilityFact(reconciliation string, oldRevision, newRevision ids.WorkRevisionID, workID ids.WorkID, status workgraph.WorkStatus, disposition workgraph.Disposition, operation workgraph.EligibilityOperation) EligibilityFact {
+	fact, err := workgraph.NewEligibilityFact(reconciliation, oldRevision, newRevision, workID, status, disposition, operation)
+	if err != nil {
+		panic(err)
+	}
+	return fact
 }
 
 func commit(character byte) string { return string(makeBytes(character, 40)) }

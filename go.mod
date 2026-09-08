@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
-	github.com/spec-kitty/gapdb v0.0.0-20260824033134-ff3dd478f87c
+	github.com/spec-kitty/gapdb v0.0.0-20260904151017-4d88094749e0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.57.0
 )

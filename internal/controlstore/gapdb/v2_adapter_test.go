@@ -668,6 +668,220 @@ func TestV2CommitTranslatesClosedProjectionToOneDurableBatch(t *testing.T) {
 	}
 }
 
+func TestV2AssertionAndWorkspaceClaimTranslation(t *testing.T) {
+	claimDigest := v2TestDigest("workspace-path-claim")
+	plan, presentKey, absentKey, _ := v2AuthorityTestPlan(t, "assertions", "shared-authority", 91, claimDigest, []byte(`{"workspace_id":"workspace-1"}`))
+	var calls atomic.Int32
+	provider := &fakeProvider{batchFn: func(_ context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+		calls.Add(1)
+		if len(batch.Assertions) != 2 || len(batch.Mutations) != plan.MutationCount() {
+			t.Fatalf("assertions=%d mutations=%d", len(batch.Assertions), len(batch.Mutations))
+		}
+		got := map[string]gapdbapi.Condition{}
+		for _, assertion := range batch.Assertions {
+			got[assertion.Key] = assertion.Condition
+		}
+		if got[presentKey.String()].Kind != gapdbapi.ConditionRevision || got[presentKey.String()].ExpectedRevision != 91 ||
+			got[absentKey.String()].Kind != gapdbapi.ConditionAbsent || got[absentKey.String()].ExpectedRevision != 0 {
+			t.Fatalf("assertion translation=%+v", got)
+		}
+		claims := 0
+		for _, mutation := range batch.Mutations {
+			if _, assertionAsPut := got[mutation.Key]; assertionAsPut {
+				t.Fatalf("read-only assertion became a mutation: %s", mutation.Key)
+			}
+			key, err := parseV2Key(mutation.Key)
+			if err == nil && key.Kind() == v2KeyWorkspacePathClaim {
+				claims++
+				if key.WorkspacePathClaimDigest() != claimDigest || mutation.Kind != gapdbapi.MutationPut || mutation.Condition.Kind != gapdbapi.ConditionAbsent || mutation.ExpiresAt != nil {
+					t.Fatalf("workspace claim mutation=%+v key=%+v", mutation, key)
+				}
+			}
+		}
+		if claims != 1 {
+			t.Fatalf("workspace path claim count=%d", claims)
+		}
+		return gapdbapi.MutationResult{Revision: 92, Ack: gapdbapi.AckDurable, DurableThroughRevision: 92, MutationCount: len(batch.Mutations), AssertionCount: len(batch.Assertions)}, nil
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	observation, err := adapter.CommitV2(t.Context(), plan)
+	if err != nil || calls.Load() != 1 || observation.MutationCount() != plan.MutationCount() || observation.AssertionCount() != plan.AssertionCount() {
+		t.Fatalf("observation=%+v calls=%d err=%v", observation, calls.Load(), err)
+	}
+	measurement, err := adapter.preflightCommitV2(plan)
+	expectedRaw := 0
+	for _, record := range plan.Records() {
+		key, keyErr := v2KeyForSealedRecord(record)
+		if keyErr != nil {
+			t.Fatal(keyErr)
+		}
+		expectedRaw += len(key.String()) + len(record.CanonicalValue())
+	}
+	for _, assertion := range plan.Assertions() {
+		key, keyErr := v2KeyForAuthorityAssertion(assertion)
+		if keyErr != nil {
+			t.Fatal(keyErr)
+		}
+		expectedRaw += len(key.String()) + 20
+	}
+	if err != nil || measurement.MutationCount != plan.MutationCount() || measurement.AssertionCount != plan.AssertionCount() || measurement.RawBytes != expectedRaw {
+		t.Fatalf("measurement=%+v err=%v", measurement, err)
+	}
+}
+
+func TestV2WorkspacePathClaimKeyIsClosedDigestOnly(t *testing.T) {
+	digest := v2TestDigest("canonical-workspace-path")
+	key, err := v2WorkspacePathClaimKey(digest)
+	if err != nil || key.String() != "spk/v2/workspace-path-claims/"+digest.String() || key.WorkspacePathClaimDigest() != digest {
+		t.Fatalf("key=%+v err=%v", key, err)
+	}
+	parsed, err := parseV2Key(key.String())
+	if err != nil || parsed.String() != key.String() || parsed.WorkspacePathClaimDigest() != digest {
+		t.Fatalf("parsed=%+v err=%v", parsed, err)
+	}
+	for _, mutant := range []string{
+		"spk/v2/workspace-path-claims/" + strings.ToUpper(digest.String()),
+		"spk/v2/workspace-path-claims/" + digest.String() + "/claim",
+		"spk/v2/workspace-path-claims/../" + digest.String(),
+	} {
+		if _, err := parseV2Key(mutant); err == nil {
+			t.Fatalf("alternate workspace claim key accepted: %q", mutant)
+		}
+	}
+}
+
+func TestV2CommitRequiresExactAssertionResultCount(t *testing.T) {
+	plan, _, _, _ := v2AuthorityTestPlan(t, "count", "count", 7, v2TestDigest("claim-count"), []byte(`{"workspace_id":"workspace-count"}`))
+	for _, count := range []int{0, plan.AssertionCount() - 1, plan.AssertionCount() + 1} {
+		provider := &fakeProvider{batchFn: func(_ context.Context, batch gapdbapi.Batch) (gapdbapi.MutationResult, error) {
+			return gapdbapi.MutationResult{Revision: 8, Ack: gapdbapi.AckDurable, DurableThroughRevision: 8, MutationCount: len(batch.Mutations), AssertionCount: count}, nil
+		}}
+		adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+		if _, err := adapter.CommitV2(t.Context(), plan); !IsKind(err, OutcomeAmbiguous) {
+			t.Fatalf("assertion count=%d err=%v", count, err)
+		}
+	}
+}
+
+func TestV2AmbiguityReobservesAssertionsAfterCompleteMembership(t *testing.T) {
+	plan, presentKey, absentKey, presentValue := v2AuthorityTestPlan(t, "reconcile", "reconcile", 71, v2TestDigest("claim-reconcile"), []byte(`{"workspace_id":"workspace-reconcile"}`))
+	probe, _ := newAdapter(&fakeProvider{}, "/explicit/socket", time.Second)
+	encoded, err := probe.encodeV2Plan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := make(map[string][]byte, len(encoded.keys))
+	for index, key := range encoded.keys {
+		values[key.String()] = encoded.values[index]
+	}
+	for _, test := range []struct {
+		name        string
+		presentRev  gapdbapi.Revision
+		presentData []byte
+		absentFound bool
+		wantOK      bool
+	}{
+		{"stable", 71, presentValue, false, true},
+		{"revision-drift", 72, presentValue, false, false},
+		{"value-drift", 71, []byte(`{"stage":"changed"}`), false, false},
+		{"absence-drift", 71, presentValue, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &fakeProvider{
+				getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
+					if value, ok := values[key]; ok {
+						return gapdbapi.NewRecord(key, value, 80, nil), nil
+					}
+					switch key {
+					case presentKey.String():
+						return gapdbapi.NewRecord(key, test.presentData, test.presentRev, nil), nil
+					case absentKey.String():
+						if test.absentFound {
+							return gapdbapi.NewRecord(key, []byte(`{"occupied":true}`), 72, nil), nil
+						}
+						return gapdbapi.Record{}, &gapdbapi.Error{Code: gapdbapi.CodeNotFound}
+					default:
+						return gapdbapi.Record{}, errors.New("unexpected assertion key")
+					}
+				},
+				statusFn: func(context.Context) (gapdbapi.StatusResult, error) {
+					return gapdbapi.StatusResult{DatabaseID: "db-1", CurrentRevision: 81, DurableThroughRevision: 81}, nil
+				},
+			}
+			adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+			observation, err := adapter.ReconcileCommitV2(t.Context(), plan)
+			if test.wantOK {
+				if err != nil || observation.Revision() != 80 || observation.AssertionCount() != 2 {
+					t.Fatalf("observation=%+v err=%v", observation, err)
+				}
+			} else if !IsKind(err, OutcomeAmbiguous) {
+				t.Fatalf("drift was not ambiguous: %v", err)
+			}
+		})
+	}
+}
+
+func TestV2AmbiguityDoesNotReadAssertionsBeforeMembershipProof(t *testing.T) {
+	plan, presentKey, absentKey, _ := v2AuthorityTestPlan(t, "ordered", "ordered", 11, v2TestDigest("claim-ordered"), []byte(`{"workspace_id":"workspace-ordered"}`))
+	probe, _ := newAdapter(&fakeProvider{}, "/explicit/socket", time.Second)
+	encoded, err := probe.encodeV2Plan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertionReads := 0
+	memberReads := 0
+	provider := &fakeProvider{getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
+		if key == presentKey.String() || key == absentKey.String() {
+			assertionReads++
+			return gapdbapi.Record{}, errors.New("assertion phase must not start")
+		}
+		memberReads++
+		if memberReads == 1 {
+			return gapdbapi.NewRecord(key, encoded.values[0], 20, nil), nil
+		}
+		return gapdbapi.Record{}, &gapdbapi.Error{Code: gapdbapi.CodeNotFound}
+	}}
+	adapter, _ := newAdapter(provider, "/explicit/socket", time.Second)
+	if _, err := adapter.ReconcileCommitV2(t.Context(), plan); !IsKind(err, OutcomeMalformedResponse) || assertionReads != 0 || memberReads != len(encoded.keys) {
+		t.Fatalf("err=%v assertion_reads=%d member_reads=%d", err, assertionReads, memberReads)
+	}
+}
+
+func TestV2WorkspacePathClaimContentionHasOneWinner(t *testing.T) {
+	claimDigest := v2TestDigest("one-canonical-path")
+	left, presentKey, _, presentValue := v2AuthorityTestPlan(t, "claim-left", "claim-shared", 1, claimDigest, []byte(`{"workspace_id":"workspace-left"}`))
+	right, _, _, _ := v2AuthorityTestPlan(t, "claim-right", "claim-shared", 1, claimDigest, []byte(`{"workspace_id":"workspace-right"}`))
+	memory := newV2AtomicMemory()
+	memory.revision = 1
+	memory.records[presentKey.String()] = gapdbapi.NewRecord(presentKey.String(), presentValue, 1, nil)
+	adapter, _ := newAdapter(memory.provider(), "/explicit/socket", time.Second)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, plan := range []journalv2.SealedCommitPlanV2{left, right} {
+		plan := plan
+		go func() {
+			<-start
+			_, err := adapter.CommitV2(context.Background(), plan)
+			results <- err
+		}()
+	}
+	close(start)
+	wins, conflicts := 0, 0
+	for range 2 {
+		switch err := <-results; {
+		case err == nil:
+			wins++
+		case IsKind(err, OutcomeConflict):
+			conflicts++
+		default:
+			t.Fatalf("unexpected result: %v", err)
+		}
+	}
+	if wins != 1 || conflicts != 1 || memory.batchCalls != 2 {
+		t.Fatalf("wins=%d conflicts=%d batches=%d", wins, conflicts, memory.batchCalls)
+	}
+}
+
 func TestV2CommitPreservesIndependentRevisionConditions(t *testing.T) {
 	plan := v2LaterTestPlan(t)
 	want := map[v2KeyKind]uint64{v2KeyOperationHead: 41, v2KeyAggregateHead: 42, v2KeyEligibilityGuard: 43, v2KeyCheckpointSlot: 44}
@@ -939,6 +1153,127 @@ func TestV2AdapterPublicSidecarAtomicMembership(t *testing.T) {
 	}
 }
 
+func TestV2AssertionCandidateSidecarQualification(t *testing.T) {
+	configuration, err := assertionCandidateTestConfiguration()
+	if err != nil {
+		if assertionCandidateQualificationRequested() {
+			t.Fatalf("assertion-candidate qualification incomplete: %v", err)
+		}
+		t.Skipf("assertion-candidate precondition unmet: %v", err)
+	}
+	harness := startExternalHarness(t, configuration)
+	t.Cleanup(func() {
+		if err := harness.Close(); err != nil {
+			t.Errorf("assertion-candidate owner did not terminate cleanly: %v", err)
+		}
+	})
+
+	claimDigest := v2TestDigest("candidate-shared-path")
+	probe, presentKey, absentKey, presentValue := v2AuthorityTestPlan(t, "candidate-probe", "candidate-authority", 1, claimDigest, []byte(`{"workspace_id":"candidate-probe"}`))
+	_ = probe
+	seed, err := harness.client.PutIfAbsent(t.Context(), presentKey.String(), presentValue, nil, gapdbapi.AckDurable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, _, _, _ := v2AuthorityTestPlan(t, "candidate-success", "candidate-authority", uint64(seed.Revision), claimDigest, []byte(`{"workspace_id":"candidate-success"}`))
+	proxy := startResponseDropProxyExpect(t, harness.socket, string(plan.PublicationID()), plan.MutationCount(), plan.AssertionCount())
+	lostClient, err := gapdbapi.Dial(proxy.socket, gapdbapi.ClientOptions{Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lostAdapter, err := New(lostClient, proxy.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = lostAdapter.CommitV2(t.Context(), plan)
+	_ = lostClient.Close()
+	if !IsKind(err, OutcomeAmbiguous) {
+		t.Fatalf("candidate dropped assertion response was not ambiguous: %v", err)
+	}
+	proxy.wait(t)
+	reconciled, err := harness.adapter.ReconcileCommitV2(t.Context(), plan)
+	if err != nil || reconciled.Revision() == 0 || reconciled.AssertionCount() != plan.AssertionCount() || reconciled.MutationCount() != plan.MutationCount() {
+		t.Fatalf("candidate stable reconciliation=%+v err=%v", reconciled, err)
+	}
+
+	_, staleKey, _, staleValue := v2AuthorityTestPlan(t, "candidate-stale-probe", "candidate-stale", 1, v2TestDigest("candidate-stale-probe-path"), []byte(`{"workspace_id":"candidate-stale-probe"}`))
+	staleSeed, err := harness.client.PutIfAbsent(t.Context(), staleKey.String(), staleValue, nil, gapdbapi.AckDurable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stalePlan, _, _, _ := v2AuthorityTestPlan(t, "candidate-stale", "candidate-stale", uint64(staleSeed.Revision), v2TestDigest("candidate-stale-path"), []byte(`{"workspace_id":"candidate-stale"}`))
+	staleMove, err := harness.client.CompareAndSwap(t.Context(), staleKey.String(), staleSeed.Revision, []byte(`{"stage":"moved"}`), nil, gapdbapi.AckDurable)
+	if err != nil || staleMove.Revision == 0 {
+		t.Fatalf("candidate stale assertion move=%+v err=%v", staleMove, err)
+	}
+	if _, err := harness.adapter.CommitV2(t.Context(), stalePlan); !IsKind(err, OutcomeConflict) {
+		t.Fatalf("candidate stale revision assertion did not conflict: %v", err)
+	}
+
+	absentSeed, err := harness.client.PutIfAbsent(t.Context(), absentKey.String(), []byte(`{"occupied":true}`), nil, gapdbapi.AckDurable)
+	if err != nil || absentSeed.Revision == 0 {
+		t.Fatalf("candidate absent assertion seed=%+v err=%v", absentSeed, err)
+	}
+	absentConflict, _, _, _ := v2AuthorityTestPlan(t, "candidate-absent-conflict", "candidate-authority", uint64(seed.Revision), v2TestDigest("candidate-other-path"), []byte(`{"workspace_id":"candidate-absent"}`))
+	if _, err := harness.adapter.CommitV2(t.Context(), absentConflict); !IsKind(err, OutcomeConflict) {
+		t.Fatalf("candidate absent assertion did not conflict: %v", err)
+	}
+
+	_, driftKey, _, driftValue := v2AuthorityTestPlan(t, "candidate-drift-probe", "candidate-drift", 1, v2TestDigest("candidate-drift-probe-path"), []byte(`{"workspace_id":"candidate-drift-probe"}`))
+	driftSeed, err := harness.client.PutIfAbsent(t.Context(), driftKey.String(), driftValue, nil, gapdbapi.AckDurable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driftPlan, _, _, _ := v2AuthorityTestPlan(t, "candidate-drift", "candidate-drift", uint64(driftSeed.Revision), v2TestDigest("candidate-drift-path"), []byte(`{"workspace_id":"candidate-drift"}`))
+	driftProxy := startResponseDropProxyExpect(t, harness.socket, string(driftPlan.PublicationID()), driftPlan.MutationCount(), driftPlan.AssertionCount())
+	driftClient, err := gapdbapi.Dial(driftProxy.socket, gapdbapi.ClientOptions{Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	driftAdapter, err := New(driftClient, driftProxy.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = driftAdapter.CommitV2(t.Context(), driftPlan)
+	_ = driftClient.Close()
+	if !IsKind(err, OutcomeAmbiguous) {
+		t.Fatalf("candidate dropped drift response was not ambiguous: %v", err)
+	}
+	driftProxy.wait(t)
+	drift, err := harness.client.CompareAndSwap(t.Context(), driftKey.String(), driftSeed.Revision, []byte(`{"stage":"changed"}`), nil, gapdbapi.AckDurable)
+	if err != nil || drift.Revision == 0 {
+		t.Fatalf("candidate assertion drift=%+v err=%v", drift, err)
+	}
+	if _, err := harness.adapter.ReconcileCommitV2(t.Context(), driftPlan); !IsKind(err, OutcomeAmbiguous) {
+		t.Fatalf("candidate response-loss drift was not ambiguous: %v", err)
+	}
+
+	contentionHead, _ := v2AggregateHeadKey(mustV2Coordinate(t, "execution", "execution-candidate-contention", journalv2.Scope{Kind: journalv2.ScopeHost}))
+	contentionValue := []byte(`{"stage":"current"}`)
+	contentionSeed, err := harness.client.PutIfAbsent(t.Context(), contentionHead.String(), contentionValue, nil, gapdbapi.AckDurable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedClaim := v2TestDigest("candidate-contention-path")
+	left, _, _, _ := v2AuthorityTestPlan(t, "candidate-left", "candidate-contention", uint64(contentionSeed.Revision), sharedClaim, []byte(`{"workspace_id":"left"}`))
+	right, _, _, _ := v2AuthorityTestPlan(t, "candidate-right", "candidate-contention", uint64(contentionSeed.Revision), sharedClaim, []byte(`{"workspace_id":"right"}`))
+	if _, err := harness.adapter.CommitV2(t.Context(), left); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := harness.adapter.CommitV2(t.Context(), right); !IsKind(err, OutcomeConflict) {
+		t.Fatalf("candidate workspace claim contention did not conflict: %v", err)
+	}
+}
+
+func mustV2Coordinate(t *testing.T, kind, id string, scope journalv2.Scope) journalv2.AggregateCoordinate {
+	t.Helper()
+	coordinate, err := journalv2.NewAggregateCoordinate(journalv2.AggregateKind(kind), journalv2.AggregateID(id), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return coordinate
+}
+
 type v2AtomicMemory struct {
 	mu         sync.Mutex
 	revision   gapdbapi.Revision
@@ -957,6 +1292,21 @@ func (m *v2AtomicMemory) provider() *fakeProvider {
 			m.mu.Lock()
 			defer m.mu.Unlock()
 			m.batchCalls++
+			for _, assertion := range batch.Assertions {
+				record, exists := m.records[assertion.Key]
+				switch assertion.Condition.Kind {
+				case gapdbapi.ConditionAbsent:
+					if exists {
+						return gapdbapi.MutationResult{}, &gapdbapi.Error{Code: gapdbapi.CodeConditionFailed}
+					}
+				case gapdbapi.ConditionRevision:
+					if !exists || record.Revision != assertion.Condition.ExpectedRevision {
+						return gapdbapi.MutationResult{}, &gapdbapi.Error{Code: gapdbapi.CodeConditionFailed}
+					}
+				default:
+					return gapdbapi.MutationResult{}, &gapdbapi.Error{Code: gapdbapi.CodeInvalidRequest}
+				}
+			}
 			for _, mutation := range batch.Mutations {
 				record, exists := m.records[mutation.Key]
 				switch mutation.Condition.Kind {
@@ -976,7 +1326,7 @@ func (m *v2AtomicMemory) provider() *fakeProvider {
 			for _, mutation := range batch.Mutations {
 				m.records[mutation.Key] = gapdbapi.NewRecord(mutation.Key, mutation.Value, m.revision, nil)
 			}
-			return gapdbapi.MutationResult{Revision: m.revision, Ack: gapdbapi.AckDurable, DurableThroughRevision: m.revision, MutationCount: len(batch.Mutations)}, nil
+			return gapdbapi.MutationResult{Revision: m.revision, Ack: gapdbapi.AckDurable, DurableThroughRevision: m.revision, MutationCount: len(batch.Mutations), AssertionCount: len(batch.Assertions)}, nil
 		},
 		getFn: func(_ context.Context, key string) (gapdbapi.Record, error) {
 			m.mu.Lock()
@@ -1390,6 +1740,55 @@ func v2CanonicalAt(size int) []byte {
 	return []byte(`{"x":"` + strings.Repeat("x", size-overhead) + `"}`)
 }
 
+func v2AuthorityTestPlan(t *testing.T, operationLabel, authorityLabel string, revision uint64, claimDigest journalv2.Digest, claimValue []byte) (journalv2.SealedCommitPlanV2, v2Key, v2Key, []byte) {
+	t.Helper()
+	presentValue := []byte(`{"stage":"current"}`)
+	presentDigest, err := journalv2.ReducerStateDigestV2(presentValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinate, err := journalv2.NewAggregateCoordinate("execution", journalv2.AggregateID("execution-"+authorityLabel), journalv2.Scope{Kind: journalv2.ScopeHost})
+	if err != nil {
+		t.Fatal(err)
+	}
+	present, err := journalv2.NewAuthorityAssertionV2(journalv2.AuthorityAssertionInputV2{
+		Target:                 journalv2.ConditionTarget{Kind: journalv2.ConditionTargetAggregateHead, Coordinate: coordinate},
+		Kind:                   journalv2.ConditionRecordRevision,
+		ObservedRevision:       revision,
+		ExpectedLogicalVersion: 7,
+		ObservedValueDigest:    presentDigest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missionID := journalv2.MissionID("assertion-" + authorityLabel)
+	shardID := journalv2.EligibilityShardID("shard-" + authorityLabel)
+	absent, err := journalv2.NewAuthorityAssertionV2(journalv2.AuthorityAssertionInputV2{
+		Target: journalv2.ConditionTarget{Kind: journalv2.ConditionTargetEligibilityGuard, MissionID: missionID, ShardID: shardID},
+		Kind:   journalv2.ConditionAbsent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := journalv2.NewWorkspacePathClaimV2(claimDigest, claimValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := v2TryNamedAuthorityPlan(t, operationLabel, operationLabel, []byte(fmt.Sprintf(`{"intent":%q}`, operationLabel)), []byte(`{"through":0}`), []journalv2.AuthorityAssertionV2{present, absent}, &claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	presentKey, err := v2AggregateHeadKey(coordinate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	absentKey, err := v2EligibilityGuardKey(missionID, shardID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan, presentKey, absentKey, presentValue
+}
+
 func v2TestPlan(t *testing.T) journalv2.SealedCommitPlanV2 {
 	return v2NamedTestPlan(t, "1", "1")
 }
@@ -1404,6 +1803,10 @@ func v2NamedTestPlan(t *testing.T, operationLabel, missionLabel string) journalv
 }
 
 func v2TryNamedTestPlan(t *testing.T, operationLabel, missionLabel string, effectCanonical, checkpointCanonical []byte) (journalv2.SealedCommitPlanV2, error) {
+	return v2TryNamedAuthorityPlan(t, operationLabel, missionLabel, effectCanonical, checkpointCanonical, nil, nil)
+}
+
+func v2TryNamedAuthorityPlan(t *testing.T, operationLabel, missionLabel string, effectCanonical, checkpointCanonical []byte, assertions []journalv2.AuthorityAssertionV2, claim *journalv2.WorkspacePathClaimV2) (journalv2.SealedCommitPlanV2, error) {
 	t.Helper()
 	operationID := journalv2.OperationID("operation-" + operationLabel)
 	missionID := journalv2.MissionID("mission-" + missionLabel)
@@ -1444,7 +1847,7 @@ func v2TryNamedTestPlan(t *testing.T, operationLabel, missionLabel string, effec
 	conditions := v2TestConditions(t, heads, guards, checkpoints)
 	plan, err := journalv2.SealCommitPlanV2(journalv2.CommitPlanInput{OperationBinding: &binding, OperationState: state, Events: events, Heads: heads,
 		EffectIntents:     []journalv2.EffectIntentReference{{EffectID: effectID, Digest: v2TestDigest("effect-" + operationLabel), Canonical: effectCanonical}},
-		EligibilityGuards: guards, Checkpoints: checkpoints, Conditions: conditions}, journalv2.DefaultEventRegistryV2())
+		EligibilityGuards: guards, Checkpoints: checkpoints, Conditions: conditions, Assertions: assertions, WorkspacePathClaim: claim}, journalv2.DefaultEventRegistryV2())
 	return plan, err
 }
 

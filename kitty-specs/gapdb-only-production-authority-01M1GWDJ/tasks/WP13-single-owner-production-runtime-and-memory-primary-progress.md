@@ -314,11 +314,12 @@ precisely without minting authority or coupling to storage.
 
 1. Define typed Get/List snapshot queries for host, mission, WorkRevision/work,
    operation/effect, review/acceptance, and integration progress.
-2. A mission progress snapshot includes MissionID, lifecycle/current action,
+2. A mission progress snapshot includes MissionID, coarse lifecycle and full
+   authorized/unavailable action census,
    journal revision, runtime epoch, current WorkRevision/generation, total and
    per-state work counts, running RunID/LeaseID/ActorID coordinates, blockers,
    open decisions, pending reconciliation/effects, review/integration state,
-   legal next actions, and bounded diagnoses.
+   typed blocking predicates and responsible producers, and bounded diagnoses.
 3. Distinguish authoritative recorded state from observed external status and
    projection freshness. Never collapse “requested,” “observed,” “accepted,”
    and “completed.”
@@ -477,8 +478,8 @@ stale clients, and replays committed results before epoch validation. Suppress
 all watch notifications to prove they are not durability.
 
 Confirm a second host and a compatible-but-wrong database both fail closed.
-Verify queries answer where any running mission is—including current action,
+Verify queries answer where any running mission is—including action readiness,
 work counts, runs/leases, blockers, decisions, reconciliation, reviews,
-integration, and legal next actions—without performing any mutation. Reject raw
+integration, and all legal/unavailable actions—without performing any mutation. Reject raw
 store escape, optimistic projection, hidden fallback, unbounded subscriber
 backpressure, dead APIs, test-only composition, or transport expansion.

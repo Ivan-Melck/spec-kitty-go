@@ -435,20 +435,18 @@ func (t *ProjectionTrackerV2) sealPrefix() (SealedProjectionPrefixV2, error) {
 }
 
 func snapshotProjectionEntries(states map[string]projectionEntryV2) []ProjectionEntryV2 {
-	keys := make([]string, 0, len(states))
-	for key, value := range states {
+	result := make([]ProjectionEntryV2, 0, len(states))
+	for _, value := range states {
 		if value.coordinate.Kind == AggregateKind("operation") {
 			continue
 		}
-		keys = append(keys, key)
+		result = append(result, ProjectionEntryV2{coordinate: value.coordinate, canonical: append([]byte(nil), value.canonical...), digest: value.digest,
+			version: value.version, lastEventID: value.lastEventID, tombstone: value.tombstone})
 	}
-	sort.Strings(keys)
-	result := make([]ProjectionEntryV2, len(keys))
-	for index, key := range keys {
-		value := states[key]
-		result[index] = ProjectionEntryV2{coordinate: value.coordinate, canonical: append([]byte(nil), value.canonical...), digest: value.digest,
-			version: value.version, lastEventID: value.lastEventID, tombstone: value.tombstone}
-	}
+	sort.Slice(result, func(i, j int) bool {
+		order, err := CompareAggregateCoordinates(result[i].coordinate, result[j].coordinate)
+		return err == nil && order < 0
+	})
 	return result
 }
 

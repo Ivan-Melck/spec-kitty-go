@@ -413,9 +413,12 @@ is refused.
 
 ### Mission and artifact authority
 
-The mission aggregate owns lifecycle, action cursor, blockers, decisions, and
-terminal outcome. One action publication may also update artifact or workgraph
-aggregates in the same batch, but the common journal does not interpret why.
+The mission aggregate owns coarse open/paused/terminal lifecycle, immutable
+activity history, blockers, decisions, and terminal outcome. A pure readiness
+evaluator derives the complete authorized/unavailable action census from exact
+current authority facts; there is no exclusive phase or action cursor. One
+capability publication may also update artifact or workgraph aggregates in the
+same batch, but the common journal does not interpret why.
 
 Artifact catalog and artifact revision are distinct aggregates. Publication
 CASes the catalog's current revision; verification or approval addresses an

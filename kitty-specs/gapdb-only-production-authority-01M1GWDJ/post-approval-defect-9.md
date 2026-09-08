@@ -5,10 +5,14 @@
 WP08 exposed two false assumptions in the ratified workspace contract.
 
 First, a condition attached only to a record being mutated cannot atomically
-prove an unchanged authority aggregate. Initial workspace binding must verify
-the current execution head without manufacturing a same-value write or
-splitting the publication across a read/commit race. The formerly admitted
-GapDB tuple did not provide read-only batch assertions.
+prove a genuinely unchanged authority aggregate. The original workspace
+binding design needed to verify an unchanged execution head without
+manufacturing a same-value write or splitting the publication across a
+read/commit race. The later execution-slot-binding correction intentionally
+changes that head so it records WorkspaceID authority; initial bind therefore
+uses an exact record-revision mutation condition on the execution head. A key
+cannot be both asserted and mutated in one publication. True read-only batch
+assertions remain required for every authority key that must stay unchanged.
 
 Second, GapDB can fence Spec Kitty authority records but cannot fence arbitrary
 POSIX or Git writes. A stale process may continue writing its old worktree, and
@@ -77,6 +81,11 @@ different WorkspaceID and a path whose claim key is absent. This rule prevents
 two cooperating Spec Kitty operations from authorizing the same directory; it
 does not pretend to control direct filesystem access.
 
+Workspace aggregate identity is independently global: its journal coordinate
+is host-scoped by WorkspaceID. Project, mission, WorkRevision, work, and
+repository coordinates live in the immutable workspace state; they must not
+form a scope that permits the same WorkspaceID to be created again elsewhere.
+
 ### Execution-owned composition
 
 `internal/execution` owns the operation that composes execution and workspace
@@ -84,13 +93,27 @@ authority because execution already depends on workspace. The workspace
 package supplies opaque, validated binding/quarantine contributions; it does
 not import execution or expose execution wire formats.
 
-Initial binding asserts the unchanged current execution head and atomically
-writes the workspace binding, first workspace event/head, permanent path claim,
-operation state, and preparation intent. If binding wins first, expiry
-re-observes the bound workspace and atomically expires the lease plus
-quarantines that workspace. If expiry wins first, binding's execution-head
-assertion fails. Once an execution slot records a bound WorkspaceID, expiry
-without the exact workspace quarantine contribution is invalid.
+Initial binding advances the current execution head under its exact prior
+record revision and atomically writes the workspace binding, first workspace
+event/head, permanent path claim, operation state, and preparation intent. It
+must not also assert that mutated key. If binding wins first, expiry re-observes
+the bound workspace and atomically expires the lease plus quarantines that
+workspace. If expiry wins first, binding's execution-head mutation condition
+fails. Once an execution slot records a bound WorkspaceID, expiry without the
+exact workspace quarantine contribution is invalid.
+
+The slot record therefore carries a paired, immutable WorkspaceID and
+workspace-path-claim digest for its current lease generation. Initial binding
+atomically advances the execution head while creating the workspace authority;
+an unbound-to-bound transition cannot be inferred from workspace state alone.
+Heartbeat and outcome preserve the pair byte-for-byte. The ordinary execution
+expiry operation refuses a bound slot before publication. Only the
+execution-owned workspace composition may consume a bound slot into an expired
+slot, and that same sealed publication must quarantine the exact WorkspaceID.
+A replacement generation begins unbound and must later bind a fresh identity
+and absent path claim. WP08 narrowly owns `internal/execution/authority_v2.go`
+and its test file in addition to its existing composition files so this law is
+enforced at the otherwise-bypassing entry point.
 
 ### Repository observations are external evidence
 
@@ -103,6 +126,21 @@ integration revalidate the target before relying on workspace evidence.
 
 An uncooperative raw Git writer can still move a ref. The product law is prompt
 detection and authority refusal, not impossible filesystem fencing.
+
+Read-only canonical-path, symlink, registration, and repository observations
+may occur before initial binding so invalid external facts are refused without
+publication. The crash-before-binding law prohibits external mutation before
+durable intent; it does not prohibit bounded observation. WP08 owns the pure
+current-workspace predicate and its exhaustive capsule tests. WP09 and WP10 own
+calling that predicate from handoff, review, acceptance, and integration, so
+WP08 does not add out-of-scope or test-only gate integrations.
+
+The recorded chronology must remain causal. A ready state cannot claim a probe
+that occurred after its own publication. While retaining the same cooperating
+repository guard, the implementation either records a non-ready intermediate
+publication between the probes and then publishes ready with both facts, or
+performs both probes before one final ready publication. It never publishes
+ready between pre- and post-probe.
 
 ## Routing
 
@@ -121,8 +159,10 @@ detection and authority refusal, not impossible filesystem fencing.
 
 ## Acceptance evidence
 
-- A controlled same-value-write substitute fails while a true unchanged-head
-  assertion passes.
+- A controlled same-value-write substitute fails wherever a true
+  unchanged-authority assertion is required; initial bind instead proves its
+  intentionally changed execution head with one exact revision-conditioned
+  mutation and no overlapping assertion.
 - Bind-versus-expire contention has one legal outcome per trial with no split
   execution/workspace authority.
 - Permanent path claims reject same-path aliases and replacement reuse.

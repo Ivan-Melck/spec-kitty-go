@@ -94,6 +94,13 @@ func (a *Adapter) reconcileV2(ctx context.Context, plan journalv2.SealedCommitPl
 		exactMembers++
 	}
 	if exactMembers == len(encoded.keys) && precondition == 0 && moved == 0 && commonRevision > 0 {
+		matched, assertionErr := a.verifyV2Assertions(ctx, encoded)
+		if assertionErr != nil {
+			return v2ReconcileResult{}, assertionErr
+		}
+		if !matched {
+			return v2ReconcileResult{}, ambiguousV2Error("sealed authority assertion changed during reconciliation", encoded.operationID, nil)
+		}
 		status, statusErr := a.client.Status(ctx)
 		if statusErr != nil {
 			return v2ReconcileResult{}, translateError("v2_reconcile_status", string(encoded.operationID), statusErr)
@@ -101,13 +108,20 @@ func (a *Adapter) reconcileV2(ctx context.Context, plan journalv2.SealedCommitPl
 		if uint64(status.CurrentRevision) < commonRevision || uint64(status.DurableThroughRevision) < commonRevision {
 			return v2ReconcileResult{}, corruptV2Publication("publication durability cannot be proven", encoded.operationID)
 		}
-		observation, observationErr := journalv2.NewCommitObservationV2(encoded.publicationID, plan.Digest(), plan.RecordSetDigest(), commonRevision, uint64(status.DurableThroughRevision), len(encoded.keys))
+		observation, observationErr := journalv2.NewCommitObservationWithAssertionsV2(encoded.publicationID, plan.Digest(), plan.RecordSetDigest(), commonRevision, uint64(status.DurableThroughRevision), len(encoded.keys), len(encoded.assertions))
 		if observationErr != nil {
 			return v2ReconcileResult{}, corruptV2Publication("publication observation is invalid", encoded.operationID)
 		}
 		return v2ReconcileResult{disposition: v2ReconcileCommitted, observation: observation, operationState: plan.OperationState()}, nil
 	}
 	if precondition == len(encoded.keys) && exactMembers == 0 {
+		matched, assertionErr := a.verifyV2Assertions(ctx, encoded)
+		if assertionErr != nil {
+			return v2ReconcileResult{}, assertionErr
+		}
+		if !matched {
+			return v2ReconcileResult{}, adapterError("v2_reconcile", string(encoded.operationID), OutcomeConflict, RecoveryRead, "sealed authority assertion changed before publication", nil)
+		}
 		return v2ReconcileResult{disposition: v2ReconcileRetrySamePublication, operationState: plan.OperationState()}, nil
 	}
 	if exactMembers > 0 {
@@ -138,7 +152,35 @@ func convertV2ReadbackRecord(record gapdbapi.Record, expected v2Key) (v2Readback
 
 func v2MovableConflictRole(role journalv2.SealedRecordRole, key v2Key) bool {
 	return role == journalv2.RecordAggregateHead || role == journalv2.RecordEligibilityGuard || role == journalv2.RecordCheckpointSlot ||
+		role == journalv2.RecordWorkspacePathClaim ||
 		role == journalv2.RecordJournalEvent && key.Coordinate().Kind != journalv2.AggregateKind("operation")
+}
+
+func (a *Adapter) verifyV2Assertions(ctx context.Context, encoded v2EncodedPlan) (bool, error) {
+	for _, assertion := range encoded.assertions {
+		record, err := a.client.Get(ctx, assertion.key.String())
+		if assertion.condition.Kind == gapdbapi.ConditionAbsent {
+			if v2NotFound(err) {
+				continue
+			}
+			if err != nil {
+				return false, ambiguousV2Error("sealed authority assertion cannot be re-observed", encoded.operationID, nil)
+			}
+			return false, nil
+		}
+		if err != nil {
+			return false, ambiguousV2Error("sealed authority assertion cannot be re-observed", encoded.operationID, nil)
+		}
+		converted, convertErr := convertV2ReadbackRecord(record, assertion.key)
+		if convertErr != nil || converted.hasExpiry || converted.revision != uint64(assertion.condition.ExpectedRevision) {
+			return false, nil
+		}
+		digest, digestErr := journalv2.ReducerStateDigestV2(converted.canonical)
+		if digestErr != nil || digest != assertion.observedValueDigest {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func v2NotFound(err error) bool {
