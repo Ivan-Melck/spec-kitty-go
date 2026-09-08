@@ -225,6 +225,20 @@ func publicationWitnessWire(witness PublicationWitnessV2) publicationWitnessWire
 }
 
 func DecodePublicationWitnessV2(encoded []byte) (PublicationWitnessV2, error) {
+	return decodePublicationWitnessV2(encoded, false)
+}
+
+// DecodePublicationWitnessRecordV2 consumes canonical bytes already sealed by
+// RecoveryRecordV2 while retaining strict schema, coordinate, and self-digest
+// validation.
+func DecodePublicationWitnessRecordV2(record RecoveryRecordV2) (PublicationWitnessV2, error) {
+	if record.address.kind != AddressPublicationWitness || record.expiresAt != "" {
+		return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
+	}
+	return decodePublicationWitnessV2(record.canonical, true)
+}
+
+func decodePublicationWitnessV2(encoded []byte, canonicalSealed bool) (PublicationWitnessV2, error) {
 	var wire publicationWitnessWireV2
 	if err := decodeStrict(encoded, MaxCanonicalPayloadBytes, &wire); err != nil {
 		return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
@@ -241,9 +255,11 @@ func DecodePublicationWitnessV2(encoded []byte) (PublicationWitnessV2, error) {
 	if err := ValidatePublicationWitnessV2(witness); err != nil {
 		return PublicationWitnessV2{}, err
 	}
-	canonical, err := EncodePublicationWitnessV2(witness)
-	if err != nil || !bytes.Equal(canonical, encoded) {
-		return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
+	if !canonicalSealed {
+		canonical, err := EncodePublicationWitnessV2(witness)
+		if err != nil || !bytes.Equal(canonical, encoded) {
+			return PublicationWitnessV2{}, invalid(ErrorJournalCorrupt, "publication_witness")
+		}
 	}
 	return witness, nil
 }

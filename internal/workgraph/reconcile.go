@@ -32,8 +32,10 @@ var allStatuses = []WorkStatus{StatusActive, StatusHandedOff, StatusApproved, St
 type EligibilityOperation string
 
 const (
+	EligibilityStart       EligibilityOperation = "start"
 	EligibilityHandoff     EligibilityOperation = "handoff"
 	EligibilityReview      EligibilityOperation = "review"
+	EligibilityAcceptance  EligibilityOperation = "acceptance"
 	EligibilityIntegration EligibilityOperation = "integration"
 )
 
@@ -72,6 +74,14 @@ func NewLegacyEligibilityFact(reconciliationID string, oldRevisionID ids.WorkRev
 	}
 	permitted := false
 	switch operation {
+	case EligibilityStart:
+		if status != StatusActive {
+			return EligibilityFact{}, newError(KindInvalidReconciliation, "start eligibility requires active work", nil)
+		}
+		// A superseded run may continue producing evidence, but its generation
+		// may not grant fresh execution authority. Handoff eligibility carries
+		// exactly that distinction across every disposition.
+		permitted = consequence.HandoffEligible
 	case EligibilityHandoff:
 		if status != StatusActive {
 			return EligibilityFact{}, newError(KindInvalidReconciliation, "handoff eligibility requires active work", nil)
@@ -85,6 +95,11 @@ func NewLegacyEligibilityFact(reconciliationID string, oldRevisionID ids.WorkRev
 	case EligibilityIntegration:
 		if status != StatusApproved {
 			return EligibilityFact{}, newError(KindInvalidReconciliation, "integration eligibility requires approved work", nil)
+		}
+		permitted = consequence.IntegrationEligible
+	case EligibilityAcceptance:
+		if status != StatusApproved {
+			return EligibilityFact{}, newError(KindInvalidReconciliation, "acceptance eligibility requires approved work", nil)
 		}
 		permitted = consequence.IntegrationEligible
 	default:
@@ -259,6 +274,7 @@ type MixedReconciliation struct {
 	decisions         []WorkDispositionDecision
 	assignedStatuses  map[ids.WorkID]WorkStatus
 	driftReportID     string
+	driftObservedAt   time.Time
 	requestDigest     string
 }
 
@@ -360,7 +376,7 @@ func ReconcileMixed(request MixedReconcileRequest) (MixedReconciliation, error) 
 		oldCriteriaDigest: request.Old.CriteriaDigest(), newCriteriaDigest: request.New.CriteriaDigest(),
 		actorID: request.ActorID, rationale: request.Rationale, oldWorkIDs: affectedOld,
 		newWorkIDs: affectedNew, occurredAt: request.OccurredAt,
-		decisions: decisions, assignedStatuses: statuses, driftReportID: request.Drift.ID(),
+		decisions: decisions, assignedStatuses: statuses, driftReportID: request.Drift.ID(), driftObservedAt: request.Drift.ObservedAt(),
 		consequences: make(map[consequenceKey]Consequence, len(decisions)*len(allStatuses)),
 	}
 	for _, decision := range decisions {
@@ -645,10 +661,11 @@ func (r MixedReconciliation) OldWorkIDs() []ids.WorkID {
 func (r MixedReconciliation) NewWorkIDs() []ids.WorkID {
 	return append([]ids.WorkID(nil), r.newWorkIDs...)
 }
-func (r MixedReconciliation) ForkEdges() []ForkEdge { return append([]ForkEdge(nil), r.forkEdges...) }
-func (r MixedReconciliation) OccurredAt() time.Time { return r.occurredAt }
-func (r MixedReconciliation) RequestDigest() string { return r.requestDigest }
-func (r MixedReconciliation) DriftReportID() string { return r.driftReportID }
+func (r MixedReconciliation) ForkEdges() []ForkEdge      { return append([]ForkEdge(nil), r.forkEdges...) }
+func (r MixedReconciliation) OccurredAt() time.Time      { return r.occurredAt }
+func (r MixedReconciliation) RequestDigest() string      { return r.requestDigest }
+func (r MixedReconciliation) DriftReportID() string      { return r.driftReportID }
+func (r MixedReconciliation) DriftObservedAt() time.Time { return r.driftObservedAt }
 func (r MixedReconciliation) Decisions() []WorkDispositionDecision {
 	result := make([]WorkDispositionDecision, len(r.decisions))
 	for index, decision := range r.decisions {

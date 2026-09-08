@@ -294,13 +294,16 @@ func TestQualificationFixtureCheckpointPlus10000Operations30Runs(t *testing.T) {
 	if raceBuild() {
 		t.Skip("the 30x10k wall-clock qualification is a performance campaign; the 100-run worker scenario remains enabled under -race")
 	}
-	input, uninterrupted, wantPrefix := qualificationRestoreFixture(t, 10_000, 300)
+	// The checkpoint writer is itself the first accepted suffix operation; the
+	// generated scopes contribute the remaining 9,999 operations. Each scope
+	// publishes its domain event and operation event atomically.
+	const generatedSuffixOperations = 9_999
+	const acceptedSuffixOperations = 1 + generatedSuffixOperations
+	const suffixEvents = acceptedSuffixOperations
+	input, uninterrupted, wantPrefix := qualificationRestoreFixture(t, 1, generatedSuffixOperations, true)
 	durations := make([]time.Duration, 30)
 	for run := range durations {
 		input.Budgets = DefaultBudgetsV2()
-		if run%2 == 0 {
-			input.Budgets.MaximumWorkers = 1
-		}
 		started := time.Now()
 		result, err := RestoreV2(t.Context(), input)
 		durations[run] = time.Since(started)
@@ -308,7 +311,7 @@ func TestQualificationFixtureCheckpointPlus10000Operations30Runs(t *testing.T) {
 			t.Fatalf("run %d: %v", run, err)
 		}
 		if result.Playback().CanonicalProjectionDigest() != uninterrupted.CanonicalProjectionDigest() ||
-			result.RollingPrefixDigest() != wantPrefix || result.Playback().EventCount() != 601 {
+			result.RollingPrefixDigest() != wantPrefix || result.Playback().EventCount() != suffixEvents {
 			t.Fatalf("run %d diverged from uninterrupted projection/prefix: events=%d", run, result.Playback().EventCount())
 		}
 		if _, err := result.FreshEpochAdmissionRequestV2(); err != nil {
@@ -317,10 +320,10 @@ func TestQualificationFixtureCheckpointPlus10000Operations30Runs(t *testing.T) {
 	}
 	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 	p95 := durations[28]
-	if p95 > 5*time.Second {
-		t.Fatalf("gross CI recovery bound exceeded: p95=%s", p95)
+	if p95 > 2*time.Second {
+		t.Fatalf("NFR-009 recovery bound exceeded: p95=%s", p95)
 	}
-	t.Logf("qualification fixture: checkpoint_operations=10000 suffix_events=601 reducer_inputs=601 runs=30 p95=%s (reference 2s adoption threshold measured separately)", p95)
+	t.Logf("NFR-009 qualification: checkpoint_operations=1 suffix_operations=%d suffix_events=%d reducer_inputs=%d runs=30 p95=%s threshold=2s", acceptedSuffixOperations, suffixEvents, suffixEvents, p95)
 }
 
 func raceBuild() bool {
@@ -337,7 +340,7 @@ func raceBuild() bool {
 }
 
 func TestRestoreParallelWorkerDeterminism100Runs(t *testing.T) {
-	input, uninterrupted, wantPrefix := qualificationRestoreFixture(t, 1, 1)
+	input, uninterrupted, wantPrefix := qualificationRestoreFixture(t, 1, 1, false)
 	for run := 0; run < 100; run++ {
 		input.Budgets = DefaultBudgetsV2()
 		input.Budgets.MaximumWorkers = 1 + 7*(run%2)
@@ -352,7 +355,7 @@ func TestRestoreParallelWorkerDeterminism100Runs(t *testing.T) {
 }
 
 func TestRestoreBudgetsAndWallClockExpirationFailClosed(t *testing.T) {
-	base, _, _ := qualificationRestoreFixture(t, 1, 1)
+	base, _, _ := qualificationRestoreFixture(t, 1, 1, false)
 	cases := []struct {
 		name   string
 		change func(*BudgetsV2)
@@ -385,7 +388,7 @@ func TestRestoreBudgetsAndWallClockExpirationFailClosed(t *testing.T) {
 }
 
 func TestRestoreRevisionCensusAndExactReadFaultsFailClosed(t *testing.T) {
-	base, _, _ := qualificationRestoreFixture(t, 1, 1)
+	base, _, _ := qualificationRestoreFixture(t, 1, 1, false)
 	t.Run("first_page_revision_mismatch_restarts_whole_attempt", func(t *testing.T) {
 		input := base
 		input.Reader = &wrongObservedRevisionReader{ReaderV2: base.Reader}
@@ -395,7 +398,7 @@ func TestRestoreRevisionCensusAndExactReadFaultsFailClosed(t *testing.T) {
 		requireRestoreKind(t, err, ErrorUnstableStore)
 	})
 	t.Run("missing_suffix_event", func(t *testing.T) {
-		input, _, _ := qualificationRestoreFixture(t, 1, 1)
+		input, _, _ := qualificationRestoreFixture(t, 1, 1, false)
 		reader := input.Reader.(*journalReader)
 		for address, record := range reader.records {
 			if address.Kind() == journal.AddressJournalEvent && record.RecordRevision() == reader.revision {
@@ -407,7 +410,7 @@ func TestRestoreRevisionCensusAndExactReadFaultsFailClosed(t *testing.T) {
 		requireRestoreField(t, err, ErrorJournalCorrupt, "missing_event")
 	})
 	t.Run("missing_operation_only_witness", func(t *testing.T) {
-		input, _, _ := qualificationRestoreFixture(t, 1, 1)
+		input, _, _ := qualificationRestoreFixture(t, 1, 1, false)
 		reader := input.Reader.(*journalReader)
 		for address, record := range reader.records {
 			if address.Kind() == journal.AddressPublicationWitness && record.RecordRevision() == 2 {
@@ -419,7 +422,7 @@ func TestRestoreRevisionCensusAndExactReadFaultsFailClosed(t *testing.T) {
 		requireRestoreField(t, err, ErrorJournalCorrupt, "missing_publication_witness")
 	})
 	t.Run("witness_revision_differs_from_group", func(t *testing.T) {
-		input, _, _ := qualificationRestoreFixture(t, 1, 1)
+		input, _, _ := qualificationRestoreFixture(t, 1, 1, false)
 		reader := input.Reader.(*journalReader)
 		for address, record := range reader.records {
 			if address.Kind() == journal.AddressPublicationWitness && record.RecordRevision() == reader.revision {
@@ -465,7 +468,7 @@ func requireRestoreField(t *testing.T, err error, kind ErrorKind, field string) 
 	}
 }
 
-func qualificationRestoreFixture(t *testing.T, checkpointOperations, postCheckpointScopes int) (InputV2, playback.ResultV2, journal.Digest) {
+func qualificationRestoreFixture(t *testing.T, checkpointOperations, postCheckpointScopes int, operationOnlySuffix bool) (InputV2, playback.ResultV2, journal.Digest) {
 	t.Helper()
 	registry, reducers := restoreRegistries(t)
 	eventDescriptor, _ := registry.Descriptor()
@@ -530,6 +533,17 @@ func qualificationRestoreFixture(t *testing.T, checkpointOperations, postCheckpo
 
 	for i := 0; i < postCheckpointScopes; i++ {
 		revision := commitRevision + uint64(i) + 1
+		if operationOnlySuffix {
+			operationID := journal.OperationID(fmt.Sprintf("qualification-suffix-operation-%05d", i))
+			publicationID := qualificationPublicationID(fmt.Sprintf("suffix-%05d", i))
+			eventID := journal.EventID(fmt.Sprintf("qualification-operation-event-%05d", i))
+			state, event := qualificationOperationEvent(t, registry, operationID, 1, journal.StatusAccepted, []journal.EventID{eventID}, publicationID, eventID, 0, 1)
+			addQualificationOperation(t, reader, operationRecords, operationID, state, event, revision, true)
+			addQualificationWitness(t, reader, publicationID, operationID, 1, revision, 4, &wantPrefix)
+			material, _ := playback.NewMaterializedEventV2(revision, event, false)
+			suffix = append(suffix, material)
+			continue
+		}
 		missionID := journal.MissionID(fmt.Sprintf("qualification-mission-%03d", i))
 		missionCoordinate, _ := journal.NewAggregateCoordinate("mission", journal.AggregateID(missionID), journal.Scope{Kind: journal.ScopeMission, ProjectID: "qualification-project", MissionID: missionID})
 		missionEventID := journal.EventID(fmt.Sprintf("qualification-mission-event-%03d", i))

@@ -2,6 +2,8 @@
 work_package_id: WP08
 title: Lease-Scoped Workspace Authority
 dependencies:
+- WP02
+- WP03
 - WP04
 - WP07
 requirement_refs:
@@ -21,6 +23,9 @@ requirement_refs:
 planning_base_branch: feat/gapdb-only-production-authority
 merge_target_branch: feat/gapdb-only-production-authority
 branch_strategy: Planning artifacts for this mission were generated on feat/gapdb-only-production-authority. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/gapdb-only-production-authority unless the human explicitly redirects the landing branch.
+base_branch: kitty/mission-gapdb-only-production-authority-01M1GWDJ
+base_commit: c2ca33b25792348816597530e96e338abde5525e
+created_at: '2026-09-04T11:45:39.413576+00:00'
 subtasks:
 - T040
 - T041
@@ -30,11 +35,26 @@ history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal/workspace/
 create_intent:
+- internal/controljournal/v2/commit_plan_budget_test.go
+- internal/gitrepo/workspace_authority_v2.go
+- internal/gitrepo/workspace_authority_v2_test.go
+- internal/execution/authority_v2.go
+- internal/execution/authority_v2_test.go
+- internal/execution/workspace_authority_v2.go
+- internal/execution/workspace_authority_v2_test.go
 - internal/controlstore/gapdb/workspace_authority.go
 - internal/controlstore/gapdb/workspace_authority_test.go
 execution_mode: code_change
 model: ''
 owned_files:
+- internal/controljournal/v2/commit_plan.go
+- internal/controljournal/v2/commit_plan_budget_test.go
+- internal/gitrepo/workspace_authority_v2.go
+- internal/gitrepo/workspace_authority_v2_test.go
+- internal/execution/authority_v2.go
+- internal/execution/authority_v2_test.go
+- internal/execution/workspace_authority_v2.go
+- internal/execution/workspace_authority_v2_test.go
 - internal/workspace/**
 - internal/controlstore/gapdb/workspace_authority.go
 - internal/controlstore/gapdb/workspace_authority_test.go
@@ -81,13 +101,20 @@ spec-kitty agent action implement WP08 --agent codex
   `kitty-specs/gapdb-only-production-authority-01M1GWDJ/lanes.json`.
 - Planning and merge target: `feat/gapdb-only-production-authority`.
 - Use only the Spec Kitty-provided lane worktree.
-- Edit only `internal/workspace/**` and
-  `internal/controlstore/gapdb/workspace_*.go`.
+- Edit only `internal/workspace/**`, `internal/execution/authority_v2.go`,
+  `internal/execution/authority_v2_test.go`, and
+  `internal/controlstore/gapdb/workspace_*.go`, plus the two explicitly owned
+  `internal/execution/workspace_authority_v2*.go` composition files and the
+  explicitly owned `internal/gitrepo/workspace_authority_v2*.go` outbound
+  adapter files.
 - Preserve concurrent work and do not revert or absorb another agent's edits.
 - Consume WP02 journal, WP03 GapDB, WP04 restore, and WP07 lease/effect
   contracts without modifying or bypassing them.
 - Filesystem and Git implementations remain outbound adapters behind
   workspace-owned ports. They never enter the pure model or reducers.
+- Apply `post-approval-defect-9.md`. Execution owns cross-capability atomic
+  composition; workspace contributes opaque validated binding/quarantine
+  members, and neither layer invents raw Git state as a GapDB-fenced fact.
 
 Read the mission `spec.md`, `plan.md`, `research.md`, `data-model.md`, and
 `contracts/authority-journal-v2.md`, plus the frozen workspace behavior tests,
@@ -108,6 +135,25 @@ gets W2. If the stale lease-17 process writes W1, it cannot make W1 current,
 transfer it to lease 18, create an admissible handoff, or pass review,
 acceptance, or integration authority checks.
 
+### Enforceable execution-slot binding
+
+The execution-slot state must record whether the current active lease has an
+immutable workspace binding. An unbound slot records neither a WorkspaceID nor
+a workspace-path-claim digest; a bound slot records both, and they are
+write-once for that lease generation. Initial binding updates the execution
+head and creates the workspace authority in one sealed publication. It must not
+leave a bound workspace while the execution slot still appears unbound.
+
+The ordinary execution service may expire only an unbound slot. When the slot
+is bound, its `ExecutionExpireV2` route must refuse before publication and
+direct callers to the execution-owned workspace composition. That composition
+alone may publish the execution expiry together with the exact bound
+workspace's irreversible quarantine in one batch. Reducer validation must also
+reject loss, replacement, or partial mutation of the binding across heartbeat,
+outcome, expiry, and replacement transitions. A replacement generation starts
+unbound and later binds a fresh WorkspaceID and fresh path claim; it never
+inherits its predecessor's binding.
+
 ## T040: Define workspace-owned model, ports, events, and reducer
 
 **Purpose**: Replace the broad workspace store with capability-owned semantic
@@ -121,6 +167,10 @@ contracts and an immutable workspace binding that later gates can verify.
    WorkspaceID, ProjectID, MissionID, WorkRevisionID, WorkID, RunID, LeaseID,
    lease generation/fence, RuntimeEpochID, RepositoryID, LaneID, canonical
    absolute path identity, owned branch/ref, pinned base, and dependency set.
+   The aggregate coordinate is host-scoped by WorkspaceID so the identity can
+   be absent only once across every project/mission/work scope. Project,
+   mission, work, and repository coordinates remain immutable state fields;
+   they are not alternate namespaces for reusing one WorkspaceID.
 2. Make repository, lease, workspace, and path bindings write-once. No stage
    transition, retry, restart, replacement, or reconciliation may change them.
 3. Treat the canonical path as recorded identity, not filesystem authority.
@@ -173,9 +223,12 @@ mutation is preceded by durable intent and every authority stage is resumable.
 
 1. Replace `ReserveWorkspace`/`AdvanceWorkspace` persistence shape with typed
    workspace commands that construct sealed Authority Journal commit plans.
-2. The first publication atomically binds the absent WorkspaceID/path to the
-   exact current run/lease/work/repository coordinates and records the first
-   preparation effect intent before any directory or Git mutation.
+2. The first publication atomically binds the absent WorkspaceID and permanent
+   absent path claim to the exact current run/lease/work/repository coordinates,
+   advances the execution head with an exact record-revision mutation condition
+   so it records the immutable WorkspaceID/path-claim pair, and records the
+   first preparation effect intent before any directory or Git mutation. A key
+   changed by this publication cannot also be a read-only assertion target.
 3. For each external preparation step, follow:
    durable requested/effect intent -> adapter action -> bounded observation ->
    guarded journal transition. Never call the adapter first.
@@ -186,9 +239,12 @@ mutation is preceded by durable intent and every authority stage is resumable.
 5. Verify repository binding, managed root, pinned target/base, registered
    worktree, owned branch, isolated GitDir/index, clean state, and exact
    dependency head at their defined stages.
-6. Represent all mutable authority used for a stage as operation, workspace,
-   execution-slot, repository/target, and eligibility-guard conditions in one
-   sealed publication. Do not rely on a process mutex or read-then-write gap.
+6. Represent changed authority, including the execution head during initial
+   binding, as exact mutation conditions. Represent only genuinely unchanged
+   execution or eligibility authority as true read-only assertions in one
+   sealed publication. Never use a same-value CAS as a fake assertion, and
+   never overlap an assertion with a mutation. Repository/Git target state
+   remains guarded external evidence, not a GapDB condition.
 7. Resolve exact OperationID/PublicationID replay before current-epoch checks.
    Changed operation meaning refuses before workspace or adapter reads.
 8. On restart, reduce the durable workspace stage and effect observations, then
@@ -197,13 +253,22 @@ mutation is preceded by durable intent and every authority stage is resumable.
 9. If an adapter response was lost, inspect the intended path and repository
    registration, compare all attributable facts, and either record the exact
    observation or enter reconciliation-required state.
-10. Publish `ready` only after a final repository-target and workspace probe in
-    the guarded window. Drift before or during publication refuses/quarantines
-    according to frozen behavior; success is never optimistic.
+10. Publish `ready` only while holding the cooperating repository target guard
+    across the complete chronology. Persist both exact observations without
+    violating causality: either pre-probe -> non-ready guarded publication ->
+    post-probe -> ready publication containing both observations, or perform
+    both probes before the single final ready publication while the same guard
+    remains held. Never publish ready between the probes and then claim the
+    later observation was already in that publication. Drift, uncertainty, or
+    guard loss withholds ready according to frozen behavior; success is never
+    optimistic.
 
 **Required fault tests**:
 
-- Crash before initial binding causes zero filesystem/Git calls.
+- Crash before initial binding causes zero mutating filesystem/Git effect
+  calls. Bounded read-only path and repository validation observations are
+  permitted, but they cannot create a directory, worktree, branch, ref, index,
+  registration, or other external state before durable intent.
 - Crash after binding/intent resumes with the same WorkspaceID, path,
   OperationID, and EffectID.
 - Crash after worktree creation but before observation reconciles rather than
@@ -229,9 +294,14 @@ invariant without pretending the database can revoke POSIX access.
 
 **Implementation requirements**:
 
-1. Provide a workspace event/plan contribution that WP07 can atomically publish
-   with lease expiry: execution authority becomes expired and its bound
-   workspace becomes quarantined in the same GapDB revision.
+1. Provide a workspace event/plan contribution that execution-owned
+   composition atomically publishes with lease expiry: execution authority
+   becomes expired and its bound workspace becomes quarantined in the same
+   GapDB revision.
+   This composition also owns the exact execution-slot transition needed to
+   establish or consume the immutable WorkspaceID/path-claim binding. The
+   general execution service must refuse bound-slot expiry rather than emit its
+   former execution-only publication.
 2. Bind quarantine evidence to WorkspaceID, LeaseID, generation/fence,
    RuntimeEpochID, WorkRevisionID, WorkID, reason, actor/process authority where
    relevant, and recorded occurrence time.
@@ -240,7 +310,8 @@ invariant without pretending the database can revoke POSIX access.
    ready, transferable, or reusable.
 4. A replacement lease must use a newly allocated WorkspaceID and distinct
    canonical path. Reject a replacement request that reuses the old ID, path,
-   branch authority, GitDir, index, or mutable workspace record.
+   permanent path claim, branch authority, GitDir, index, or mutable workspace
+   record.
 5. Do not transfer filesystem ownership or rewrite the old workspace binding to
    name the replacement lease. W1 stays evidence for expired lease 17; W2 is
    created for lease 18.
@@ -251,9 +322,13 @@ invariant without pretending the database can revoke POSIX access.
    review, acceptance, and integration. It must compare exact epoch, work
    generation, WorkID, RunID, LeaseID/generation/fence, WorkspaceID/path,
    repository binding, ready status, and non-quarantine state.
-8. Validate the current-workspace predicate before any candidate publication,
-   reviewer mutation, acceptance decision, repository fence, or Git mutation.
-   Return the frozen earliest typed stale/quarantined refusal.
+8. Expose the current-workspace predicate for validation before any candidate
+   publication, reviewer mutation, acceptance decision, repository fence, or
+   Git mutation. WP08 proves its pure result against representative current,
+   stale, predecessor-epoch, and quarantined capsules. WP09 and WP10 own its
+   production wiring into handoff, review, acceptance, and integration; WP08
+   must not create test-only consumer integrations outside its owned surface.
+   Those consumers must return the frozen earliest typed refusal.
 9. Treat post-quarantine file changes as external observations only. They may
    support forensic reconciliation, but never restore authority or contaminate
    W2's candidate.
@@ -286,7 +361,11 @@ go test ./internal/workspace -run 'Expire|Quarantine|Replacement|Zombie|Authorit
 prove crash, restart, concurrency, and stale-writer behavior.
 
 **Files**: `internal/controlstore/gapdb/workspace_*.go` plus tests under the two
-owned wildcard surfaces.
+owned wildcard surfaces. WP08 also owns the narrow prerequisite repair in
+`internal/controljournal/v2/commit_plan.go` and
+`internal/controljournal/v2/commit_plan_budget_test.go`: a provider assertion's
+composite canonical ordering key is not itself one identity and therefore must
+be size-accounted through its already-bounded semantic components.
 
 **Adapter requirements**:
 
@@ -307,6 +386,16 @@ owned wildcard surfaces.
    values, filesystem contents, or raw adapter errors.
 8. Add no SQLite/SQL path, backend selector, fallback, dual write, importer,
    table-compatible API, or provider dependency in `internal/workspace`.
+9. Preserve every individual assertion identity/scope bound while allowing a
+   legitimate work-scoped execution-head assertion whose composite canonical
+   ordering key exceeds `MaxIdentityBytes`. Add a real exact-bound regression;
+   do not raise the global identity limit or weaken assertion validation.
+10. Supply a real `internal/gitrepo` implementation of the workspace-owned
+    preparation-effect and repository-target-guard ports, plus a callable
+    GapDB workspace-authority construction seam. WP13 remains the sole owner of
+    the host lifecycle, restore barrier, and final production composition root;
+    WP08 must not create a competing runtime or command entry point merely to
+    manufacture an early call site.
 
 **Concurrency and fault campaigns**:
 
@@ -327,6 +416,10 @@ owned wildcard surfaces.
 - workspace path reused by replacement lease;
 - quarantine can transition back to ready;
 - lease expires without atomic workspace quarantine;
+- same-value CAS substitutes for a read-only assertion on genuinely unchanged
+  authority, or initial bind asserts and mutates the execution head together;
+- execution expiry wins but stale workspace binding still publishes;
+- workspace binding wins but expiry omits its quarantine contribution;
 - cleanup failure rolls back quarantine;
 - preparation adapter call occurs before durable effect intent;
 - crash retry allocates a new WorkspaceID, path, OperationID, or EffectID;
@@ -337,6 +430,8 @@ owned wildcard surfaces.
 - two workspace events target one aggregate in one publication;
 - restart trusts projection state not proven by replay;
 - adapter or filesystem implementation leaks into the workspace kernel.
+- workspace aggregate scope changes from host to work, allowing one
+  WorkspaceID to bind under a second work coordinate.
 
 Each mutant requires a passing control and must fail for its intended semantic
 reason. Grep-only assertions do not count as behavioral proof.
@@ -366,6 +461,8 @@ git diff --check
 - Quarantined workspace identity is never reactivated, reused, or transferred.
 - The zombie scenario proves stale direct writes cannot pass authority gates.
 - GapDB adapter uses sealed v2 batches and restores byte-identical state.
+- The real Git/worktree outbound adapter is buildable and contract-tested;
+  final host/command wiring remains explicitly owned by WP13/WP15.
 - Parity, refusal, 100-run contention/zombie, fault, mutant, and race gates pass.
 - No SQLite, provider-kernel, process-lock, or optimistic-ready path exists.
 - T040–T043 are recorded `done` through the canonical event log.
@@ -409,6 +506,11 @@ before current-epoch checks and restart never trusts process-local memory.
 Reject any implementation that chmods or deletes W1 as its correctness
 mechanism, reassigns W1 to lease 18, derives current authority from the path or
 branch alone, uses a process mutex for exclusivity, silently retries Git work,
-or lets cleanup failure reactivate authority. Also reject dead production APIs,
-test-only substitute implementations, missing mutant controls, or a workspace
-kernel dependency on GapDB, SQL, Git implementation, filesystem, or transport.
+or lets cleanup failure reactivate authority. Also reject missing production
+outbound adapters, capability APIs without a declared downstream consumer,
+test-only substitutes for behavior WP08 owns, missing mutant controls, or a
+workspace kernel dependency on GapDB, SQL, Git implementation, filesystem, or
+transport. The declared downstream consumers are WP09/WP10 for the
+current-workspace predicate and WP13 for restore-barrier host composition;
+their not-yet-written entry points are not by themselves a WP08 dead-code
+failure.

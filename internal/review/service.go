@@ -10,39 +10,28 @@ import (
 
 type Store interface {
 	LookupReviewOperation(context.Context, Request) (Record, bool, error)
-	WorkEligibility(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus) (workgraph.Consequence, string, error)
 	InspectReview(context.Context, Request) (Scope, error)
 	CommitReview(context.Context, Request) (Record, error)
 }
 type EligibilityFactStore interface {
 	WorkEligibilityFact(context.Context, ids.WorkRevisionID, ids.WorkID, workgraph.WorkStatus, workgraph.EligibilityOperation) (workgraph.EligibilityFact, error)
 }
-type eligibilityMode uint8
-
-const (
-	eligibilityLegacyV1 eligibilityMode = iota + 1
-	eligibilityComplete
-)
-
 type Service struct {
 	store       Store
-	mode        eligibilityMode
 	eligibility EligibilityFactStore
 	faults      faults.Hook
 }
 
 func NewService(store Store) *Service {
-	service := &Service{store: store, mode: eligibilityLegacyV1, faults: faults.Noop{}}
+	service := &Service{store: store, faults: faults.Noop{}}
 	if eligibility, ok := any(store).(EligibilityFactStore); ok {
 		service.eligibility = eligibility
-		service.mode = eligibilityComplete
 	}
 	return service
 }
 func (s *Service) WithEligibilityFacts(reader EligibilityFactStore) *Service {
 	if reader != nil {
 		s.eligibility = reader
-		s.mode = eligibilityComplete
 	}
 	return s
 }
@@ -97,39 +86,19 @@ func (s *Service) Submit(ctx context.Context, request Request) (Record, error) {
 }
 
 func (s *Service) requireEligibility(ctx context.Context, request Request) error {
-	if s.mode == eligibilityComplete {
-		if s.eligibility == nil {
-			return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision review eligibility reader is unavailable"}
-		}
-		expected := request.ExpectedEligibility
-		if !expected.Complete() || !expected.MatchesComplete(expected.ReconciliationID(), request.WorkRevisionID, expected.NewRevisionID(), request.WorkID, workgraph.StatusHandedOff, expected.Disposition(), workgraph.EligibilityReview) {
-			return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision review eligibility is required"}
-		}
-		fact, err := s.eligibility.WorkEligibilityFact(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff, workgraph.EligibilityReview)
-		if err != nil {
-			return &Error{Kind: KindConflict, Message: "read complete WorkRevision review eligibility", Cause: err}
-		}
-		if !fact.SameComplete(expected) {
-			return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision review eligibility does not match the request"}
-		}
-		if !fact.Permitted() {
-			return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision reconciliation forbids review", Observed: map[string]string{"reconciliation_id": fact.ReconciliationID(), "reason": fact.Reason()}, Expected: map[string]string{"operation": string(workgraph.EligibilityReview)}}
-		}
-		return nil
-	}
-	if s.mode != eligibilityLegacyV1 {
-		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision review eligibility mode is invalid"}
-	}
-	if !request.ExpectedEligibility.IsZero() {
+	if s.eligibility == nil {
 		return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision review eligibility reader is unavailable"}
 	}
-	consequence, reconciliationID, err := s.store.WorkEligibility(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff)
-	if err != nil {
-		return &Error{Kind: KindConflict, Message: "read WorkRevision review eligibility", Cause: err}
+	expected := request.ExpectedEligibility
+	if !expected.Complete() || !expected.MatchesComplete(expected.ReconciliationID(), request.WorkRevisionID, expected.NewRevisionID(), request.WorkID, workgraph.StatusHandedOff, expected.Disposition(), workgraph.EligibilityReview) {
+		return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision review eligibility is required"}
 	}
-	fact, err := workgraph.NewLegacyEligibilityFact(reconciliationID, request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff, workgraph.EligibilityReview, consequence)
-	if err != nil || !fact.MatchesLegacy(request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff, workgraph.EligibilityReview) {
-		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision review eligibility is malformed"}
+	fact, err := s.eligibility.WorkEligibilityFact(ctx, request.WorkRevisionID, request.WorkID, workgraph.StatusHandedOff, workgraph.EligibilityReview)
+	if err != nil {
+		return &Error{Kind: KindConflict, Message: "read complete WorkRevision review eligibility", Cause: err}
+	}
+	if !fact.SameComplete(expected) {
+		return &Error{Kind: KindRevisionIneligible, Message: "complete WorkRevision review eligibility does not match the request"}
 	}
 	if !fact.Permitted() {
 		return &Error{Kind: KindRevisionIneligible, Message: "WorkRevision reconciliation forbids review", Observed: map[string]string{"reconciliation_id": fact.ReconciliationID(), "reason": fact.Reason()}, Expected: map[string]string{"operation": string(workgraph.EligibilityReview)}}

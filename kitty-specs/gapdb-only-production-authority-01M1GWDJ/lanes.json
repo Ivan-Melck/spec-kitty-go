@@ -78,6 +78,12 @@
         "WP03"
       ],
       "write_scope": [
+        "go.mod",
+        "go.sum",
+        "internal/controlstore/gapdb/admission_test.go",
+        "internal/controlstore/gapdb/external_scenarios_test.go",
+        "internal/controlstore/gapdb/port.go",
+        "internal/controlstore/gapdb/port_test.go",
         "internal/controlstore/gapdb/v2_adapter_test.go",
         "internal/controlstore/gapdb/v2_ambiguity.go",
         "internal/controlstore/gapdb/v2_codec.go",
@@ -194,8 +200,16 @@
         "WP08"
       ],
       "write_scope": [
+        "internal/controljournal/v2/commit_plan.go",
+        "internal/controljournal/v2/commit_plan_budget_test.go",
         "internal/controlstore/gapdb/workspace_authority.go",
         "internal/controlstore/gapdb/workspace_authority_test.go",
+        "internal/gitrepo/workspace_authority_v2.go",
+        "internal/gitrepo/workspace_authority_v2_test.go",
+        "internal/execution/authority_v2.go",
+        "internal/execution/authority_v2_test.go",
+        "internal/execution/workspace_authority_v2.go",
+        "internal/execution/workspace_authority_v2_test.go",
         "internal/workspace/**"
       ],
       "predicted_surfaces": [
@@ -204,6 +218,8 @@
         "workspace"
       ],
       "depends_on_lanes": [
+        "lane-b",
+        "lane-c",
         "lane-d",
         "lane-g"
       ],
@@ -288,6 +304,33 @@
         "lane-g",
         "lane-h",
         "lane-i",
+        "lane-j",
+        "lane-r"
+      ],
+      "parallel_group": 10
+    },
+    {
+      "lane_id": "lane-r",
+      "wp_ids": [
+        "WP18"
+      ],
+      "write_scope": [
+        "internal/architecture/m2_autonomy_contract_test.go",
+        "internal/architecture/m2_autonomy_mutant_test.go",
+        "internal/controlstore/gapdb/mission_authority.go",
+        "internal/controlstore/gapdb/mission_authority_test.go",
+        "internal/governancecontext/mission_action.go",
+        "internal/governancecontext/mission_action_test.go",
+        "internal/mission/**",
+        "internal/missiontype/**"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
         "lane-j"
       ],
       "parallel_group": 9
@@ -314,7 +357,7 @@
         "lane-k",
         "lane-l"
       ],
-      "parallel_group": 10
+      "parallel_group": 11
     },
     {
       "lane_id": "lane-n",
@@ -334,7 +377,7 @@
       "depends_on_lanes": [
         "lane-m"
       ],
-      "parallel_group": 11
+      "parallel_group": 12
     },
     {
       "lane_id": "lane-o",
@@ -357,7 +400,7 @@
       "depends_on_lanes": [
         "lane-m"
       ],
-      "parallel_group": 11
+      "parallel_group": 12
     },
     {
       "lane_id": "lane-p",
@@ -384,7 +427,7 @@
         "lane-n",
         "lane-o"
       ],
-      "parallel_group": 12
+      "parallel_group": 13
     },
     {
       "lane_id": "lane-q",
@@ -416,10 +459,10 @@
       "depends_on_lanes": [
         "lane-p"
       ],
-      "parallel_group": 13
+      "parallel_group": 14
     }
   ],
-  "computed_at": "2026-09-02T12:12:15.531555+00:00",
+  "computed_at": "2026-09-05T00:28:38.511422+00:00",
   "computed_from": "dependency_graph+ownership",
   "planning_artifact_wps": [],
   "planning_commit_sha": "e640621cadc78f803bb8e2bba5c1715f6179aca3"

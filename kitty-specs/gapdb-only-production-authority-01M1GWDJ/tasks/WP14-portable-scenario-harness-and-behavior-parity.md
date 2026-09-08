@@ -32,6 +32,9 @@ requirement_refs:
 planning_base_branch: feat/gapdb-only-production-authority
 merge_target_branch: feat/gapdb-only-production-authority
 branch_strategy: Planning artifacts for this mission were generated on feat/gapdb-only-production-authority. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/gapdb-only-production-authority unless the human explicitly redirects the landing branch.
+base_branch: kitty/mission-gapdb-only-production-authority-01M1GWDJ
+base_commit: ca6d8d7934bcf238d5664b88e96978a865ff986c
+created_at: '2026-09-05T12:27:20.186784+00:00'
 subtasks:
 - T070
 - T071
@@ -128,7 +131,7 @@ only the first two survive.
    hand off, review, accept, integrate, or mutate current authority.
 10. Exactly one current integration authority exists per repository/target ref,
     and Git observations remain evidence rather than authority.
-11. Universal invariants run after every admitted or refused phase and after
+11. Universal invariants run after every admitted or refused capability and after
     every restart/fault cut, not only at terminal success.
 12. Harness evidence is deterministic, bounded, machine-readable, and names the
     source revision, test, scenario, family, repetition, and outcome.
@@ -149,6 +152,21 @@ only the first two survive.
   the same admitted journal prefix.
 - Historical owners, epochs, capsules, leases, workspaces, candidates, and
   fences cannot mutate current authority.
+
+## Ratified review clarifications
+
+- Production publication faults are qualified by the orthogonal family/cut
+  method in `research/compositional-fault-qualification.md`; no Cartesian label
+  is counted as an experiment.
+- Concurrency is qualified by the complete two-item scenario plus attributable
+  capability contention, host no-global-mutex, and mutant axes described in
+  `research/compositional-concurrency-qualification.md`.
+- The scenario's decomposition boundary is native autonomous readiness plus an
+  acknowledged finalized WorkRevision. Removed Python phase cursor, Markdown
+  task-list, and manual ceremony gates are not parity requirements.
+- The external-effect saga exercises the fake tracker. Outbox remains a
+  registered/replayed adapter capability without an M2 production Host command
+  surface and is not falsely reported as a scenario route.
 
 ### Subtask T070 - Replace SQLite harness setup and introspection
 
@@ -221,7 +239,9 @@ inventory entry to capability-level scenarios and observable M2 evidence.
 6. Require zero additional authority and external mutations for every refused
    case and exact replay for same-binding admitted operations.
 7. Keep storage or Python/Markdown mechanics explicitly classified as non-product
-   evidence rather than recreating them in the new harness.
+   evidence rather than recreating them in the new harness. This includes the
+   exclusive phase cursor, manual phase advancement, tracked derived lane
+   status, prompt-only evidence producers, and stack-specific artifact gates.
 8. Fail the census for duplicate identifiers, missing mappings, substitutions,
    uncovered refusal edges, or a test name that does not resolve.
 
@@ -242,16 +262,16 @@ inventory entry to capability-level scenarios and observable M2 evidence.
 
 #### Purpose
 
-Prove the full authority lifecycle reaches identical terminal facts for an
-uninterrupted two-item mission and variants that restart after every major
-phase.
+Prove the full authority model reaches identical terminal facts for an
+uninterrupted two-item mission and variants that restart after every durable
+authority/publication boundary.
 
 #### Steps
 
 1. Define one canonical fixture with two independent work items, explicit
    dependencies/scopes where relevant, complete artifact and WorkRevision
    evidence, distinct ActorIDs, and a deterministic fake tracker plan.
-2. Drive mission creation, lifecycle advance, decomposition, artifact publish /
+2. Drive mission creation, readiness evaluation, decomposition, artifact publish /
    validate / approve, WorkRevision finalization, work start, lease/workspace,
    concurrent execution, handoff, independent review, acceptance, integration,
    tracker effects, outbox resolution, and terminal query state.
@@ -261,7 +281,8 @@ phase.
    terminal authority, projection digest, operation results, external evidence,
    repository result, and event-family coverage.
 5. Run a variant that fully stops and restarts the production owner after each
-   major phase, discarding memory projection and reconnecting through readiness.
+   durable authority/publication boundary, discarding memory projection and
+   reconnecting through readiness.
 6. After every restart, assert a new RuntimeEpoch, refusal of predecessor
    capsules/authority, byte-identical recovered projection for the committed
    prefix, and no duplicate transition or effect.
@@ -278,7 +299,7 @@ phase.
 
 - Both items reach the qualified terminal state with exactly one current
   authority at every gate and no lost parallel progress.
-- Restart after every phase produces the same terminal semantic snapshot and
+- Restart after every authority/publication boundary produces the same terminal semantic snapshot and
   exactly one result per committed operation.
 - A stale pre-restart capsule fails before external or repository mutation.
 - The scenario makes no direct database call and parses no CLI prose.
@@ -323,41 +344,54 @@ serialization.
 - Same-aggregate and integration conflicts yield stable typed results.
 - Zombie and same-ActorID reviewer mutants are detected on every repetition.
 
-### Subtask T074 - Qualify per-family faults and universal invariants
+### Subtask T074 - Qualify compositional publication faults and universal invariants
 
 #### Purpose
 
-Exercise crash, lost/malformed acknowledgement, ambiguous and dishonest external
-observations for every authority-changing family, backed by universal invariants
-and mutation controls.
+Exercise every authority family's semantic publication/replay behavior and
+exercise crash, lost/malformed acknowledgement, ambiguity, restart, and
+dishonest external observations at the single production publication boundary.
+Bind the two axes with an executable architecture guard and killed bypass
+mutant instead of claiming a synthetic Cartesian campaign.
 
 #### Steps
 
 1. Enumerate every authority-changing event family registered for M2 and fail
    setup if the scenario campaign omits, renames, duplicates, or substitutes one.
-2. For each applicable family, inject crash before publication, crash after
-   durable commit before response/projection publication, lost response,
-   malformed acknowledgement, restart before reconciliation, and restart after
-   reconciliation.
-3. Repeat each declared crash/ambiguity cut at least 100 times as required by
-   NFR-001, NFR-002, FR-025, and the mission success criteria.
-4. Script fake tracker observations for unavailable, stale, contradictory,
+2. For each family, execute its exact semantic publication, refusal,
+   replay/collision, and restore proof at least 100 times. A family row may name
+   only behavior the cited executable actually performs.
+3. At the sole production publication coordinator/GapDB committer boundary,
+   inject crash before publication, crash after durable commit before
+   response/projection publication, lost response, malformed acknowledgement,
+   restart before reconciliation, and restart after reconciliation. Repeat each
+   cut at least 100 times as required by NFR-001, NFR-002, FR-025, and the
+   mission success criteria.
+4. Add an executable composition guard and controlled bypass mutant proving
+   every host-served command capability reaches authority only through that
+   qualified boundary. Qualify `runtime_host` bootstrap at its pre-coordinator
+   sealed GapDB batch; treat `operation` as mandatory plan membership; and do
+   not claim a Host route for registered `outbox` until one exists. Do not add
+   a production fault-injection configuration surface.
+5. Script fake tracker observations for unavailable, stale, contradictory,
    unattributed, maliciously changed, and permanently ambiguous outcomes while
    preserving the existing fake tracker protocol.
-5. Assert committed operations have exactly one result and complete batch
+6. Assert committed operations have exactly one result and complete batch
    membership; absent operations have no authority fragments; ambiguous ones
    remain explicit with no blind retry or compensation.
-6. Run universal invariants after each cut and after recovery using only typed
+7. Run universal invariants after each cut and after recovery using only typed
    domain/projection queries plus attributable tracker/repository evidence.
-7. Add mutants for omitted intent, partial batch, duplicate transition, changed
+8. Add mutants for omitted intent, partial batch, duplicate transition, changed
    OperationID retry, projection-as-authority, stale epoch acceptance, stale
    WorkRevision/lease/candidate/policy/reviewer/fence acceptance, unsafe
    compensation, and integration fence bypass.
-8. Add harness-integrity mutants for SQLite/raw-key introspection, CLI prose
+9. Add harness-integrity mutants for SQLite/raw-key introspection, CLI prose
    parsing, missing family coverage, disabled repetition, swallowed typed
    refusal, and fake tracker contract drift.
-9. Emit a bounded machine-readable campaign census keyed by source revision,
-   authority family, fault cut, repetition count, test, mutants, and outcomes.
+10. Emit a bounded machine-readable campaign census with separate
+    family-semantic and publication-cut evidence, keyed by source revision,
+    family or cut, repetition count, executable test, mutants, and outcomes.
+    Never multiply labels to report executions that did not occur.
 
 #### Files
 
@@ -397,11 +431,12 @@ long suite accidentally during ordinary focused iteration.
   versioned machine envelopes.
 - Every frozen Exact and Strengthen behavior maps to a passing capability test,
   refusal/mutation expectation, and evidence reference.
-- Uninterrupted and restart-after-each-phase two-item missions reach identical
+- Uninterrupted and restart-after-each-authority-boundary two-item missions reach identical
   semantic terminal facts with no duplicate authority or effects.
-- All required 100-run concurrency, owner replacement, crash, ambiguity, and
-  lost-response campaigns pass with complete family coverage.
-- Universal invariants execute after every relevant phase/cut and all declared
+- All required 100-run family-semantic, concurrency, owner replacement, shared
+  publication-cut, ambiguity, and lost-response campaigns pass, and the
+  no-bypass proof binds complete family coverage to the qualified boundary.
+- Universal invariants execute after every relevant capability/cut and all declared
   mutant controls prove the assertions are capable of failing.
 - Focused tests, bounded race runs, architecture checks, `go vet`,
   `staticcheck`, and `git diff --check` pass.
@@ -449,12 +484,13 @@ not as a test-file port. Require direct evidence that:
    machine schema and semantic result kinds.
 5. The Exact/Strengthen census is complete and every refusal proves both its
    precedence and zero later authority/external mutations.
-6. The complete two-item mission covers every major phase and restart variants
+6. The complete two-item mission covers every authority capability and restart variants
    produce identical semantic terminal state with predecessor fencing.
 7. The 100-run campaigns demonstrate independent progress, same-head exclusion,
    zombie fencing, ActorID reviewer independence, and target-ref serialization.
-8. Every authority family has applicable crash, ambiguity, restart, and
-   dishonest-observer coverage with exactly-one-result/all-or-nothing evidence.
+8. Every authority family has exact semantic/replay/restore evidence; every
+   publication cut has exactly-one-result/all-or-nothing evidence at the sole
+   production boundary; and an executable no-bypass proof binds the axes.
 9. Universal invariants run throughout the campaign and every named mutant is
    killed by an assertion tied to the violated product law.
 10. The diff is confined to `internal/scenario/**` and does not weaken product
@@ -462,5 +498,7 @@ not as a test-file port. Require direct evidence that:
 
 Reject if tests replace SQLite reads with raw GapDB reads, start a harness-only
 authority owner, parse CLI prose, silently reduce repetitions, omit an event
-family or frozen behavior, infer authority from tracker/Git/filesystem state, or
-claim parity without executable source-bound evidence and killed controls.
+family or frozen behavior, infer authority from tracker/Git/filesystem state,
+add a production fault-injection backdoor, multiply metadata labels into fake
+executions, or claim parity without executable source-bound evidence and killed
+controls.

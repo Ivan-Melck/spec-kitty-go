@@ -18,6 +18,13 @@ type v2EncodedPlan struct {
 	batch         gapdbapi.Batch
 	rawBytes      int
 	wireBytes     int
+	assertions    []v2EncodedAssertion
+}
+
+type v2EncodedAssertion struct {
+	key                 v2Key
+	condition           gapdbapi.Condition
+	observedValueDigest journalv2.Digest
 }
 
 var _ journalv2.DurablePublicationPortV2 = (*Adapter)(nil)
@@ -56,10 +63,11 @@ func (a *Adapter) CommitV2(ctx context.Context, plan journalv2.SealedCommitPlanV
 		}
 		return journalv2.CommitObservationV2{}, translateV2MutationError("v2_commit", encoded.operationID, callErr)
 	}
-	if result.Revision == 0 || result.Ack != gapdbapi.AckDurable || result.DurableThroughRevision < result.Revision || result.MutationCount != len(encoded.batch.Mutations) {
+	if result.Revision == 0 || result.Ack != gapdbapi.AckDurable || result.DurableThroughRevision < result.Revision ||
+		result.MutationCount != len(encoded.batch.Mutations) || result.AssertionCount != len(encoded.batch.Assertions) {
 		return journalv2.CommitObservationV2{}, ambiguousV2Error("provider acknowledgement cannot prove durable publication", encoded.operationID, nil)
 	}
-	observation, err := journalv2.NewCommitObservationV2(encoded.publicationID, plan.Digest(), plan.RecordSetDigest(), uint64(result.Revision), uint64(result.DurableThroughRevision), result.MutationCount)
+	observation, err := journalv2.NewCommitObservationWithAssertionsV2(encoded.publicationID, plan.Digest(), plan.RecordSetDigest(), uint64(result.Revision), uint64(result.DurableThroughRevision), result.MutationCount, result.AssertionCount)
 	if err != nil {
 		return journalv2.CommitObservationV2{}, ambiguousV2Error("provider acknowledgement cannot form a sealed observation", encoded.operationID, err)
 	}
@@ -84,7 +92,7 @@ func (a *Adapter) preflightCommitV2(plan journalv2.SealedCommitPlanV2) (BatchMea
 	if err != nil {
 		return BatchMeasurement{}, err
 	}
-	return BatchMeasurement{MutationCount: len(encoded.batch.Mutations), RawBytes: encoded.rawBytes, WireBytes: encoded.wireBytes}, nil
+	return BatchMeasurement{MutationCount: len(encoded.batch.Mutations), AssertionCount: len(encoded.batch.Assertions), RawBytes: encoded.rawBytes, WireBytes: encoded.wireBytes}, nil
 }
 
 func (a *Adapter) encodeV2Plan(plan journalv2.SealedCommitPlanV2) (v2EncodedPlan, error) {
@@ -98,8 +106,9 @@ func (a *Adapter) encodeV2Plan(plan journalv2.SealedCommitPlanV2) (v2EncodedPlan
 		return v2EncodedPlan{}, invalidV2Plan("sealed operation membership")
 	}
 	records := plan.Records()
-	if len(records) == 0 || len(records) > MaxMutationsPerBatch {
-		return v2EncodedPlan{}, invalidV2Plan("mutation count")
+	assertions := plan.Assertions()
+	if len(records) == 0 || len(records)+len(assertions) > MaxMutationsPerBatch {
+		return v2EncodedPlan{}, invalidV2Plan("combined operation count")
 	}
 	encoded := v2EncodedPlan{
 		publicationID: publicationID,
@@ -107,7 +116,8 @@ func (a *Adapter) encodeV2Plan(plan journalv2.SealedCommitPlanV2) (v2EncodedPlan
 		keys:          make([]v2Key, len(records)),
 		roles:         make([]journalv2.SealedRecordRole, len(records)),
 		values:        make([][]byte, len(records)),
-		batch:         gapdbapi.Batch{Ack: gapdbapi.AckDurable, Mutations: make([]gapdbapi.Mutation, len(records))},
+		batch:         gapdbapi.Batch{Ack: gapdbapi.AckDurable, Assertions: make([]gapdbapi.Assertion, len(assertions)), Mutations: make([]gapdbapi.Mutation, len(records))},
+		assertions:    make([]v2EncodedAssertion, len(assertions)),
 	}
 	counts := make(map[journalv2.SealedRecordRole]int, 9)
 	seen := make(map[string]struct{}, len(records))
@@ -150,6 +160,28 @@ func (a *Adapter) encodeV2Plan(plan journalv2.SealedCommitPlanV2) (v2EncodedPlan
 		encoded.values[index] = append([]byte(nil), value...)
 		encoded.batch.Mutations[index] = gapdbapi.NewPutMutation(key.String(), value, condition, nil)
 		counts[record.Role()]++
+	}
+	for index, assertion := range assertions {
+		key, err := v2KeyForAuthorityAssertion(assertion)
+		if err != nil {
+			return v2EncodedPlan{}, err
+		}
+		if _, duplicate := seen[key.String()]; duplicate {
+			return v2EncodedPlan{}, invalidV2Plan("assertion overlaps projected key")
+		}
+		seen[key.String()] = struct{}{}
+		condition, err := v2ProviderAssertionCondition(assertion)
+		if err != nil {
+			return v2EncodedPlan{}, err
+		}
+		const assertionOperationOverhead = 20
+		addition := len(key.String()) + assertionOperationOverhead
+		if addition > MaxRawBatchBytes-encoded.rawBytes {
+			return v2EncodedPlan{}, invalidV2Plan("raw batch budget")
+		}
+		encoded.rawBytes += addition
+		encoded.batch.Assertions[index] = gapdbapi.Assertion{Key: key.String(), Condition: condition}
+		encoded.assertions[index] = v2EncodedAssertion{key: key, condition: condition, observedValueDigest: assertion.ObservedValueDigest()}
 	}
 	if counts[journalv2.RecordJournalEvent] < 1 || counts[journalv2.RecordJournalEvent] > MaxEventsPerCommand ||
 		counts[journalv2.RecordOperationHead] != 1 || counts[journalv2.RecordOperationHead]+counts[journalv2.RecordAggregateHead] > MaxHeadsPerCommand ||
@@ -227,6 +259,14 @@ func v2KeyForSealedRecord(record journalv2.SealedRecordV2) (v2Key, error) {
 			return v2Key{}, invalidV2Plan("publication witness target")
 		}
 		key, err = v2PublicationWitnessKey(target.PublicationID())
+	case journalv2.RecordWorkspacePathClaim:
+		if target.WorkspacePathClaimDigest().IsZero() || target.OperationID() != "" || target.PublicationID() != "" || target.EffectID() != "" || !emptyCoordinate || target.LogicalVersion() != 0 || target.MissionID() != "" || target.ShardID() != "" || target.CheckpointID() != "" || target.CheckpointSlotID() != "" {
+			return v2Key{}, invalidV2Plan("workspace path claim target")
+		}
+		if record.ValueClass() != journalv2.RecordValueOrdinary || record.Condition().Kind() != journalv2.ConditionAbsent || record.Condition().ObservedRevision() != 0 {
+			return v2Key{}, invalidV2Plan("workspace path claim semantics")
+		}
+		key, err = v2WorkspacePathClaimKey(target.WorkspacePathClaimDigest())
 	default:
 		return v2Key{}, invalidV2Plan("unknown record role")
 	}
@@ -239,7 +279,7 @@ func v2KeyForSealedRecord(record journalv2.SealedRecordV2) (v2Key, error) {
 func v2ProviderCondition(record journalv2.SealedRecordV2) (gapdbapi.Condition, error) {
 	immutable := record.Role() == journalv2.RecordOperationBinding || record.Role() == journalv2.RecordJournalEvent ||
 		record.Role() == journalv2.RecordEffectIntent || record.Role() == journalv2.RecordCheckpointRecord ||
-		record.Role() == journalv2.RecordPublicationWitness
+		record.Role() == journalv2.RecordPublicationWitness || record.Role() == journalv2.RecordWorkspacePathClaim
 	condition := record.Condition()
 	switch condition.Kind() {
 	case journalv2.ConditionAbsent:
@@ -254,6 +294,41 @@ func v2ProviderCondition(record journalv2.SealedRecordV2) (gapdbapi.Condition, e
 		return gapdbapi.Condition{Kind: gapdbapi.ConditionRevision, ExpectedRevision: gapdbapi.Revision(condition.ObservedRevision())}, nil
 	default:
 		return gapdbapi.Condition{}, invalidV2Plan("condition kind")
+	}
+}
+
+func v2KeyForAuthorityAssertion(assertion journalv2.AuthorityAssertionV2) (v2Key, error) {
+	target := assertion.Target()
+	switch target.Kind {
+	case journalv2.ConditionTargetAggregateHead:
+		if target.Coordinate == (journalv2.AggregateCoordinate{}) || target.MissionID != "" || target.ShardID != "" || target.CheckpointSlotID != "" {
+			return v2Key{}, invalidV2Plan("assertion target")
+		}
+		return v2AggregateHeadKey(target.Coordinate)
+	case journalv2.ConditionTargetEligibilityGuard:
+		if target.Coordinate != (journalv2.AggregateCoordinate{}) || target.MissionID == "" || target.ShardID == "" || target.CheckpointSlotID != "" {
+			return v2Key{}, invalidV2Plan("assertion target")
+		}
+		return v2EligibilityGuardKey(target.MissionID, target.ShardID)
+	default:
+		return v2Key{}, invalidV2Plan("assertion target")
+	}
+}
+
+func v2ProviderAssertionCondition(assertion journalv2.AuthorityAssertionV2) (gapdbapi.Condition, error) {
+	switch assertion.Kind() {
+	case journalv2.ConditionAbsent:
+		if assertion.ObservedRevision() != 0 || assertion.ExpectedLogicalVersion() != 0 || !assertion.ObservedValueDigest().IsZero() {
+			return gapdbapi.Condition{}, invalidV2Plan("absent assertion evidence")
+		}
+		return gapdbapi.Condition{Kind: gapdbapi.ConditionAbsent}, nil
+	case journalv2.ConditionRecordRevision:
+		if assertion.ObservedRevision() == 0 || assertion.ObservedValueDigest().IsZero() {
+			return gapdbapi.Condition{}, invalidV2Plan("revision assertion evidence")
+		}
+		return gapdbapi.Condition{Kind: gapdbapi.ConditionRevision, ExpectedRevision: gapdbapi.Revision(assertion.ObservedRevision())}, nil
+	default:
+		return gapdbapi.Condition{}, invalidV2Plan("assertion condition")
 	}
 }
 
