@@ -55,7 +55,11 @@ preflight: tools fmt-check build ## Check required local tools, formatting, and 
 	@printf 'preflight passed: go=%s artifacts=%s\n' "$$($(GO) version)" "$(ARTIFACT_DIR)"
 
 contract: ## Run unit and portable contract packages, excluding expensive scenarios.
-	@packages="$$( $(GO) list ./internal/... | awk '$$0 !~ /\/scenario$$/' )"; \
+	@packages="$$( $(GO) list ./internal/... | awk \
+		'$$0 !~ /\/scenario$$/ && \
+		 $$0 !~ /\/architecture$$/ && \
+		 $$0 !~ /\/tracker\/beads$$/ && \
+		 $$0 !~ /\/testcampaign\/m2(\/|$$)/' )"; \
 	test -n "$$packages" || { echo "no contract packages discovered"; exit 1; }; \
 	$(GO) test -short -p=$(GO_TEST_PARALLEL) -count=1 $$packages
 
@@ -123,7 +127,7 @@ quality-core: preflight contract mission-contract mission-acceptance race static
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign quality -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 	@printf 'core quality campaign passed; evidence=%s\n' "$(ARTIFACT_DIR)"
 
-quality: beads-contract quality-core ## Run the complete local pull-request gate aggregate.
+quality: beads-contract m2-short quality-core ## Run the complete local pull-request gate aggregate, including delegated provider and M2 tiers.
 	@printf 'quality aggregate passed; evidence=%s\n' "$(ARTIFACT_DIR)"
 
 beads-qualification: ## Run real pinned Beads qualification only inside an enforced offline boundary.

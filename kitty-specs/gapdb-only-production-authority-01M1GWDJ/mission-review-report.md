@@ -200,6 +200,15 @@ and the dedicated M2 performance/qualification path. This preserves the NFR
 and its signed 1.866-second release measurement without treating unrelated CI
 load as a pull-request correctness failure.
 
+The next hosted pass confirmed that the remaining issue was duplicated gate
+composition: the generic contract sweep reran the expensive architecture,
+Beads, and M2 packages even though exact required jobs already owned those
+proofs. The bounded `contract` target now delegates those packages to the
+quality campaign, `beads-contract`, and `m2-short` respectively. `quality`
+still composes all three tiers for local use, while `contract-full` and the
+nightly path continue to execute the exhaustive non-scenario package set.
+This removes duplicate execution without deleting a proof obligation.
+
 ## Risk findings
 
 ### RISK-1 — Local absence scan observes ignored tracker metadata

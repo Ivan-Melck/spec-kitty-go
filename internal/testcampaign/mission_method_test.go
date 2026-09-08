@@ -34,7 +34,8 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 		"phase3-publication:", "$(GO) run ./internal/testcampaign/cmd/campaign", "-publication-root", "-payload-commit", "-attestation-commit",
 		"contract-full:", "$(GO) test -short", "race-full:", "full-campaign: contract-full race-full quality",
 		"quality-core: preflight contract mission-contract mission-acceptance race static dependencies",
-		"quality: beads-contract quality-core",
+		"quality: beads-contract m2-short quality-core",
+		`$$0 !~ /\/architecture$$/`, `$$0 !~ /\/tracker\/beads$$/`, `$$0 !~ /\/testcampaign\/m2(\/|$$)/`,
 	} {
 		if !strings.Contains(makefile, required) {
 			t.Fatalf("Makefile contract omitted %q", required)

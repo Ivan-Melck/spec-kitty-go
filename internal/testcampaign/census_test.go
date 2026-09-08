@@ -408,7 +408,8 @@ func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *te
 		{"missing offline boundary", `test "$(OFFLINE_ENFORCED)" = linux-network-namespace`, `test -n "$(OFFLINE_ENFORCED)"`},
 		{"missing namespace proof", `test "$$current_net" != "$$host_net"`, `test -n "$$current_net"`},
 		{"missing inherited offline Go modules", `GOENV="$$go_env"`, `GOENV=`},
-		{"quality omits bounded campaign", "quality: beads-contract quality-core", "quality: quality-core"},
+		{"quality delegated campaigns", "quality: beads-contract m2-short quality-core", "quality: m2-short quality-core"},
+		{"quality delegated campaigns", "quality: beads-contract m2-short quality-core", "quality: beads-contract quality-core"},
 	}
 	for _, mutant := range mutants {
 		t.Run(mutant.name, func(t *testing.T) {
@@ -551,7 +552,7 @@ func validateProviderMakeControls(makefile string) error {
 		{"missing digest comparison", `test "$$observed" = "$(QUALIFIED_BEADS_DIGEST)"`},
 		{"missing offline boundary", `test "$(OFFLINE_ENFORCED)" = linux-network-namespace`},
 		{"missing namespace proof", `test "$$current_net" != "$$host_net"`},
-		{"quality omits bounded campaign", "quality: beads-contract quality-core"},
+		{"quality delegated campaigns", "quality: beads-contract m2-short quality-core"},
 		{"installer tuple", `.source_commit == "6c124203e771433a3550c348771a5b5e27fd3c21"`},
 		{"installer schema", `(keys | length == 9) and .schema_version == 1`},
 		{"offline Go modules", "GOPROXY=off GOSUMDB=off"},
