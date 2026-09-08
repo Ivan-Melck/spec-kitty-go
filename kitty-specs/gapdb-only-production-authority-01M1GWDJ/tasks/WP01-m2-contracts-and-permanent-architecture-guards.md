@@ -74,6 +74,9 @@ M2 replaces the historical SQLite authority with one memory-primary runtime
 whose only durable production substrate is the exact GapDB tuple admitted by
 M1. This first package does not implement the new journal or any capability.
 It establishes the non-negotiable boundary within which WP02–WP16 must work.
+This package was reopened by `post-approval-defect-2.md`; the corrected global
+head spelling, operation tuple, and coordinator reachability law replace the
+previously approved forms.
 
 Read these mission artifacts before editing:
 
@@ -118,6 +121,111 @@ Start or resume implementation with:
 spec-kitty agent action implement WP01 --agent <name> --mission gapdb-only-production-authority-01M1GWDJ
 ```
 
+## Post-approval correction: durable publication evidence
+
+Read `post-approval-defect-4.md` before editing. WP01 is reopened because the
+closed keyspace and foundation-type census do not yet admit the mandatory
+publication witness and attributable operation boundaries required by WP04.
+
+Extend the exact keyspace with only
+`spk/v2/publications/<publication-id>/witness`. The record is immutable,
+non-expiring, and absent-conditioned. Extend the structural foundation-owned
+type census to cover `PublicationWitnessV2`, `OperationBoundaryV2`, and their
+public pure validation/digest/prefix helpers. Continue to reject adapter-owned
+look-alike witness/boundary types and capability-to-adapter reachability.
+
+Add execution-bound deletion, substitution, plausible-prefix, malformed-key,
+renamed/wrapped-type, and adapter-side-model mutants to the existing sealed
+census. Include a mutant proving that a kernel package importing or returning
+an adapter witness fails. Preserve all prior 121 mutants and their independent
+digest/census controls.
+
+The compact-boundary addendum closes a checkpoint-size contradiction. When the
+foundation activates, require `OperationBoundaryV2` to expose only its
+fixed-size OperationID lookup digest, logical version, leaf digest, and a pure
+exact-ID match method. Reject a variable-length/full OperationID, terminal
+result, PublicationID, status, or membership field in the boundary's exported
+type graph. Require structural and state-aware operation-summary validation to
+remain foundation-owned. Add execution-bound full-ID leakage, missing match,
+duplicate/collision, and deleted state-aware-validation mutants without
+removing any of the 139 already sealed cases.
+
+## Post-approval correction: acyclic checkpoint identity and summary codecs
+
+Read `post-approval-defect-5.md` before editing. WP01 is reopened once more
+because the prior checkpoint field required the checkpoint to contain the
+PublicationID derived from bytes that include that checkpoint, and because
+WP04 had no foundation-owned canonical `OperationSummaryV2` codec.
+
+Replace the guarded checkpoint concept `created_publication_id` with the
+acknowledgement-derived `covered_through_publication_id`. Require
+`SealedProjectionPrefixV2` to expose and seal the terminal PublicationID chosen
+by greatest provider revision, never response completion order. Extend the
+exact public helper census from eight to ten with only
+`EncodeOperationSummaryV2` and `DecodeOperationSummaryV2`; both remain
+foundation-owned, strict, canonical, and bounded. Continue to reject an
+adapter-, checkpoint-, playback-, or restore-owned operation-summary/boundary
+wire model.
+
+Add execution-bound mutants for a missing/substituted/zero covered-through
+identity, completion-order selection, omitted seal participation, the obsolete
+field spelling, either deleted/substituted codec, and a WP04-local summary wire
+type. Preserve all previously sealed mutants and independent controls.
+
+## Post-approval correction: durable canonical byte compatibility
+
+Read `post-approval-defect-6.md` before editing. The first real WP04 restore
+fixture proved that some foundation encoders emit bytes that
+`RecoveryRecordV2` silently reorders and their strict decoders then reject.
+Extend the permanent guard with an execution-bound durable-codec census for
+operation bindings, event envelopes, aggregate heads, operation states,
+publication witnesses, and the nested operation summary.
+
+Require every direct-record encoder output to be recursively canonical, remain
+byte-identical through `NewRecoveryRecordV2`, and pass its strict decoder.
+Require operation summary to survive recursive checkpoint embedding. Reject
+raw declaration-order output, top-level-only normalization, discarded
+canonicalization results, length-only recovery admission, removed decoder
+equality, and omission of any classified durable codec. Preserve every prior
+mutant ID and census control; additions append to the sealed census.
+
+## Post-approval correction: restore deadline capability boundary
+
+Read `post-approval-defect-7.md` before editing. The existing standard-library
+guard incorrectly applies the pure playback boundary to the restore I/O
+coordinator. Preserve the common v2 allowlist, but admit the exact production
+edge `internal/controljournal/v2/restore -> time` solely for validated
+elapsed-attempt context deadlines. Foundation, checkpoint, playback, and every
+other v2 package remain time-free.
+
+Add positive and negative exact-edge tests plus a mutant that widens the
+exception to the whole v2 prefix; the widening must be rejected by the same
+repository validator. Do not replace the existing `M-PURE-TIME` control or any
+prior mutant. Append the new control to the sealed census and update its exact
+count/digest. This correction authorizes no clock-derived durable state,
+ordering, digest, revision, or acceptance semantics.
+
+## Post-approval correction: split restore deadline proof
+
+Read `post-approval-defect-8.md` before editing. Review cycles 20–23 proved
+that a custom AST/types control-flow verifier is neither sound nor bounded.
+Delete that verifier instead of extending it.
+
+WP01 now proves only structural capability confinement: the exact restore-only
+`time` edge; `go/types` object-identity use limited to `time.Duration`,
+`time.Second`, and `time.Minute`; the duration-bearing field confined to the
+explicit restore attempt budget rather than durable/result/authority state; a
+direct call to the real `context.WithTimeout` object; and refusal of ambient
+clock/timer APIs or function-value escape. Keep alias, lexical-shadowing,
+exact-owner, missing-call, escaping-call, misplaced-duration, and ambient-clock
+controls. Do not infer validation dominance or arbitrary Go control flow.
+
+WP04 owns source-bound behavioral proof and overlay mutations for validation,
+deadline derivation, placement, propagation, cancellation, retries, and parent
+deadlines. WP17 owns final one-source combined evidence. Preserve the existing
+`M-PURE-TIME`, restore-owner-widening mutant, prior mutant identities, and exact
+census controls.
+
 ## T001 — Executable contract and schema validation
 
 ### Purpose
@@ -154,6 +262,10 @@ checking for filenames is not sufficient.
    operation, mission, both artifact aggregates, workgraph, execution,
    workspace, handoff, review, acceptance, integration target/attempt,
    external effect, and outbox.
+   Require the operation family to use exactly event schema 2/reducer 2 and
+   reject operation tuple `1/1`. Treat registry ID/version, publication rule,
+   ordering tuple, and every family/schema/reducer/owner field as compatibility
+   identity rather than descriptive metadata.
 9. Cross-check key semantic phrases in `authority-journal-v2.md` only where the
    Markdown file is presently the normative contract. Keep these assertions
    structural and exact enough to fail when a law disappears, but avoid prose
@@ -274,10 +386,15 @@ operation identities everywhere else.
    provider-neutral journal contracts. Deny direct dependencies from mission,
    artifact, workgraph, execution, workspace, handoff, review, integration, or
    projection packages to concrete control-store adapters.
+   The foundation publication coordinator is the only capability-reachable
+   durable publication seam; a capability reaching the GapDB adapter directly
+   must fail even through a wrapper or interface value.
 9. Encode the closed production `spk/v2/` keyspace contract in
    `internal/architecture/m2_registry_test.go`. Assert canonical namespaces
-   for authority binding, runtime epochs, global operations, scoped aggregate
-   heads/events, checkpoints, and workgraph eligibility shards.
+   for authority binding, runtime epochs, global operations, globally
+   enumerable `spk/v2/heads/<scope>/<kind>/<id>` aggregate heads, scoped
+   immutable events, checkpoints, and workgraph eligibility shards. Explicitly
+   reject the former `spk/v2/scopes/<scope>/heads/...` spelling and any alias.
 10. Prove operation bindings are outside mission/project scoped journal
     prefixes. Reject helper APIs or constants that construct
     `.../missions/<id>/operations/...` or accept mission identity as the root
@@ -330,7 +447,8 @@ not test decoration.
    positives. Conversely, an innocently named production edge must be caught.
 7. Include keyspace mutants for a mission-scoped operation binding, variable
    width version, ambiguous component encoding, raw caller key, v1/current
-   mixed prefix, and global journal head or shared projection head.
+   mixed prefix, the rejected scope-first aggregate-head spelling, and global
+   journal head or shared projection head.
 8. Include architecture-policy deletion mutants: remove each critical package
    classification, allowed-direction restriction, forbidden-provider prefix,
    reachability target, and keyspace registry entry; each removal must change
@@ -418,13 +536,19 @@ the complete command and keep the `TestM2` subset bounded for normal iteration.
 - The complete contract census compiles, validates positive boundaries, and
   rejects representative closed-schema mutations.
 - The event-family registry has a unique, exact, versioned census with stable
-  owners and ordering semantics.
+  owners and ordering semantics; operation tuple `2/2` is admitted and `1/1`
+  is refused.
 - M1 adoption, source/tree, manifest, tuple, sidecar, release tag, archive name,
   and archive digest are revalidated without a default network dependency.
 - Package-direction tests preserve capability ownership, pure playback, the
   narrow GapDB adapter allowance, tracker bounds, and unknown-package refusal.
 - Keyspace tests preserve global OperationID identity and the closed `spk/v2/`
-  layout without introducing a hot global journal head.
+  layout, including the globally enumerable aggregate-head prefix and rejection
+  of its scope-first predecessor, without introducing a hot global journal
+  head.
+- Reachability tests reject direct and wrapped capability-to-GapDB adapter
+  calls while allowing the foundation publication coordinator and composition
+  root.
 - Semantic mutants cover direct and indirect imports, aliases, build tags,
   generated files, renames, wrappers, interfaces, embedding, decoys, missing
   activation, and deleted guard rules.
@@ -475,6 +599,8 @@ coverage. In particular, verify:
 - contract schemas are compiled and exercised, not merely listed;
 - event-family and keyspace registries are closed, duplicate-free, and
   resilient to reorderings where order is not semantic;
+- operation event tuple `2/2` and the global aggregate-head spelling are the
+  only admitted forms; their replaced forms fail dedicated mutants;
 - OperationID bindings are demonstrably host-global while aggregate events
   remain scoped and independently writable;
 - pure journal/playback layers cannot reach provider, filesystem, Git, tracker,
@@ -489,7 +615,7 @@ coverage. In particular, verify:
 - deleting a rule, registry entry, or mutant is itself detected;
 - the existing M1 and Phase 1–3 architecture tests remain intact and green;
   and
-- all edits remain inside WP01's four-file ownership boundary.
+- all edits remain inside WP01's six-file ownership boundary.
 
 Reject the WP if the suite can be made green by deleting a census entry,
 renaming a forbidden type, moving an import behind a wrapper, limiting scans to

@@ -34,6 +34,12 @@ history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal/controlstore/gapdb/
 create_intent:
+- go.mod
+- go.sum
+- internal/controlstore/gapdb/admission_test.go
+- internal/controlstore/gapdb/external_scenarios_test.go
+- internal/controlstore/gapdb/port.go
+- internal/controlstore/gapdb/port_test.go
 - internal/controlstore/gapdb/v2_codec.go
 - internal/controlstore/gapdb/v2_committer.go
 - internal/controlstore/gapdb/v2_reader.go
@@ -42,6 +48,12 @@ create_intent:
 execution_mode: code_change
 model: ''
 owned_files:
+- go.mod
+- go.sum
+- internal/controlstore/gapdb/admission_test.go
+- internal/controlstore/gapdb/external_scenarios_test.go
+- internal/controlstore/gapdb/port.go
+- internal/controlstore/gapdb/port_test.go
 - internal/controlstore/gapdb/v2_codec.go
 - internal/controlstore/gapdb/v2_committer.go
 - internal/controlstore/gapdb/v2_reader.go
@@ -78,21 +90,23 @@ capability policy or alternate authority path.
 
 WP01 freezes the M2 contracts, registry, budgets, and architectural boundaries.
 WP02 owns provider-neutral journal values, immutable host-global operation
-binding, revisioned OperationState, canonical event/head bytes, and the only
-constructor for a sealed commit plan. This WP begins only after both are
-accepted and consumes their public contracts without weakening or duplicating
-their validation.
+binding, revisioned OperationState, canonical record bytes, and the only
+constructor for a sealed commit plan and its closed record projection. This WP
+begins only after both are accepted and consumes their public contracts without
+weakening or duplicating their validation.
 
 Capability packages own commands, event meaning, reducers, refusal precedence,
 and consumer ports. WP02 owns plan membership, digests, logical versions, and
 registry validation. This WP owns provider translation; WP04 later consumes its
 read metadata without moving restore policy into the adapter.
 
-Use only the admitted public `github.com/spec-kitty/gapdb/gapdb` client already
-bound by the M1 adoption tuple. Do not import provider internals, start or
-discover a sidecar executable, add a dependency, expose raw provider types to
-kernel packages, or retain/reintroduce SQLite, SQL, a backend selector, a dual
-write, a rescue read, or a migration path.
+Use only the released public `github.com/spec-kitty/gapdb/gapdb` client at the
+exact assertion-capable module version named by review cycle 7. This compiles
+the new client capability but does not replace the separately frozen M1
+production-admitted executable tuple. Do not import provider internals, start
+or discover a sidecar executable, expose raw provider types to kernel packages,
+or retain/reintroduce SQLite, SQL, a backend selector, a dual write, a rescue
+read, or a migration path.
 
 ### Branch, lane, and ownership
 
@@ -109,8 +123,10 @@ reuse another WP's lane, edit the root checkout, or merge directly to `main`.
 Accepted work merges only into `feat/gapdb-only-production-authority` through
 the Spec Kitty workflow.
 
-Own exactly the five files in `owned_files`. Do not modify WP02 journal files,
-existing M1 adapter files, `go.mod`, `go.sum`, mission contracts, architecture
+Own exactly the files in `owned_files`, including the bounded module pin,
+candidate admission evidence, public-port compatibility, and external scenario
+updates added by review cycle 7. Do not modify WP02 journal files, overwrite the
+frozen M1 `Admitted*` executable tuple, alter mission contracts, architecture
 guards, sidecar lifecycle code, or later capability packages. If an upstream
 contract is insufficient, stop with a concrete dependency finding rather than
 creating a second model inside the adapter.
@@ -129,6 +145,48 @@ creating a second model inside the adapter.
 - Provider revisions are storage metadata. They never become logical versions,
   caller intent, authority identities, or guessed current-batch values.
 
+### Post-approval correction
+
+This package was reopened after WP04 proved that adapter-owned `V2Key`,
+`V2Prefix`, `V2Record`, scan request/page, commit-result, and error shapes
+cannot serve a foundation recovery package without reversing dependency
+direction. Read `post-approval-defect-2.md` and the reapproved WP02 contract.
+
+WP03 must consume foundation `RecordAddressV2`, `ScanTargetV2`, read/scan
+requests, records/pages, `StoreRevisionV2`, recovery errors, and
+`CommitObservationV2`. Encoded key strings, public GapDB revisions, records,
+cursors, and errors remain private translations. Do not preserve adapter-owned
+look-alike types as a second application contract.
+
+`post-approval-defect-4.md` adds one bounded adapter correction. Extend the
+closed codec with exactly
+`spk/v2/publications/<publication-id>/witness`, consume the foundation-owned
+witness semantic address/value only, and map the sealed witness record to a
+non-expiring `RequireAbsent` ordinary put. Every commit, observation, raw/wire
+budget, and ambiguity reconciliation count includes the witness. Complete
+reconciliation requires the witness and all non-witness records at one common
+positive provider revision; application records without the witness are
+partial. Do not reconstruct witness content, operation boundaries, plan
+digests, or prefix logic in the adapter.
+
+Expose adapter methods structurally equivalent to:
+
+```go
+CaptureRevisionV2(context.Context) (journalv2.StoreRevisionV2, error)
+VerifyRevisionV2(context.Context, journalv2.StoreRevisionV2) error
+ReadV2(context.Context, journalv2.ReadRequestV2) (journalv2.RecoveryRecordV2, error)
+ScanV2(context.Context, journalv2.ScanRequestV2) (journalv2.RecoveryPageV2, error)
+CommitV2(context.Context, journalv2.SealedCommitPlanV2) (journalv2.CommitObservationV2, error)
+```
+
+Capture requires a positive current revision, durable-through at least current,
+and the provider DatabaseID. The first page of every scan must report captured
+`R`; only its continuation cursor is provider-pinned. Every exact-read record
+must have a positive revision no greater than `R`. Final verification requires
+the same DatabaseID and exactly `R`. This is an attempt-bound stability proof:
+GapDB provides neither an as-of `Get` nor an explicit requested revision for
+the first scan page, and no adapter API may claim otherwise.
+
 ### Subtask T012: Implement the canonical host-global and scoped v2 key codec
 
 **Purpose**: Provide one closed, reversible, budgeted encoding for every v2 key
@@ -144,7 +202,11 @@ mission-scoped operation identity.
    - `spk/v2/runtime/current` and
      `spk/v2/runtime/epochs/<runtime-epoch-id>`;
    - host-global `spk/v2/operations/<operation-id>/binding` and `/head`;
-   - scoped aggregate heads and version-addressed immutable events;
+   - immutable `spk/v2/publications/<publication-id>/witness`;
+   - host-global immutable `spk/v2/effects/<effect-id>/intent`;
+   - globally enumerable
+     `spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>` heads and scoped
+     version-addressed immutable events;
    - checkpoint slot/record keys; and
    - WorkRevision eligibility-shard keys.
 
@@ -157,6 +219,8 @@ mission-scoped operation identity.
    non-canonical escapes, alternate spellings, separators inside raw
    components, `.`/`..` aliases, malformed tagged scopes, unknown key families,
    trailing components, and bytes outside the contract's admitted domain.
+   Explicitly reject `spk/v2/scopes/<scope>/heads/...`; it is not an alias or
+   migration input.
 
 4. Encode a positive logical version as exactly 16 lowercase hexadecimal
    characters. Reject zero, uppercase, short, overlong, signed, overflowing,
@@ -177,8 +241,10 @@ to `internal/controlstore/gapdb/v2_adapter_test.go`.
 
 - Every canonical key family round-trips byte-for-byte.
 - Operation keys remain host-global across two mission scopes.
-- Scoped keys distinguish host, project, mission, repository, WorkRevision,
+- Global head keys distinguish host, project, mission, repository, WorkRevision,
   and work coordinates without collisions.
+- A scan from `spk/v2/heads/` discovers a head in a scope not known before the
+  scan; the rejected scope-first spelling never decodes.
 - Exact 1 KiB keys pass; plus-one keys fail before a provider call.
 - Canonical version `0000000000000001` passes; zero, uppercase, malformed, and
   overflow forms fail with stable typed diagnostics.
@@ -193,15 +259,16 @@ the adapter boundary.
 
 **Steps**:
 
-1. Create `internal/controlstore/gapdb/v2_reader.go` with the smallest
-   provider-neutral read surface needed for exact Get and bounded prefix scan.
-   Reuse the admitted M1 adapter's public client boundary rather than importing
-   `internal/server` or constructing another client stack.
+1. Create `internal/controlstore/gapdb/v2_reader.go` as the translation of
+   WP02's provider-neutral read contract for capture, final verification, exact
+   Get, and bounded prefix scan. Reuse the admitted M1 adapter's public client
+   boundary rather than importing `internal/server` or constructing another
+   client stack.
 
-2. Return immutable record copies containing canonical key, copied value bytes,
-   positive provider `Record.Revision`, and normalized optional expiry
-   metadata. Do not expose `gapdb.Revision`, cursors, errors, or record structs
-   outside this adapter package.
+2. Return foundation `RecoveryRecordV2`/`RecoveryPageV2` values containing the
+   semantic address, copied value bytes, positive provider record revision, and
+   normalized optional expiry metadata. Do not expose `gapdb.Revision`, raw
+   keys, cursors, errors, or record structs in application-facing signatures.
 
 3. For exact reads, verify the provider returned the requested canonical key,
    a positive revision, an admitted value size, and valid metadata. A foreign
@@ -226,6 +293,10 @@ the adapter boundary.
    error kinds. Read unavailability may be retried; malformed metadata and
    version/capability mismatch require operator or upgrade action, not a
    fabricated empty result.
+8. `CaptureRevisionV2` reads public Status and returns only a positive,
+   durable `(DatabaseID, R)`. `VerifyRevisionV2` rejects database replacement,
+   revision movement, or lost durability. `ReadV2` rejects any record revision
+   greater than the attempt's `R`; it does not claim to perform an as-of read.
 
 **Files**: Create `internal/controlstore/gapdb/v2_reader.go` and add reader
 contract cases to `internal/controlstore/gapdb/v2_adapter_test.go`.
@@ -238,6 +309,9 @@ contract cases to `internal/controlstore/gapdb/v2_adapter_test.go`.
 - A 500-record page at exactly 8 MiB succeeds; a plus-one page is safely
   repaged or refused without skip/duplicate behavior.
 - No public GapDB type crosses the adapter's application-facing signatures.
+- Movement before the first page, between pages, during exact reads, or before
+  final verification is surfaced so restore can discard the whole attempt.
+- Same numeric revision from a different DatabaseID is a mismatch.
 
 ### Subtask T014: Translate a sealed CommitPlan into exactly one AtomicBatch
 
@@ -251,10 +325,12 @@ semantics in the adapter.
    opaque/sealed commit-plan capability; do not accept a public struct or raw
    slice that callers can assemble after validation.
 
-2. Flatten the sealed plan's operation binding create, OperationState
-   event/head, capability events/heads, effect intents, eligibility guards,
-   and optional checkpoint records/slot transition in its canonical membership
-   order. Preserve exact keys and bytes supplied by the sealed plan.
+2. Flatten only the sealed plan's closed provider-neutral record projection in
+   its canonical membership order. Map each typed semantic target through this
+   WP's canonical key codec and preserve the exact canonical bytes, value class,
+   and condition supplied by the projection. Do not parse the plan's evidence
+   serialization, reconstruct heads, consult capability state, or maintain a
+   second membership model.
 
 3. Map immutable creates to `ConditionAbsent` and existing mutable heads/guards
    to `ConditionRevision` with a positive exact observed provider revision.
@@ -278,8 +354,11 @@ semantics in the adapter.
 
 7. Accept success only when revision is positive, acknowledgement is durable,
    durable-through is at least the returned revision, and mutation count equals
-   exact plan membership. Return the positive revision as provider metadata;
-   do not write it back into already canonical event values.
+   exact plan membership. Return WP02's `CommitObservationV2` containing the
+   plan PublicationID and validated provider metadata; do not return an
+   adapter-owned result or write the revision back into canonical event values.
+   The foundation coordinator alone converts this observation into an opaque
+   acknowledgement and projection update.
 
 **Files**: Create `internal/controlstore/gapdb/v2_committer.go` and add
 translation/mutation-spy cases to `internal/controlstore/gapdb/v2_adapter_test.go`.
@@ -320,7 +399,9 @@ changing caller identity, or optimistically publishing an in-memory projection.
    one common positive provider revision.
 
 4. Return the exact recorded result/progress only when complete matching
-   membership proves the plan committed. Proven absence of every planned key
+   membership proves the plan committed, together with a
+   `CommitObservationV2` suitable for the same foundation acknowledgement
+   validation as an ordinary durable response. Proven absence of every planned key
    may return an explicit `retry_same_publication` disposition; retry remains a
    caller decision using the identical sealed plan and still-valid conditions.
 
@@ -392,10 +473,21 @@ provider neutrality before capability WPs depend on it.
 7. Add compile-time direction checks: only this adapter imports the admitted
    public client, WP02/domain packages remain provider-neutral, and no adapter
    API exposes provider records, revisions, batches, errors, or cursors.
+   Add architecture coverage proving capability packages cannot call this
+   committer directly, including through wrappers; their durable seam is the
+   WP02 publication coordinator.
 
 8. Keep the suite bounded and deterministic. Separate any repeated race/stress
    census from ordinary unit tests and document the exact bounded invocation;
    do not claim M2 crown qualification from this WP.
+9. Exercise capture at `R`, first-page disagreement, provider-pinned cursor
+   staleness, record revisions above `R`, movement during exact reads, final
+   database/revision disagreement, and a stable successful attempt. Assert no
+   API or test labels exact Get as an as-of provider read.
+10. Add mutants for the old scope-first aggregate-head key, adapter-owned
+    recovery/commit-result contracts, dropped DatabaseID comparison, omitted
+    first-page revision check, accepted record revision above `R`, and a
+    capability reaching the adapter directly.
 
 **Files**: Create `internal/controlstore/gapdb/v2_adapter_test.go`.
 
@@ -416,17 +508,21 @@ identity reconciliation, and zero provider calls for rejected preflight cases.
 ## Definition of Done
 
 - T012 provides one canonical closed v2 key codec for all contract families;
-  host-global operations cannot collide with or be hidden by scoped keys.
-- T013 exposes exact and paged provider-neutral reads with honest record/page
-  revisions, bounded copied values, and no public GapDB types above the adapter.
+  host-global operations cannot collide with or be hidden by scoped keys, and
+  only the global aggregate-head spelling is admitted.
+- T013 implements WP02's provider-neutral capture/read/scan/final-verification
+  contracts with honest record/page revisions, bounded copied values, and no
+  public GapDB or adapter-owned look-alike types above the adapter.
 - T014 accepts only a WP02 sealed plan and translates it into exactly one
-  durable conditional `AtomicBatch` with no unconditional/delete semantics.
+  durable conditional `AtomicBatch` with no unconditional/delete semantics,
+  returning a foundation `CommitObservationV2`.
 - T015 resolves ambiguity by exact OperationID/PublicationID membership,
   returns recorded results or explicit dispositions, and performs no automatic
   retry, identity allocation, effect, or projection mutation.
 - T016 proves independent-head progress, same-head contention, exact batch
   membership, durable acknowledgement, malformed response handling, and all
-  exact/plus-one budgets through the public-sidecar boundary.
+  exact/plus-one budgets through the public-sidecar boundary, plus every
+  capture-R movement cut and direct-adapter reachability mutant.
 - No provider internal package, SQLite/SQL path, alternate backend, dependency,
   sidecar lifecycle, domain policy, restore policy, or raw provider type is
   added to the WP03 surface.
@@ -466,6 +562,12 @@ spec-kitty agent tasks mark-status T012 T013 T014 T015 T016 --status done --miss
   reads and require one common revision.
 - **Budget drift**: provider defaults are larger than product limits. Enforce
   the frozen product ceilings locally with exact/plus-one tests.
+- **False snapshot claims**: the provider has no as-of Get or first-page
+  requested revision. Enforce capture/first-page/record/final coordinates and
+  describe only the stable-attempt proof.
+- **Adapter contract gravity**: exporting parallel recovery values makes the
+  foundation import outward. Consume WP02 types and keep only encoded provider
+  translation private.
 
 ## Reviewer Guidance
 
@@ -488,14 +590,23 @@ Verify a committed-but-lost response returns exact recorded progress without a
 second write, while partial/mixed membership closes authority.
 
 Adversarially mutate canonical key escapes, logical-version width/case, scope
-tags, host-global operation placement, mutation membership, each condition,
+tags, the rejected scope-first head spelling, host-global operation placement,
+mutation membership, each condition,
 provider acknowledgement fields, returned keys/revisions, and every budget at
 its boundary. Confirm each mutant reaches the production path and fails for its
 intended reason before any forbidden provider call.
 
+Trace capture through final verification. Require positive durable `R`, exact
+first-page `R`, provider-pinned continuation behavior, record revisions no
+greater than `R`, and the same final DatabaseID/revision. Reject any claim that
+exact Get itself is provider-pinned. Confirm complete reconciliation returns
+the same foundation observation shape as ordinary durable success and that
+only the foundation coordinator can acknowledge or advance projection.
+
 Finally, inspect imports and the diff: only the five owned files may change;
 there must be no `internal/server`, SQLite/SQL, sidecar process management,
 module change, raw provider type above the adapter, table-shaped API, backend
-selector, rescue read, or migration behavior. This WP is an adapter boundary,
+selector, rescue read, adapter-owned recovery model, direct capability call, or
+migration behavior. This WP is an adapter boundary,
 not a claim that checkpoint restore, capability migration, or M2 qualification
 is complete.

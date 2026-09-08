@@ -113,6 +113,16 @@ Implementation command:
 spec-kitty agent action implement WP17 --agent codex
 ```
 
+## Post-approval correction: source-bound restore deadline evidence
+
+Read `post-approval-defect-8.md`. The final frozen census must include WP01's
+structural restore-time confinement tests, WP04's named deadline contract tests,
+and every exact-anchored restore overlay mutant. Bind the production source
+commit/tree, each substitution and anchor count, and each killed-by test to the
+same RunID. Refuse a campaign that substitutes generated fake-package behavior,
+omits a mutant, accepts a zero/multiple source anchor, or assembles structural
+and behavioral evidence from different source identities.
+
 ## Branch, dependency, and evidence rules
 
 - Start from accepted WP16 as recorded for WP17 in
@@ -189,7 +199,7 @@ complete machine-checkable evidence rather than filenames or narrative.
 go test ./internal/testcampaign/m2 ./cmd/spk-m2-qualification -run 'Manifest|Census|Verify|SourceBound' -count=10
 ```
 
-## T087: Run the complete two-item restart-every-phase crown
+## T087: Run the complete two-item autonomous restart-at-every-boundary crown
 
 **Purpose**: Prove the entire authority model works as one product, not merely
 as independently green packages.
@@ -205,7 +215,7 @@ as independently green packages.
    finalization, concurrent claim, workspace preparation, implementation
    candidate, handoff, independent review, acceptance, and serialized
    integration to terminal completion.
-3. Restart the production owner after every major phase and every durable saga
+3. Restart the production owner after every durable authority/publication and saga
    stage. Each restart restores from checkpoint plus suffix, admits a fresh
    epoch, rejects predecessor capsules, and preserves exact results.
 4. Kill one agent after lease/workspace acquisition, expire its lease,
@@ -431,7 +441,8 @@ git diff --check
 ## Definition of Done
 
 - One exact manifest and frozen census account for every required claim.
-- The real two-item restart-every-phase crown passes end to end.
+- The real two-item autonomous restart-at-every-boundary crown passes end to end
+  without manual phase advancement.
 - Every authority family meets 100-run fault/ambiguity/idempotency coverage.
 - Two-agent, same-aggregate, zombie, manual-Git, and restart campaigns pass.
 - Recovery/query/mutation thresholds pass with complete raw samples.
@@ -486,3 +497,7 @@ samples, unregistered families, grep-only mutants, fake-store crown runs,
 provider/Git authority leakage, or qualification code reachable by production.
 The final verdict may say `release_ready`; adoption remains an explicit later
 human decision.
+
+## Activity Log
+
+- 2026-09-07T01:59:05Z – codex – shell_pid=232941 – Scope extension approved during qualification: the exact 10,000-operation performance campaign demonstrated that productionruntime afterMutation performs full durable RestoreV2 and projection snapshot reconstruction after every acknowledged mutation, yielding a doubly quadratic hot path. WP17 may modify the minimum required internal/controljournal/v2, internal/projection, and internal/productionruntime files to implement revision-ordered acknowledged delta projection and scoped query indexes. The 10,000 mutation/query and 30 clean-memory recovery workload, GapDB durable authority, startup/ambiguity restore, checkpoint/restart digest equivalence, concurrent publication ordering, and architecture confinement must be preserved; weakening evidence is prohibited.

@@ -92,12 +92,14 @@ head together. A checkpoint records the complete aggregate census, each
 logical version, and the canonical projected state through a positive GapDB
 watermark.
 
-Restore closes command admission, scans the stable current head census, and
+Restore closes command admission, captures one positive durable
+`(DatabaseID, R)` coordinate, scans the stable current head census, and
 compares it with the checkpoint census. For each new or advanced aggregate it
 performs bounded parallel exact reads for versions
 `checkpointVersion+1..currentVersion`. The event union is validated against
-global OperationBinding/OperationState membership, grouped by commit revision,
-and ordered by `(Record.Revision, EventIndex, EventID)` before pure reduction.
+global OperationBinding and reconstructible historical OperationState
+membership, grouped by commit revision, and ordered by
+`(Record.Revision, EventIndex, EventID)` before pure reduction.
 This gives suffix-bounded work without a per-command global sequence or a
 provider revision-range API. A bounded full head/event reconstruction remains
 the fallback when no compatible checkpoint exists; missing versions, excessive
@@ -114,6 +116,24 @@ explicitly recoverable only by rescan. Per-aggregate logical versions already
 exist for conflict detection; using them as immutable event addresses makes the
 suffix directly enumerable, preserves unrelated-aggregate concurrency, and
 still uses provider record revisions as the total cross-aggregate commit order.
+
+The head namespace must be enumerable before any scope is known. Aggregate
+heads therefore use
+`spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>` while immutable events
+remain under the scope-first journal namespace. The rejected
+`spk/v2/scopes/<scope>/heads/...` spelling cannot discover a scope created
+after the checkpoint without scanning all scoped event history. Operation
+bindings and current heads retain their host-global `spk/v2/operations/`
+namespace and are scanned as a second bounded census.
+
+GapDB does not expose an as-of `Get` or accept a requested revision on an
+initial `ScanPrefix` call. Recovery therefore does not claim either facility.
+It requires the first page to report captured `R`, relies on the provider-bound
+cursor for continuation pages, requires every record revision to be positive
+and no greater than `R`, and finally rechecks the identical DatabaseID and
+exactly `R`. Monotonic non-reusable revisions make an equal capture/final pair
+proof that no committed mutation occurred during the attempt. Any difference
+discards the whole attempt.
 
 **Alternatives considered**:
 
@@ -154,12 +174,22 @@ atomicity/refusal requirements reviewable per aggregate.
 
 ## Decision 5: Version event families around product capabilities
 
-**Decision**: Extend the frozen event/reducer registry with bounded v1 families
+**Decision**: Extend the frozen event/reducer registry with bounded closed families
 for mission, artifact, WorkRevision, decision/blocker, run, lease, governance,
 workspace, effect, candidate/handoff, review, acceptance, integration, outbox,
 and projection/checkpoint facts. Cross-aggregate commands list every expected
 head and event in one validated batch. Unknown event/reducer/schema/order
 coordinates fail restore before any command is admitted.
+
+The operation family uses event schema 2 and reducer version 2. Its immutable
+payload is the canonical OperationState transition preimage, excluding only
+the PublicationID derived by the sealer; the completed envelope supplies that
+identity during reconstruction. The incomplete operation `1/1` tuple is not a
+compatibility alias. Registry identity includes registry ID/version,
+publication rule, ordering tuple, and the sorted family/schema/reducer/owner
+census. Reducer identity additionally includes the declared implementation
+digest. Runtime `Apply` is stateless; repeated-call determinism qualification
+is separate from replay and cannot impose a 256-event session ceiling.
 
 **Rationale**: Event families are the stable semantic boundary that M3–M5 will
 consume. They should describe what happened, not mirror tables or provider
@@ -180,6 +210,21 @@ one database identity, one runtime epoch, application services, in-memory
 aggregate/progress indexes, checkpoint scheduling, and revision watches. Remote
 or CLI callers use typed application capabilities. They never open GapDB or
 construct repositories themselves.
+
+All authority writes pass through a foundation-owned publication coordinator.
+It registers the sealed plan before delivery, accepts only a durable exact
+acknowledgement or same-identity reconciliation, and only then advances the
+in-memory projection. It keeps a bounded revision-keyed acknowledgement ledger
+capable of at least 10,000 publications between seals. At a quiescent
+checkpoint barrier it orders acknowledgements by provider revision and derives
+the rolling prefix from the prior prefix, revision, PublicationID, plan digest,
+and sealed record-set digest. Those otherwise process-local proof coordinates
+are persisted in one immutable, absent-conditioned publication witness in the
+same atomic batch. The witness is constructed after PublicationID and the
+non-witness record-set digest, avoiding recursive identity, and the live
+tracker and restore share one pure prefix-advance helper. Unresolved ambiguity
+blocks a seal. Capability packages may reach this coordinator but may not
+reach the GapDB adapter.
 
 **Rationale**: This is the machine/filesystem authority boundary ratified by
 the architecture. It preserves fast reads while making restart and ownership

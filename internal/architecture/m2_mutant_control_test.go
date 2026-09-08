@@ -17,20 +17,23 @@ import (
 )
 
 const (
-	m2MutantCensusCount  = 88
-	m2MutantCensusSHA256 = "d49e81ad3829dd7ab2fb4c4a7129e52d310dc53b7992a5e55a30661b515c8199"
+	m2MutantCensusCount  = 185
+	m2MutantCensusSHA256 = "bb4e46d391a130b5050eab4ee4a1193755e4747dac09537d52636a953f194379"
 )
 
 const (
-	m2ValidatorImport      = "all-go-imports-v1"
-	m2ValidatorReach       = "production-reachability-v1"
-	m2ValidatorPolicy      = "closed-policy-v2"
-	m2ValidatorKeyspace    = "keyspace-contract-v2"
-	m2ValidatorEligibility = "eligibility-seams-v1"
-	m2ValidatorDependency  = "dependency-graph-v2"
-	m2ValidatorEvents      = "event-registry-v2"
-	m2ValidatorLegacy      = "legacy-edge-filter-v1"
-	m2ValidatorRawStore    = "raw-store-census-v1"
+	m2ValidatorImport       = "all-go-imports-v1"
+	m2ValidatorReach        = "production-reachability-v1"
+	m2ValidatorPolicy       = "closed-policy-v2"
+	m2ValidatorKeyspace     = "keyspace-contract-v2"
+	m2ValidatorEligibility  = "eligibility-seams-v1"
+	m2ValidatorDependency   = "dependency-graph-v2"
+	m2ValidatorEvents       = "event-registry-v2"
+	m2ValidatorLegacy       = "legacy-edge-filter-v1"
+	m2ValidatorRawStore     = "raw-store-census-v1"
+	m2ValidatorRecovery     = "foundation-contract-ownership-v2"
+	m2ValidatorCapReach     = "capability-adapter-reachability-v2"
+	m2ValidatorDurableCodec = "durable-codec-compatibility-v2"
 )
 
 type m2ViolationObservation struct {
@@ -130,6 +133,49 @@ func TestM2ArbiterFixtureBindingProbe(t *testing.T) {
 	}{
 		{m2ValidatorPolicy, "CLASS", "GAPDB-CLASS"},
 		{m2ValidatorEvents, "RENAMED", "WRONG-OWNER"},
+		{m2ValidatorRecovery, "RENAMED-CALLABLE", "UNRELATED-PUBLIC"},
+		{m2ValidatorRecovery, "NAMED-FUNCTION-TYPE", "UNRELATED-NAMED-FUNCTION"},
+		{m2ValidatorRecovery, "ALIAS-FUNCTION-TYPE", "UNRELATED-ALIAS-FUNCTION"},
+		{m2ValidatorRecovery, "USED-GENERIC-CONSTRAINT", "UNRELATED-GENERIC-CONSTRAINT"},
+		{m2ValidatorRecovery, "UNUSED-GENERIC-CONSTRAINT", "FOUNDATION-ONLY-GENERIC"},
+		{m2ValidatorRecovery, "UNION-CONSTRAINT", "UNRELATED-GENERIC-CONSTRAINT"},
+		{m2ValidatorRecovery, "GENERIC-ALIAS", "UNRELATED-ALIAS-FUNCTION"},
+		{m2ValidatorRecovery, "DEFINED-REQUEST-WRAPPER", "UNRELATED-PUBLIC"},
+		{m2ValidatorRecovery, "TRANSITIVE-DEFINED-WRAPPER", "UNRELATED-PUBLIC"},
+		{m2ValidatorRecovery, "VARIABLE-WRAPPER-POINTER", "UNRELATED-VARIABLE"},
+		{m2ValidatorRecovery, "FIELD-WRAPPER-POINTER", "UNRELATED-FIELD"},
+		{m2ValidatorRecovery, "NAMED-CALLABLE-POINTER", "UNRELATED-NAMED-FUNCTION"},
+		{m2ValidatorRecovery, "INTERFACE-METHOD-POINTER", "PRIVATE-GENERIC-CONSTRAINT"},
+		{m2ValidatorRecovery, "RECEIVER-GENERIC-CONSTRAINT", "FOUNDATION-ONLY-RECEIVER"},
+		{m2ValidatorRecovery, "ANONYMOUS-INTERFACE-VARIABLE", "FOUNDATION-ONLY-COMPOSITE"},
+		{m2ValidatorRecovery, "UNEXPORTED-RECEIVER-VARIABLE", "PRIVATE-UNREACHABLE-TYPE"},
+		{m2ValidatorRecovery, "ANONYMOUS-STRUCT-FUNCTION-FIELD", "UNRELATED-COMPOSITE"},
+		{m2ValidatorRecovery, "FUNCTION-RETURNED-RECEIVER", "PRIVATE-UNREACHABLE-TYPE"},
+		{m2ValidatorRecovery, "EXPORTED-FIELD-RECEIVER", "PRIVATE-UNREACHABLE-TYPE"},
+		{m2ValidatorRecovery, "PUBLICATION-BOUNDARY-FULL-ID", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-BOUNDARY-MISSING-MATCH", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-DUPLICATE-COLLISION", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-DELETED-STATE-VALIDATION", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-BOUNDARY-METHOD-LEAK", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-MISSING", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-COMPLETION-ORDER", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-SEAL-OMITTED", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-ENCODE-DELETED", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-ENCODE-SUBSTITUTED", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-DECODE-SUBSTITUTED", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-CHECKPOINT-OLD-FIELD", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-CHECKPOINT-SUMMARY-WIRE", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-ZERO-INVERTED", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-ZERO-NOOP", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-SEAL-DEAD-REFERENCE", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-ADDENDUM-ENCODE-ONLY", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-ADDENDUM-DECODE-ONLY", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-ADDENDUM-ACCESSOR-ONLY", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-OTHER-UINT64-ORDER", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-SELECT-BEFORE-SORT", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-COUPLED-COMPLETION-ORDER", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-COVERED-SEAL-HELPER-DISCARDS", "PUBLICATION-COMPLETE"},
+		{m2ValidatorRecovery, "PUBLICATION-SUMMARY-DEFINED-BYTE", "PUBLICATION-COMPLETE"},
 	} {
 		candidate := find(swap.validator, swap.from)
 		candidate.Fixture = swap.to
@@ -140,11 +186,14 @@ func TestM2ArbiterFixtureBindingProbe(t *testing.T) {
 			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s swap=%s->%s observed=false-green", swap.validator, swap.from, swap.to)
 		}
 	}
-	for _, validator := range []string{m2ValidatorPolicy, m2ValidatorEvents, m2ValidatorLegacy} {
-		candidate := find(validator, map[string]string{m2ValidatorPolicy: "CLASS", m2ValidatorEvents: "RENAMED", m2ValidatorLegacy: "WORKGRAPH-SQLITE"}[validator])
+	for _, validator := range []string{m2ValidatorPolicy, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRecovery} {
+		candidate := find(validator, map[string]string{m2ValidatorPolicy: "CLASS", m2ValidatorEvents: "RENAMED", m2ValidatorLegacy: "WORKGRAPH-SQLITE", m2ValidatorRecovery: "RENAMED-CALLABLE"}[validator])
 		candidate.Fixture = "NOOP"
-		if m2ExpectedFixtureDigest(candidate) != "" || observeM2Mutant(t, candidate) == candidate.Expected {
-			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s noop observed=accepted", validator)
+		if digest := m2ExpectedFixtureDigest(candidate); digest != "" {
+			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s noop observed-digest=%s expected=empty", validator, digest)
+		}
+		if observed := observeM2Mutant(t, candidate); observed == candidate.Expected {
+			t.Fatalf("evidence=M2-MUTANT-CENSUS validator=%s noop observed=%+v expected=different-from=%+v", validator, observed, candidate.Expected)
 		}
 	}
 }
@@ -179,14 +228,14 @@ func m2ExecutableMutants() []m2MutantCase {
 	for _, fixture := range []string{"CONSTRUCTOR-VAR", "EMBED", "GENERIC", "INTERFACE", "METHOD-VALUE", "RENAME"} {
 		cases = append(cases, m2Case("M-REACH-"+fixture, m2ValidatorReach, fixture, "FORBIDDEN_REACHABILITY", "example.test/reach/internal/mission", "example.test/reach/internal/controlstore/gapdb"))
 	}
-	for _, fixture := range []string{"CLASS", "DIRECTION", "GAPDB-CLASS", "PROVIDER"} {
+	for _, fixture := range []string{"CLASS", "DIRECTION", "GAPDB-CLASS", "GAPDB-DENIAL", "PROVIDER"} {
 		cases = append(cases, m2Case("M-POLICY-"+fixture, m2ValidatorPolicy, fixture, "POLICY_SHAPE", fixture, ""))
 	}
 	for index, entryID := range m2CanonicalKeyIDs() {
 		fixture := "PATH-" + strconv.Itoa(index)
 		cases = append(cases, m2Case("M-KEY-PATH-"+entryID, m2ValidatorKeyspace, fixture, "KEYSPACE_CONTRACT", entryID, ""))
 	}
-	for _, fixture := range []string{"AMBIGUOUS", "GLOBAL-HEAD", "MISSION-OPERATION", "MIXED-V1", "RAW", "VARIABLE-VERSION", "SCOPE", "MUTABILITY", "SUFFIX", "BUDGET"} {
+	for _, fixture := range []string{"AMBIGUOUS", "GLOBAL-HEAD", "MISSION-OPERATION", "MIXED-V1", "RAW", "SCOPE-FIRST-HEAD", "VARIABLE-VERSION", "SCOPE", "MUTABILITY", "SUFFIX", "BUDGET", "WITNESS-DELETE", "WITNESS-SUBSTITUTE", "WITNESS-PLAUSIBLE-PREFIX", "WITNESS-MALFORMED", "WITNESS-MUTABLE", "WITNESS-EXPIRING", "WITNESS-REVISION-CONDITION", "WITNESS-NO-CONDITION"} {
 		cases = append(cases, m2Case("M-KEY-"+fixture, m2ValidatorKeyspace, fixture, "KEYSPACE_CONTRACT", fixture, ""))
 	}
 	for _, fixture := range []string{"ADAPTER", "DECOY-FIRST", "DECOY-LAST", "MULTI-BROKEN", "RUNTIME", "SAME-FILE-FIRST", "SAME-FILE-LAST", "SPLIT-FILE", "UNCLASSIFIED", "VALUE", "WRAPPER"} {
@@ -195,19 +244,55 @@ func m2ExecutableMutants() []m2MutantCase {
 	for _, target := range []string{"crypto/rand", "math/rand", "net", "os", "os/exec", "path/filepath", "time"} {
 		cases = append(cases, m2DependencyCase("M-PURE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "PURE", m2ModulePath+"/internal/controljournal/v2", target, ImportStandardLibrary, string(RuleDeferredSurface)))
 	}
+	cases = append(cases, m2DependencyCase(
+		"M-PURE-TIME-RESTORE-OWNER-WIDENING", "RESTORE-OWNER-WIDENING",
+		m2ModulePath+"/internal/controljournal/v2/restore/worker", "time", ImportStandardLibrary, string(RuleDeferredSurface),
+	))
 	cases = append(cases, m2DependencyCase("M-GAPDB-SCENARIO-CALLER", "GAPDB-SCENARIO", m2ModulePath+"/internal/scenario", "github.com/spec-kitty/gapdb/gapdb", ImportExternal, string(RuleExternalDirection)))
+	for _, fixture := range []string{"DIRECT", "WRAPPER", "WITNESS-DIRECT"} {
+		cases = append(cases, m2Case("M-CAPABILITY-REACH-"+fixture, m2ValidatorCapReach, fixture, string(RuleReachability), m2ModulePath+"/internal/execution", m2ModulePath+"/internal/controlstore/gapdb"))
+	}
 	for _, target := range []string{"github.com/spec-kitty/gapdb/internal/server", "github.com/spec-kitty/gapdb/server", "github.com/spec-kitty/gapdb/gapdb/internal/server", "github.com/spec-kitty/gapdb/gapdb/private-server"} {
 		cases = append(cases, m2DependencyCase("M-GAPDB-PRIVATE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "GAPDB-PRIVATE", m2ModulePath+"/internal/controlstore/gapdb", target, ImportExternal, string(RuleDeferredSurface)))
 	}
 	for _, target := range []string{"acceptance", "artifact", "execution", "gitrepo", "handoff", "integration", "mission", "review", "workspace"} {
 		cases = append(cases, m2DependencyCase("M-TRACKER-"+strings.ToUpper(target), "TRACKER", m2ModulePath+"/internal/tracker/beads", m2ModulePath+"/internal/"+target, ImportModuleLocal, string(RuleLocalDirection)))
 	}
-	for _, fixture := range []string{"MISSING", "REDUCER-VERSION", "RENAMED", "UNEXPECTED", "VERSION", "WRONG-OWNER"} {
+	for _, fixture := range []string{"MISSING", "OPERATION-REDUCER", "OPERATION-SCHEMA", "ORDERING", "PUBLICATION", "REDUCER-VERSION", "REGISTRY-ID", "REGISTRY-SCHEMA", "RENAMED", "UNEXPECTED", "VERSION", "WRONG-OWNER"} {
 		cases = append(cases, m2Case("M-EVENT-"+fixture, m2ValidatorEvents, fixture, "EVENT_REGISTRY", fixture, ""))
 	}
 	cases = append(cases, m2Case("M-LEGACY-CANNOT-HIDE-WORKGRAPH", m2ValidatorLegacy, "WORKGRAPH-SQLITE", string(RuleDeferredSurface), m2ModulePath+"/internal/workgraph", "modernc.org/sqlite"))
 	for _, fixture := range []string{"ALIASES", "BUILD-VARIANT", "EMBEDDING", "FUNCTIONS", "GENERATED", "GENERIC-RECORD", "GENERICS", "INTERFACE", "RECORD-POINTER", "RECORD-VALUE", "SPLIT-METHODS", "STRUCT-FIELDS", "WRAPPER"} {
 		cases = append(cases, m2Case("M-RAW-"+fixture, m2ValidatorRawStore, fixture, "RAW_KEY_GOD_STORE", fixture, ""))
+	}
+	for _, fixture := range []string{
+		"ADAPTER-OWNED", "ALIAS-FUNCTION-TYPE", "ANONYMOUS-INTERFACE-VARIABLE", "ANONYMOUS-STRUCT-FUNCTION-FIELD",
+		"DEFINED-REQUEST-WRAPPER", "EXPORTED-FIELD-RECEIVER", "FIELD-WRAPPER-POINTER", "FUNCTION-RETURNED-RECEIVER", "GENERIC-ALIAS",
+		"INTERFACE-METHOD-POINTER", "MISSING", "NAMED-CALLABLE-POINTER", "NAMED-FUNCTION-TYPE", "RECEIVER-GENERIC-CONSTRAINT",
+		"RENAMED-ADAPTER", "RENAMED-CALLABLE", "TRANSITIVE-DEFINED-WRAPPER", "UNION-CONSTRAINT", "UNUSED-GENERIC-CONSTRAINT",
+		"UNEXPORTED-RECEIVER-VARIABLE", "USED-GENERIC-CONSTRAINT", "VARIABLE-WRAPPER-POINTER", "WEAKENED-CENSUS",
+		"PUBLICATION-MISSING-TYPE", "PUBLICATION-MISSING-HELPER", "PUBLICATION-MISSING-BOUNDARIES",
+		"PUBLICATION-ADAPTER-WITNESS", "PUBLICATION-ADAPTER-BOUNDARY-LOOKALIKE",
+		"PUBLICATION-WRAPPED-WITNESS", "PUBLICATION-WRAPPED-BOUNDARY", "WEAKENED-PUBLICATION-CENSUS",
+		"PUBLICATION-BOUNDARY-FULL-ID", "PUBLICATION-BOUNDARY-PUBLICATION-ID", "PUBLICATION-BOUNDARY-TERMINAL-RESULT",
+		"PUBLICATION-BOUNDARY-STATUS", "PUBLICATION-BOUNDARY-MEMBERSHIP", "PUBLICATION-BOUNDARY-MISSING-MATCH",
+		"PUBLICATION-SUMMARY-DUPLICATE-COLLISION", "PUBLICATION-SUMMARY-DELETED-STATE-VALIDATION",
+		"PUBLICATION-SUMMARY-WRONG-BUDGET", "PUBLICATION-BOUNDARY-METHOD-LEAK",
+		"PUBLICATION-BOUNDARY-VARIABLE-DIGEST", "PUBLICATION-BOUNDARY-WIDE-VERSION",
+		"PUBLICATION-BOUNDARY-EMBEDDED-FIELD", "PUBLICATION-BOUNDARY-EXPORTED-FIELD", "PUBLICATION-SUMMARY-EXTRA-AUTHORITY",
+		"PUBLICATION-COVERED-MISSING", "PUBLICATION-COVERED-SUBSTITUTED", "PUBLICATION-COVERED-ZERO",
+		"PUBLICATION-COVERED-COMPLETION-ORDER", "PUBLICATION-COVERED-SEAL-OMITTED",
+		"PUBLICATION-SUMMARY-ENCODE-DELETED", "PUBLICATION-SUMMARY-DECODE-DELETED", "PUBLICATION-SUMMARY-ENCODE-SUBSTITUTED", "PUBLICATION-SUMMARY-DECODE-SUBSTITUTED",
+		"PUBLICATION-CHECKPOINT-OLD-FIELD", "PUBLICATION-CHECKPOINT-SUMMARY-WIRE", "PUBLICATION-ADAPTER-SUMMARY-WIRE",
+		"PUBLICATION-COVERED-ZERO-INVERTED", "PUBLICATION-COVERED-ZERO-NOOP", "PUBLICATION-COVERED-SEAL-DEAD-REFERENCE",
+		"PUBLICATION-ADDENDUM-ENCODE-ONLY", "PUBLICATION-ADDENDUM-DECODE-ONLY", "PUBLICATION-ADDENDUM-ACCESSOR-ONLY",
+		"PUBLICATION-COVERED-OTHER-UINT64-ORDER", "PUBLICATION-COVERED-SELECT-BEFORE-SORT", "PUBLICATION-SUMMARY-DEFINED-BYTE",
+		"PUBLICATION-COVERED-COUPLED-COMPLETION-ORDER", "PUBLICATION-COVERED-SEAL-HELPER-DISCARDS",
+	} {
+		cases = append(cases, m2Case("M-RECOVERY-OWNERSHIP-"+fixture, m2ValidatorRecovery, fixture, "FOUNDATION_CONTRACT_OWNERSHIP", fixture, ""))
+	}
+	for _, fixture := range []string{"RAW-STRUCT-ORDER", "TOP-LEVEL-ONLY", "DISCARDED-NORMALIZED-RESULT", "LENGTH-ONLY-RECOVERY", "REMOVED-DECODER-EQUALITY", "OMITTED-CODEC-CLASSIFICATION", "PARTIAL-REPAIR"} {
+		cases = append(cases, m2Case("M-DURABLE-CODEC-"+fixture, m2ValidatorDurableCodec, fixture, "DURABLE_CODEC_COMPATIBILITY", fixture, ""))
 	}
 	return cases
 }
@@ -249,6 +334,15 @@ func observeM2Mutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
 		return observeM2LegacyMutant(t, mutant)
 	case m2ValidatorRawStore:
 		return observeM2RawStoreMutant(t, mutant)
+	case m2ValidatorRecovery:
+		return observeM2RecoveryOwnershipMutant(t, mutant)
+	case m2ValidatorCapReach:
+		return observeM2CapabilityReachMutant(t, mutant)
+	case m2ValidatorDurableCodec:
+		if err := validateM2DurableCodecCompatibility(t, mutant.Fixture); err != nil {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: "DURABLE_CODEC_COMPATIBILITY", Source: mutant.Fixture}
+		}
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 	default:
 		return m2ViolationObservation{Validator: mutant.Validator, Code: "HARNESS_UNKNOWN_VALIDATOR", Source: mutant.Fixture}
 	}
@@ -407,6 +501,56 @@ func observeM2RawStoreMutant(t *testing.T, mutant m2MutantCase) m2ViolationObser
 	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
 }
 
+func observeM2RecoveryOwnershipMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	if mutant.Fixture == "WEAKENED-CENSUS" {
+		names := m2FoundationContractTypeNames()
+		if err := validateM2FoundationContractTypeNames(names[:len(names)-1]); err != nil {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: "FOUNDATION_CONTRACT_OWNERSHIP", Source: mutant.Fixture}
+		}
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+	}
+	if mutant.Fixture == "WEAKENED-PUBLICATION-CENSUS" {
+		helpers := m2PublicationRecoveryHelperNames()
+		if err := validateM2PublicationRecoveryNames(m2PublicationRecoveryTypeNames(), helpers[:len(helpers)-1]); err != nil {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: "FOUNDATION_CONTRACT_OWNERSHIP", Source: mutant.Fixture}
+		}
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+	}
+	const module = "example.test/recovery-ownership"
+	root := t.TempDir()
+	writeGoFixture(t, root, "go.mod", "module "+module+"\n\ngo 1.26\n")
+	files := m2FoundationOwnershipFixture(mutant.Fixture)
+	if strings.HasPrefix(mutant.Fixture, "PUBLICATION-") {
+		files = m2PublicationRecoveryFixture(strings.TrimPrefix(mutant.Fixture, "PUBLICATION-"))
+	}
+	if files == nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
+	}
+	for path, source := range files {
+		writeGoFixture(t, root, path, source)
+	}
+	setIsolatedGoPaths(t)
+	t.Setenv("GOPROXY", "off")
+	if err := inspectM2FoundationContractOwnership(t.Context(), root, module); err != nil {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "FOUNDATION_CONTRACT_OWNERSHIP", Source: mutant.Fixture}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+}
+
+func observeM2CapabilityReachMutant(t *testing.T, mutant m2MutantCase) m2ViolationObservation {
+	policy := m2ClosedPolicy(t, m2ModulePath)
+	graph, ok := m2CapabilityReachFixture(mutant.Fixture)
+	if !ok {
+		return m2ViolationObservation{Validator: mutant.Validator, Code: "UNKNOWN_FIXTURE", Source: mutant.Fixture}
+	}
+	for _, violation := range m2CapabilityGapDBReachability(policy, graph) {
+		if violation.SourcePackage == mutant.Expected.Source && violation.TargetPackage == mutant.Expected.Target {
+			return m2ViolationObservation{Validator: mutant.Validator, Code: string(violation.Rule), Source: violation.SourcePackage, Target: violation.TargetPackage}
+		}
+	}
+	return m2ViolationObservation{Validator: mutant.Validator, Code: "NO_VIOLATION", Source: mutant.Fixture}
+}
+
 func validateM2ExecutableMutants(cases []m2MutantCase) error {
 	if len(cases) != m2MutantCensusCount {
 		return fmt.Errorf("evidence=M2-MUTANT-CENSUS observed-count=%d expected=%d", len(cases), m2MutantCensusCount)
@@ -485,6 +629,31 @@ func m2FixtureDigest(validator, fixture string) string {
 		material = m2EligibilityFixture(fixture)
 	case m2ValidatorRawStore:
 		material = m2RawFixture(fixture)
+	case m2ValidatorRecovery:
+		if fixture == "WEAKENED-CENSUS" {
+			names := m2FoundationContractTypeNames()
+			material = names[:len(names)-1]
+		} else if fixture == "WEAKENED-PUBLICATION-CENSUS" {
+			helpers := m2PublicationRecoveryHelperNames()
+			material = append(m2PublicationRecoveryTypeNames(), helpers[:len(helpers)-1]...)
+		} else {
+			fixtureMaterial := m2FoundationOwnershipFixture(fixture)
+			if strings.HasPrefix(fixture, "PUBLICATION-") {
+				fixtureMaterial = m2PublicationRecoveryFixture(strings.TrimPrefix(fixture, "PUBLICATION-"))
+			}
+			if fixtureMaterial == nil {
+				return ""
+			}
+			material = fixtureMaterial
+		}
+	case m2ValidatorCapReach:
+		graph, ok := m2CapabilityReachFixture(fixture)
+		if !ok {
+			return ""
+		}
+		material = graph
+	case m2ValidatorDurableCodec:
+		material = m2DurableCodecFixtureMaterial(fixture)
 	default:
 		return ""
 	}
@@ -507,6 +676,8 @@ func m2PolicyFixture(fixture string) (Policy, bool) {
 		}
 	case "GAPDB-CLASS":
 		removeM2Pattern(&policy, m2ModulePath+"/internal/controlstore/gapdb")
+	case "GAPDB-DENIAL":
+		policy.ForbiddenLocalDirections = policy.ForbiddenLocalDirections[1:]
 	case "PROVIDER":
 		policy.ForbiddenImportPrefixes = removeM2String(policy.ForbiddenImportPrefixes, "modernc.org/sqlite")
 	default:
@@ -524,6 +695,18 @@ func m2EventFixture(fixture string) (m2EventRegistry, bool) {
 		registry.Families = registry.Families[1:]
 	case "REDUCER-VERSION":
 		registry.Families[0].Reducer = 2
+	case "OPERATION-REDUCER":
+		registry.Families[1].Reducer = 1
+	case "OPERATION-SCHEMA":
+		registry.Families[1].EventSchema = 1
+	case "ORDERING":
+		registry.Ordering[0] = "global_sequence"
+	case "PUBLICATION":
+		registry.PublicationRule = "many_events_per_aggregate"
+	case "REGISTRY-ID":
+		registry.RegistryID = "spec-kitty.authority-event-families"
+	case "REGISTRY-SCHEMA":
+		registry.SchemaVersion = 1
 	case "RENAMED":
 		registry.Families[0].Family = "runtime"
 	case "UNEXPECTED":
@@ -556,7 +739,7 @@ func m2DigestJSON(value any) string {
 }
 
 func m2KnownValidator(value string) bool {
-	return slices.Contains([]string{m2ValidatorImport, m2ValidatorReach, m2ValidatorPolicy, m2ValidatorKeyspace, m2ValidatorEligibility, m2ValidatorDependency, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRawStore}, value)
+	return slices.Contains([]string{m2ValidatorImport, m2ValidatorReach, m2ValidatorPolicy, m2ValidatorKeyspace, m2ValidatorEligibility, m2ValidatorDependency, m2ValidatorEvents, m2ValidatorLegacy, m2ValidatorRawStore, m2ValidatorRecovery, m2ValidatorCapReach, m2ValidatorDurableCodec}, value)
 }
 
 func m2SQLImportSource(fixture string) string {
@@ -598,7 +781,7 @@ func m2SQLExpectedTarget(fixture string) string {
 }
 
 func m2CanonicalKeyIDs() []string {
-	return []string{"K-AUTHORITY-BINDING", "K-RUNTIME-CURRENT", "K-RUNTIME-EPOCH", "K-OPERATION-BINDING", "K-OPERATION-HEAD", "K-AGGREGATE-HEAD", "K-AGGREGATE-EVENT", "K-CHECKPOINT-SLOT", "K-CHECKPOINT-RECORD", "K-WORKGRAPH-ELIGIBILITY"}
+	return []string{"K-AUTHORITY-BINDING", "K-RUNTIME-CURRENT", "K-RUNTIME-EPOCH", "K-OPERATION-BINDING", "K-OPERATION-HEAD", "K-AGGREGATE-HEAD", "K-AGGREGATE-EVENT", "K-CHECKPOINT-SLOT", "K-CHECKPOINT-RECORD", "K-WORKGRAPH-ELIGIBILITY", "K-PUBLICATION-WITNESS"}
 }
 
 func m2ReachFixture(fixture string) string {
@@ -633,6 +816,8 @@ func mutateM2Keyspace(fixture string, registry *[]m2KeyEntry) bool {
 		values[0].Template = "spk/v1/authority/binding"
 	case "RAW":
 		values = append(values, m2KeyEntry{ID: "K-RAW", Template: "<caller-key>"})
+	case "SCOPE-FIRST-HEAD":
+		values[5].Template = "spk/v2/scopes/<scope>/heads/<aggregate-kind>/<aggregate-id>"
 	case "VARIABLE-VERSION":
 		values[6].Template = strings.Replace(values[6].Template, "hex16", "decimal", 1)
 	case "SCOPE":
@@ -643,11 +828,55 @@ func mutateM2Keyspace(fixture string, registry *[]m2KeyEntry) bool {
 		values[6].SuffixRule = "decimal"
 	case "BUDGET":
 		values[0].MaxKeyBytes++
+	case "WITNESS-DELETE":
+		values = values[:len(values)-1]
+	case "WITNESS-SUBSTITUTE":
+		values[len(values)-1].Template = "spk/v2/publications/<publication-id>/proof"
+	case "WITNESS-PLAUSIBLE-PREFIX":
+		values[len(values)-1].Template = "spk/v2/operations/<publication-id>/witness"
+	case "WITNESS-MALFORMED":
+		values[len(values)-1].Template = "spk/v2/publications//<publication-id>/witness"
+	case "WITNESS-MUTABLE":
+		values[len(values)-1].Mutable = true
+	case "WITNESS-EXPIRING":
+		values[len(values)-1].Expires = true
+	case "WITNESS-REVISION-CONDITION":
+		values[len(values)-1].WriteCondition = "require-revision"
+	case "WITNESS-NO-CONDITION":
+		values[len(values)-1].WriteCondition = ""
 	default:
 		return false
 	}
 	*registry = values
 	return true
+}
+
+func m2CapabilityReachFixture(fixture string) (Graph, bool) {
+	capability := m2ModulePath + "/internal/execution"
+	coordinator := m2ModulePath + "/internal/controljournal/v2"
+	adapter := m2ModulePath + "/internal/controlstore/gapdb"
+	var edges []ImportEdge
+	switch fixture {
+	case "DIRECT":
+		edges = []ImportEdge{{SourcePackage: capability, TargetPackage: adapter, Kind: ImportModuleLocal}}
+	case "WITNESS-DIRECT":
+		// Returning an adapter-owned witness necessarily creates this forbidden
+		// kernel-to-adapter edge, independent of the local type's spelling.
+		edges = []ImportEdge{
+			{SourcePackage: capability, TargetPackage: adapter, Kind: ImportModuleLocal},
+			{SourcePackage: adapter, TargetPackage: coordinator, Kind: ImportModuleLocal},
+		}
+	case "WRAPPER":
+		edges = []ImportEdge{
+			{SourcePackage: capability, TargetPackage: coordinator, Kind: ImportModuleLocal},
+			{SourcePackage: coordinator, TargetPackage: adapter, Kind: ImportModuleLocal},
+		}
+	default:
+		return Graph{}, false
+	}
+	graph := fixtureGraph([]string{capability, coordinator, adapter}, edges...)
+	graph.ModulePath = m2ModulePath
+	return graph, true
 }
 
 func m2EligibilityFixture(fixture string) map[string]string {

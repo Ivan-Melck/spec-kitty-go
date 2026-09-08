@@ -117,6 +117,53 @@ type GenerationOneCandidateParams struct {
 	GovernanceContextID  ids.GovernanceContextID
 }
 
+type GenerationOneCandidateV3Params struct {
+	Observation          FinalizationObservation
+	PlanningSourceCommit string
+	MissionDefinition    MissionDefinitionIdentity
+	DependencyPolicy     DependencyPolicy
+	FinalizedBy          ids.ActorID
+	FinalizedAt          time.Time
+	GovernanceContextID  ids.GovernanceContextID
+}
+
+// BuildGenerationOneCandidateV3 retains the exact definition artifact and all
+// attributable provider evidence that the frozen v2 candidate dropped. New M2
+// authority must use this constructor; the v2 constructor remains historical.
+func BuildGenerationOneCandidateV3(params GenerationOneCandidateV3Params) (RevisionV2, error) {
+	findings := ValidateDraft(params.Observation.draft, DefaultQualityPolicy())
+	if len(findings) != 0 {
+		return RevisionV2{}, invalidV2("work", fmt.Sprintf("work observation has %d validation finding(s)", len(findings)), nil)
+	}
+	lanes, err := CollapseLanes(params.Observation.draft)
+	if err != nil {
+		return RevisionV2{}, err
+	}
+	evidenceByWork := make(map[ids.WorkID]ObservationEvidence, len(params.Observation.evidence))
+	providerEvidence := make([]ProviderObservationV3, len(params.Observation.evidence))
+	for index, item := range params.Observation.evidence {
+		evidenceByWork[item.WorkID] = item
+		providerEvidence[index] = ProviderObservationV3{WorkID: item.WorkID, Provider: item.Provider, ExternalID: item.ExternalID, Revision: item.Revision, MetadataSchema: item.MetadataSchema, DefinitionDigest: item.DefinitionDigest, CriterionEvidenceHints: cloneStringMap(item.CriterionEvidenceHints)}
+	}
+	work := params.Observation.draft.Work()
+	items := make([]WorkItemV2Params, len(work))
+	for index, item := range work {
+		criteria := make([]CriterionV2Params, len(item.Criteria()))
+		for criterionIndex, criterion := range item.Criteria() {
+			criteria[criterionIndex] = CriterionV2Params{ID: criterion.ID, Text: criterion.Text, VerifierKind: criterion.Verifier, Required: criterion.Requirement == CriterionRequired, Outcome: criterion.Outcome, EvidenceHint: evidenceByWork[item.WorkID()].CriterionEvidenceHints[criterion.ID]}
+		}
+		scopes := make([]NormalizedWriteScope, len(item.WriteScopes()))
+		for scopeIndex, scope := range item.WriteScopes() {
+			scopes[scopeIndex] = NormalizedWriteScope(scope)
+		}
+		items[index] = WorkItemV2Params{WorkID: item.WorkID(), Title: item.Title(), Description: item.Description(), DesignContext: item.DesignContext(), Criteria: criteria, Dependencies: item.Dependencies(), WriteScopes: scopes}
+	}
+	return NewRevisionV3(RevisionV3Params{ProjectID: params.Observation.draft.ProjectID(), MissionID: params.Observation.draft.MissionID(), Generation: 1, PlanningSourceCommit: params.PlanningSourceCommit,
+		MissionDefinition: params.MissionDefinition, DependencyPolicy: params.DependencyPolicy, WorkItems: items, Lanes: lanes,
+		ArtifactObservations: []ArtifactObservationV3{{Kind: "plan", ArtifactRevisionID: params.Observation.draft.PlanRevisionID(), ContentDigest: params.Observation.draft.PlanDigest()}}, ProviderEvidence: providerEvidence,
+		FinalizedBy: params.FinalizedBy, FinalizedAt: params.FinalizedAt, GovernanceContextID: params.GovernanceContextID})
+}
+
 func BuildGenerationOneCandidate(params GenerationOneCandidateParams) (RevisionV2, error) {
 	findings := ValidateDraft(params.Observation.draft, DefaultQualityPolicy())
 	if len(findings) != 0 {

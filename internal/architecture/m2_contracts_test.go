@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	m2MissionDir = "gapdb-only-production-authority-01M1GWDJ"
+	m2MissionDir                  = "gapdb-only-production-authority-01M1GWDJ"
+	m2EventRegistryIdentitySHA256 = "c56f715a05fd8169760fdc78006c82b789fc9c56b948d2426f90f764a2acf1cf"
 
 	m2SourceCommit = "e05a5e46feb3e65ff42c4544c16678c440ef3818"
 	m2SourceTree   = "c7b932b3d85833beee1a84d8a1ae7f4e4a75ec73"
@@ -212,11 +213,27 @@ func TestM2ContractEventFamilyRegistry(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("contract=C-M2-EVENT-REGISTRY law=closed-family-census observed=%v expected=%v", got, want)
 	}
+	for _, omitted := range []string{"schema_version", "registry_id", "publication_rule", "ordering", "families"} {
+		var document map[string]any
+		if err := json.Unmarshal(payload, &document); err != nil {
+			t.Fatal(err)
+		}
+		delete(document, omitted)
+		mutant, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := validateM2EventRegistry(mutant); err == nil {
+			t.Fatalf("contract=C-M2-EVENT-REGISTRY law=complete-identity omitted=%s observed=accepted expected=rejected", omitted)
+		}
+	}
 
 	mutants := []struct {
 		name   string
 		mutate func(*m2EventRegistry)
 	}{
+		{"registry-schema-version", func(v *m2EventRegistry) { v.SchemaVersion = 1 }},
+		{"registry-id", func(v *m2EventRegistry) { v.RegistryID = "spec-kitty.authority-event-families" }},
 		{"duplicate-family", func(v *m2EventRegistry) { v.Families = append(v.Families, v.Families[0]) }},
 		{"zero-reducer", func(v *m2EventRegistry) { v.Families[0].Reducer = 0 }},
 		{"wrong-order", func(v *m2EventRegistry) { v.Ordering[0] = "global_sequence" }},
@@ -229,6 +246,8 @@ func TestM2ContractEventFamilyRegistry(t *testing.T) {
 		}},
 		{"event-version-change", func(v *m2EventRegistry) { v.Families[0].EventSchema = 2 }},
 		{"reducer-version-change", func(v *m2EventRegistry) { v.Families[0].Reducer = 2 }},
+		{"operation-schema-1", func(v *m2EventRegistry) { v.Families[1].EventSchema = 1 }},
+		{"operation-reducer-1", func(v *m2EventRegistry) { v.Families[1].Reducer = 1 }},
 		{"open-publication", func(v *m2EventRegistry) { v.PublicationRule = "many_events_per_aggregate" }},
 	}
 	for _, mutant := range mutants {
@@ -261,6 +280,33 @@ func TestM2ContractAuthorityJournalLaws(t *testing.T) {
 		for _, phrase := range phrases {
 			if !strings.Contains(text, phrase) {
 				t.Fatalf("contract=%s law=normative-phrase observed=missing expected=%q", id, phrase)
+			}
+		}
+	}
+}
+
+func TestM2ContractPublicationWitnessAndBoundaryCorrection(t *testing.T) {
+	text := string(readM2File(t, filepath.Join("kitty-specs", m2MissionDir, "post-approval-defect-4.md")))
+	laws := map[string][]string{
+		"C-M2-PUBLICATION-WITNESS": {
+			"spk/v2/publications/<publication-id>/witness", "PublicationWitnessV2", "RequireAbsent",
+			"non-expiring", "authority_record_set_sha256", "provider_mutation_count = authority_record_count + 1",
+		},
+		"C-M2-OPERATION-BOUNDARY": {
+			"OperationBoundaryV2", "operation_id_sha256", "logical_version", "leaf_sha256",
+			"fixed-size boundaries", "MatchesOperationID", "state-aware validation", "missing, extra, duplicate, colliding, unmatched, or regressed",
+		},
+		"C-M2-OPERATION-SUMMARY-BUDGET": {
+			"MaxOperationSummaryBytesV2", "2,112,000 bytes", "2,082,304", "bytes of the 4 MiB", "embedded structurally",
+		},
+		"C-M2-SHARED-PREFIX": {
+			"one prefix-advance function", "providerRevision", "publicationID", "planSHA256", "authorityRecordSetSHA256",
+		},
+	}
+	for id, phrases := range laws {
+		for _, phrase := range phrases {
+			if !strings.Contains(text, phrase) {
+				t.Fatalf("contract=%s law=ratified-correction observed=missing expected=%q", id, phrase)
 			}
 		}
 	}
@@ -396,13 +442,25 @@ func validateM2EventRegistry(payload []byte) (m2EventRegistry, error) {
 	if !slices.Equal(got, want) {
 		return registry, fmt.Errorf("contract=C-M2-EVENT-REGISTRY law=closed-family-tuples observed=%+v expected=%+v", got, want)
 	}
+	if digest := m2EventRegistryIdentityDigest(registry); digest != m2EventRegistryIdentitySHA256 {
+		return registry, fmt.Errorf("contract=C-M2-EVENT-REGISTRY law=compatibility-identity-digest observed=%s expected=%s", digest, m2EventRegistryIdentitySHA256)
+	}
 	return registry, nil
+}
+
+func m2EventRegistryIdentityDigest(registry m2EventRegistry) string {
+	registry.Ordering = slices.Clone(registry.Ordering)
+	registry.Families = slices.Clone(registry.Families)
+	slices.SortFunc(registry.Families, func(left, right m2EventFamily) int {
+		return strings.Compare(left.Family, right.Family)
+	})
+	return m2DigestJSON(registry)
 }
 
 func m2ExpectedEventFamilies() []m2EventFamily {
 	return []m2EventFamily{
 		{Family: "runtime_host", EventSchema: 1, Reducer: 1, Owner: "internal/productionruntime"},
-		{Family: "operation", EventSchema: 1, Reducer: 1, Owner: "internal/controljournal/application"},
+		{Family: "operation", EventSchema: 2, Reducer: 2, Owner: "internal/controljournal/application"},
 		{Family: "mission", EventSchema: 1, Reducer: 1, Owner: "internal/mission"},
 		{Family: "artifact_catalog", EventSchema: 1, Reducer: 1, Owner: "internal/artifact"},
 		{Family: "artifact_revision", EventSchema: 1, Reducer: 1, Owner: "internal/artifact"},

@@ -4,7 +4,8 @@
 **Branch**: `feat/gapdb-only-production-authority`  
 **Date**: 2026-09-02  
 **Spec**: [spec.md](spec.md)  
-**Status**: Ready for work-package decomposition
+**Status**: Post-approval correction ratified; WP01 structural deadline proof
+requires reapproval before WP04 resumes with behavioral deadline evidence
 
 ## Summary
 
@@ -79,19 +80,25 @@ flowchart LR
     Host --> Cap[Capability service]
     Cap --> Decide[Pure decision and reducer]
     Decide --> Commit[Sealed commit plan]
-    Commit --> Adapter[GapDB public adapter]
+    Commit --> Coordinator[Publication coordinator]
+    Coordinator --> Adapter[GapDB public adapter]
     Adapter --> Daemon[Verified gapdbd sidecar]
     Daemon --> Durable[(Journal, heads, checkpoints)]
-    Adapter --> Projection[In-memory projections]
+    Adapter --> Ack[Durable observation or reconciliation]
+    Ack --> Coordinator
+    Coordinator --> Projection[In-memory projections]
     Durable --> Restore[Bounded restore and playback]
     Restore --> Projection
     Projection --> Query[Query and progress views]
 ```
 
 The host is the sole production composition root. Domain packages own meaning;
-the common journal owns canonical publication mechanics; the GapDB adapter owns
-provider translation; the sidecar supervisor owns process and database
-identity. Callers cannot construct repositories or open the store.
+the common journal owns canonical publication mechanics and the acknowledged
+projection coordinator; the GapDB adapter owns provider translation; the
+sidecar supervisor owns process and database identity. Callers cannot
+construct repositories or open the store. Capability packages may reach the
+foundation coordinator but direct capability-to-adapter reachability is a
+permanent architecture violation.
 
 ### Command publication and operation identity
 
@@ -139,12 +146,49 @@ registration, and one-provider-call publication. It interprets no mission,
 review, integration, or provider policy. Every affected aggregate emits exactly
 one transition event and increments once per publication.
 
+The required operation event uses the closed operation event schema 2/reducer
+2 tuple. Its payload is the canonical OperationState transition preimage,
+excluding only the PublicationID that sealing derives. The final envelope
+supplies that PublicationID, so historical operation progress and exact
+event/effect membership can be reconstructed from immutable journal material.
+The incomplete operation `1/1` tuple is rejected rather than treated as an
+alias.
+
+A foundation publication coordinator registers each sealed plan before
+delivery. It accepts only a durable exact acknowledgement or complete
+same-identity reconciliation and advances projection state only afterward.
+Its bounded revision-keyed acknowledgement ledger supports at least 10,000
+publications between seals. At a quiescent checkpoint barrier it orders
+acknowledgements by provider revision and folds the prior prefix with revision,
+PublicationID, plan digest, and sealed record-set digest. Every atomic
+publication persists those otherwise process-local proof coordinates in one
+immutable, absent-conditioned publication witness. The plan digest binds the
+witness contract version; the witness is constructed afterward so no identity
+is recursive. One foundation-owned pure helper performs the fold for both the
+live tracker and restore. Unresolved ambiguity blocks the seal without
+serializing unrelated durable commits.
+
+The seal also binds the terminal PublicationID selected by greatest provider
+revision. A checkpoint at watermark `R` records that acknowledged identity as
+its covered-through publication. The later atomic publication that writes the
+checkpoint record and retained-ring slot occurs at `C > R` and remains suffix;
+the checkpoint never attempts to contain its own creating PublicationID. The
+foundation owns the sole strict canonical operation-summary codec consumed by
+checkpoint and restore code.
+
+All persistence-facing v2 record encoders converge on one recursively
+canonical final-byte representation. Recovery admission compares rather than
+rewrites provider bytes, while established semantic digest preimages remain
+unchanged. This makes the durable pipeline closed under
+`Encode -> RecoveryRecordV2 -> Decode` and prevents capability packages from
+reconstructing foundation wire.
+
 ### Capability-owned authority
 
 | Aggregate owner | Representative facts and invariants |
 |---|---|
 | Runtime host | epoch admission, readiness, predecessor invalidation; no commands before ready |
-| Mission | lifecycle, actions, blockers, decisions, terminal outcome |
+| Mission | coarse lifecycle, activity history, blockers, decisions, terminal outcome, derived readiness census |
 | Artifact catalog/revision | immutable content/provenance, latest-revision CAS, exact verdict |
 | Work graph | immutable generation, drift, `continue/supersede/invalidate/fork`, eligibility guards |
 | Execution slot | run, lease generation, heartbeat, expiry, one current authority |
@@ -188,20 +232,44 @@ sequenceDiagram
     E-->>H: ready; predecessor capsules are stale
 ```
 
+Aggregate heads are globally enumerable at
+`spk/v2/heads/<scope>/<aggregate-kind>/<aggregate-id>`. Immutable events retain
+the scope-first journal layout. The former
+`spk/v2/scopes/<scope>/heads/...` spelling is rejected, not read as a
+compatibility alias. Host-global operation binding/head records form a second
+bounded census under `spk/v2/operations/`.
+Each publication also has one exact-read immutable witness at
+`spk/v2/publications/<publication-id>/witness` carrying its operation
+coordinate, plan digest, and non-witness record-set digest/count. It shares the
+publication's provider revision and consumes one of the 256 allowed atomic
+mutations.
+
 Restore command admission remains closed while it:
 
-1. captures stable store revision `R`;
+1. captures a positive durable store coordinate `(DatabaseID, R)`;
 2. selects the newest valid compatible bounded checkpoint;
-3. scans a complete aggregate-head census pinned to `R`, restarting the whole
-   attempt on stale cursor or revision disagreement;
+3. requires the initial aggregate-head and operation-census pages to report
+   `R`, then uses their provider-pinned continuation cursors;
 4. enumerates exact event versions after each checkpointed aggregate version;
 5. reads them with bounded concurrency and byte/count limits;
-6. validates global binding/state and complete same-revision operation
-   membership;
-7. sorts the union by `(Record.Revision, EventIndex, EventID)`;
-8. reduces without external or persistence capabilities;
-9. matches every terminal head and whole-product digest; and
-10. rechecks revision `R` before admitting a fresh epoch.
+6. requires every record revision to be positive and no greater than `R`, and
+   reconstructs historical OperationState from operation events;
+7. exact-reads and validates one witness for every distinct suffix
+   PublicationID, requiring the same operation coordinate and provider
+   revision;
+8. advances the checkpoint prefix with the shared pure helper and validates
+   operation suffixes from their checkpoint boundaries;
+9. sorts the union by `(Record.Revision, EventIndex, EventID)`;
+10. reduces without external or persistence capabilities;
+11. matches every terminal head and whole-product digest; and
+12. rechecks the same DatabaseID and exactly `R` before admitting a fresh
+    epoch.
+
+The frozen GapDB API has no as-of `Get` and does not accept a requested
+revision on the first prefix-scan page; the design makes no such claim. Equal
+capture/final coordinates, first-page `R`, cursor staleness, and record
+revision bounds form the enforceable stable-attempt proof. Any movement or
+replacement discards all material collected by that attempt.
 
 No checkpoint falls back to a watch stream. With no compatible checkpoint, a
 bounded complete head/event reconstruction is allowed. Missing versions,
@@ -214,6 +282,28 @@ capability and a rolling digest; it does not re-reduce the full origin. A
 bounded retained candidate ring permits fallback from a corrupt latest
 checkpoint to an earlier compatible one and rejects contradictory candidates
 at the same watermark.
+
+Registry compatibility seals the exact registry ID/version, publication rule,
+ordering tuple, and sorted family/schema/reducer/owner census. Reducer
+compatibility also seals a declared implementation digest. Runtime reduction
+is a stateless `Apply`; bounded repeated-call determinism qualification is a
+separate concern and cannot cap a 10,000-operation replay at 256 observations.
+
+The provider-neutral recovery vocabulary belongs to the journal foundation:
+closed semantic record addresses/scan targets, store revision coordinates,
+immutable records/pages, typed recovery errors, and canonical aggregate
+comparators. Event, head, binding, and OperationState values expose every
+semantic field required for validation through defensive accessors. GapDB keys
+and public client values remain adapter-private translations. Checkpoints store
+a compact operation summary of counts and fixed-size boundaries rather than
+copying every variable-length OperationID or terminal result. Each boundary
+contains an OperationID lookup digest, checkpoint logical version, and leaf
+digest; the leaf commits to the full prior operation state. Restore joins the
+boundary to an exact ID from the operation-head scan, reads the boundary event,
+and verifies the leaf before using the suffix. The final structured checkpoint
+encoder must prove 10,000 maximum-version boundaries and outer summary
+overhead fit `MaxOperationSummaryBytesV2 = 2,112,000` bytes, leaving 2,082,304
+bytes for aggregate entries and remaining checkpoint metadata.
 
 ### Refusal parity and external effects
 
@@ -453,6 +543,21 @@ flowchart TD
     I7 --> I9[IC-09 SQLite eradication]
     I9 --> I10[IC-10 Crown evidence]
 ```
+
+## Restore deadline capability boundary
+
+Restore is the consumer-owned I/O coordinator, not the pure playback kernel.
+It owns the explicit elapsed-attempt budget required by bounded recovery and
+may use `time.Duration` plus context deadlines to enforce it. The architecture
+guard admits only the exact `internal/controljournal/v2/restore -> time` edge.
+Foundation, checkpoint, playback, and all other v2 packages remain time-free,
+and time cannot participate in durable state or authority decisions. A
+permanent widening mutant prevents this exception from becoming a prefix-wide
+allowance. WP01 proves structural confinement and absence of ambient-clock
+capabilities; WP04 proves the real validation and deadline data flow through
+source-bound execution; WP17 binds both to overlay mutants and one exact source
+identity. No architecture test models arbitrary Go control flow. See
+`post-approval-defect-7.md` and `post-approval-defect-8.md`.
 
 ## Complexity Tracking
 

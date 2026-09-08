@@ -31,12 +31,24 @@ work_packages:
       - "internal/controljournal/v2/codec.go"
       - "internal/controljournal/v2/commit_plan.go"
       - "internal/controljournal/v2/operation.go"
+      - "internal/controljournal/v2/recovery.go"
+      - "internal/controljournal/v2/recovery_test.go"
+      - "internal/controljournal/v2/publication.go"
+      - "internal/controljournal/v2/publication_test.go"
+      - "internal/controljournal/v2/projection.go"
+      - "internal/controljournal/v2/projection_test.go"
       - "internal/controljournal/v2/journal_test.go"
     create_intent:
       - "internal/controljournal/v2/model.go"
       - "internal/controljournal/v2/codec.go"
       - "internal/controljournal/v2/commit_plan.go"
       - "internal/controljournal/v2/operation.go"
+      - "internal/controljournal/v2/recovery.go"
+      - "internal/controljournal/v2/recovery_test.go"
+      - "internal/controljournal/v2/publication.go"
+      - "internal/controljournal/v2/publication_test.go"
+      - "internal/controljournal/v2/projection.go"
+      - "internal/controljournal/v2/projection_test.go"
       - "internal/controljournal/v2/journal_test.go"
     requirement_refs: [FR-002, FR-004, FR-005, FR-006, FR-017, FR-022, FR-025, FR-033, NFR-001, NFR-002, NFR-012, NFR-013, C-002, C-004, C-005, C-013]
     plan_concern_refs: [IC-02]
@@ -51,12 +63,24 @@ work_packages:
     title: "GapDB v2 Committer and Key Codec"
     dependencies: [WP01, WP02]
     owned_files:
+      - "go.mod"
+      - "go.sum"
+      - "internal/controlstore/gapdb/admission_test.go"
+      - "internal/controlstore/gapdb/external_scenarios_test.go"
+      - "internal/controlstore/gapdb/port.go"
+      - "internal/controlstore/gapdb/port_test.go"
       - "internal/controlstore/gapdb/v2_codec.go"
       - "internal/controlstore/gapdb/v2_committer.go"
       - "internal/controlstore/gapdb/v2_reader.go"
       - "internal/controlstore/gapdb/v2_ambiguity.go"
       - "internal/controlstore/gapdb/v2_adapter_test.go"
     create_intent:
+      - "go.mod"
+      - "go.sum"
+      - "internal/controlstore/gapdb/admission_test.go"
+      - "internal/controlstore/gapdb/external_scenarios_test.go"
+      - "internal/controlstore/gapdb/port.go"
+      - "internal/controlstore/gapdb/port_test.go"
       - "internal/controlstore/gapdb/v2_codec.go"
       - "internal/controlstore/gapdb/v2_committer.go"
       - "internal/controlstore/gapdb/v2_reader.go"
@@ -82,6 +106,7 @@ work_packages:
       - "internal/controljournal/v2/playback/playback_test.go"
       - "internal/controljournal/v2/restore/restore.go"
       - "internal/controljournal/v2/restore/restore_test.go"
+      - "internal/controljournal/v2/restore/deadline_contract_test.go"
     create_intent:
       - "internal/controljournal/v2/checkpoint/model.go"
       - "internal/controljournal/v2/checkpoint/checkpoint.go"
@@ -90,6 +115,7 @@ work_packages:
       - "internal/controljournal/v2/playback/playback_test.go"
       - "internal/controljournal/v2/restore/restore.go"
       - "internal/controljournal/v2/restore/restore_test.go"
+      - "internal/controljournal/v2/restore/deadline_contract_test.go"
     requirement_refs: [FR-003, FR-019, FR-020, FR-021, FR-022, FR-025, FR-034, NFR-005, NFR-006, NFR-007, NFR-008, NFR-009, NFR-012, NFR-013, C-002, C-013]
     plan_concern_refs: [IC-02]
     subtasks: [T017, T018, T019, T020, T021, T022]
@@ -168,12 +194,27 @@ work_packages:
 
   - id: WP08
     title: "Lease-Scoped Workspace Authority"
-    dependencies: [WP04, WP07]
+    dependencies: [WP02, WP03, WP04, WP07]
     owned_files:
+      - "internal/controljournal/v2/commit_plan.go"
+      - "internal/controljournal/v2/commit_plan_budget_test.go"
+      - "internal/gitrepo/workspace_authority_v2.go"
+      - "internal/gitrepo/workspace_authority_v2_test.go"
+      - "internal/execution/authority_v2.go"
+      - "internal/execution/authority_v2_test.go"
+      - "internal/execution/workspace_authority_v2.go"
+      - "internal/execution/workspace_authority_v2_test.go"
       - "internal/workspace/**"
       - "internal/controlstore/gapdb/workspace_authority.go"
       - "internal/controlstore/gapdb/workspace_authority_test.go"
     create_intent:
+      - "internal/controljournal/v2/commit_plan_budget_test.go"
+      - "internal/gitrepo/workspace_authority_v2.go"
+      - "internal/gitrepo/workspace_authority_v2_test.go"
+      - "internal/execution/authority_v2.go"
+      - "internal/execution/authority_v2_test.go"
+      - "internal/execution/workspace_authority_v2.go"
+      - "internal/execution/workspace_authority_v2_test.go"
       - "internal/controlstore/gapdb/workspace_authority.go"
       - "internal/controlstore/gapdb/workspace_authority_test.go"
     requirement_refs: [FR-012, FR-020, FR-023, FR-024, FR-025, NFR-001, NFR-003, NFR-004, NFR-007, NFR-016, C-004, C-005, C-011]
@@ -234,7 +275,7 @@ work_packages:
 
   - id: WP11
     title: "Outbox Query Projections and Capability Conformance"
-    dependencies: [WP05, WP06, WP07, WP08, WP09, WP10]
+    dependencies: [WP05, WP06, WP07, WP08, WP09, WP10, WP18]
     owned_files:
       - "internal/controlstore/store.go"
       - "internal/projection/**"
@@ -251,6 +292,32 @@ work_packages:
     plan_concern_refs: [IC-06, IC-07]
     subtasks: [T054, T055, T056, T057, T058]
     prompt_file: "tasks/WP11-outbox-query-projections-and-capability-conformance.md"
+    agent_profile: implementer-ivan
+    role: implementer
+    agent: codex
+    model: ""
+
+  - id: WP18
+    title: "Autonomous Readiness and Mission Ergonomics Authority"
+    dependencies: [WP10]
+    owned_files:
+      - "internal/mission/**"
+      - "internal/missiontype/**"
+      - "internal/governancecontext/mission_action.go"
+      - "internal/governancecontext/mission_action_test.go"
+      - "internal/controlstore/gapdb/mission_authority.go"
+      - "internal/controlstore/gapdb/mission_authority_test.go"
+      - "internal/architecture/m2_autonomy_contract_test.go"
+      - "internal/architecture/m2_autonomy_mutant_test.go"
+    create_intent:
+      - "internal/controlstore/gapdb/mission_authority.go"
+      - "internal/controlstore/gapdb/mission_authority_test.go"
+      - "internal/architecture/m2_autonomy_contract_test.go"
+      - "internal/architecture/m2_autonomy_mutant_test.go"
+    requirement_refs: [FR-007, FR-008, FR-009, FR-010, FR-015, FR-017, FR-018, FR-019, FR-023, FR-024, FR-025, FR-036, NFR-001, NFR-004, NFR-005, NFR-010, NFR-015, NFR-016, C-004, C-005, C-009, C-010]
+    plan_concern_refs: [IC-03, IC-05, IC-06, IC-07]
+    subtasks: [T093, T094, T095, T096, T097, T098, T099]
+    prompt_file: "tasks/WP18-autonomous-readiness-and-mission-ergonomics-authority.md"
     agent_profile: implementer-ivan
     role: implementer
     agent: codex
