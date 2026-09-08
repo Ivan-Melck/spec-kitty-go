@@ -2,6 +2,7 @@ package testcampaign
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -111,20 +112,21 @@ var profiles = map[string]Profile{
 	"acceptance": {
 		Name:    "acceptance",
 		Package: "./internal/scenario",
-		Pattern: "^(TestQualityCampaignUniversalInvariants|TestReconciliationRejectsPostCollapseCycle|TestReviewImmutableCandidateAndActorIndependence)$",
+		Pattern: "^(TestProductionCapabilityCompositionHasOnePublicationBoundary|TestTerminalSemanticEquivalenceControlledMutants|TestWorkCoordinateAgreementControlledMutants)$",
 		ExpectedTests: []string{
-			"TestQualityCampaignUniversalInvariants",
-			"TestReconciliationRejectsPostCollapseCycle",
-			"TestReviewImmutableCandidateAndActorIndependence",
+			"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+			"TestTerminalSemanticEquivalenceControlledMutants",
+			"TestWorkCoordinateAgreementControlledMutants",
 		},
 	},
 	"scope": {
 		Name:    "scope",
 		Package: "./internal/scenario",
-		Pattern: "^(TestPhase1ProductionDependencyAndArchitectureScope|TestPhase1SourceScopeMutantControl)$",
+		Pattern: "^(TestHarnessArchitectureGuardKillsRetiredFileMutant|TestHarnessArchitectureGuardKillsStorageMutants|TestHarnessArchitectureIsPortable)$",
 		ExpectedTests: []string{
-			"TestPhase1ProductionDependencyAndArchitectureScope",
-			"TestPhase1SourceScopeMutantControl",
+			"TestHarnessArchitectureGuardKillsRetiredFileMutant",
+			"TestHarnessArchitectureGuardKillsStorageMutants",
+			"TestHarnessArchitectureIsPortable",
 		},
 	},
 	"provider-portable": {
@@ -138,30 +140,33 @@ var profiles = map[string]Profile{
 	},
 	"provider-adversarial": {
 		Name:     "provider-adversarial",
-		Package:  "./internal/scenario",
-		Pattern:  "^(TestBeadsDishonestRunsSharedPortableConformance|TestBeadsDishonestSharedConformanceKillsDeletedPublicMethods|TestBeadsDishonestProtocolFaultMatrix|TestBeadsDishonestScriptFailsClosedAndSchemaMirrorsActions|TestBeadsFaultRegistryExactCensus|TestBeadsFaultAuthorityAuditKillsDisconnectedCanaryTopologyMutant|TestBeadsFaultAuthorityAuditKillsUnrelatedProviderRoutingMutant|TestBeadsDishonestTruthfulWarningStaleAndWrongState|TestBeadsDishonestSlowCancellationKillsChild|TestBeadsDishonestExplicitBarrierSurvivesSchedulerLoad|TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry|TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry|TestBeadsDishonestCommentApplyTimeoutObservedBeforeRetry|TestBeadsDishonestDependencyApplyTimeoutObservedBeforeRetry|TestBeadsDishonestCatalogUpdateApplyTimeoutObservedBeforeRetry|TestBeadsUnsafeDecisionMutantsAreKilled|TestBeadsHumanAssignmentPreservation100|TestBeadsHumanAssignmentCampaignKillsPostAttributionOverwriteMutant|TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe|TestBeadsFaultDiagnosticsNeverTreatProseAsAuthority)$",
+		Package:  "./internal/tracker/beads",
+		Pattern:  "^(TestAdapterRejectsProseNestedErrorsAndIgnoresWarningWording|TestAssignmentDiagnosticsDoNotExposeProviderPayload|TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces|TestCatalogConfirmedCreateRejectsDishonestLiveProviderState|TestCatalogReplayRefusesLiveProviderDrift|TestDiscussionAmbiguousAppendObservesWithoutBlindRetry|TestDiscussionDuplicateMarkerAndRevisionDriftRefuseMutation|TestGraphAmbiguousMutationUsesObservationWithoutSecondWrite|TestGraphValidationAndProviderRefusalsDoNotBlindlyMutate|TestIncompatiblePreflightAndReadinessRefuseBeforeLockAndMutatingSideEffect|TestInfiniteProducerIsBoundedKilledAndReaped|TestMetadataConflictsAndFutureSchemaAreNonMutating|TestMissionMethodAdapterSourceKeepsProviderAuthorityBounded|TestMissionMethodDefinitionObservationDetectsEqualTimestampSemanticMutation|TestMutationAmbiguityIsMonotonicAndRedacted|TestMutationRefusalPrecedesWriterLockAndSubprocess|TestNonzeroStderrJSONMutantNeverSelectsProviderState|TestProcessRunnerBoundsCancellationAndAmbiguity|TestReadTimeoutAfterStartPreservesStartedEvidence|TestReadinessDetectsExecutableReplacementAfterPreflight|TestReadyProjectionReportsProviderUnavailable|TestSafeCompensationRefusalSensorsKillReadCompareUpdateMutant|TestServerIdentitySpoofAndStaleReadinessRefuseBeforeMutation)$",
 		Parallel: 8,
 		ExpectedTests: []string{
-			"TestBeadsDishonestAssignmentApplyTimeoutObservedBeforeRetry",
-			"TestBeadsDishonestCatalogCreateApplyTimeoutObservedBeforeRetry",
-			"TestBeadsDishonestCatalogUpdateApplyTimeoutObservedBeforeRetry",
-			"TestBeadsDishonestCommentApplyTimeoutObservedBeforeRetry",
-			"TestBeadsDishonestDependencyApplyTimeoutObservedBeforeRetry",
-			"TestBeadsDishonestExplicitBarrierSurvivesSchedulerLoad",
-			"TestBeadsDishonestProtocolFaultMatrix",
-			"TestBeadsDishonestRunsSharedPortableConformance",
-			"TestBeadsDishonestScriptFailsClosedAndSchemaMirrorsActions",
-			"TestBeadsDishonestSharedConformanceKillsDeletedPublicMethods",
-			"TestBeadsDishonestSlowCancellationKillsChild",
-			"TestBeadsDishonestTruthfulWarningStaleAndWrongState",
-			"TestBeadsFaultAuthorityAuditKillsDisconnectedCanaryTopologyMutant",
-			"TestBeadsFaultAuthorityAuditKillsUnrelatedProviderRoutingMutant",
-			"TestBeadsFaultDiagnosticsNeverTreatProseAsAuthority",
-			"TestBeadsFaultRegistryExactCensus",
-			"TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe",
-			"TestBeadsHumanAssignmentCampaignKillsPostAttributionOverwriteMutant",
-			"TestBeadsHumanAssignmentPreservation100",
-			"TestBeadsUnsafeDecisionMutantsAreKilled",
+			"TestAdapterRejectsProseNestedErrorsAndIgnoresWarningWording",
+			"TestAssignmentDiagnosticsDoNotExposeProviderPayload",
+			"TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces",
+			"TestCatalogConfirmedCreateRejectsDishonestLiveProviderState",
+			"TestCatalogReplayRefusesLiveProviderDrift",
+			"TestDiscussionAmbiguousAppendObservesWithoutBlindRetry",
+			"TestDiscussionDuplicateMarkerAndRevisionDriftRefuseMutation",
+			"TestGraphAmbiguousMutationUsesObservationWithoutSecondWrite",
+			"TestGraphValidationAndProviderRefusalsDoNotBlindlyMutate",
+			"TestIncompatiblePreflightAndReadinessRefuseBeforeLockAndMutatingSideEffect",
+			"TestInfiniteProducerIsBoundedKilledAndReaped",
+			"TestMetadataConflictsAndFutureSchemaAreNonMutating",
+			"TestMissionMethodAdapterSourceKeepsProviderAuthorityBounded",
+			"TestMissionMethodDefinitionObservationDetectsEqualTimestampSemanticMutation",
+			"TestMutationAmbiguityIsMonotonicAndRedacted",
+			"TestMutationRefusalPrecedesWriterLockAndSubprocess",
+			"TestNonzeroStderrJSONMutantNeverSelectsProviderState",
+			"TestProcessRunnerBoundsCancellationAndAmbiguity",
+			"TestReadTimeoutAfterStartPreservesStartedEvidence",
+			"TestReadinessDetectsExecutableReplacementAfterPreflight",
+			"TestReadyProjectionReportsProviderUnavailable",
+			"TestSafeCompensationRefusalSensorsKillReadCompareUpdateMutant",
+			"TestServerIdentitySpoofAndStaleReadinessRefuseBeforeMutation",
 		},
 	},
 	"provider-real": {
@@ -176,29 +181,44 @@ var profiles = map[string]Profile{
 	},
 	"fault": {
 		Name:    "fault",
-		Package: "./internal/scenario",
-		Pattern: "^(TestWP01CrashAtClaimBoundaryLeavesNoAuthority|TestWorkspaceCrashReplayMatrixSR05ThroughSR09|TestHandoffFaultBoundaryReplayHR00ThroughHR07|TestIntegrationIG00ThroughIG09RecoversFromRealGitFacts|TestStartRunRecoveryCrashMatrix|TestCycle1NamedTrackerCrashBoundariesRecoverAcrossProcesses|TestZombieWriterCommitsAfterExpiryButCannotCrossControlPlane|TestZombieRevisionInvalidationUsesSameExpiryQuarantineTransition)$",
+		Package: "./internal/controlstore/gapdb",
+		Pattern: "^(TestAuthorityAdapterReconcilesRegisteredAmbiguousPublicationV2|TestCapabilityAuthorityRecoversCommittedLostResponseWithoutRepublishing|TestMissionAuthorityAdapterOneBatchRestartReplayV2|TestOutboxGapDBFaultsPreserveStableIdentityAndNeverMintPermissionV2|TestWorkspaceProductionZombieReplacementCampaignV2)$",
 		ExpectedTests: []string{
-			"TestCycle1NamedTrackerCrashBoundariesRecoverAcrossProcesses",
-			"TestHandoffFaultBoundaryReplayHR00ThroughHR07",
-			"TestIntegrationIG00ThroughIG09RecoversFromRealGitFacts",
-			"TestStartRunRecoveryCrashMatrix",
-			"TestWP01CrashAtClaimBoundaryLeavesNoAuthority",
-			"TestWorkspaceCrashReplayMatrixSR05ThroughSR09",
-			"TestZombieRevisionInvalidationUsesSameExpiryQuarantineTransition",
-			"TestZombieWriterCommitsAfterExpiryButCannotCrossControlPlane",
+			"TestAuthorityAdapterReconcilesRegisteredAmbiguousPublicationV2",
+			"TestCapabilityAuthorityRecoversCommittedLostResponseWithoutRepublishing",
+			"TestMissionAuthorityAdapterOneBatchRestartReplayV2",
+			"TestOutboxGapDBFaultsPreserveStableIdentityAndNeverMintPermissionV2",
+			"TestWorkspaceProductionZombieReplacementCampaignV2",
 		},
 	},
 	"soak": {
 		Name:    "soak",
-		Package: "./internal/scenario",
-		Pattern: "^(TestPhase1TwoAgentTortureChamber|TestWP01ContentionCeiling|TestIntegrationSerializesTwoLanesFromTwoMissions|TestPhase1ExactCatalogScenarios|TestPhase1CatalogRegressionScenarios)$",
+		Package: "./internal/controlstore/gapdb",
+		Pattern: "^(TestEffectAuthoritySameSlotAndUnrelatedSlotContentionCampaignV2|TestExecutionAuthorityProductionContentionMatrixV2|TestHandoffGapDBPublisherCommitsOneCompleteBatchAndContendsV2|TestReviewGapDBPublisherCommitsOneCompleteBatchAndContendsV2|TestWorkspaceProductionZombieReplacementCampaignV2)$",
 		ExpectedTests: []string{
-			"TestIntegrationSerializesTwoLanesFromTwoMissions",
-			"TestPhase1CatalogRegressionScenarios",
-			"TestPhase1ExactCatalogScenarios",
-			"TestPhase1TwoAgentTortureChamber",
-			"TestWP01ContentionCeiling",
+			"TestEffectAuthoritySameSlotAndUnrelatedSlotContentionCampaignV2",
+			"TestExecutionAuthorityProductionContentionMatrixV2",
+			"TestHandoffGapDBPublisherCommitsOneCompleteBatchAndContendsV2",
+			"TestReviewGapDBPublisherCommitsOneCompleteBatchAndContendsV2",
+			"TestWorkspaceProductionZombieReplacementCampaignV2",
+		},
+	},
+	"portable-scenario": {
+		Name:    "portable-scenario",
+		Package: "./internal/scenario",
+		Pattern: "^(TestBehaviorParityCensus|TestBehaviorParityCensusMutants|TestCrashAmbiguousDishonestUniversalCensus|TestHarnessArchitectureGuardKillsRetiredFileMutant|TestHarnessArchitectureGuardKillsStorageMutants|TestHarnessArchitectureIsPortable|TestProductionCapabilityCompositionBoundaryBypassMutant|TestProductionCapabilityCompositionHasOnePublicationBoundary|TestTerminalSemanticEquivalenceControlledMutants|TestUniversalCampaignCensusMutants|TestWorkCoordinateAgreementControlledMutants)$",
+		ExpectedTests: []string{
+			"TestBehaviorParityCensus",
+			"TestBehaviorParityCensusMutants",
+			"TestCrashAmbiguousDishonestUniversalCensus",
+			"TestHarnessArchitectureGuardKillsRetiredFileMutant",
+			"TestHarnessArchitectureGuardKillsStorageMutants",
+			"TestHarnessArchitectureIsPortable",
+			"TestProductionCapabilityCompositionBoundaryBypassMutant",
+			"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+			"TestTerminalSemanticEquivalenceControlledMutants",
+			"TestUniversalCampaignCensusMutants",
+			"TestWorkCoordinateAgreementControlledMutants",
 		},
 	},
 	"full-scenario": {
@@ -285,17 +305,29 @@ var profiles = map[string]Profile{
 var campaigns = map[string]Campaign{
 	"quality": {
 		Name: "quality", Profiles: []string{"acceptance", "architecture", "scope"},
-		UniversalTest: "TestQualityCampaignUniversalInvariants", RequireUniversal: true, RequireStaleProbe: true,
+		UniversalTest: "TestProductionCapabilityCompositionHasOnePublicationBoundary", RequireUniversal: true, RequireStaleProbe: true,
 	},
 	"full_campaign": {
-		Name: "full_campaign", Profiles: []string{"full-scenario"},
-		UniversalTest: "TestFullCampaignUniversalInvariants", RequireUniversal: true, RequireStaleProbe: true,
+		Name: "full_campaign", Profiles: []string{"fault", "portable-scenario", "soak"},
+		RequiredProfiles: []string{"fault", "portable-scenario", "soak"},
+		UniversalTest:    "TestProductionCapabilityCompositionHasOnePublicationBoundary",
+		RequiredTests: []string{
+			"TestCapabilityAuthorityRecoversCommittedLostResponseWithoutRepublishing",
+			"TestExecutionAuthorityProductionContentionMatrixV2",
+			"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+			"TestWorkspaceProductionZombieReplacementCampaignV2",
+		},
+		RequireUniversal: true, RequireStaleProbe: true,
 	},
 	"provider_bounded": {
 		Name: "provider_bounded", Profiles: []string{"provider-portable", "provider-adversarial"},
 		RequiredProfiles: []string{"provider-adversarial", "provider-portable"},
-		UniversalTest:    "TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe",
-		RequiredTests:    []string{"TestBeadsFaultsCarryUniversalAuthorityAndStaleProbe", "TestBeadsHumanAssignmentPreservation100"},
+		UniversalTest:    "TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces",
+		RequiredTests: []string{
+			"TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces",
+			"TestReadinessDetectsExecutableReplacementAfterPreflight",
+			"TestSafeCompensationRefusalSensorsKillReadCompareUpdateMutant",
+		},
 		RequireUniversal: true, RequireStaleProbe: true,
 	},
 	"provider_real": {
@@ -313,7 +345,18 @@ func ProfileByName(name string) (Profile, error) {
 		return Profile{}, fmt.Errorf("unknown campaign profile %q", name)
 	}
 	profile.ExpectedTests = append([]string(nil), profile.ExpectedTests...)
+	if profile.Pattern == "" {
+		profile.Pattern = exactProfilePattern(profile.ExpectedTests)
+	}
 	return profile, validateProfile(profile)
+}
+
+func exactProfilePattern(expected []string) string {
+	quoted := make([]string, len(expected))
+	for index, name := range expected {
+		quoted[index] = regexp.QuoteMeta(name)
+	}
+	return "^(" + strings.Join(quoted, "|") + ")$"
 }
 
 func CampaignByName(name string) (Campaign, error) {
@@ -391,6 +434,9 @@ func sortedUniqueNonempty(values []string) bool {
 func validateProfile(profile Profile) error {
 	if profile.Name == "" || profile.Package == "" || len(profile.ExpectedTests) == 0 {
 		return fmt.Errorf("profile name, package, and expected tests are required")
+	}
+	if profile.Pattern != exactProfilePattern(profile.ExpectedTests) {
+		return fmt.Errorf("profile %s selector must bind its exact expected-test census", profile.Name)
 	}
 	if profile.Parallel < 0 || profile.Parallel > 32 {
 		return fmt.Errorf("profile %s parallelism must be between 0 and 32", profile.Name)

@@ -26,9 +26,12 @@ import (
 )
 
 var (
-	externalGapDBD        = flag.String("gapdbd", "", "absolute path to the exact admitted gapdbd")
-	externalDataRoot      = flag.String("data-root", "", "absolute disposable data root for the external GapDB scenarios")
-	externalQualification = flag.Bool("qualification", false, "fail closed when external scenario prerequisites are absent")
+	externalGapDBD                  = flag.String("gapdbd", "", "absolute path to the exact admitted gapdbd")
+	externalDataRoot                = flag.String("data-root", "", "absolute disposable data root for the external GapDB scenarios")
+	externalQualification           = flag.Bool("qualification", false, "fail closed when external scenario prerequisites are absent")
+	assertionCandidateGapDBD        = flag.String("assertion-candidate-gapdbd", "", "absolute path to the exact assertion-candidate gapdbd")
+	assertionCandidateDataRoot      = flag.String("assertion-candidate-data-root", "", "absolute disposable data root for assertion-candidate scenarios")
+	assertionCandidateQualification = flag.Bool("assertion-candidate-qualification", false, "fail closed when assertion-candidate prerequisites are absent")
 )
 
 var externalScenarioIDs = []string{
@@ -148,6 +151,60 @@ func qualificationRequested() bool {
 		return true
 	}
 	value, _ := strconv.ParseBool(os.Getenv("SPEC_KITTY_M1_QUALIFICATION"))
+	return value
+}
+
+func assertionCandidateTestConfiguration() (externalConfiguration, error) {
+	binaryPath := *assertionCandidateGapDBD
+	dataRoot := *assertionCandidateDataRoot
+	if binaryPath == "" {
+		binaryPath = os.Getenv("SPEC_KITTY_ASSERTION_CANDIDATE_GAPDBD")
+	}
+	if dataRoot == "" {
+		dataRoot = os.Getenv("SPEC_KITTY_ASSERTION_CANDIDATE_DATA_ROOT")
+	}
+	if binaryPath == "" || dataRoot == "" {
+		return externalConfiguration{}, errors.New("assertion-candidate sidecar and data-root must be explicit")
+	}
+	if !filepath.IsAbs(binaryPath) || !filepath.IsAbs(dataRoot) {
+		return externalConfiguration{}, errors.New("assertion-candidate sidecar and data-root paths must be absolute")
+	}
+	info, err := os.Stat(binaryPath)
+	if err != nil {
+		return externalConfiguration{}, fmt.Errorf("assertion-candidate sidecar is inaccessible: %w", err)
+	}
+	wantBytes, wantSHA := int64(AssertionCandidateSidecarBytes), AssertionCandidateSidecarSHA256
+	if m2QualificationCandidateRequested() {
+		wantBytes, wantSHA = int64(QualificationSidecarBytes), QualificationSidecarSHA256
+	}
+	if !info.Mode().IsRegular() || info.Size() != wantBytes {
+		return externalConfiguration{}, errors.New("sidecar type or size does not match the assertion candidate")
+	}
+	contents, err := os.ReadFile(binaryPath)
+	if err != nil {
+		return externalConfiguration{}, fmt.Errorf("assertion-candidate sidecar cannot be hashed: %w", err)
+	}
+	digest := sha256.Sum256(contents)
+	if hex.EncodeToString(digest[:]) != wantSHA {
+		return externalConfiguration{}, errors.New("sidecar digest does not match the assertion candidate")
+	}
+	rootInfo, err := os.Stat(dataRoot)
+	if err != nil || !rootInfo.IsDir() {
+		return externalConfiguration{}, errors.New("assertion-candidate data-root must name an existing directory")
+	}
+	return externalConfiguration{binary: binaryPath, dataRoot: dataRoot}, nil
+}
+
+func m2QualificationCandidateRequested() bool {
+	value, _ := strconv.ParseBool(os.Getenv("SPEC_KITTY_M2_QUALIFICATION_CANDIDATE"))
+	return value
+}
+
+func assertionCandidateQualificationRequested() bool {
+	if *assertionCandidateQualification {
+		return true
+	}
+	value, _ := strconv.ParseBool(os.Getenv("SPEC_KITTY_ASSERTION_CANDIDATE_QUALIFICATION"))
 	return value
 }
 
@@ -623,6 +680,10 @@ type responseDropProxy struct {
 }
 
 func startResponseDropProxy(t *testing.T, upstream string) *responseDropProxy {
+	return startResponseDropProxyExpect(t, upstream, "external-response-loss", 3, 0)
+}
+
+func startResponseDropProxyExpect(t *testing.T, upstream, requestID string, mutationCount, assertionCount int) *responseDropProxy {
 	t.Helper()
 	socket := filepath.Join(t.TempDir(), "drop.sock")
 	listener, err := net.Listen("unix", socket)
@@ -638,7 +699,7 @@ func startResponseDropProxy(t *testing.T, upstream string) *responseDropProxy {
 				proxy.done <- err
 				return
 			}
-			if err := relayAndDrop(client, upstream); errors.Is(err, io.EOF) {
+			if err := relayAndDrop(client, upstream, requestID, mutationCount, assertionCount); errors.Is(err, io.EOF) {
 				continue // the public client's Dial readiness probe carries no request
 			} else {
 				proxy.done <- err
@@ -649,7 +710,7 @@ func startResponseDropProxy(t *testing.T, upstream string) *responseDropProxy {
 	return proxy
 }
 
-func relayAndDrop(client net.Conn, upstreamPath string) error {
+func relayAndDrop(client net.Conn, upstreamPath, requestID string, mutationCount, assertionCount int) error {
 	defer client.Close()
 	_ = client.SetDeadline(time.Now().Add(5 * time.Second))
 	request, err := readFrame(client, MaxWireFrameBytes)
@@ -680,6 +741,7 @@ func relayAndDrop(client net.Conn, upstreamPath string) error {
 			Ack                    string `json:"ack"`
 			DurableThroughRevision uint64 `json:"durable_through_revision"`
 			MutationCount          int    `json:"mutation_count"`
+			AssertionCount         int    `json:"assertion_count,omitempty"`
 		} `json:"result"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(response))
@@ -690,7 +752,7 @@ func relayAndDrop(client net.Conn, upstreamPath string) error {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return errors.New("drop proxy response contains trailing data")
 	}
-	if envelope.SchemaVersion != AdmittedWireVersion || !envelope.OK || envelope.DatabaseID == "" || envelope.Operation != "atomic_batch" || envelope.RequestID != "external-response-loss" || envelope.Result.Revision == 0 || envelope.Result.Ack != string(gapdbapi.AckDurable) || envelope.Result.DurableThroughRevision < envelope.Result.Revision || envelope.Result.MutationCount != 3 {
+	if envelope.SchemaVersion != AdmittedWireVersion || !envelope.OK || envelope.DatabaseID == "" || envelope.Operation != "atomic_batch" || envelope.RequestID != requestID || envelope.Result.Revision == 0 || envelope.Result.Ack != string(gapdbapi.AckDurable) || envelope.Result.DurableThroughRevision < envelope.Result.Revision || envelope.Result.MutationCount != mutationCount || envelope.Result.AssertionCount != assertionCount {
 		return errors.New("drop proxy observed a non-accepted response")
 	}
 	// The complete accepted frame is intentionally consumed and never written

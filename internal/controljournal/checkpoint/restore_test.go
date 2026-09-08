@@ -243,6 +243,9 @@ func TestRestoreSuffixOnlyCheckpointOnlyAndCheckpointPlusSuffix(t *testing.T) {
 }
 
 func TestRestoreCheckpointPrefixMayExceedSuffixBoundsWithoutPrefixIO(t *testing.T) {
+	if testing.Short() {
+		t.Skip("large checkpoint-prefix traversal is reserved for full qualification")
+	}
 	last := MaxRestoreEvents + 1
 	records := make([]controljournal.StoredEventV1, last)
 	for index := range records {

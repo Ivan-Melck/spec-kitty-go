@@ -12,17 +12,18 @@ import (
 )
 
 type fakeProvider struct {
-	getFn    func(context.Context, string) (gapdbapi.Record, error)
-	putFn    func(context.Context, string, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
-	absentFn func(context.Context, string, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
-	casFn    func(context.Context, string, gapdbapi.Revision, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
-	deleteFn func(context.Context, string, gapdbapi.Revision, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
-	batchFn  func(context.Context, gapdbapi.Batch) (gapdbapi.MutationResult, error)
-	scanFn   func(context.Context, string, int, string) (gapdbapi.ScanPage, error)
-	watchFn  func(context.Context, string, gapdbapi.Revision) (providerWatch, error)
-	statusFn func(context.Context) (gapdbapi.StatusResult, error)
-	healthFn func(context.Context) (gapdbapi.HealthResult, error)
-	configFn func(context.Context) (gapdbapi.ConfigResult, error)
+	getFn      func(context.Context, string) (gapdbapi.Record, error)
+	readManyFn func(context.Context, []string) (gapdbapi.ReadManyResult, error)
+	putFn      func(context.Context, string, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
+	absentFn   func(context.Context, string, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
+	casFn      func(context.Context, string, gapdbapi.Revision, []byte, *time.Time, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
+	deleteFn   func(context.Context, string, gapdbapi.Revision, gapdbapi.AckMode) (gapdbapi.MutationResult, error)
+	batchFn    func(context.Context, gapdbapi.Batch) (gapdbapi.MutationResult, error)
+	scanFn     func(context.Context, string, int, string) (gapdbapi.ScanPage, error)
+	watchFn    func(context.Context, string, gapdbapi.Revision) (providerWatch, error)
+	statusFn   func(context.Context) (gapdbapi.StatusResult, error)
+	healthFn   func(context.Context) (gapdbapi.HealthResult, error)
+	configFn   func(context.Context) (gapdbapi.ConfigResult, error)
 }
 
 var _ provider = (*fakeProvider)(nil)
@@ -32,6 +33,32 @@ func (f *fakeProvider) Get(ctx context.Context, key string) (gapdbapi.Record, er
 		return f.getFn(ctx, key)
 	}
 	return gapdbapi.Record{}, errors.New("unexpected Get")
+}
+func (f *fakeProvider) ReadMany(ctx context.Context, keys []string) (gapdbapi.ReadManyResult, error) {
+	if f.readManyFn != nil {
+		return f.readManyFn(ctx, keys)
+	}
+	if f.getFn == nil || f.statusFn == nil {
+		return gapdbapi.ReadManyResult{}, errors.New("unexpected ReadMany")
+	}
+	status, err := f.statusFn(ctx)
+	if err != nil {
+		return gapdbapi.ReadManyResult{}, err
+	}
+	result := gapdbapi.ReadManyResult{ObservedRevision: status.CurrentRevision, AsOf: time.Now().UTC(), Entries: make([]gapdbapi.ReadManyEntry, len(keys))}
+	for index, key := range keys {
+		record, readErr := f.getFn(ctx, key)
+		if readErr != nil {
+			var providerErr *gapdbapi.Error
+			if errors.As(readErr, &providerErr) && providerErr.Code == gapdbapi.CodeNotFound {
+				result.Entries[index] = gapdbapi.ReadManyEntry{Key: key}
+				continue
+			}
+			return gapdbapi.ReadManyResult{}, readErr
+		}
+		result.Entries[index] = gapdbapi.ReadManyEntry{Key: key, Found: true, Record: &record}
+	}
+	return result, nil
 }
 func (f *fakeProvider) Put(ctx context.Context, key string, value []byte, expiry *time.Time, ack gapdbapi.AckMode) (gapdbapi.MutationResult, error) {
 	if f.putFn != nil {

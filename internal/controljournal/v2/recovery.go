@@ -1,0 +1,663 @@
+package v2
+
+import (
+	"bytes"
+)
+
+const (
+	MaxRecoveryPageRecords     = 500
+	MaxRecoveryPageBytes       = 8 * 1024 * 1024
+	MaxRecoveryCursorBytes     = 16 * 1024
+	MaxRecoveryReadManyRecords = 10_000
+	MaxRecoveryReadManyBytes   = 64 * 1024 * 1024
+	MaxRecoverySnapshotRecords = 200_000
+	MaxRecoverySnapshotBytes   = 256 * 1024 * 1024
+)
+
+// DatabaseID is the durable store incarnation identity. A revision is only
+// meaningful together with this identity.
+type DatabaseID string
+
+type StoreRevisionV2 struct {
+	databaseID      DatabaseID
+	currentRevision uint64
+	durableThrough  uint64
+}
+
+func NewStoreRevisionV2(databaseID DatabaseID, currentRevision, durableThrough uint64) (StoreRevisionV2, error) {
+	if validateIdentity("database_id", string(databaseID)) != nil {
+		return StoreRevisionV2{}, invalid(ErrorInvalidIdentity, "database_id")
+	}
+	if currentRevision == 0 || durableThrough < currentRevision {
+		return StoreRevisionV2{}, invalid(ErrorInvalidVersion, "store_revision")
+	}
+	return StoreRevisionV2{databaseID: databaseID, currentRevision: currentRevision, durableThrough: durableThrough}, nil
+}
+
+func (r StoreRevisionV2) DatabaseID() DatabaseID         { return r.databaseID }
+func (r StoreRevisionV2) CurrentRevision() uint64        { return r.currentRevision }
+func (r StoreRevisionV2) DurableThroughRevision() uint64 { return r.durableThrough }
+
+type RecordAddressKindV2 string
+
+const (
+	AddressAggregateHead      RecordAddressKindV2 = "aggregate_head"
+	AddressJournalEvent       RecordAddressKindV2 = "journal_event"
+	AddressOperationBinding   RecordAddressKindV2 = "operation_binding"
+	AddressOperationHead      RecordAddressKindV2 = "operation_head"
+	AddressCheckpointRecord   RecordAddressKindV2 = "checkpoint_record"
+	AddressCheckpointSlot     RecordAddressKindV2 = "checkpoint_slot"
+	AddressPublicationWitness RecordAddressKindV2 = "publication_witness"
+)
+
+// RecordAddressV2 is a semantic address. It has no raw key constructor and
+// carries no provider namespace, escaping, or prefix detail.
+type RecordAddressV2 struct {
+	kind             RecordAddressKindV2
+	coordinate       AggregateCoordinate
+	logicalVersion   LogicalVersion
+	operationID      OperationID
+	checkpointID     CheckpointID
+	checkpointSlotID CheckpointSlotID
+	publicationID    PublicationID
+}
+
+func NewAggregateHeadAddressV2(coordinate AggregateCoordinate) (RecordAddressV2, error) {
+	if _, err := NewAggregateCoordinate(coordinate.Kind, coordinate.ID, coordinate.Scope); err != nil || coordinate.Kind == AggregateKind("operation") {
+		return RecordAddressV2{}, invalid(ErrorInvalidCanonicalData, "record_address")
+	}
+	return RecordAddressV2{kind: AddressAggregateHead, coordinate: coordinate}, nil
+}
+
+func NewJournalEventAddressV2(coordinate AggregateCoordinate, version LogicalVersion) (RecordAddressV2, error) {
+	if _, err := NewAggregateCoordinate(coordinate.Kind, coordinate.ID, coordinate.Scope); err != nil || version == 0 {
+		return RecordAddressV2{}, invalid(ErrorInvalidCanonicalData, "record_address")
+	}
+	return RecordAddressV2{kind: AddressJournalEvent, coordinate: coordinate, logicalVersion: version}, nil
+}
+
+func NewOperationBindingAddressV2(operationID OperationID) (RecordAddressV2, error) {
+	if validateIdentity("operation_id", string(operationID)) != nil {
+		return RecordAddressV2{}, invalid(ErrorInvalidIdentity, "operation_id")
+	}
+	return RecordAddressV2{kind: AddressOperationBinding, operationID: operationID}, nil
+}
+
+func NewOperationHeadAddressV2(operationID OperationID) (RecordAddressV2, error) {
+	if validateIdentity("operation_id", string(operationID)) != nil {
+		return RecordAddressV2{}, invalid(ErrorInvalidIdentity, "operation_id")
+	}
+	return RecordAddressV2{kind: AddressOperationHead, operationID: operationID}, nil
+}
+
+func NewCheckpointRecordAddressV2(checkpointID CheckpointID) (RecordAddressV2, error) {
+	if validateIdentity("checkpoint_id", string(checkpointID)) != nil {
+		return RecordAddressV2{}, invalid(ErrorInvalidIdentity, "checkpoint_id")
+	}
+	return RecordAddressV2{kind: AddressCheckpointRecord, checkpointID: checkpointID}, nil
+}
+
+func NewCheckpointSlotAddressV2(slotID CheckpointSlotID) (RecordAddressV2, error) {
+	if validateIdentity("checkpoint_slot_id", string(slotID)) != nil {
+		return RecordAddressV2{}, invalid(ErrorInvalidIdentity, "checkpoint_slot_id")
+	}
+	return RecordAddressV2{kind: AddressCheckpointSlot, checkpointSlotID: slotID}, nil
+}
+
+// WitnessAddressV2 constructs the exact semantic recovery address for this
+// publication without exposing an adapter key or adding another top-level
+// proof helper.
+func (publicationID PublicationID) WitnessAddressV2() (RecordAddressV2, error) {
+	if _, err := DecodePublicationID(string(publicationID)); err != nil {
+		return RecordAddressV2{}, err
+	}
+	return RecordAddressV2{kind: AddressPublicationWitness, publicationID: publicationID}, nil
+}
+
+func (a RecordAddressV2) Kind() RecordAddressKindV2          { return a.kind }
+func (a RecordAddressV2) Coordinate() AggregateCoordinate    { return a.coordinate }
+func (a RecordAddressV2) LogicalVersion() LogicalVersion     { return a.logicalVersion }
+func (a RecordAddressV2) OperationID() OperationID           { return a.operationID }
+func (a RecordAddressV2) CheckpointID() CheckpointID         { return a.checkpointID }
+func (a RecordAddressV2) CheckpointSlotID() CheckpointSlotID { return a.checkpointSlotID }
+func (a RecordAddressV2) PublicationID() PublicationID       { return a.publicationID }
+
+func (a RecordAddressV2) validate() error {
+	switch a.kind {
+	case AddressAggregateHead:
+		_, err := NewAggregateHeadAddressV2(a.coordinate)
+		return err
+	case AddressJournalEvent:
+		_, err := NewJournalEventAddressV2(a.coordinate, a.logicalVersion)
+		return err
+	case AddressOperationBinding:
+		_, err := NewOperationBindingAddressV2(a.operationID)
+		return err
+	case AddressOperationHead:
+		_, err := NewOperationHeadAddressV2(a.operationID)
+		return err
+	case AddressCheckpointRecord:
+		_, err := NewCheckpointRecordAddressV2(a.checkpointID)
+		return err
+	case AddressCheckpointSlot:
+		_, err := NewCheckpointSlotAddressV2(a.checkpointSlotID)
+		return err
+	case AddressPublicationWitness:
+		_, err := a.publicationID.WitnessAddressV2()
+		return err
+	default:
+		return invalid(ErrorInvalidCanonicalData, "record_address")
+	}
+}
+
+type ScanTargetKindV2 string
+
+const (
+	ScanAllAggregateHeads   ScanTargetKindV2 = "all_aggregate_heads"
+	ScanAllOperationRecords ScanTargetKindV2 = "all_operation_records"
+	ScanCheckpointSlots     ScanTargetKindV2 = "checkpoint_slots"
+)
+
+type ScanTargetV2 struct{ kind ScanTargetKindV2 }
+
+func AggregateHeadScanTargetV2() ScanTargetV2   { return ScanTargetV2{kind: ScanAllAggregateHeads} }
+func OperationRecordScanTargetV2() ScanTargetV2 { return ScanTargetV2{kind: ScanAllOperationRecords} }
+func CheckpointSlotScanTargetV2() ScanTargetV2  { return ScanTargetV2{kind: ScanCheckpointSlots} }
+func (t ScanTargetV2) Kind() ScanTargetKindV2   { return t.kind }
+func (t ScanTargetV2) validate() error {
+	switch t.kind {
+	case ScanAllAggregateHeads, ScanAllOperationRecords, ScanCheckpointSlots:
+		return nil
+	default:
+		return invalid(ErrorInvalidCanonicalData, "scan_target")
+	}
+}
+
+type ReadRequestV2 struct {
+	address RecordAddressV2
+	attempt StoreRevisionV2
+}
+
+func NewReadRequestV2(address RecordAddressV2, attempt StoreRevisionV2) (ReadRequestV2, error) {
+	if err := address.validate(); err != nil {
+		return ReadRequestV2{}, err
+	}
+	if _, err := NewStoreRevisionV2(attempt.databaseID, attempt.currentRevision, attempt.durableThrough); err != nil {
+		return ReadRequestV2{}, err
+	}
+	return ReadRequestV2{address: address, attempt: attempt}, nil
+}
+
+func (r ReadRequestV2) Address() RecordAddressV2         { return r.address }
+func (r ReadRequestV2) AttemptRevision() StoreRevisionV2 { return r.attempt }
+
+// ReadManyRequestV2 is an exact, ordered set of reads against one captured
+// store revision. Providers must return the complete set or one typed error;
+// partial success is never evidence for recovery.
+type ReadManyRequestV2 struct {
+	requests []ReadRequestV2
+	maxBytes int
+}
+
+func NewReadManyRequestV2(requests []ReadRequestV2, maxBytes int) (ReadManyRequestV2, error) {
+	if len(requests) == 0 || len(requests) > MaxRecoveryReadManyRecords || maxBytes <= 0 || maxBytes > MaxRecoveryReadManyBytes {
+		return ReadManyRequestV2{}, invalid(ErrorBudgetExceeded, "read_many_request")
+	}
+	attempt := requests[0].attempt
+	seen := make(map[RecordAddressV2]struct{}, len(requests))
+	owned := make([]ReadRequestV2, len(requests))
+	for index, request := range requests {
+		if err := request.address.validate(); err != nil {
+			return ReadManyRequestV2{}, err
+		}
+		if request.attempt != attempt {
+			return ReadManyRequestV2{}, invalid(ErrorRevisionMoved, "read_many_attempt")
+		}
+		if _, duplicate := seen[request.address]; duplicate {
+			return ReadManyRequestV2{}, invalid(ErrorInvalidCanonicalData, "read_many_duplicate")
+		}
+		seen[request.address] = struct{}{}
+		owned[index] = request
+	}
+	return ReadManyRequestV2{requests: owned, maxBytes: maxBytes}, nil
+}
+
+func (r ReadManyRequestV2) Requests() []ReadRequestV2 {
+	return append([]ReadRequestV2(nil), r.requests...)
+}
+func (r ReadManyRequestV2) AttemptRevision() StoreRevisionV2 {
+	if len(r.requests) == 0 {
+		return StoreRevisionV2{}
+	}
+	return r.requests[0].attempt
+}
+func (r ReadManyRequestV2) MaxBytes() int { return r.maxBytes }
+
+type ScanRequestV2 struct {
+	target   ScanTargetV2
+	attempt  StoreRevisionV2
+	cursor   []byte
+	limit    int
+	maxBytes int
+}
+
+func NewScanRequestV2(target ScanTargetV2, attempt StoreRevisionV2, cursor []byte, limit, maxBytes int) (ScanRequestV2, error) {
+	if err := target.validate(); err != nil {
+		return ScanRequestV2{}, err
+	}
+	if _, err := NewStoreRevisionV2(attempt.databaseID, attempt.currentRevision, attempt.durableThrough); err != nil {
+		return ScanRequestV2{}, err
+	}
+	if len(cursor) > MaxRecoveryCursorBytes || limit <= 0 || limit > MaxRecoveryPageRecords || maxBytes <= 0 || maxBytes > MaxRecoveryPageBytes {
+		return ScanRequestV2{}, invalid(ErrorBudgetExceeded, "scan_request")
+	}
+	return ScanRequestV2{target: target, attempt: attempt, cursor: append([]byte(nil), cursor...), limit: limit, maxBytes: maxBytes}, nil
+}
+
+func (r ScanRequestV2) Target() ScanTargetV2             { return r.target }
+func (r ScanRequestV2) AttemptRevision() StoreRevisionV2 { return r.attempt }
+func (r ScanRequestV2) Cursor() []byte                   { return append([]byte(nil), r.cursor...) }
+func (r ScanRequestV2) Limit() int                       { return r.limit }
+func (r ScanRequestV2) MaxBytes() int                    { return r.maxBytes }
+
+type RecoveryRecordV2 struct {
+	address     RecordAddressV2
+	canonical   []byte
+	revision    uint64
+	expiresAt   string
+	addressSize int
+}
+
+func NewRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
+	record, err := newRecoveryRecordV2(address, canonical, revision, expiresAt)
+	if err != nil {
+		return RecoveryRecordV2{}, err
+	}
+	record.canonical = append([]byte(nil), canonical...)
+	return record, nil
+}
+
+// TakeRecoveryRecordV2 validates and consumes caller-owned bytes. It is
+// restricted by Go's internal package boundary and clears the supplied slice;
+// all public record access remains defensive.
+func TakeRecoveryRecordV2(address RecordAddressV2, canonical *[]byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
+	if canonical == nil {
+		return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record")
+	}
+	owned := *canonical
+	record, err := newRecoveryRecordV2(address, owned, revision, expiresAt)
+	if err != nil {
+		return RecoveryRecordV2{}, err
+	}
+	*canonical = nil
+	return record, nil
+}
+
+func newRecoveryRecordV2(address RecordAddressV2, canonical []byte, revision uint64, expiresAt string) (RecoveryRecordV2, error) {
+	if err := address.validate(); err != nil {
+		return RecoveryRecordV2{}, err
+	}
+	maximum, err := recoveryRecordMaximumV2(address.kind)
+	if err != nil {
+		return RecoveryRecordV2{}, err
+	}
+	if revision == 0 || len(canonical) == 0 || len(canonical) > maximum {
+		return RecoveryRecordV2{}, invalid(ErrorBudgetExceeded, "recovery_record")
+	}
+	// Validate the exact caller bytes without manufacturing a full-size
+	// intermediate copy. canonicalObjectOwned returns the input only for the
+	// complete canonical fast path; its reference path still normalizes into a
+	// distinct value, so bytes.Equal continues to reject alternate spellings.
+	value, err := canonicalObjectOwned(canonical, maximum)
+	if err != nil || !bytes.Equal(value, canonical) {
+		return RecoveryRecordV2{}, invalid(ErrorMalformed, "recovery_record")
+	}
+	if expiresAt != "" && !canonicalUTCInstant(expiresAt) {
+		return RecoveryRecordV2{}, invalid(ErrorInvalidCanonicalData, "recovery_record_expiry")
+	}
+	addressSize := semanticRecoveryAddressSizeV2(address)
+	if addressSize <= 0 || addressSize >= MaxRecoverySnapshotBytes {
+		return RecoveryRecordV2{}, invalid(ErrorBudgetExceeded, "recovery_record_address")
+	}
+	return RecoveryRecordV2{address: address, canonical: canonical, revision: revision, expiresAt: expiresAt, addressSize: addressSize}, nil
+}
+
+func recoveryRecordMaximumV2(kind RecordAddressKindV2) (int, error) {
+	switch kind {
+	case AddressCheckpointRecord:
+		return MaxCheckpointValueBytes, nil
+	case AddressJournalEvent:
+		return MaxEventEnvelopeBytes, nil
+	case AddressAggregateHead,
+		AddressOperationBinding,
+		AddressOperationHead,
+		AddressCheckpointSlot,
+		AddressPublicationWitness:
+		return MaxCanonicalPayloadBytes, nil
+	default:
+		return 0, invalid(ErrorInvalidCanonicalData, "record_address")
+	}
+}
+
+func (r RecoveryRecordV2) Address() RecordAddressV2 { return r.address }
+func (r RecoveryRecordV2) CanonicalValue() []byte   { return append([]byte(nil), r.canonical...) }
+func (r RecoveryRecordV2) CanonicalSizeV2() int     { return len(r.canonical) }
+func (r RecoveryRecordV2) RecordRevision() uint64   { return r.revision }
+func (r RecoveryRecordV2) ExpiresAt() string        { return r.expiresAt }
+
+// RecoverySnapshotRequestV2 asks an optional provider capability for one
+// complete, immutable record census at the already captured revision. The
+// provider supplies bytes only; RestoreV2 remains the semantic verifier.
+type RecoverySnapshotRequestV2 struct {
+	attempt    StoreRevisionV2
+	maxRecords int
+	maxBytes   int
+}
+
+func NewRecoverySnapshotRequestV2(attempt StoreRevisionV2, maxRecords, maxBytes int) (RecoverySnapshotRequestV2, error) {
+	if _, err := NewStoreRevisionV2(attempt.databaseID, attempt.currentRevision, attempt.durableThrough); err != nil {
+		return RecoverySnapshotRequestV2{}, err
+	}
+	if maxRecords <= 0 || maxRecords > MaxRecoverySnapshotRecords || maxBytes <= 0 || maxBytes > MaxRecoverySnapshotBytes {
+		return RecoverySnapshotRequestV2{}, invalid(ErrorBudgetExceeded, "recovery_snapshot_request")
+	}
+	return RecoverySnapshotRequestV2{attempt: attempt, maxRecords: maxRecords, maxBytes: maxBytes}, nil
+}
+
+func (r RecoverySnapshotRequestV2) AttemptRevision() StoreRevisionV2 { return r.attempt }
+func (r RecoverySnapshotRequestV2) MaxRecords() int                  { return r.maxRecords }
+func (r RecoverySnapshotRequestV2) MaxBytes() int                    { return r.maxBytes }
+
+// RecoverySnapshotV2 owns the complete provider-neutral record set. Its
+// constructor validates identity, revision, expiry, uniqueness, and budgets;
+// downstream recovery still validates every record's domain meaning.
+type RecoverySnapshotV2 struct {
+	observedRevision uint64
+	asOf             string
+	records          []RecoveryRecordV2
+	byAddress        map[RecordAddressV2]RecoveryRecordV2
+}
+
+func NewRecoverySnapshotV2(observedRevision uint64, asOf string, records []RecoveryRecordV2) (RecoverySnapshotV2, error) {
+	if observedRevision == 0 || !canonicalUTCInstant(asOf) || len(records) > MaxRecoverySnapshotRecords {
+		return RecoverySnapshotV2{}, invalid(ErrorBudgetExceeded, "recovery_snapshot")
+	}
+	byAddress := make(map[RecordAddressV2]RecoveryRecordV2, len(records))
+	owned := make([]RecoveryRecordV2, len(records))
+	bytesUsed := 0
+	for index, record := range records {
+		// RecoveryRecordV2's private fields can only be sealed by its validating
+		// constructor outside this package. Do not revalidate every address at
+		// the aggregate snapshot boundary.
+		if record.addressSize <= 0 || record.revision == 0 || record.revision > observedRevision || len(record.canonical) == 0 {
+			return RecoverySnapshotV2{}, invalid(ErrorMalformed, "recovery_snapshot_record")
+		}
+		if _, duplicate := byAddress[record.address]; duplicate {
+			return RecoverySnapshotV2{}, invalid(ErrorMalformed, "recovery_snapshot_duplicate")
+		}
+		byAddress[record.address] = record
+		if record.expiresAt != "" {
+			if !canonicalUTCInstantAfter(record.expiresAt, asOf) {
+				return RecoverySnapshotV2{}, invalid(ErrorMalformed, "recovery_snapshot_expiry")
+			}
+		}
+		bytesUsed += record.CanonicalSizeV2() + record.addressSize
+		if bytesUsed > MaxRecoverySnapshotBytes {
+			return RecoverySnapshotV2{}, invalid(ErrorBudgetExceeded, "recovery_snapshot_bytes")
+		}
+		// RecoveryRecordV2 already owns sealed canonical bytes and exposes only
+		// defensive copies. Copy the record table, not every immutable payload.
+		owned[index] = record
+	}
+	return RecoverySnapshotV2{observedRevision: observedRevision, asOf: asOf, records: owned, byAddress: byAddress}, nil
+}
+
+func (r RecoverySnapshotV2) ObservedRevision() uint64 { return r.observedRevision }
+func (r RecoverySnapshotV2) AsOf() string             { return r.asOf }
+func (r RecoverySnapshotV2) Records() []RecoveryRecordV2 {
+	result := make([]RecoveryRecordV2, len(r.records))
+	for index := range r.records {
+		result[index] = cloneRecoveryRecord(r.records[index])
+	}
+	return result
+}
+
+// VisitRecordsV2 provides bounded read-only iteration without cloning the
+// entire snapshot payload set. RecoveryRecordV2 keeps its fields private and
+// CanonicalValue still returns a defensive copy.
+func (r RecoverySnapshotV2) VisitRecordsV2(visit func(RecoveryRecordV2) error) error {
+	if visit == nil {
+		return invalid(ErrorInvalidCanonicalData, "recovery_snapshot_visitor")
+	}
+	for _, record := range r.records {
+		if err := visit(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LookupRecordV2 returns an immutable sealed record value; its byte accessor
+// remains defensive.
+func (r RecoverySnapshotV2) LookupRecordV2(address RecordAddressV2) (RecoveryRecordV2, bool) {
+	record, ok := r.byAddress[address]
+	return record, ok
+}
+
+func semanticRecoveryAddressSizeV2(address RecordAddressV2) int {
+	switch address.kind {
+	case AddressAggregateHead, AddressJournalEvent:
+		encoded, err := CanonicalAggregateCoordinate(address.coordinate)
+		if err != nil {
+			return MaxRecoverySnapshotBytes
+		}
+		return len(encoded) + 16
+	case AddressOperationBinding, AddressOperationHead:
+		return len(address.operationID) + 8
+	case AddressCheckpointRecord:
+		return len(address.checkpointID) + 8
+	case AddressCheckpointSlot:
+		return len(address.checkpointSlotID) + 8
+	case AddressPublicationWitness:
+		return len(address.publicationID) + 8
+	default:
+		return MaxRecoverySnapshotBytes
+	}
+}
+
+// RecoveryReadManyResultV2 is one complete provider observation. Records are
+// retained in request order by the reader implementation and are immutable to
+// callers. Missing records are represented by a typed read error, never by a
+// shorter result.
+type RecoveryReadManyResultV2 struct {
+	observedRevision uint64
+	asOf             string
+	records          []RecoveryRecordV2
+}
+
+func NewRecoveryReadManyResultV2(observedRevision uint64, asOf string, records []RecoveryRecordV2) (RecoveryReadManyResultV2, error) {
+	if observedRevision == 0 || !canonicalUTCInstant(asOf) || len(records) == 0 || len(records) > MaxRecoveryReadManyRecords {
+		return RecoveryReadManyResultV2{}, invalid(ErrorBudgetExceeded, "read_many_result")
+	}
+	seen := make(map[RecordAddressV2]struct{}, len(records))
+	owned := make([]RecoveryRecordV2, len(records))
+	bytesUsed := 0
+	for index, record := range records {
+		if err := record.address.validate(); err != nil || record.revision == 0 || record.revision > observedRevision || len(record.canonical) == 0 {
+			return RecoveryReadManyResultV2{}, invalid(ErrorMalformed, "read_many_record")
+		}
+		if _, duplicate := seen[record.address]; duplicate {
+			return RecoveryReadManyResultV2{}, invalid(ErrorMalformed, "read_many_duplicate")
+		}
+		seen[record.address] = struct{}{}
+		bytesUsed += record.CanonicalSizeV2()
+		if bytesUsed > MaxRecoveryReadManyBytes {
+			return RecoveryReadManyResultV2{}, invalid(ErrorBudgetExceeded, "read_many_bytes")
+		}
+		// RecoveryRecordV2 owns bytes sealed by its validating constructor and
+		// exposes those bytes only through a defensive accessor. Copy the record
+		// table, not every immutable payload, at post-seal composition boundaries.
+		owned[index] = record
+	}
+	return RecoveryReadManyResultV2{observedRevision: observedRevision, asOf: asOf, records: owned}, nil
+}
+
+func (r RecoveryReadManyResultV2) ObservedRevision() uint64 { return r.observedRevision }
+func (r RecoveryReadManyResultV2) AsOf() string             { return r.asOf }
+func (r RecoveryReadManyResultV2) Records() []RecoveryRecordV2 {
+	result := make([]RecoveryRecordV2, len(r.records))
+	copy(result, r.records)
+	return result
+}
+
+type RecoveryPageV2 struct {
+	observedRevision uint64
+	asOf             string
+	records          []RecoveryRecordV2
+	cursor           []byte
+	truncated        bool
+}
+
+func NewRecoveryPageV2(observedRevision uint64, asOf string, records []RecoveryRecordV2, cursor []byte, truncated bool) (RecoveryPageV2, error) {
+	if observedRevision == 0 || !canonicalUTCInstant(asOf) || len(records) > MaxRecoveryPageRecords || len(cursor) > MaxRecoveryCursorBytes {
+		return RecoveryPageV2{}, invalid(ErrorBudgetExceeded, "recovery_page")
+	}
+	if truncated != (len(cursor) != 0) {
+		return RecoveryPageV2{}, invalid(ErrorMalformed, "recovery_page_cursor")
+	}
+	total := 0
+	copied := make([]RecoveryRecordV2, len(records))
+	for index, record := range records {
+		if err := record.address.validate(); err != nil || record.revision == 0 || len(record.canonical) == 0 {
+			return RecoveryPageV2{}, invalid(ErrorMalformed, "recovery_page_record")
+		}
+		total += len(record.canonical)
+		if total > MaxRecoveryPageBytes {
+			return RecoveryPageV2{}, invalid(ErrorBudgetExceeded, "recovery_page_bytes")
+		}
+		copied[index] = cloneRecoveryRecord(record)
+	}
+	return RecoveryPageV2{observedRevision: observedRevision, asOf: asOf, records: copied, cursor: append([]byte(nil), cursor...), truncated: truncated}, nil
+}
+
+// canonicalUTCInstant admits exactly the UTC representation produced by
+// RFC3339Nano. The package's pure-foundation import boundary excludes clock
+// packages, so the grammar below independently validates the calendar and
+// RFC3339Nano's unique non-zero fractional representation, including year zero.
+func canonicalUTCInstant(value string) bool {
+	if len(value) == 20 {
+		return value[19] == 'Z' && canonicalUTCRecoverySecond(value[:19])
+	}
+	if len(value) < 22 || len(value) > 30 || value[19] != '.' || value[len(value)-1] != 'Z' || !canonicalUTCRecoverySecond(value[:19]) {
+		return false
+	}
+	fraction := value[20 : len(value)-1]
+	for index := range fraction {
+		if fraction[index] < '0' || fraction[index] > '9' {
+			return false
+		}
+	}
+	// RFC3339Nano removes trailing zeroes. A final non-zero digit therefore
+	// proves both a non-zero fraction and the absence of an alternate spelling.
+	return fraction[len(fraction)-1] != '0'
+}
+
+func canonicalUTCRecoverySecond(value string) bool {
+	if len(value) != 19 || value[4] != '-' || value[7] != '-' || value[10] != 'T' || value[13] != ':' || value[16] != ':' {
+		return false
+	}
+	for _, index := range [...]int{0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18} {
+		if value[index] < '0' || value[index] > '9' {
+			return false
+		}
+	}
+	digit := func(index int) int { return int(value[index] - '0') }
+	number := func(a, b int) int { return digit(a)*10 + digit(b) }
+	year := digit(0)*1000 + digit(1)*100 + digit(2)*10 + digit(3)
+	month, day := number(5, 6), number(8, 9)
+	hour, minute, second := number(11, 12), number(14, 15), number(17, 18)
+	if month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59 {
+		return false
+	}
+	days := [...]int{0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+	if month == 2 && (year%400 == 0 || year%4 == 0 && year%100 != 0) {
+		days[2] = 29
+	}
+	return day >= 1 && day <= days[month]
+}
+
+func canonicalUTCInstantAfter(left, right string) bool {
+	if !canonicalUTCInstant(left) || !canonicalUTCInstant(right) {
+		return false
+	}
+	if left[:19] != right[:19] {
+		return left[:19] > right[:19]
+	}
+	fraction := func(value string, index int) byte {
+		if len(value) == 20 || index >= len(value)-21 {
+			return '0'
+		}
+		return value[20+index]
+	}
+	for index := 0; index < 9; index++ {
+		if l, r := fraction(left, index), fraction(right, index); l != r {
+			return l > r
+		}
+	}
+	return false
+}
+
+func cloneRecoveryRecord(record RecoveryRecordV2) RecoveryRecordV2 {
+	copy := record
+	copy.canonical = append([]byte(nil), record.canonical...)
+	return copy
+}
+
+func (p RecoveryPageV2) ObservedRevision() uint64 { return p.observedRevision }
+func (p RecoveryPageV2) AsOf() string             { return p.asOf }
+func (p RecoveryPageV2) Records() []RecoveryRecordV2 {
+	result := make([]RecoveryRecordV2, len(p.records))
+	for index := range p.records {
+		result[index] = cloneRecoveryRecord(p.records[index])
+	}
+	return result
+}
+func (p RecoveryPageV2) Cursor() []byte  { return append([]byte(nil), p.cursor...) }
+func (p RecoveryPageV2) Truncated() bool { return p.truncated }
+
+// ValidateStableRecoveryAttemptV2 validates the enforceable GapDB protocol. It
+// does not imply or request as-of Get semantics: equal capture/final store
+// coordinates prove that latest-value reads were coherent during the attempt.
+func ValidateStableRecoveryAttemptV2(capture StoreRevisionV2, pages []RecoveryPageV2, records []RecoveryRecordV2, final StoreRevisionV2) error {
+	if _, err := NewStoreRevisionV2(capture.databaseID, capture.currentRevision, capture.durableThrough); err != nil {
+		return err
+	}
+	if _, err := NewStoreRevisionV2(final.databaseID, final.currentRevision, final.durableThrough); err != nil {
+		return err
+	}
+	if capture.databaseID != final.databaseID || capture.currentRevision != final.currentRevision {
+		return invalid(ErrorRevisionMoved, "recovery_attempt")
+	}
+	validateRecord := func(record RecoveryRecordV2) error {
+		if record.revision == 0 || record.revision > capture.currentRevision {
+			return invalid(ErrorRevisionMoved, "record_revision")
+		}
+		return record.address.validate()
+	}
+	for _, page := range pages {
+		if page.observedRevision != capture.currentRevision {
+			return invalid(ErrorRevisionMoved, "scan_revision")
+		}
+		for _, record := range page.records {
+			if err := validateRecord(record); err != nil {
+				return err
+			}
+		}
+	}
+	for _, record := range records {
+		if err := validateRecord(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-kitty.dev/contracts/historical-state-disposition-v1.schema.json",
+  "title": "Spec Kitty Historical State Disposition v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version","control_root_sha256","classification","findings","current_mutation_count","action","diagnosis_code"],
+  "properties": {
+    "schema_version":{"const":1},
+    "control_root_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "classification":{"enum":["empty_supported","current_supported","historical","mixed","unsafe","malformed","ambiguous"]},
+    "findings":{"type":"array","maxItems":256,"items":{"$ref":"#/$defs/finding"}},
+    "current_mutation_count":{"type":"integer","minimum":0,"maximum":0},
+    "action":{"enum":["initialize","recover","offline_disposition_required"]},
+    "diagnosis_code":{"type":"string","pattern":"^[A-Z][A-Z0-9_]{0,63}$"}
+  },
+  "$defs": {
+    "finding": {
+      "type":"object",
+      "additionalProperties":false,
+      "required":["kind","detail_code"],
+      "properties": {
+        "kind":{"type":"string","pattern":"^[a-z][a-z0-9_.-]{0,63}$"},
+        "relative_path":{"type":"string","minLength":1,"maxLength":512},
+        "observed_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+        "detail_code":{"type":"string","pattern":"^[A-Z][A-Z0-9_]{0,63}$"}
+      }
+    }
+  }
+}

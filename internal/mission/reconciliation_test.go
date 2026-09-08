@@ -22,7 +22,7 @@ func TestSuccessorPublicationAtomicallyAdvancesPointerAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Replayed || result.Revision.ID() != command.Candidate.ID() || result.Mission.CurrentWorkRevisionID != command.Candidate.ID() || result.Mission.StateVersion != command.ExpectedMission.StateVersion+1 || result.Mission.Lifecycle != LifecycleTerminal || result.Mission.CurrentStep != StepWorkFinalized || result.Mission.TerminalOutcome != OutcomeWorkFinalized || len(result.RequestDigest) != 64 {
+	if result.Replayed || result.Revision.ID() != command.Candidate.ID() || result.Mission.CurrentWorkRevisionID != command.Candidate.ID() || result.Mission.StateVersion != command.ExpectedMission.StateVersion+1 || result.Mission.Lifecycle != LifecycleOpen || result.Mission.CurrentStep != command.ExpectedMission.CurrentStep || result.Mission.TerminalOutcome != "" || len(result.RequestDigest) != 64 {
 		t.Fatalf("incomplete publication result: %#v", result)
 	}
 	wantKinds := []AuthorityActionKind{AuthorityExpireRun, AuthorityQuarantineWorkspace}
@@ -31,6 +31,18 @@ func TestSuccessorPublicationAtomicallyAdvancesPointerAndReplays(t *testing.T) {
 	slices.Sort(wantKinds)
 	if !slices.Equal(gotKinds, wantKinds) || store.publishCalls.Load() != 1 {
 		t.Fatalf("durable action facts=%#v publish=%d", result.Actions, store.publishCalls.Load())
+	}
+	prior, err := sealWorkRevisionAuthorityV2(command.ExpectedOld)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SealReconciledWorkRevisionSelectionV2(prior, result); err != nil {
+		t.Fatalf("validated successor publication did not mint work-revision authority: %v", err)
+	}
+	forged := result
+	forged.publication = workRevisionPublicationV2{}
+	if _, err := SealReconciledWorkRevisionSelectionV2(prior, forged); !IsMissionAuthorityKindV2(err, MissionAuthorityInvalidRequestV2) {
+		t.Fatalf("caller-authored successor result minted work-revision authority: %v", err)
 	}
 	replay, err := service.Publish(context.Background(), command)
 	if err != nil || !replay.Replayed || store.publishCalls.Load() != 1 || replay.RequestDigest != result.RequestDigest || replay.Revision.ID() != result.Revision.ID() {
@@ -395,11 +407,8 @@ func successorPublicationFixture(t *testing.T, operation ids.OperationID) Succes
 		t.Fatal(err)
 	}
 	mission := oldCommand.ExpectedMission.clone()
-	mission.CurrentStep = StepWorkFinalized
 	mission.CurrentWorkRevisionID = old.ID()
 	mission.StateVersion++
-	mission.Lifecycle = LifecycleTerminal
-	mission.TerminalOutcome = OutcomeWorkFinalized
 	mission.UpdatedAt = oldCommand.OccurredAt
 	return SuccessorPublicationCommand{MissionID: old.MissionID(), ProjectID: old.ProjectID(), ExpectedMission: mission, ExpectedCurrentGeneration: 1, ExpectedOld: old, Candidate: candidate, Drift: drift, ReconciliationID: "reconciliation-successor", Reconciliation: plan, OperationID: operation, ActorID: "actor-reconciler", GovernanceContextID: "governance-reconcile", Rationale: rationale, OccurredAt: when}
 }

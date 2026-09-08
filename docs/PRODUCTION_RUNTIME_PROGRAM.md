@@ -1,6 +1,6 @@
 # Production Runtime Program
 
-Status: **active implementation program — M1 accepted; M2 next**
+Status: **active implementation program — M1 adopted; M2 release-ready, adoption pending**
 
 Program ID: `production-runtime`
 
@@ -25,11 +25,14 @@ mission-review, and retrospective gates.
 
 M1 is **accepted** at the exact identities recorded in
 [`programs/evidence/m1-adoption.json`](programs/evidence/m1-adoption.json) and
-its [adoption closeout](programs/evidence/m1-adoption-closeout.md). M2 is the
-next proposed mission and is now eligible for admission. M3–M7 remain proposed
-and dependency-blocked. This execution status does not transfer M1's narrow
-journal proof to the full authority store, production host, API 2.0, neutral
-acceptance, or MCP.
+its [adoption closeout](programs/evidence/m1-adoption-closeout.md). M2's exact
+GapDB-only production-authority candidate completed the clean crown campaign,
+independent review, recursive release verification, mission acceptance,
+integration, and post-merge mission review. It is technically release-ready;
+its release receipt intentionally records `adopted=false`. M3–M7 remain
+dependency-blocked until the exact M2 tuple receives a separate attributable
+human adoption record. This result does not transfer M2 proof to API 2.0,
+neutral acceptance, real-agent composition, or MCP.
 
 The program is intentionally not a mega-mission:
 
@@ -235,7 +238,8 @@ and signed adoption evidence.
 
 ### M2 — GapDB-Only Production Authority
 
-**Status:** proposed
+**Status:** implementation complete, accepted, merged, and post-merge reviewed;
+exact source-bound release is ready for a separate human adoption decision
 
 **Outcome:** Move all authority capabilities to the event and CAS model and
 erase SQLite from the production graph.
@@ -280,9 +284,18 @@ write sequences.
 **Rollback:** revert the unshipped GapDB authority adapter as a unit and repair
 it on its branch. Never ship dual writes or re-enable the forbidden fallback.
 
-**Successors consume:** GapDB-backed domain ports, stable event families,
-recovery/ambiguity semantics, structural absence evidence, and a production
-authority composition that no longer exposes SQL behavior.
+**Successors consume:** only the exact verified M2 manifest tuple: GapDB-backed
+consumer-owned domain ports, the 15-entry event-family/schema/reducer registry,
+operation binding and replay semantics, memory-primary progress projections,
+single-host ownership, checkpoint/restore and fresh-epoch rules, structural
+absence evidence, and the explicit historical-root refusal contract.
+
+Qualification packages and `cmd/spk-m2-qualification` are not production
+ports. Successors must not import them, open GapDB directly, import adapters
+into kernels, trust tracker/Git state as authority, revive SQLite, or add a
+fallback/import path. M3 owns real agents/Beads/Git/workspace composition; M4
+owns stack-neutral acceptance; M5 owns API 2.0 and the ordinary complete CLI;
+Team Kitty and the optional stateless MCP adapter remain later consumers.
 
 ### M3 — Production Mission Execution and Beads Composition
 
@@ -678,29 +691,21 @@ Expected topological constraints are `M1 < M2`, `M2 < M3`, `M2 < M4`,
 one falsification target per mission, no hidden dependency, parallel groups
 `after-M2` and `after-M5`, and no package-scaffolding exit criterion.
 
-## 10. Creating the next governed mission
+## 10. Admitting the M2 successors
 
-Do not create all seven mission directories in advance. After this architecture
-mission is accepted and merged, an accountable maintainer should:
+M1 is adopted and M2 is technically release-ready. Its full clean run,
+independent archive verification, and post-merge mission review completed with
+no unresolved critical/high finding. Do not admit a successor from source
+presence, a green local test, a tracker state, or this roadmap. The remaining
+program decision is an attributable human adoption record binding the exact
+source commit, tree, RunID, manifest digest, producer and release archive
+digests, sidecar chain, and reviewer identity.
 
-1. resolve and record the immutable M1 GapDB/harness entry evidence;
-2. record the M1 admission decision against the digest of this manifest;
-3. create only the admitted mission:
-
-   ```bash
-   spec-kitty specify gapdb-control-journal-proving-ground \
-     --mission-type software-dev \
-     --topology lanes_with_coord
-   ```
-
-4. carry that mission through specify, plan, tasks, implement/review, accept,
-   merge, mission-review, and retrospective; and
-5. reconcile this program using M1's immutable terminal evidence before
-   admitting M2.
-
-If the M1 specification cannot preserve the falsification target, torture
-sequence, non-goal, and stop rule above, cancel or supersede the candidate
-rather than weakening the proof to start implementation.
+After that human decision, M3 and M4 may be created in the `after-M2` parallel
+group.
+Each consumes the M2 successor contract rather than database keys or qualifier
+internals. If M2 fails, preserve the attempt and repair a new candidate; do not
+admit a successor by weakening the census or substituting the short CI tier.
 
 ## 11. Program non-goals
 

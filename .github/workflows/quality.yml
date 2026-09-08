@@ -29,7 +29,7 @@ jobs:
       - name: Install pinned Go toolchain
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.7
           cache: true
 
       - name: Configure isolated mutable paths
@@ -55,7 +55,7 @@ jobs:
           started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           started_seconds=$(date +%s)
           set +e
-          make quality-core ARTIFACT_DIR="$ARTIFACT_DIR"
+          make quality-bounded ARTIFACT_DIR="$ARTIFACT_DIR"
           status=$?
           set -e
           finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -76,3 +76,81 @@ jobs:
           path: ${{ env.ARTIFACT_DIR }}
           if-no-files-found: error
           retention-days: 14
+
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - name: Check out committed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.7
+          cache: true
+
+      - name: Configure isolated mutable paths
+        run: |
+          echo "ARTIFACT_DIR=$RUNNER_TEMP/go-kitty3-race-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "GOCACHE=$RUNNER_TEMP/go-race-cache-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "GOTMPDIR=$RUNNER_TEMP/go-race-tmp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "TMPDIR=$RUNNER_TEMP/process-race-tmp-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Prepare isolated mutable paths
+        run: mkdir -p "$ARTIFACT_DIR" "$GOCACHE" "$GOTMPDIR" "$TMPDIR"
+
+      - name: Run bounded race campaign
+        shell: bash
+        run: |
+          set -uo pipefail
+          started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          started_seconds=$(date +%s)
+          set +e
+          make race
+          status=$?
+          set -e
+          finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          finished_seconds=$(date +%s)
+          duration_seconds=$((finished_seconds - started_seconds))
+          verdict=pass
+          if [ "$status" -ne 0 ]; then verdict=fail; fi
+          if [ "$duration_seconds" -ge 600 ]; then status=124; verdict=fail; fi
+          printf '{"schema_version":1,"campaign":"race","commit":"%s","started_at":"%s","finished_at":"%s","duration_seconds":%d,"process_exit":%d,"verdict":"%s","hosted_baseline":"pending_ten_comparable_samples"}\n' \
+            "$GITHUB_SHA" "$started_at" "$finished_at" "$duration_seconds" "$status" "$verdict" > "$ARTIFACT_DIR/campaign-summary.json"
+          exit "$status"
+
+      - name: Upload race timing evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: race-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ARTIFACT_DIR }}
+          if-no-files-found: error
+          retention-days: 14
+
+  m2-short:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.7
+          cache: true
+      - name: Install pinned static analyzer
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+      - name: Run bounded M2 tier
+        run: make m2-short

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "program_id": "production-runtime",
+  "mission_id": "M2",
+  "artifact_role": "generator_contract_not_qualification_evidence",
+  "requirements_total": 85,
+  "generator": "internal/testcampaign/m2.BuildAcceptanceMatrix",
+  "producer_state": "SC-013-review-required",
+  "release_state": "SC-013-bound-to-independent-review-receipt",
+  "validation": "The producer generates all 36 FR, 18 NFR, 18 constraint, and 13 success-criterion rows from the frozen requirement set. Each row binds requirement-specific census IDs and artifact paths with final digests. Verify rejects missing, duplicate, extra, placeholder, generic, substituted, mixed-source, mixed-RunID, and fabricated-review mappings. This repository file is explanatory input and cannot grant a verdict."
+}

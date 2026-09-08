@@ -70,38 +70,35 @@ var phase3ArchitectureTests = []string{
 var missionProfiles = map[string]Profile{
 	MissionContractProfile: {
 		Name: MissionContractProfile, Package: "./internal/scenario",
-		Pattern: "^(TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation|TestMissionMethodQualificationContract|TestQualityCampaignUniversalInvariants|TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries)$",
+		Pattern: "^(TestBehaviorParityCensusMutants|TestCrashAmbiguousDishonestUniversalCensus|TestTerminalSemanticEquivalenceControlledMutants|TestUniversalCampaignCensusMutants)$",
 		ExpectedTests: []string{
-			"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation",
-			"TestMissionMethodQualificationContract",
-			"TestQualityCampaignUniversalInvariants",
-			"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
+			"TestBehaviorParityCensusMutants",
+			"TestCrashAmbiguousDishonestUniversalCensus",
+			"TestTerminalSemanticEquivalenceControlledMutants",
+			"TestUniversalCampaignCensusMutants",
 		},
 	},
 	MissionRealIdentityProfile: {
-		Name: MissionRealIdentityProfile, Package: "./internal/scenario",
-		Pattern:       "^(TestMissionMethodBeadsQualificationProfileIdentity)$",
-		ExpectedTests: []string{"TestMissionMethodBeadsQualificationProfileIdentity"},
+		Name: MissionRealIdentityProfile, Package: "./internal/tracker/beads",
+		Pattern:       "^(TestMissionMethodRealBeadsTwoItemQualification)$",
+		ExpectedTests: []string{"TestMissionMethodRealBeadsTwoItemQualification"},
 	},
 	MissionAcceptanceProfile: {
 		Name: MissionAcceptanceProfile, Package: "./internal/scenario",
-		Pattern: "^(TestMissionMethodNormalizationAndPureQueries100|TestMissionMethodProjectionAndGovernanceIndependence100|TestMissionMethodProviderParityPortableCampaign)$",
+		Pattern: "^(TestProductionCapabilityCompositionHasOnePublicationBoundary|TestTerminalSemanticEquivalenceControlledMutants|TestWorkCoordinateAgreementControlledMutants)$",
 		ExpectedTests: []string{
-			"TestMissionMethodNormalizationAndPureQueries100",
-			"TestMissionMethodProjectionAndGovernanceIndependence100",
-			"TestMissionMethodProviderParityPortableCampaign",
+			"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+			"TestTerminalSemanticEquivalenceControlledMutants",
+			"TestWorkCoordinateAgreementControlledMutants",
 		},
 	},
 	MissionAdversarialProfile: {
-		Name: MissionAdversarialProfile, Package: "./internal/scenario",
-		Pattern: "^(TestDishonestMissionAuthorityDetectsSameCountOutboxMutation|TestMissionMethodBeadsDishonestProviderRefusesBeforePublication|TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse|TestMissionMethodCrashBoundaryCensus|TestMissionMethodFinalizationProcessRaces100|TestMissionMethodSemanticDriftMutations1000)$",
+		Name: MissionAdversarialProfile, Package: "./internal/architecture",
+		Pattern: "^(TestM2FocusedEvidenceCensus|TestM2MutantsAreKilledByOneExecutableCensus|TestM2RecoveryAndPublicationContractsRemainFoundationOwned)$",
 		ExpectedTests: []string{
-			"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
-			"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
-			"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
-			"TestMissionMethodCrashBoundaryCensus",
-			"TestMissionMethodFinalizationProcessRaces100",
-			"TestMissionMethodSemanticDriftMutations1000",
+			"TestM2FocusedEvidenceCensus",
+			"TestM2MutantsAreKilledByOneExecutableCensus",
+			"TestM2RecoveryAndPublicationContractsRemainFoundationOwned",
 		},
 	},
 }
@@ -131,21 +128,17 @@ func init() {
 		Name:             MissionFullCampaign,
 		Profiles:         []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile},
 		RequiredProfiles: []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile},
-		UniversalTest:    "TestQualityCampaignUniversalInvariants",
+		UniversalTest:    "TestProductionCapabilityCompositionHasOnePublicationBoundary",
 		RequiredTests: []string{
-			"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
-			"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation",
-			"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
-			"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
-			"TestMissionMethodCrashBoundaryCensus",
-			"TestMissionMethodFinalizationProcessRaces100",
-			"TestMissionMethodNormalizationAndPureQueries100",
-			"TestMissionMethodProjectionAndGovernanceIndependence100",
-			"TestMissionMethodProviderParityPortableCampaign",
-			"TestMissionMethodQualificationContract",
-			"TestMissionMethodSemanticDriftMutations1000",
-			"TestQualityCampaignUniversalInvariants",
-			"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
+			"TestBehaviorParityCensusMutants",
+			"TestCrashAmbiguousDishonestUniversalCensus",
+			"TestM2FocusedEvidenceCensus",
+			"TestM2MutantsAreKilledByOneExecutableCensus",
+			"TestM2RecoveryAndPublicationContractsRemainFoundationOwned",
+			"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+			"TestTerminalSemanticEquivalenceControlledMutants",
+			"TestUniversalCampaignCensusMutants",
+			"TestWorkCoordinateAgreementControlledMutants",
 		},
 		RequireUniversal: true, RequireStaleProbe: true,
 	}
@@ -155,26 +148,22 @@ func init() {
 	campaigns[MissionFullCampaign] = campaign
 }
 
-// ValidateMissionCampaign freezes the Phase 3 selector census. Generic
-// campaign validation proves internal consistency; this additional check
-// prevents a simultaneously weakened profile and required-test list from
-// silently redefining qualification.
+// ValidateMissionCampaign freezes the current portable mission selector
+// census. Historical Phase 3 evidence has separate immutable commitments;
+// this check prevents a simultaneously weakened live profile and required-test
+// list from silently redefining today's qualification.
 func ValidateMissionCampaign(campaign Campaign) error {
 	wantProfiles := []string{MissionAcceptanceProfile, MissionAdversarialProfile, MissionContractProfile}
 	wantTests := []string{
-		"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
-		"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation",
-		"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
-		"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
-		"TestMissionMethodCrashBoundaryCensus",
-		"TestMissionMethodFinalizationProcessRaces100",
-		"TestMissionMethodNormalizationAndPureQueries100",
-		"TestMissionMethodProjectionAndGovernanceIndependence100",
-		"TestMissionMethodProviderParityPortableCampaign",
-		"TestMissionMethodQualificationContract",
-		"TestMissionMethodSemanticDriftMutations1000",
-		"TestQualityCampaignUniversalInvariants",
-		"TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries",
+		"TestBehaviorParityCensusMutants",
+		"TestCrashAmbiguousDishonestUniversalCensus",
+		"TestM2FocusedEvidenceCensus",
+		"TestM2MutantsAreKilledByOneExecutableCensus",
+		"TestM2RecoveryAndPublicationContractsRemainFoundationOwned",
+		"TestProductionCapabilityCompositionHasOnePublicationBoundary",
+		"TestTerminalSemanticEquivalenceControlledMutants",
+		"TestUniversalCampaignCensusMutants",
+		"TestWorkCoordinateAgreementControlledMutants",
 	}
 	if campaign.Name != MissionFullCampaign || !slices.Equal(campaign.Profiles, wantProfiles) || !slices.Equal(campaign.RequiredProfiles, wantProfiles) {
 		return fmt.Errorf("mission campaign profile census changed")
@@ -182,7 +171,7 @@ func ValidateMissionCampaign(campaign Campaign) error {
 	if !slices.Equal(campaign.RequiredTests, wantTests) {
 		return fmt.Errorf("mission campaign test census changed")
 	}
-	if campaign.UniversalTest != "TestQualityCampaignUniversalInvariants" || !campaign.RequireUniversal || !campaign.RequireStaleProbe {
+	if campaign.UniversalTest != "TestProductionCapabilityCompositionHasOnePublicationBoundary" || !campaign.RequireUniversal || !campaign.RequireStaleProbe {
 		return fmt.Errorf("mission campaign universal invariant changed")
 	}
 	return ValidateCampaign(campaign)
@@ -729,28 +718,36 @@ func validatePhase3Provider(provider struct {
 }
 
 func validatePhase3Profiles(c phase3Census, schema int) error {
-	wantPrimary := map[string][]string{}
-	for _, name := range []string{MissionContractProfile, MissionAcceptanceProfile, MissionAdversarialProfile} {
-		profile, err := ProfileByName(name)
-		if err != nil {
-			return err
-		}
-		wantPrimary[name] = profile.ExpectedTests
+	// Phase 3 is an immutable historical publication. Its evidence must remain
+	// valid when the live campaign registry evolves, while substitutions in the
+	// published census must still fail closed. These commitments are the SHA-256
+	// of each publication-time, newline-joined test list (without a trailing
+	// newline); they deliberately do not consult ProfileByName.
+	type frozenProfile struct {
+		count  int
+		digest string
+	}
+	wantPrimary := map[string]frozenProfile{
+		MissionContractProfile:     {count: 4, digest: "c55011aaa9983d3e136600dc697d2aa7ab98acd8ab2b0b90ddb9a9bfd53b192c"},
+		MissionAcceptanceProfile:   {count: 3, digest: "6885265520f1d69f09811ff1a6e2426e76b065301d0f73b2c41c8d45464a1d9e"},
+		MissionAdversarialProfile:  {count: 6, digest: "a4c136f49a063832044e21d19938097e6520b3e931a51645cbda877cbc25b2b9"},
+		MissionRealIdentityProfile: {count: 1, digest: "a137b9a4db990c41a3674db6424349631fb70b376102b1c497a171ab7167489d"},
 	}
 	if len(c.Profiles) != 4 {
 		return fmt.Errorf("phase3 primary profile census changed")
 	}
 	seen := map[string]bool{}
 	for _, profile := range c.Profiles {
+		want, ok := wantPrimary[profile.Name]
+		if !ok {
+			return fmt.Errorf("phase3 profile %s changed", profile.Name)
+		}
 		if err := validatePhase3ProfileEvidence(profile); err != nil {
 			return err
 		}
 		seen[profile.Name] = true
-		if want, ok := wantPrimary[profile.Name]; ok && !slices.Equal(profile.Tests, want) {
+		if profile.Expected != want.count || (schema >= 2 && phase3TestIdentityDigest(profile.Tests) != want.digest) {
 			return fmt.Errorf("phase3 profile %s test identities changed", profile.Name)
-		}
-		if profile.Name == MissionRealIdentityProfile && !slices.Equal(profile.Tests, []string{"TestMissionMethodRealBeadsTwoItemQualification"}) {
-			return fmt.Errorf("phase3 real identity selector changed")
 		}
 	}
 	for _, name := range []string{MissionContractProfile, MissionAcceptanceProfile, MissionAdversarialProfile, MissionRealIdentityProfile} {
@@ -761,20 +758,25 @@ func validatePhase3Profiles(c phase3Census, schema int) error {
 	if len(c.Supporting) != 5 {
 		return fmt.Errorf("phase3 supporting profile census changed")
 	}
-	wantSupporting := map[string]string{"provider-portable": "provider-portable", "provider-adversarial": "provider-adversarial", "architecture": Phase3ArchitectureProfile, "scope": "scope", "historical-full-scenario": "full-scenario"}
+	wantSupporting := map[string]frozenProfile{
+		"provider-portable":        {count: 2, digest: "3f234767b486a1c026d6bbda8e384f53e60847023b5bf1b40ce5339a42d747c7"},
+		"provider-adversarial":     {count: 20, digest: "295e8fc3bbc4e319687ebfad0f15894b50d83778978ae1c2d1756ae5e55e5f84"},
+		"architecture":             {count: 38, digest: "25846ae2b39f94f242d4b5996e93e4de00bb73221d190f9354c52c53e45ebe3c"},
+		"scope":                    {count: 2, digest: "6374a2baf5a872ed1dbc06f5f0494bcd72d02e7d32c7f3693f772e90dfe329a8"},
+		"historical-full-scenario": {count: 73, digest: "9e47b5eb97e50940eda21b40acd2fc5ddb3844226eb3657952cd5e4bcb825ae9"},
+	}
 	for _, profile := range c.Supporting {
-		registryName, ok := wantSupporting[profile.Name]
+		want, ok := wantSupporting[profile.Name]
 		if !ok {
 			return fmt.Errorf("phase3 supporting profile %s changed", profile.Name)
 		}
-		registered, err := ProfileByName(registryName)
-		if err != nil || profile.Expected != len(registered.ExpectedTests) {
+		if profile.Expected != want.count {
 			return fmt.Errorf("phase3 supporting profile %s changed", profile.Name)
 		}
 		if err := validatePhase3ProfileEvidence(profile); err != nil {
 			return err
 		}
-		if schema >= 2 && !slices.Equal(profile.Tests, registered.ExpectedTests) {
+		if schema >= 2 && phase3TestIdentityDigest(profile.Tests) != want.digest {
 			return fmt.Errorf("phase3 supporting profile %s lacks exact test identities", profile.Name)
 		}
 		delete(wantSupporting, profile.Name)
@@ -783,6 +785,11 @@ func validatePhase3Profiles(c phase3Census, schema int) error {
 		return fmt.Errorf("phase3 supporting profile missing")
 	}
 	return nil
+}
+
+func phase3TestIdentityDigest(tests []string) string {
+	digest := sha256.Sum256([]byte(strings.Join(tests, "\n")))
+	return hex.EncodeToString(digest[:])
 }
 
 func validatePhase3Campaigns(c phase3Census) error {
@@ -1143,6 +1150,18 @@ func validatePhase3CommandShape(root string, command []string) error {
 		return unsupported()
 	case "go":
 		if len(core) == 3 && core[1] == "mod" && slices.Contains([]string{"download", "verify"}, core[2]) {
+			return nil
+		}
+		if len(core) == 6 && core[1] == "build" && core[2] == "-trimpath" && core[3] == "-o" {
+			allowed := map[string]string{
+				"bin/spec-kitty":           "./cmd/spec-kitty",
+				"bin/spk-m2-qualification": "./cmd/spk-m2-qualification",
+			}
+			if allowed[phase3ShellValue(core[4])] == phase3ShellValue(core[5]) && phase3ExistingGoPath(root, core[5]) {
+				return nil
+			}
+		}
+		if len(core) == 4 && core[1] == "install" && core[2] == "./cmd/spec-kitty" && core[3] == "./cmd/spk-m2-qualification" && phase3ExistingGoPath(root, core[2]) && phase3ExistingGoPath(root, core[3]) {
 			return nil
 		}
 		if len(core) == 3 && core[1] == "install" && core[2] == "./cmd/spk-phase1-helper" && phase3ExistingGoPath(root, core[2]) {

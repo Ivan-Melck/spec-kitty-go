@@ -32,15 +32,18 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 		"mission-contract:", "-profile mission-contract", "mission-acceptance:", "-profile mission-acceptance",
 		"mission-adversarial:", "-profile mission-adversarial", "-campaign mission_full",
 		"phase3-publication:", "$(GO) run ./internal/testcampaign/cmd/campaign", "-publication-root", "-payload-commit", "-attestation-commit",
-		"quality-core: preflight contract mission-contract mission-acceptance race static dependencies",
-		"quality: beads-contract quality-core",
+		"contract-full:", "$(GO) test -short", "race-full:", "full-campaign: contract-full race-full quality",
+		"quality-bounded: preflight contract mission-contract mission-acceptance static dependencies",
+		"quality-core: quality-bounded race",
+		"quality: beads-contract m2-short quality-core",
+		`$$0 !~ /\/architecture$$/`, `$$0 !~ /\/tracker\/beads$$/`, `$$0 !~ /\/testcampaign\/m2(\/|$$)/`,
 	} {
 		if !strings.Contains(makefile, required) {
 			t.Fatalf("Makefile contract omitted %q", required)
 		}
 	}
 	quality := read(".github/workflows/quality.yml")
-	for _, required := range []string{"permissions:\n  contents: read", "timeout-minutes: 15", "go-version: 1.26.5", "duration_seconds\" -ge 600", "if: always()", "make quality-core"} {
+	for _, required := range []string{"permissions:\n  contents: read", "timeout-minutes: 15", "go-version: 1.26.7", "duration_seconds\" -ge 600", "if: always()", "make quality-bounded", "make race", "name: Upload race timing evidence"} {
 		if !strings.Contains(quality, required) {
 			t.Fatalf("quality workflow contract omitted %q", required)
 		}
@@ -49,7 +52,7 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 		t.Fatal("slow mission campaign leaked into pull-request workflow")
 	}
 	full := read(".github/workflows/full-campaign.yml")
-	for _, required := range []string{"schedule:", "workflow_dispatch:", "go-version: 1.26.5", "make full-campaign", "if: always()"} {
+	for _, required := range []string{"schedule:", "workflow_dispatch:", "go-version: 1.26.7", "make full-campaign", "if: always()"} {
 		if !strings.Contains(full, required) {
 			t.Fatalf("full workflow contract omitted %q", required)
 		}
@@ -96,6 +99,12 @@ func TestPhase3PublicationClosedSchemaAndDocumentationMutants(t *testing.T) {
 		},
 		"bad_go_mod_verb": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "README.md"), "go mod download", "go mod overwrite")
+		},
+		"bad_go_build_output": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "README.md"), "-o bin/spec-kitty ./cmd/spec-kitty", "-o bin/spec-kitty-unreviewed ./cmd/spec-kitty")
+		},
+		"bad_go_install_source": func(t *testing.T, path string) {
+			phase3Replace(t, filepath.Join(path, "README.md"), "go install ./cmd/spec-kitty ./cmd/spk-m2-qualification", "go install ./cmd/spec-kitty ./cmd/spk-phase1-helper")
 		},
 		"bad_provider_verb": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "README.md"), `"$beads_bin" version --json`, `"$beads_bin" destroy --json`)
@@ -393,7 +402,12 @@ func phase3RepositoryRoot(t *testing.T) string {
 func phase3PublicationFixture(t *testing.T, source string) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, relative := range []string{"README.md", "Makefile", "LICENSE"} {
+	for _, relative := range []string{
+		"README.md",
+		"Makefile",
+		"LICENSE",
+		"kitty-specs/gapdb-only-production-authority-01M1GWDJ/mission-review-report.md",
+	} {
 		input, err := os.ReadFile(filepath.Join(source, relative))
 		if err != nil {
 			t.Fatal(err)
@@ -460,6 +474,9 @@ func phase3UpgradeFixtureSchema(t *testing.T, root string) {
 		record["schema_version"] = float64(phase3PublicationSchema)
 		for _, raw := range record["supporting_profiles"].([]any) {
 			profile := raw.(map[string]any)
+			if tests, ok := profile["tests"].([]any); ok && len(tests) > 0 {
+				continue
+			}
 			registryName := profile["name"].(string)
 			switch registryName {
 			case "historical-full-scenario":
@@ -628,37 +645,34 @@ func TestMissionMethodProfilesAreExactSeparatedAndDefensive(t *testing.T) {
 	fast, _ := ProfileByName(MissionAcceptanceProfile)
 	slow, _ := ProfileByName(MissionAdversarialProfile)
 	for _, expensive := range []string{
-		"TestDishonestMissionAuthorityDetectsSameCountOutboxMutation",
-		"TestMissionMethodBeadsDishonestProviderRefusesBeforePublication",
-		"TestMissionMethodBeadsSlowObservationCannotPublishBeforeResponse",
-		"TestMissionMethodCrashBoundaryCensus",
-		"TestMissionMethodFinalizationProcessRaces100",
-		"TestMissionMethodSemanticDriftMutations1000",
+		"TestM2FocusedEvidenceCensus",
+		"TestM2MutantsAreKilledByOneExecutableCensus",
+		"TestM2RecoveryAndPublicationContractsRemainFoundationOwned",
 	} {
 		if slices.Contains(fast.ExpectedTests, expensive) || !slices.Contains(slow.ExpectedTests, expensive) {
 			t.Fatalf("expensive test %s crossed fast/slow boundary", expensive)
 		}
 	}
-	for _, portable := range []string{"TestMissionMethodNormalizationAndPureQueries100", "TestMissionMethodProjectionAndGovernanceIndependence100", "TestMissionMethodProviderParityPortableCampaign"} {
+	for _, portable := range []string{"TestProductionCapabilityCompositionHasOnePublicationBoundary", "TestTerminalSemanticEquivalenceControlledMutants", "TestWorkCoordinateAgreementControlledMutants"} {
 		if !slices.Contains(fast.ExpectedTests, portable) || slices.Contains(slow.ExpectedTests, portable) {
 			t.Fatalf("portable acceptance test %s crossed fast/slow boundary", portable)
 		}
 	}
 	contract, _ := ProfileByName(MissionContractProfile)
-	for _, identity := range []string{"TestHelperReplayPrecedesEligibilityAndStaleAuthorityPrecedesInvalidation", "TestMissionMethodQualificationContract", "TestQualityCampaignUniversalInvariants", "TestWP07AssignmentRecoveryCannotCrossLocalAuthorityBoundaries"} {
+	for _, identity := range []string{"TestBehaviorParityCensusMutants", "TestCrashAmbiguousDishonestUniversalCensus", "TestTerminalSemanticEquivalenceControlledMutants", "TestUniversalCampaignCensusMutants"} {
 		if !slices.Contains(contract.ExpectedTests, identity) {
 			t.Fatalf("mission contract profile omitted %s", identity)
 		}
 	}
-	if slices.Contains(contract.ExpectedTests, "TestMissionMethodBeadsQualificationProfileIdentity") {
+	if slices.Contains(contract.ExpectedTests, "TestMissionMethodRealBeadsTwoItemQualification") {
 		t.Fatal("opt-in real-provider identity leaked into the portable contract profile")
 	}
 	realIdentity, err := ProfileByName(MissionRealIdentityProfile)
-	if err != nil || !slices.Equal(realIdentity.ExpectedTests, []string{"TestMissionMethodBeadsQualificationProfileIdentity"}) {
+	if err != nil || !slices.Equal(realIdentity.ExpectedTests, []string{"TestMissionMethodRealBeadsTwoItemQualification"}) {
 		t.Fatalf("real-provider identity profile changed: profile=%+v err=%v", realIdentity, err)
 	}
 	full, err := CampaignByName(MissionFullCampaign)
-	if err != nil || slices.Contains(full.Profiles, MissionRealIdentityProfile) || slices.Contains(full.RequiredTests, "TestMissionMethodBeadsQualificationProfileIdentity") {
+	if err != nil || slices.Contains(full.Profiles, MissionRealIdentityProfile) || slices.Contains(full.RequiredTests, "TestMissionMethodRealBeadsTwoItemQualification") {
 		t.Fatalf("portable mission campaign acquired opt-in real-provider identity: campaign=%+v err=%v", full, err)
 	}
 }

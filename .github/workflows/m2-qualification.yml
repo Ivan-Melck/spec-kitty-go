@@ -1,0 +1,67 @@
+name: m2-qualification
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m2-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  crown:
+    # The release campaign requires the locally admitted immutable sidecar;
+    # hosted runners are deliberately not allowed to download a substitute.
+    runs-on: [self-hosted, linux, x64, spec-kitty-m2]
+    timeout-minutes: 180
+    env:
+      GOTOOLCHAIN: local
+      M2_GAPDBD: /opt/spec-kitty/admitted/gapdbd-54d3c80dd225a5e58f1488f0ce62fd6b95a6bb0ecf95b541e211b199555d8eaf
+      M2_WP16_GAPDBD: /opt/spec-kitty/admitted/gapdbd-947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad
+      M2_ACTOR_ID: github-actions
+      M2_PROCESS_ID: github-run-${{ github.run_id }}-${{ github.run_attempt }}
+      M2_IMPLEMENTATION_CONTRIBUTORS: codex
+      M2_PROFILE_REVISION: 94c8fd94c5e237df5b4e256a595804c6bae685e5a4a57417275c74c0b604a378
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.7
+          cache: false
+      - name: Configure immutable run identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id="m2-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          evidence="$RUNNER_TEMP/m2-evidence"
+          build="$RUNNER_TEMP/m2-build"
+          mkdir -p "$evidence" "$build"
+          printf 'M2_RUN_ID=%s\nM2_EVIDENCE_ROOT=%s\nBUILD_DIR=%s\n' "$run_id" "$evidence" "$build" >> "$GITHUB_ENV"
+      - name: Verify admitted sidecar identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x "$M2_GAPDBD"
+          test "$(sha256sum "$M2_GAPDBD" | awk '{print $1}')" = 54d3c80dd225a5e58f1488f0ce62fd6b95a6bb0ecf95b541e211b199555d8eaf
+          test "$(sha256sum "$M2_WP16_GAPDBD" | awk '{print $1}')" = 947bda324a550f4a7534e4efec2a75485e95b4c27907fd0298f72aba247dadad
+      - name: Run required sidecar-free short tier
+        run: make m2-short
+      - name: Run complete crown once
+        run: make m2-qualification
+      - name: Upload immutable pass or non-admissible attempt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: m2-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.M2_EVIDENCE_ROOT }}
+          if-no-files-found: error
+          retention-days: 30

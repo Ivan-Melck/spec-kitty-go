@@ -315,6 +315,55 @@ func TestDefaultPolicyClassifiesM1CommandAndBoundsExternalGapDBDirection(t *test
 	})
 }
 
+func TestDefaultPolicyClassifiesCompleteM2SurfaceExactly(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		path string
+		tier TierName
+	}{
+		{module + "/internal/controljournal/v2", TierFoundation},
+		{module + "/internal/controljournal/v2/reducer", TierFoundation},
+		{module + "/internal/controlroot", TierFoundation},
+		{module + "/internal/controlroot/signatures", TierFoundation},
+		{module + "/internal/acceptance", TierAuthority},
+		{module + "/internal/acceptance/policy", TierAuthority},
+		{module + "/internal/controlstore/gapdb", TierAdapter},
+		{module + "/internal/controlstore/gapdb/mission", TierAdapter},
+		{module + "/internal/sidecar/gapdb", TierAdapter},
+		{module + "/internal/sidecar/gapdb/protocol", TierAdapter},
+		{module + "/internal/productionruntime", TierComposition},
+		{module + "/internal/productionruntime/progress", TierComposition},
+		{module + "/cmd/spec-kitty", TierComposition},
+		{module + "/cmd/spec-kitty/subcommands", TierComposition},
+		{module + "/cmd/spk-m2-qualification", TierQuality},
+		{module + "/cmd/spk-m2-qualification/reporter", TierQuality},
+	} {
+		t.Run(strings.TrimPrefix(test.path, module+"/"), func(t *testing.T) {
+			assertTier(t, policy, test.path, test.tier)
+		})
+	}
+
+	for _, path := range []string{
+		module + "/internal/controljournal/v2x",
+		module + "/internal/controlrooted",
+		module + "/internal/acceptancex",
+		module + "/internal/controlstore/gapdbx",
+		module + "/internal/sidecar/gapdbx",
+		module + "/internal/productionruntimex",
+		module + "/cmd/spec-kittyx",
+		module + "/cmd/spk-m2-qualificationx",
+	} {
+		t.Run("lookalike-"+strings.TrimPrefix(path, module+"/"), func(t *testing.T) {
+			assertExactViolation(t, policy, fixtureGraph([]string{path}), RuleUnknownPackage, path, "", path, "")
+		})
+	}
+}
+
 func TestDefaultPolicyClassifiesPureControlJournalAsFoundation(t *testing.T) {
 	const module = "github.com/spec-kitty/go-kitty3"
 	policy, err := DefaultPolicy(module)
@@ -372,6 +421,66 @@ func TestDefaultPolicySeparatesJournalApplicationComposition(t *testing.T) {
 	)
 	graph.ModulePath = module
 	assertExactViolation(t, policy, graph, RuleLocalDirection, pure, TierFoundation, adapter, TierAdapter)
+
+	for _, foundation := range []string{
+		module + "/internal/controljournal",
+		module + "/internal/controljournal/checkpoint",
+		module + "/internal/controljournal/playback",
+		module + "/internal/controljournal/v2",
+	} {
+		graph := fixtureGraph(
+			[]string{foundation, adapter},
+			ImportEdge{SourcePackage: foundation, TargetPackage: adapter, Kind: ImportModuleLocal},
+		)
+		graph.ModulePath = module
+		assertExactViolation(t, policy, graph, RuleLocalDirection, foundation, TierFoundation, adapter, TierAdapter)
+	}
+}
+
+func TestDefaultPolicyPermanentlyDeniesCapabilityToGapDBAdapter(t *testing.T) {
+	const module = "github.com/spec-kitty/go-kitty3"
+	policy, err := DefaultPolicy(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := module + "/internal/controlstore/gapdb"
+	for _, capability := range []struct {
+		path string
+		tier TierName
+	}{
+		{module + "/internal/artifact", TierArtifactAuthority},
+		{module + "/internal/mission", TierMissionAuthority},
+		{module + "/internal/workgraph", TierAuthority},
+		{module + "/internal/execution", TierAuthority},
+		{module + "/internal/workspace", TierAuthority},
+		{module + "/internal/handoff", TierAuthority},
+		{module + "/internal/review", TierAuthority},
+		{module + "/internal/acceptance", TierAuthority},
+		{module + "/internal/integration", TierAuthority},
+	} {
+		t.Run(strings.TrimPrefix(capability.path, module+"/internal/"), func(t *testing.T) {
+			graph := fixtureGraph(
+				[]string{capability.path, adapter},
+				ImportEdge{SourcePackage: capability.path, TargetPackage: adapter, Kind: ImportModuleLocal},
+			)
+			graph.ModulePath = module
+			assertExactViolation(t, policy, graph, RuleLocalDirection, capability.path, capability.tier, adapter, TierAdapter)
+		})
+	}
+
+	mutant := policy
+	mutant.ForbiddenLocalDirections = append([]ForbiddenLocalDirection(nil), policy.ForbiddenLocalDirections[1:]...)
+	for index := range mutant.Tiers {
+		if mutant.Tiers[index].Name == TierAuthority {
+			mutant.Tiers[index].AllowedLocalTargets = append(mutant.Tiers[index].AllowedLocalTargets, TierAdapter)
+		}
+	}
+	capability := module + "/internal/execution"
+	graph := fixtureGraph([]string{capability, adapter}, ImportEdge{SourcePackage: capability, TargetPackage: adapter, Kind: ImportModuleLocal})
+	graph.ModulePath = module
+	if err := mutant.Check(graph); err != nil {
+		t.Fatalf("removing exact GapDB denial did not admit the controlled widened-tier mutant: %v", err)
+	}
 }
 
 func TestDefaultPolicyClassifiesProvingGroundCompositionExactly(t *testing.T) {
@@ -536,7 +645,6 @@ func TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic(t *testing.T)
 			{path: module + "/internal/workgraph", tier: TierAuthority},
 			{path: module + "/internal/workspace", tier: TierAuthority},
 			{path: module + "/internal/tracker", tier: TierProviderContract},
-			{path: module + "/internal/controlstore/sqlite", tier: TierAdapter},
 			{path: module + "/internal/gitrepo", tier: TierAdapter},
 			{path: module + "/internal/tracker/fake", tier: TierAdapter},
 			{path: module + "/internal/tracker/beads", tier: TierAdapter},
@@ -557,6 +665,7 @@ func TestPackagePatternsAreSlashBoundedAndAmbiguityIsDeterministic(t *testing.T)
 		for _, path := range []string{
 			module + "/internal/tracker/beadsx",
 			module + "/internal/tracker/beads-protocol",
+			module + "/internal/controlstore/sqlite",
 		} {
 			_, err := policy.Classify(path)
 			violation, ok := err.(Violation)
@@ -626,7 +735,6 @@ func checkDefaultPolicyClassifiesPhase3CapabilitiesExactly(t *testing.T) {
 		{module + "/internal/tracker", TierProviderContract},
 		{module + "/internal/tracker/fake", TierAdapter},
 		{module + "/internal/tracker/beads/protocol", TierAdapter},
-		{module + "/internal/controlstore/sqlite", TierAdapter},
 		{module + "/internal/gitrepo", TierAdapter},
 	} {
 		assertTier(t, policy, test.path, test.tier)
@@ -651,7 +759,7 @@ func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 	controlstore := module + "/internal/controlstore"
 	beads := module + "/internal/tracker/beads"
 	fake := module + "/internal/tracker/fake"
-	sqlite := module + "/internal/controlstore/sqlite"
+	gapdb := module + "/internal/controlstore/gapdb"
 	git := module + "/internal/gitrepo"
 	ids := module + "/internal/ids"
 
@@ -669,7 +777,7 @@ func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 		{"projection-to-mission-read-model", projection, missionReadModel},
 		{"projection-to-artifact-read-model", projection, artifactReadModel},
 		{"projection-to-workgraph-read-model", projection, workgraphReadModel},
-		{"control-store-to-mission-port", sqlite, mission},
+		{"control-store-to-mission-port", gapdb, mission},
 	}
 	for _, test := range accepted {
 		t.Run("accept-"+test.name, func(t *testing.T) {
@@ -690,10 +798,10 @@ func checkDefaultPolicyEnforcesPhase3DirectionsWithExactMutants(t *testing.T) {
 	}{
 		{"mission-to-beads", mission, TierMissionAuthority, beads, TierAdapter},
 		{"mission-to-fake-tracker", mission, TierMissionAuthority, fake, TierAdapter},
-		{"mission-to-sqlite", mission, TierMissionAuthority, sqlite, TierAdapter},
+		{"mission-to-gapdb", mission, TierMissionAuthority, gapdb, TierAdapter},
 		{"mission-to-git", mission, TierMissionAuthority, git, TierAdapter},
 		{"mission-to-projection", mission, TierMissionAuthority, projection, TierProjection},
-		{"artifact-to-adapter", artifact, TierArtifactAuthority, sqlite, TierAdapter},
+		{"artifact-to-adapter", artifact, TierArtifactAuthority, gapdb, TierAdapter},
 		{"artifact-to-projection", artifact, TierArtifactAuthority, projection, TierProjection},
 		{"projection-to-mission-authority", projection, TierProjection, mission, TierMissionAuthority},
 		{"projection-to-artifact-authority", projection, TierProjection, artifact, TierArtifactAuthority},

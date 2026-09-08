@@ -113,7 +113,7 @@ func TestVerifyRejectsProcessAndJSONVerdictDisagreement(t *testing.T) {
 }
 
 func TestCampaignManifestsAreValidAndDefensiveCopies(t *testing.T) {
-	for _, name := range []string{"acceptance", "architecture", "scope", "fault", "soak", "full-scenario", "provider-portable", "provider-adversarial", "provider-real"} {
+	for _, name := range []string{"acceptance", "architecture", "scope", "fault", "soak", "full-scenario", "portable-scenario", "provider-portable", "provider-adversarial", "provider-real"} {
 		profile, err := ProfileByName(name)
 		if err != nil {
 			t.Fatalf("profile %s: %v", name, err)
@@ -180,13 +180,18 @@ func TestProviderAdversarialParallelismIsExplicitAndBounded(t *testing.T) {
 
 func TestProviderProfilesMatchAcceptedTopLevelTests(t *testing.T) {
 	root := campaignRepositoryRoot(t)
+	adversarial, err := ProfileByName("provider-adversarial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adversarialSelector := regexp.MustCompile(adversarial.Pattern)
 	tests := []struct {
 		profile   string
 		directory string
 		relevant  func(string) bool
 	}{
 		{"provider-portable", filepath.Join(root, "internal", "tracker", "conformance"), func(name string) bool { return strings.HasPrefix(name, "Test") }},
-		{"provider-adversarial", filepath.Join(root, "internal", "scenario"), func(name string) bool { return strings.HasPrefix(name, "TestBeads") }},
+		{"provider-adversarial", filepath.Join(root, "internal", "tracker", "beads"), adversarialSelector.MatchString},
 		{"provider-real", filepath.Join(root, "internal", "tracker", "beads"), func(name string) bool {
 			return strings.HasPrefix(name, "TestRealBeads") && name != "TestRealBeadsProcessCreate"
 		}},
@@ -214,6 +219,38 @@ func TestProviderProfilesMatchAcceptedTopLevelTests(t *testing.T) {
 	}
 }
 
+func TestCurrentMissionProfilesResolveToExactTopLevelTests(t *testing.T) {
+	root := campaignRepositoryRoot(t)
+	profiles := []struct {
+		name      string
+		directory string
+	}{
+		{"acceptance", filepath.Join(root, "internal", "scenario")},
+		{"architecture", filepath.Join(root, "internal", "architecture")},
+		{"fault", filepath.Join(root, "internal", "controlstore", "gapdb")},
+		{MissionAcceptanceProfile, filepath.Join(root, "internal", "scenario")},
+		{MissionAdversarialProfile, filepath.Join(root, "internal", "architecture")},
+		{MissionContractProfile, filepath.Join(root, "internal", "scenario")},
+		{MissionRealIdentityProfile, filepath.Join(root, "internal", "tracker", "beads")},
+		{"portable-scenario", filepath.Join(root, "internal", "scenario")},
+		{"scope", filepath.Join(root, "internal", "scenario")},
+		{"soak", filepath.Join(root, "internal", "controlstore", "gapdb")},
+	}
+	for _, candidate := range profiles {
+		t.Run(candidate.name, func(t *testing.T) {
+			profile, err := ProfileByName(candidate.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selector := regexp.MustCompile(profile.Pattern)
+			discovered := discoverTopLevelTests(t, candidate.directory, selector.MatchString)
+			if err = compareExactCensus(profile.ExpectedTests, discovered); err != nil {
+				t.Fatalf("live profile census drifted: %v", err)
+			}
+		})
+	}
+}
+
 func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
 	bounded, err := CampaignByName("provider_bounded")
 	if err != nil {
@@ -227,7 +264,7 @@ func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
 		{"portable profile", "provider-portable", func(c *Campaign) { c.Profiles = c.Profiles[1:] }},
 		{"universal", "stale probing", func(c *Campaign) { c.RequireStaleProbe = false }},
 		{"universal test", "TestDeletedUniversal", func(c *Campaign) { c.UniversalTest = "TestDeletedUniversal" }},
-		{"human preservation", "TestDeletedHumanPreservation", func(c *Campaign) { c.RequiredTests[1] = "TestDeletedHumanPreservation" }},
+		{"human preservation", "TestDeletedHumanPreservation", func(c *Campaign) { c.RequiredTests[0] = "TestDeletedHumanPreservation" }},
 	}
 	for _, test := range mutants {
 		t.Run(test.name, func(t *testing.T) {
@@ -243,10 +280,13 @@ func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
 
 	original := profiles["provider-adversarial"]
 	mutantProfile := original
-	mutantProfile.ExpectedTests = slices.DeleteFunc(append([]string(nil), original.ExpectedTests...), func(name string) bool { return name == "TestBeadsHumanAssignmentPreservation100" })
+	mutantProfile.ExpectedTests = slices.DeleteFunc(append([]string(nil), original.ExpectedTests...), func(name string) bool {
+		return name == "TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces"
+	})
+	mutantProfile.Pattern = exactProfilePattern(mutantProfile.ExpectedTests)
 	profiles["provider-adversarial"] = mutantProfile
 	t.Cleanup(func() { profiles["provider-adversarial"] = original })
-	if err := ValidateCampaign(bounded); err == nil || !strings.Contains(err.Error(), "TestBeadsHumanAssignmentPreservation100") {
+	if err := ValidateCampaign(bounded); err == nil || !strings.Contains(err.Error(), "TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces") {
 		t.Fatalf("missing expected-test mutant did not name the control: %v", err)
 	}
 
@@ -257,6 +297,11 @@ func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
 	})
 	if err := compareExactCensus(architectureMutant.ExpectedTests, architecture.ExpectedTests); err == nil || !strings.Contains(err.Error(), "TestDefaultPolicyPinsTrackerConformanceAsOneWayQualityTooling") {
 		t.Fatalf("accepted provider architecture removal mutant error=%v", err)
+	}
+	widened := architecture
+	widened.Pattern = "^Test"
+	if err := validateProfile(widened); err == nil || !strings.Contains(err.Error(), "exact expected-test census") {
+		t.Fatalf("widened live selector mutant survived: %v", err)
 	}
 
 	for _, name := range []string{
@@ -338,7 +383,7 @@ func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *te
 		t.Fatal(err)
 	}
 	makefile := string(content)
-	for target, campaign := range map[string]string{"quality-core": "quality", "full-campaign": "full_campaign", "beads-contract": "provider_bounded"} {
+	for target, campaign := range map[string]string{"quality-bounded": "quality", "full-campaign": "full_campaign", "beads-contract": "provider_bounded"} {
 		if err := validateMakeCampaignBinding(makefile, target, campaign); err != nil {
 			t.Fatal(err)
 		}
@@ -363,7 +408,8 @@ func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *te
 		{"missing offline boundary", `test "$(OFFLINE_ENFORCED)" = linux-network-namespace`, `test -n "$(OFFLINE_ENFORCED)"`},
 		{"missing namespace proof", `test "$$current_net" != "$$host_net"`, `test -n "$$current_net"`},
 		{"missing inherited offline Go modules", `GOENV="$$go_env"`, `GOENV=`},
-		{"quality omits bounded campaign", "quality: beads-contract quality-core", "quality: quality-core"},
+		{"quality delegated campaigns", "quality: beads-contract m2-short quality-core", "quality: m2-short quality-core"},
+		{"quality delegated campaigns", "quality: beads-contract m2-short quality-core", "quality: beads-contract quality-core"},
 	}
 	for _, mutant := range mutants {
 		t.Run(mutant.name, func(t *testing.T) {
@@ -506,7 +552,7 @@ func validateProviderMakeControls(makefile string) error {
 		{"missing digest comparison", `test "$$observed" = "$(QUALIFIED_BEADS_DIGEST)"`},
 		{"missing offline boundary", `test "$(OFFLINE_ENFORCED)" = linux-network-namespace`},
 		{"missing namespace proof", `test "$$current_net" != "$$host_net"`},
-		{"quality omits bounded campaign", "quality: beads-contract quality-core"},
+		{"quality delegated campaigns", "quality: beads-contract m2-short quality-core"},
 		{"installer tuple", `.source_commit == "6c124203e771433a3550c348771a5b5e27fd3c21"`},
 		{"installer schema", `(keys | length == 9) and .schema_version == 1`},
 		{"offline Go modules", "GOPROXY=off GOSUMDB=off"},
