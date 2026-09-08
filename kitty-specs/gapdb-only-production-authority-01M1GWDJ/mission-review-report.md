@@ -182,6 +182,15 @@ composition invariant. Dishonest-provider behavior remains covered by the
 dedicated Beads and M2 qualification tiers, where the required fixtures and
 terminal-test census make a skipped proof fail closed.
 
+The subsequent clean-clone gate found one final selector-construction defect:
+the architecture profile carried an exact expected-test list but no `-run`
+pattern, so Go executed the whole package and the campaign correctly rejected
+the unexpected tests. Profile lookup now synthesizes an anchored selector from
+the immutable expected census when needed, validation rejects every wider or
+different selector, and the architecture profile is included in source-level
+exact-census discovery. An omitted pattern can therefore no longer widen a
+live campaign.
+
 ## Risk findings
 
 ### RISK-1 — Local absence scan observes ignored tracker metadata

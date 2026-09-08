@@ -226,6 +226,7 @@ func TestCurrentMissionProfilesResolveToExactTopLevelTests(t *testing.T) {
 		directory string
 	}{
 		{"acceptance", filepath.Join(root, "internal", "scenario")},
+		{"architecture", filepath.Join(root, "internal", "architecture")},
 		{"fault", filepath.Join(root, "internal", "controlstore", "gapdb")},
 		{MissionAcceptanceProfile, filepath.Join(root, "internal", "scenario")},
 		{MissionAdversarialProfile, filepath.Join(root, "internal", "architecture")},
@@ -282,6 +283,7 @@ func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
 	mutantProfile.ExpectedTests = slices.DeleteFunc(append([]string(nil), original.ExpectedTests...), func(name string) bool {
 		return name == "TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces"
 	})
+	mutantProfile.Pattern = exactProfilePattern(mutantProfile.ExpectedTests)
 	profiles["provider-adversarial"] = mutantProfile
 	t.Cleanup(func() { profiles["provider-adversarial"] = original })
 	if err := ValidateCampaign(bounded); err == nil || !strings.Contains(err.Error(), "TestAssignmentHumanChangesSurviveOneHundredIndependentRecoveryRaces") {
@@ -295,6 +297,11 @@ func TestProviderCampaignMutantsNameMissingControl(t *testing.T) {
 	})
 	if err := compareExactCensus(architectureMutant.ExpectedTests, architecture.ExpectedTests); err == nil || !strings.Contains(err.Error(), "TestDefaultPolicyPinsTrackerConformanceAsOneWayQualityTooling") {
 		t.Fatalf("accepted provider architecture removal mutant error=%v", err)
+	}
+	widened := architecture
+	widened.Pattern = "^Test"
+	if err := validateProfile(widened); err == nil || !strings.Contains(err.Error(), "exact expected-test census") {
+		t.Fatalf("widened live selector mutant survived: %v", err)
 	}
 
 	for _, name := range []string{

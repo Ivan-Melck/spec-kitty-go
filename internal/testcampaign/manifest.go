@@ -2,6 +2,7 @@ package testcampaign
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -344,7 +345,18 @@ func ProfileByName(name string) (Profile, error) {
 		return Profile{}, fmt.Errorf("unknown campaign profile %q", name)
 	}
 	profile.ExpectedTests = append([]string(nil), profile.ExpectedTests...)
+	if profile.Pattern == "" {
+		profile.Pattern = exactProfilePattern(profile.ExpectedTests)
+	}
 	return profile, validateProfile(profile)
+}
+
+func exactProfilePattern(expected []string) string {
+	quoted := make([]string, len(expected))
+	for index, name := range expected {
+		quoted[index] = regexp.QuoteMeta(name)
+	}
+	return "^(" + strings.Join(quoted, "|") + ")$"
 }
 
 func CampaignByName(name string) (Campaign, error) {
@@ -422,6 +434,9 @@ func sortedUniqueNonempty(values []string) bool {
 func validateProfile(profile Profile) error {
 	if profile.Name == "" || profile.Package == "" || len(profile.ExpectedTests) == 0 {
 		return fmt.Errorf("profile name, package, and expected tests are required")
+	}
+	if profile.Pattern != exactProfilePattern(profile.ExpectedTests) {
+		return fmt.Errorf("profile %s selector must bind its exact expected-test census", profile.Name)
 	}
 	if profile.Parallel < 0 || profile.Parallel > 32 {
 		return fmt.Errorf("profile %s parallelism must be between 0 and 32", profile.Name)
