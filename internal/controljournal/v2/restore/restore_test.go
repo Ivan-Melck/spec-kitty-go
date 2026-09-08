@@ -346,6 +346,9 @@ func TestRestoreSuffixMembershipOrderingTerminalAndRollingPrefix(t *testing.T) {
 }
 
 func TestQualificationFixtureCheckpointPlus10000Operations30Runs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("the 30x10k wall-clock qualification runs in the isolated M2 performance and full campaign tiers")
+	}
 	if raceBuild() {
 		t.Skip("the 30x10k wall-clock qualification is a performance campaign; the 100-run worker scenario remains enabled under -race")
 	}

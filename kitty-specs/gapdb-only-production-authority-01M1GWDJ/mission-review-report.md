@@ -191,6 +191,15 @@ different selector, and the architecture profile is included in source-level
 exact-census discovery. An omitted pattern can therefore no longer widen a
 live campaign.
 
+Hosted execution then identified one wall-clock qualification still misplaced
+inside the parallel short package sweep. The 30-run, 10,000-operation NFR-009
+recovery measurement passed on the qualification host but measured 2.20–2.38
+seconds under shared CI contention against its isolated two-second threshold.
+It now opts out under `testing.Short()` and remains active in `contract-full`
+and the dedicated M2 performance/qualification path. This preserves the NFR
+and its signed 1.866-second release measurement without treating unrelated CI
+load as a pull-request correctness failure.
+
 ## Risk findings
 
 ### RISK-1 — Local absence scan observes ignored tracker metadata
