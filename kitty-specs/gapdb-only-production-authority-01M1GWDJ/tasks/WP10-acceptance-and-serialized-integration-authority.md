@@ -23,9 +23,6 @@ requirement_refs:
 planning_base_branch: feat/gapdb-only-production-authority
 merge_target_branch: feat/gapdb-only-production-authority
 branch_strategy: Planning artifacts for this mission were generated on feat/gapdb-only-production-authority. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/gapdb-only-production-authority unless the human explicitly redirects the landing branch.
-base_branch: kitty/mission-gapdb-only-production-authority-01M1GWDJ
-base_commit: 415fe448e3230f68a281cfb15453e075bf2768cc
-created_at: '2026-09-05T00:33:26.044444+00:00'
 subtasks:
 - T049
 - T050
