@@ -1,6 +1,6 @@
 # Production Runtime Program
 
-Status: **active implementation program — M1 accepted; M2 implementation candidate**
+Status: **active implementation program — M1 adopted; M2 release-ready, adoption pending**
 
 Program ID: `production-runtime`
 
@@ -25,12 +25,14 @@ mission-review, and retrospective gates.
 
 M1 is **accepted** at the exact identities recorded in
 [`programs/evidence/m1-adoption.json`](programs/evidence/m1-adoption.json) and
-its [adoption closeout](programs/evidence/m1-adoption-closeout.md). M2 now has a
-GapDB-only production authority implementation and source-bound crown
-qualifier. M2 remains unaccepted until its exact clean candidate completes the
-full campaign and independent review. M3–M7 remain dependency-blocked. This
-execution status does not transfer M2 proof to API 2.0, neutral acceptance,
-real-agent composition, or MCP.
+its [adoption closeout](programs/evidence/m1-adoption-closeout.md). M2's exact
+GapDB-only production-authority candidate completed the clean crown campaign,
+independent review, recursive release verification, mission acceptance,
+integration, and post-merge mission review. It is technically release-ready;
+its release receipt intentionally records `adopted=false`. M3–M7 remain
+dependency-blocked until the exact M2 tuple receives a separate attributable
+human adoption record. This result does not transfer M2 proof to API 2.0,
+neutral acceptance, real-agent composition, or MCP.
 
 The program is intentionally not a mega-mission:
 
@@ -236,8 +238,8 @@ and signed adoption evidence.
 
 ### M2 — GapDB-Only Production Authority
 
-**Status:** implementation candidate; full source-bound qualification and
-independent review required before acceptance
+**Status:** implementation complete, accepted, merged, and post-merge reviewed;
+exact source-bound release is ready for a separate human adoption decision
 
 **Outcome:** Move all authority capabilities to the event and CAS model and
 erase SQLite from the production graph.
@@ -691,14 +693,16 @@ one falsification target per mission, no hidden dependency, parallel groups
 
 ## 10. Admitting the M2 successors
 
-M1 is adopted and M2 is implemented. Do not admit a successor from source
-presence, a green local test, a tracker state, or this roadmap. First complete
-one full clean M2 run, independently verify the extracted immutable archive,
-and obtain an independent mission review with no unresolved critical/high
-finding. The resulting program decision binds the exact source commit, tree,
-RunID, manifest digest, archive digest, sidecar chain, and reviewer identity.
+M1 is adopted and M2 is technically release-ready. Its full clean run,
+independent archive verification, and post-merge mission review completed with
+no unresolved critical/high finding. Do not admit a successor from source
+presence, a green local test, a tracker state, or this roadmap. The remaining
+program decision is an attributable human adoption record binding the exact
+source commit, tree, RunID, manifest digest, producer and release archive
+digests, sidecar chain, and reviewer identity.
 
-After that decision, M3 and M4 may be created in the `after-M2` parallel group.
+After that human decision, M3 and M4 may be created in the `after-M2` parallel
+group.
 Each consumes the M2 successor contract rather than database keys or qualifier
 internals. If M2 fails, preserve the attempt and repair a new candidate; do not
 admit a successor by weakening the census or substituting the short CI tier.

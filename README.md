@@ -17,7 +17,7 @@ successor missions and are not inferred from an M2 result.
 | Authority and concurrency | The GapDB production host implements leases, lease-scoped workspaces, quarantine, stale-authority refusal, ActorID-independent review, and serialized Git integration; Phase 1 remains the historical source-bound proof | The M2 crown requalifies the complete laws on the sole production store before M3/M4 admission |
 | Work substrate | Provider-neutral ports and the exact Beads 1.2.2 JSON adapter tuple are delivered | M3 composes the admitted provider with the production host; Beads remains mutable work/discussion, never mission or execution authority |
 | Mission method | Specification, plan, provider-neutral decomposition, immutable WorkRevision generations, drift reconciliation, typed `next`, execution, review, acceptance, integration, progress, and recovery are implemented as native capabilities | M3 adds real-agent/provider composition without changing these authority laws |
-| Control state | GapDB is the sole compiled production authority; M2 has no SQLite package, module, fallback, importer, selector, or test driver | Release readiness requires the exact M2 crown evidence and independent review |
+| Control state | GapDB is the sole compiled production authority; M2 has no SQLite package, module, fallback, importer, selector, or test driver | The exact M2 crown evidence and independent review passed; human adoption remains a separate decision |
 | Application surface | `cmd/spec-kitty` is the native authority command surface; `cmd/spk-m2-qualification` is release tooling and grants no authority | Orchestrator API 2.0 and the complete normal CLI remain M5 |
 | Acceptance | Repository-specific Go campaigns and candidate-bound evidence | Stack-neutral claims, approved provider bindings, typed evidence envelopes, and a policy gate |
 | MCP | Not shipped and not required | Optional, separately packaged MCP `2026-07-28` adapter with Tasks as a projection of native operations |
@@ -47,7 +47,7 @@ what happens next:
    [Python behavior inventory](docs/PYTHON_BEHAVIOR_INVENTORY.md) for provenance.
 6. [Build and run the current repository](#build-and-run-the-current-repository)
    and [Evidence](#evidence) for reproducible present-tense claims.
-7. [What happens next](#what-happens-next) for the M2 review boundary and M3/M4 stop rule.
+7. [What happens next](#what-happens-next) for the M2 adoption boundary and M3/M4 stop rule.
 
 ## What makes this port distinct
 
@@ -462,8 +462,23 @@ release.
 
 That decision admitted M2. The repository now contains the GapDB authority
 capabilities and closed qualifier for source, module graph, SBOM, binaries,
-install, configuration, fallback, and migration absence. Source presence alone
-does not make an exact tree release-ready. There is no dual-write interval.
+install, configuration, fallback, and migration absence. The exact M2 candidate
+has now completed its clean qualification run, independent review, recursive
+release verification, mission acceptance, lane integration, and post-merge
+mission review. The machine verdict is `release_ready=true`; the deliberately
+separate human field remains `adopted=false`. There is no dual-write interval.
+
+The release-ready evidence is bound to:
+
+| Identity | Value |
+|---|---|
+| Source commit | `416138f490ad6d908fc445c12b91440ca66ef18c` |
+| Source tree | `2b68ee733305465d5acdfe8680f053b91d867a8d` |
+| Run ID | `wp17-qualification-416138f4-cycle2-final23` |
+| Manifest SHA-256 | `8d7731992a35b0ace4cdcd816651df302d4459c8af91d1a2c31cf5d3aeb285a0` |
+| Producer archive SHA-256 | `250bad6ef3115b154794db61407736133ec0b1f5a5fc61117ec1267e77057fc2` |
+| Independent review SHA-256 | `a35f944548bd766887344192f59c36fd6002519d88588e07e3cdc48989510e50` |
+| Release archive SHA-256 | `098fa8d3fae6f33e227ce290530fc172f820c961ffd326adb820a26aa44e2414` |
 
 This is a gated implementation sequence, not uncertainty about the target.
 The former store remains only an immutable Phase 1–3 evidence boundary; it is
@@ -471,17 +486,18 @@ not compiled, selectable, importable, or available as production fallback.
 
 ## What happens next
 
-M1 is complete and adopted. M2, **GapDB-Only Production Authority**, is in its
-qualification/review boundary. Its falsification target remains deliberately
-stronger than “the new adapter works”: every authority capability preserves its
-behavioral and refusal contract on the M1 event/CAS substrate while the retired
-store disappears from every production surface.
+M1 is complete and adopted. M2, **GapDB-Only Production Authority**, is merged,
+post-merge reviewed, and technically release-ready. Its falsification target was
+deliberately stronger than “the new adapter works”: every authority capability
+preserves its behavioral and refusal contract on the M1 event/CAS substrate
+while the retired store disappears from every production surface.
 
-If the full crown or independent review fails, retain that immutable attempt and
-repair a new source candidate. Do not admit M3/M4, introduce dual write, add
-read fallback, import legacy state, or create a runtime backend-selection escape
-hatch. The complete dependency graph, exit evidence, and rollback rules are in
-the production runtime program.
+The next program decision is explicit human adoption of the exact M2 tuple.
+Until that record exists, consumers must say `release-ready`, never `adopted`,
+and M3/M4 must not infer admission from a branch, tag, tracker ticket, or this
+README. After adoption, M3 (real-agent/Beads/Git/workspace composition) and M4
+(stack-neutral acceptance) may proceed in parallel. Dual write, read fallback,
+legacy import, and runtime backend selection remain forbidden.
 
 ## Evidence
 
@@ -501,6 +517,7 @@ the verdict automatically.
 - [Technical project plan](docs/TECHNICAL_PROJECT_PLAN.md)
 - [M2 acceptance mapping](docs/programs/evidence/m2-acceptance-matrix.json)
   and [independent review input](docs/programs/evidence/m2-independent-review-input.md)
+- [M2 post-merge mission review](kitty-specs/gapdb-only-production-authority-01M1GWDJ/mission-review-report.md)
 
 ## License
 
