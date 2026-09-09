@@ -210,6 +210,9 @@
       "last_event_id": "01M23QYWSDKD4NWEX7EC17GDE2",
       "last_transition_at": "2026-09-09T18:47:51.853772+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review at source 6fd7b5a5a4a2cc56980752e08f9e2722729ace1c: compiled pinned installer and fixed system tools, normal identity smoke and installer/refusals, full quality and package races pass. Historical 6aaf2112 full-local evidence remains 27/28 with expected active-successor non-admissibility; final integrated qualification remains required."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 2930183,
