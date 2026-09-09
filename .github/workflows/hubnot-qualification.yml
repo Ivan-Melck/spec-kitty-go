@@ -67,6 +67,9 @@ jobs:
           echo "HUBNOT_SOURCE=$RUNNER_TEMP/hubnot-source" >> "$GITHUB_ENV"
           echo "BUILD_DIR=$RUNNER_TEMP/hubnot-build" >> "$GITHUB_ENV"
           echo "ARTIFACT_DIR=$RUNNER_TEMP/hubnot-real" >> "$GITHUB_ENV"
+      - name: Verify ordinary-user namespace prerequisite
+        run: bash scripts/ci/prepare-userns.sh
+
       - name: Build canonical qualifier and fetch its exact accepted prerequisite
         shell: bash
         run: |

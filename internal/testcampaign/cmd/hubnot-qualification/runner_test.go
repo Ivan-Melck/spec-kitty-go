@@ -202,7 +202,24 @@ func TestQualificationCancellationRemovesDescendantGroups(t *testing.T) {
 	if pid <= 1 {
 		cancel()
 		<-done
-		t.Fatal("fault descendant did not start")
+		var diagnostics strings.Builder
+		for _, name := range []string{"worker.stderr", "qualification.json"} {
+			f, err := os.Open(filepath.Join(evidence, name))
+			if err != nil {
+				diagnostics.WriteString(name + ": " + err.Error() + "\n")
+				continue
+			}
+			raw, readErr := io.ReadAll(io.LimitReader(f, 8193))
+			f.Close()
+			if len(raw) > 8192 {
+				raw = append(raw[:8192], []byte(" [truncated]")...)
+			}
+			diagnostics.WriteString(name + ": " + string(raw) + "\n")
+			if readErr != nil {
+				diagnostics.WriteString(readErr.Error() + "\n")
+			}
+		}
+		t.Fatalf("fault descendant did not start; retained diagnostics after supervisor joined:\n%s", diagnostics.String())
 	}
 	defer syscall.Kill(-pid, syscall.SIGKILL)
 	cancel()

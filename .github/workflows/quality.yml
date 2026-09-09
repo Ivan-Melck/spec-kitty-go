@@ -43,6 +43,9 @@ jobs:
       - name: Prepare isolated mutable paths
         run: mkdir -p "$ARTIFACT_DIR" "$BUILD_DIR" "$GOCACHE" "$GOTMPDIR" "$TMPDIR"
 
+      - name: Verify ordinary-user namespace prerequisite
+        run: bash scripts/ci/prepare-userns.sh
+
       - name: Install pinned analysis tools
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
