@@ -92,8 +92,8 @@ func admittedAbsenceContractCount(contract []byte) (int, error) {
 	switch SHA256(contract) {
 	case "245af6f271f12f1905613c4140cb4b842cc117ab40465f559a545069e79af09d":
 		return 489, nil
-	case "838f3a6c78e60f2d2153ab90df675117c03a4afc8bc3c5cfd4ef756b013e61d3":
-		return 505, nil
+	case "fde13c95060b9ab8a559d2ad3f4319408768aa19aa4d47b58ff7ccbac604d380":
+		return 515, nil
 	default:
 		return 0, fmt.Errorf("WP16 absence contract is not an admitted byte identity")
 	}

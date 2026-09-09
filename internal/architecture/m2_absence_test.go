@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -282,7 +283,23 @@ func inspectM2Candidate(path string, data []byte, mode fs.FileMode, add func(str
 			}
 		}
 		executable = strings.ToLower(m2GoExecutableText(data) + "\n" + strings.Join(m2GoResolvedExecutables(parsed), "\n"))
-	} else if ext == ".sh" || ignoreFile || bytes.HasPrefix(data, []byte("#!")) {
+	}
+	shellCandidate := ext == ".sh" || ignoreFile || bytes.HasPrefix(data, []byte("#!"))
+	if mode.Perm()&0o111 != 0 {
+		// Shell ENOEXEC fallback is independent of suffix, shebang and UTF-8.
+		// Only parsed executable containers avoid shell interpretation; unknown
+		// NUL-bearing material refuses explicitly and still gets byte-scanned.
+		switch {
+		case m2ELFExecutable(data):
+			shellCandidate = false
+		case bytes.IndexByte(data, 0) >= 0:
+			add("ambiguous-shell", path, "unclassified-executable-bytes")
+			shellCandidate = false
+		default:
+			shellCandidate = true
+		}
+	}
+	if shellCandidate {
 		rawShell := string(data)
 		if ignoreFile && mode.Perm()&0o111 == 0 && !bytes.HasPrefix(data, []byte("#!")) {
 			rawShell = m2IgnoreExecutableText(rawShell)
@@ -353,6 +370,31 @@ func inspectM2Candidate(path string, data []byte, mode fs.FileMode, add func(str
 			}
 		}
 	}
+}
+
+// Linux is the qualified execution target. Recognize a structurally parsed ELF
+// executable/shared object with a bounded, file-backed executable load segment.
+// Other executable containers are deliberately ambiguous, not silently exempt.
+func m2ELFExecutable(data []byte) bool {
+	if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+		return false
+	}
+	file, err := elf.NewFile(bytes.NewReader(data))
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	if file.Type != elf.ET_EXEC && file.Type != elf.ET_DYN {
+		return false
+	}
+	for _, program := range file.Progs {
+		if program.Type == elf.PT_LOAD && program.Flags&elf.PF_X != 0 &&
+			program.Filesz > 0 && program.Memsz >= program.Filesz &&
+			program.Off <= uint64(len(data)) && program.Filesz <= uint64(len(data))-program.Off {
+			return true
+		}
+	}
+	return false
 }
 
 // Recognize a conservative subset of plain ignore patterns, never shell syntax.

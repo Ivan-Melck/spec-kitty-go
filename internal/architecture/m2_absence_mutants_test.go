@@ -1,6 +1,7 @@
 package architecture
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"os"
@@ -68,31 +69,39 @@ func TestM2AbsenceMutants(t *testing.T) {
 func testM2InertIgnorePatternsPreserveExecutableDenials(t *testing.T) {
 	for _, test := range []struct {
 		name, path, content, kind string
-		executable                bool
+		mode                      os.FileMode
 	}{
-		{"observed-provider-patterns", ".beads/.gitignore", "# Ephemeral store (" + m2LegacyTitle + ")\nephemeral." + m2LegacyCLI + "\nephemeral." + m2LegacyCLI + "-journal\nephemeral." + m2LegacyCLI + "-wal\nephemeral." + m2LegacyCLI + "-shm\n", "", false},
-		{"nested-negated-globs", ".cache/.gitignore", "*." + m2LegacyCLI + "\n!keep." + m2LegacyCLI + "\n**/cache." + m2LegacyCLI + "-wal\n", "", false},
-		{"ignore-comment", ".gitignore", "# " + m2LegacyCLI + " is a database filename suffix\n", "", false},
-		{"plain-command", ".gitignore", m2LegacyCLI + " /tmp/db\n", "subprocess", false},
-		{"bare-command", ".gitignore", m2LegacyCLI + "\n", "subprocess", false},
-		{"split-command", ".gitignore", "sql'ite'3 /tmp/db\n", "subprocess", false},
-		{"shebang-command", ".gitignore", "#!/bin/sh\nsql\\ite3 /tmp/db\n", "subprocess", false},
-		{"executable-no-shebang", ".gitignore", "sql'ite'3 /tmp/db\n", "subprocess", true},
-		{"pattern-then-command", ".beads/.gitignore", "*." + m2LegacyCLI + "\n" + m2LegacyCLI + " /tmp/db\n", "subprocess", false},
-		{"hidden-extensionless", ".cache/run", "#!/bin/sh\nsql'ite'3 /tmp/db\n", "subprocess", true},
-		{"executable-pattern", ".gitignore", "ephemeral." + m2LegacyCLI + "\n", "subprocess", true},
-		{"hidden-import", ".cache/generated/x.go", "package x\nimport _ \"" + m2ModerncDriver + "\"\n", "go-import", false},
-		{"hidden-module", ".cache/go.mod", "module x\nrequire " + m2ModerncDriver + " v1.0.0\n", "module", false},
-		{"driver-in-ignore", ".gitignore", m2ModerncDriver + "\n", "driver", false},
-		{"lookalike-name", ".gitignore-copy", "*." + m2LegacyCLI + "\n", "subprocess", false},
+		{"observed-provider-patterns", ".beads/.gitignore", "# Ephemeral store (" + m2LegacyTitle + ")\nephemeral." + m2LegacyCLI + "\nephemeral." + m2LegacyCLI + "-journal\nephemeral." + m2LegacyCLI + "-wal\nephemeral." + m2LegacyCLI + "-shm\n", "", 0o600},
+		{"nested-negated-globs", ".cache/.gitignore", "*." + m2LegacyCLI + "\n!keep." + m2LegacyCLI + "\n**/cache." + m2LegacyCLI + "-wal\n", "", 0o600},
+		{"ignore-comment", ".gitignore", "# " + m2LegacyCLI + " is a database filename suffix\n", "", 0o600},
+		{"plain-command", ".gitignore", m2LegacyCLI + " /tmp/db\n", "subprocess", 0o600},
+		{"bare-command", ".gitignore", m2LegacyCLI + "\n", "subprocess", 0o600},
+		{"split-command", ".gitignore", "sql'ite'3 /tmp/db\n", "subprocess", 0o600},
+		{"shebang-command", ".gitignore", "#!/bin/sh\nsql\\ite3 /tmp/db\n", "subprocess", 0o600},
+		{"executable-no-shebang", ".gitignore", "sql'ite'3 /tmp/db\n", "subprocess", 0o700},
+		{"pattern-then-command", ".beads/.gitignore", "*." + m2LegacyCLI + "\n" + m2LegacyCLI + " /tmp/db\n", "subprocess", 0o600},
+		{"hidden-extensionless", ".cache/run", "#!/bin/sh\nsql'ite'3 /tmp/db\n", "subprocess", 0o700},
+		{"hidden-owner-no-shebang", ".cache/run", "sql'ite'3 /tmp/db\n", "subprocess", 0o700},
+		{"hidden-group-no-shebang", ".cache/run", "sql\\ite3 /tmp/db\n", "subprocess", 0o610},
+		{"hidden-other-executable-suffix", ".cache/run.txt", "sql'ite'3 /tmp/db\n", "subprocess", 0o601},
+		{"executable-nonutf8-comment", ".cache/run", "# \xff\nsql'ite'3 /tmp/db\n", "subprocess", 0o700},
+		{"executable-nonutf8-data", ".cache/run", "printf '\xff\\n'\nsql'ite'3 /tmp/db\n", "subprocess", 0o700},
+		{"executable-control-data", ".cache/run", "printf '\x01\\n'\nsql'ite'3 /tmp/db\n", "subprocess", 0o700},
+		{"executable-unknown-nul", ".cache/run", "\x00sql'ite'3 /tmp/db\n", "ambiguous-shell", 0o700},
+		{"executable-elf", ".cache/run", string(m2ExecutableELFFixture()), "", 0o700},
+		{"executable-elf-token", ".cache/run", string(m2ExecutableELFFixture()) + m2LegacyCLI, "subprocess", 0o700},
+		{"executable-truncated-elf", ".cache/run", "\x7fELF\x02\x01\x01\x00", "ambiguous-shell", 0o700},
+		{"executable-pattern", ".gitignore", "ephemeral." + m2LegacyCLI + "\n", "subprocess", 0o700},
+		{"hidden-import", ".cache/generated/x.go", "package x\nimport _ \"" + m2ModerncDriver + "\"\n", "go-import", 0o600},
+		{"hidden-module", ".cache/go.mod", "module x\nrequire " + m2ModerncDriver + " v1.0.0\n", "module", 0o600},
+		{"driver-in-ignore", ".gitignore", m2ModerncDriver + "\n", "driver", 0o600},
+		{"lookalike-name", ".gitignore-copy", "*." + m2LegacyCLI + "\n", "subprocess", 0o600},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			writeM2Mutant(t, root, test.path, []byte(test.content))
-			if test.executable {
-				if err := os.Chmod(filepath.Join(root, test.path), 0o700); err != nil {
-					t.Fatal(err)
-				}
+			if err := os.Chmod(filepath.Join(root, test.path), test.mode); err != nil {
+				t.Fatal(err)
 			}
 			evidence := inspectM2Absence(t, root, false)
 			if test.kind == "" {
@@ -104,6 +113,29 @@ func testM2InertIgnorePatternsPreserveExecutableDenials(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A complete minimal ELF64 executable container, with one file-backed executable
+// load segment. No host executable, database, or external command is invoked.
+func m2ExecutableELFFixture() []byte {
+	data := make([]byte, 121)
+	copy(data, "\x7fELF\x02\x01\x01")
+	binary.LittleEndian.PutUint16(data[16:], 2)  // ET_EXEC
+	binary.LittleEndian.PutUint16(data[18:], 62) // EM_X86_64
+	binary.LittleEndian.PutUint32(data[20:], 1)
+	binary.LittleEndian.PutUint64(data[24:], 0x400078)
+	binary.LittleEndian.PutUint64(data[32:], 64)
+	binary.LittleEndian.PutUint16(data[52:], 64)
+	binary.LittleEndian.PutUint16(data[54:], 56)
+	binary.LittleEndian.PutUint16(data[56:], 1)
+	binary.LittleEndian.PutUint32(data[64:], 1) // PT_LOAD
+	binary.LittleEndian.PutUint32(data[68:], 5) // PF_R | PF_X
+	binary.LittleEndian.PutUint64(data[80:], 0x400000)
+	binary.LittleEndian.PutUint64(data[96:], uint64(len(data)))
+	binary.LittleEndian.PutUint64(data[104:], uint64(len(data)))
+	binary.LittleEndian.PutUint64(data[112:], 0x1000)
+	data[120] = 0xc3 // ret
+	return data
 }
 
 func TestM2AbsenceSymlinkAndHistoricalDiscrimination(t *testing.T) {

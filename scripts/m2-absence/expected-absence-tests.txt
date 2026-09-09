@@ -503,3 +503,13 @@ TestM2AbsenceMutants/inert-ignore-context/hidden-import
 TestM2AbsenceMutants/inert-ignore-context/hidden-module
 TestM2AbsenceMutants/inert-ignore-context/driver-in-ignore
 TestM2AbsenceMutants/inert-ignore-context/lookalike-name
+TestM2AbsenceMutants/inert-ignore-context/hidden-owner-no-shebang
+TestM2AbsenceMutants/inert-ignore-context/hidden-group-no-shebang
+TestM2AbsenceMutants/inert-ignore-context/hidden-other-executable-suffix
+TestM2AbsenceMutants/inert-ignore-context/executable-nonutf8-comment
+TestM2AbsenceMutants/inert-ignore-context/executable-nonutf8-data
+TestM2AbsenceMutants/inert-ignore-context/executable-control-data
+TestM2AbsenceMutants/inert-ignore-context/executable-unknown-nul
+TestM2AbsenceMutants/inert-ignore-context/executable-elf
+TestM2AbsenceMutants/inert-ignore-context/executable-elf-token
+TestM2AbsenceMutants/inert-ignore-context/executable-truncated-elf

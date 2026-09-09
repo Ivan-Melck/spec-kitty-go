@@ -1038,7 +1038,7 @@ func TestAbsenceContractAdmissionPreservesHistoricalAndCurrentCensuses(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if SHA256(current) != "838f3a6c78e60f2d2153ab90df675117c03a4afc8bc3c5cfd4ef756b013e61d3" {
+	if SHA256(current) != "fde13c95060b9ab8a559d2ad3f4319408768aa19aa4d47b58ff7ccbac604d380" {
 		t.Fatal("current expected absence contract differs from its reviewed bytes")
 	}
 	historical := bytes.Join(bytes.SplitAfter(current, []byte("\n"))[:489], nil)
@@ -1055,10 +1055,10 @@ func TestAbsenceContractAdmissionPreservesHistoricalAndCurrentCensuses(t *testin
 		wantPass bool
 	}{
 		{"historical", historical, 489, true},
-		{"current", current, 505, true},
-		{"unknown-same-count", unknown, 505, false},
-		{"reduced-self-consistent", bytes.Join(bytes.SplitAfter(current, []byte("\n"))[1:], nil), 504, false},
-		{"duplicated-self-consistent", duplicate, 506, false},
+		{"current", current, 515, true},
+		{"unknown-same-count", unknown, 515, false},
+		{"reduced-self-consistent", bytes.Join(bytes.SplitAfter(current, []byte("\n"))[1:], nil), 514, false},
+		{"duplicated-self-consistent", duplicate, 516, false},
 		{"forged-count", current, 489, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
