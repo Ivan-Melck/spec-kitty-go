@@ -1866,8 +1866,9 @@ func (r *scenarioRunner) performanceScenario(ctx context.Context, id string) (re
 			return errors.New("known reference changed signed discussion")
 		}
 		r.measure("consumer_seconds", seconds)
+		return r.traceSeparateQuery(ctx, "performance.known-reference", "definition", read)
 	case "performance.original-recovery":
-		replay, err := f.call(ctx, "define", r.performanceRequests[999], 0)
+		replay, err := f.call(ctx, "define", r.performanceRequests[len(r.performanceRequests)-1], 0)
 		if err != nil {
 			return err
 		}
@@ -1878,6 +1879,7 @@ func (r *scenarioRunner) performanceScenario(ctx context.Context, id string) (re
 			return err
 		}
 		r.measure("consumer_seconds", time.Since(started).Seconds())
+		return r.traceSeparateQuery(ctx, id, "define", replay)
 	}
 
 	return nil
@@ -1885,6 +1887,146 @@ func (r *scenarioRunner) performanceScenario(ctx context.Context, id string) (re
 
 func validateUnitCensus(raw []byte, pkg string, tests []string) (testcampaign.HubnotUnitCensus, error) {
 	return testcampaign.ValidateHubnotUnitOutput(raw, pkg, tests)
+}
+
+// Separate query tracing follows the untraced measurement on its existing fixture.
+// The exact original argv/input are reused; tracing never supplies admission latency.
+func (r *scenarioRunner) traceSeparateQuery(ctx context.Context, id, action string, original object) error {
+	untracedIndex := len(r.row.Commands) - 1
+	if untracedIndex < 0 {
+		return errors.New("untraced query missing")
+	}
+	untraced := r.row.Commands[untracedIndex]
+	if len(untraced.Argv) == 0 || untraced.Argv[0] != r.options.Product || untraced.Stdin == nil {
+		return errors.New("untraced query identity missing")
+	}
+	input, err := os.ReadFile(untraced.Stdin.Path)
+	if err != nil || int64(len(input)) != untraced.Stdin.Bytes || shaBytes(input) != untraced.Stdin.SHA256 {
+		return errors.New("untraced query input changed")
+	}
+	trace, err := exec.LookPath("strace")
+	if err != nil {
+		return prerequisite("separate query census requires strace")
+	}
+	trace, err = filepath.Abs(trace)
+	if err != nil {
+		return err
+	}
+	tracePath := filepath.Join(r.options.EvidenceDir, fmt.Sprintf("%s-%05d.execve.trace", id, r.sequence+1))
+	file, err := os.OpenFile(tracePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	args := append([]string{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-o", tracePath}, untraced.Argv...)
+	tracedIndex := len(r.row.Commands)
+	started := time.Now()
+	output, commandErr := r.command(ctx, untraced.Directory, input, 0, trace, args...)
+	r.measure("traced_seconds", time.Since(started).Seconds())
+	a, err := fileArtifact(tracePath)
+	if err != nil {
+		return errors.Join(commandErr, err)
+	}
+	r.row.Artifacts = append(r.row.Artifacts, a)
+	r.measure("process_trace", a)
+	r.measure("untraced_command", untracedIndex)
+	r.measure("traced_command", tracedIndex)
+	if commandErr != nil {
+		return commandErr
+	}
+	if _, err = os.Stat(filepath.Join(untraced.Directory, "never-control-root")); !errors.Is(err, os.ErrNotExist) {
+		return errors.New("traced query touched control root")
+	}
+	envelope, err := decodeObject(output)
+	if err != nil || envelope["schema"] != "go-kitty.tracker-result/1" || envelope["action"] != action || envelope["outcome"] != "success" || !sameSeparateQueryResult(action, original, obj(envelope["result"])) {
+		return errors.New("traced query differs from untraced complete result")
+	}
+	data, err := os.ReadFile(tracePath)
+	if err != nil {
+		return err
+	}
+	records, err := parseExecTrace(string(data))
+	if err != nil {
+		return err
+	}
+	counts := map[string]int{"consumer": 0, "hubnot": 0, "git": 0, "other": 0, "failed_exec": 0}
+	consumerPID := ""
+	childPIDs := map[string]bool{}
+	for _, record := range records {
+		if record.Success {
+			childPIDs[record.PID] = true
+		}
+		switch {
+		case !record.Success:
+			counts["failed_exec"]++
+		case record.Path == r.options.Product:
+			consumerPID = record.PID
+			counts["consumer"]++
+		case record.Path == r.options.HN:
+			counts["hubnot"]++
+		case filepath.Base(record.Path) == "git":
+			counts["git"]++
+		default:
+			counts["other"]++
+		}
+	}
+	if counts["consumer"] != 1 || counts["hubnot"] == 0 || counts["git"] == 0 {
+		return errors.New("separate query execution census incomplete")
+	}
+	delete(childPIDs, consumerPID)
+	r.measure("observed_exec_child_pids", len(childPIDs))
+	r.measure("exec_counts", counts)
+	return nil
+}
+
+func sameSeparateQueryResult(action string, a, b object) bool {
+	kind := "known-work-observation/1"
+	if action == "define" {
+		kind = "original-operation/1"
+	} else if action != "definition" {
+		return false
+	}
+	copies := []object{}
+	for _, original := range []object{a, b} {
+		raw, err := json.Marshal(original)
+		if err != nil {
+			return false
+		}
+		copy, err := decodeObject(raw)
+		if err != nil {
+			return false
+		}
+		copies = append(copies, copy)
+	}
+	proofs := []object{}
+	observations := []object{}
+	for _, copy := range copies {
+		observation := copy
+		p := obj(copy["proof"])
+		if action == "define" {
+			if copy["replayed"] != true || copy["prior_mutation"] != true {
+				return false
+			}
+			observation = obj(copy["observation"])
+			p = obj(observation["proof"])
+		}
+		if _, err := proof(p, kind); err != nil {
+			return false
+		}
+		if observation["observed_at"] != p["observed_at"] {
+			return false
+		}
+		observations = append(observations, observation)
+		proofs = append(proofs, p)
+	}
+	if !sameObservedProof(proofs[0], proofs[1]) {
+		return false
+	}
+	proofs[1]["observed_at"] = proofs[0]["observed_at"]
+	observations[1]["observed_at"] = observations[0]["observed_at"]
+	return equal(copies[0], copies[1])
 }
 
 // Observation time is per invocation; every immutable proof field remains exact.

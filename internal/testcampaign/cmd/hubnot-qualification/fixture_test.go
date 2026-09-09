@@ -101,7 +101,15 @@ func TestPublicPerformanceFixtureSmallOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := newScenarioRunner(qualificationOptions{Repository: root, Product: product, HN: hn, EvidenceDir: t.TempDir()})
+	evidence := t.TempDir()
+	if base := os.Getenv("GO_KITTY_TEST_ARTIFACT_ROOT"); base != "" {
+		evidence, err = os.MkdirTemp(base, "small-query-traces-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Log("retained artifacts", evidence)
+	}
+	r := newScenarioRunner(qualificationOptions{Repository: root, Product: product, HN: hn, EvidenceDir: evidence})
 	defer r.close()
 	defer saveHandlerProbe(t, r)
 	r.row = &testcampaign.HubnotScenarioResult{Measurements: map[string]json.RawMessage{}}
@@ -120,8 +128,49 @@ func TestPublicPerformanceFixtureSmallOracle(t *testing.T) {
 	if err = r.verifyPerformanceComments(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err = r.performanceScenario(ctx, "performance.known-reference"); err != nil {
-		t.Fatal(err)
+	for _, id := range []string{"performance.known-reference", "performance.original-recovery"} {
+		if err = r.performanceScenario(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		var counts map[string]int
+		if json.Unmarshal(r.row.Measurements["exec_counts"], &counts) != nil || counts["consumer"] != 1 || counts["hubnot"] < 1 || counts["git"] < 1 {
+			t.Fatal("missing separate actual child census")
+		}
+		var trace testcampaign.HubnotArtifact
+		if json.Unmarshal(r.row.Measurements["process_trace"], &trace) != nil || trace.Bytes == 0 {
+			t.Fatal("missing separate trace bytes")
+		}
+		raw, err := os.ReadFile(trace.Path)
+		if err != nil || shaBytes(raw) != trace.SHA256 {
+			t.Fatal("trace identity mismatch")
+		}
+		if _, err = parseExecTrace(string(raw)); err != nil {
+			t.Fatal(err)
+		}
+		var uniqueChildren int
+		if json.Unmarshal(r.row.Measurements["observed_exec_child_pids"], &uniqueChildren) != nil || uniqueChildren <= 0 {
+			t.Fatal("missing distinct exec-child PID census")
+		}
+		var u, v int
+		_ = json.Unmarshal(r.row.Measurements["untraced_command"], &u)
+		_ = json.Unmarshal(r.row.Measurements["traced_command"], &v)
+		leftRaw, _ := os.ReadFile(r.row.Commands[u].Stdout.Path)
+		rightRaw, _ := os.ReadFile(r.row.Commands[v].Stdout.Path)
+		left, _ := decodeObject(leftRaw)
+		right, _ := decodeObject(rightRaw)
+		action := str(left["action"])
+		if !sameSeparateQueryResult(action, obj(left["result"]), obj(right["result"])) {
+			t.Fatal("stable actual result refused")
+		}
+		if action == "definition" {
+			obj(obj(right["result"])["definition"])["title"] = "different portable content"
+		} else {
+			obj(right["result"])["prior_mutation"] = false
+		}
+		if sameSeparateQueryResult(action, obj(left["result"]), obj(right["result"])) {
+			t.Fatal("different full traced semantics admitted")
+		}
+		t.Logf("%s successful exec classes=%v distinct successful-exec child PIDs=%d trace=%s", id, counts, uniqueChildren, trace.Path)
 	}
 	replay, err := r.performance.call(ctx, "define", r.performanceRequests[3], 0)
 	if err != nil || replay["replayed"] != true || replay["prior_mutation"] != true {
