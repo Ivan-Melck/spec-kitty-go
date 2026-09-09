@@ -36,7 +36,7 @@ In particular:
 4. A replacement lease receives a fresh workspace. A fencing token cannot stop
    POSIX writes, so an expired workspace is quarantined and never transferred.
 5. `ActorID`, not `ProcessID`, is the default review-independence boundary.
-6. Beads owns mutable work definition and discussion; Spec Kitty owns mission,
+6. Hubnot owns mutable work definition and discussion; Spec Kitty owns mission,
    execution, review, acceptance, and integration decisions; Git owns code and
    ref facts; GapDB supplies ordered storage, not product semantics.
 7. Orchestrator API 2.0 is the typed process-complete application seam. CLI,

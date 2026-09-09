@@ -111,10 +111,10 @@ matrix, not an assumption that matching release dates imply compatibility.
 | per-request capability negotiation, Tasks/MRTR projection | native operations, decisions, mission state, leases, evidence, effects |
 | task-handle token codec, TTL projection, polling hints | durable `NativeOperationID` and operation/mission retention |
 | transport limits, rate limiting, stream buffers, redaction | domain bounds, journal/watch revisions, artifact authorization |
-| endpoint/listener configuration and API host address | GapDB, Beads, Git, workspace, qualification, and secret lifecycles |
+| endpoint/listener configuration and API host address | GapDB, Hubnot, Git, workspace, qualification, and secret lifecycles |
 
 The adapter can run beside the host for local stdio/Unix-socket access or as a
-separate authenticated service. It never opens GapDB, Beads, Git repositories,
+separate authenticated service. It never opens GapDB, Hubnot, Git repositories,
 workspaces, or artifact storage directly.
 
 ### 2.3 Core-absence gate
@@ -452,7 +452,7 @@ It does not promise the Task will become `cancelled`.
 | task expires or client drops handle | no native cancellation occurs | retrieval may fail while mission/operation continues |
 
 `tasks/cancel` never directly expires a lease, deletes/quarantines a workspace,
-resets Git, clears a Beads assignment, withdraws a candidate, removes review or
+resets Git, clears a Hubnot assignment, withdraws a candidate, removes review or
 evidence, or runs compensation. Compensation is a separate API operation and
 may undo an external effect only when current provider revision, value, and
 operation attribution still prove that effect belongs to the compensated

@@ -53,7 +53,8 @@ type Diagnostic struct {
 	RecoveryActions []string `json:"recovery_actions,omitempty"`
 }
 
-// Envelope is the only machine output. Result is canonical JSON produced by
+// Envelope is the mission command machine output. Tracker commands have a
+// separate descriptive envelope. Result is canonical JSON produced by
 // a typed kernel result, never prose parsed back into meaning.
 type Envelope struct {
 	SchemaVersion      uint32                             `json:"schema_version"`

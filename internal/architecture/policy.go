@@ -233,6 +233,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 					PackagePrefix(modulePath + "/internal/sidecar/gapdb"),
 					pkg("internal/gitrepo"), pkg("internal/tracker/fake"),
 					PackagePrefix(modulePath + "/internal/tracker/beads"),
+					PackagePrefix(modulePath + "/internal/tracker/hubnot"),
 				},
 				AllowedLocalTargets: []TierName{
 					TierFoundation, TierReadModel, TierAuthority, TierArtifactAuthority,
@@ -269,6 +270,15 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 			},
 		},
 		ForbiddenLocalDirections: []ForbiddenLocalDirection{
+			{
+				Sources:     []PackagePattern{PackagePrefix(modulePath + "/internal/tracker/hubnot")},
+				TargetTiers: []TierName{TierAuthority, TierArtifactAuthority, TierMissionAuthority, TierMissionDefinition},
+				Targets:     []PackagePattern{PackagePrefix(modulePath + "/internal/controlstore"), PackagePrefix(modulePath + "/internal/sidecar"), PackagePrefix(modulePath + "/internal/gitrepo")},
+			},
+			{
+				Sources: []PackagePattern{PackagePrefix(modulePath + "/internal/controlstore"), PackagePrefix(modulePath + "/internal/sidecar")},
+				Targets: []PackagePattern{PackagePrefix(modulePath + "/internal/tracker/hubnot")},
+			},
 			{
 				Sources: []PackagePattern{
 					pkg("internal/artifact"), pkg("internal/mission"), pkg("internal/workgraph"),

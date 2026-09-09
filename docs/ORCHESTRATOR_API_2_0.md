@@ -70,7 +70,7 @@ flowchart LR
         Journal[Memory-primary state and control journal]
     end
 
-    External[Beads, Git, workspaces, artifacts, qualification providers]
+    External[Hubnot, Git, workspaces, artifacts, qualification providers]
 
     CLI --> Inbound
     Hosted --> Inbound
@@ -116,7 +116,7 @@ not choose an authority record or claim a host-generated outcome.
 | Value or system | What it may prove | What it never authorizes |
 |---|---|---|
 | GapDB revision | Ordering and conditional persistence of accepted facts | A legal lifecycle transition or acceptance verdict |
-| Beads assignment/status | Mutable work observation at a provider revision | Execution, review, acceptance, integration, or mission advancement |
+| Hubnot assignment/status | Mutable work observation at a provider revision | Execution, review, acceptance, integration, or mission advancement |
 | Git ref or commit | A repository fact observed through the Git port | Candidate admission, review approval, or ref mutation |
 | Filesystem path | Location recorded for a host-owned `WorkspaceID` | Lease ownership, workspace transfer, or candidate identity |
 | `ProcessID` | Which execution instance acted | Durable actor identity, live lease authority, or reviewer independence |
@@ -606,7 +606,7 @@ conforms to the mission-local
       "id": "drift-tracker-12",
       "kind": "tracker",
       "severity": "blocking",
-      "reason": "provider revision beads:728 differs from finalized beads:721"
+      "reason": "provider revision hubnot:728 differs from finalized hubnot:721"
     }
   ],
   "next_actions": [
@@ -848,5 +848,5 @@ Author validation for this WP02 document completed with these results:
 | coverage | command families and FR-010–FR-014 table; all data-model identities; diagnostic/retry and deliberate-refusal tables | pass |
 
 The reviewer should attempt a complete mission using only this contract. Any
-step that requires direct Beads, Markdown, worktree, Git, GapDB, or artifact
+step that requires direct Hubnot, Markdown, worktree, Git, GapDB, or artifact
 mutation is a contract defect, not an invitation to expose those systems.

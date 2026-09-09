@@ -91,136 +91,6 @@ type phase2Census struct {
 	} `json:"hosted_baseline"`
 }
 
-func TestBeadsDocumentationDeliveryClaims(t *testing.T) {
-	root := phase2RepositoryRoot(t)
-	documents := map[string]string{
-		"README.md":                      phase2Read(t, root, "README.md"),
-		"docs/TECHNICAL_PROJECT_PLAN.md": phase2Read(t, root, "docs/TECHNICAL_PROJECT_PLAN.md"),
-	}
-	for path, document := range documents {
-		flat := phase2Flat(document)
-		for _, required := range []string{
-			"Beads executable: 1.2.2",
-			"source tag commit: 6c124203e771433a3550c348771a5b5e27fd3c21",
-			"BD_JSON_ENVELOPE=1",
-			"schema_version: 1",
-			"argv-only documented JSON CLI",
-			"canonical Beads workspace",
-			"guarded arbitrary update",
-			"safe arbitrary compensation",
-			"one machine and one filesystem authority",
-			"SQLite",
-			"Gapdb",
-		} {
-			if !strings.Contains(flat, required) {
-				t.Errorf("%s lacks required Phase 2 truth %q", path, required)
-			}
-		}
-		if err := phase2RejectLivingClaims(flat); err != nil {
-			t.Errorf("%s: %v", path, err)
-		}
-	}
-
-	readme := phase2Flat(documents["README.md"])
-	for _, required := range []string{
-		"inspection is read-only",
-		"--stealth --skip-agents --skip-hooks --non-interactive",
-		"JSONL interchange",
-		"Dolt-native restorable backup",
-		"assignment is not an execution lease",
-		"readiness is not permission to run",
-		"comments are not review verdicts",
-		"tracker closure or status is not mission acceptance",
-		"make beads-contract",
-		"make beads-qualification",
-	} {
-		if !strings.Contains(readme, required) {
-			t.Errorf("README.md lacks operational statement %q", required)
-		}
-	}
-}
-
-func TestBeadsDocumentationLinksMermaidAndCommands(t *testing.T) {
-	root := phase2RepositoryRoot(t)
-	readme := phase2Read(t, root, "README.md")
-	makefile := phase2Read(t, root, "Makefile")
-	runner := phase2Read(t, root, "internal/testcampaign/cmd/beads-qualification/runner.go")
-	evidenceIndex := phase2Read(t, root, "docs/phase2-evidence/README.md")
-	const checksumCommand = "(cd docs/phase2-evidence && sha256sum --check SHA256SUMS)"
-	for path, document := range map[string]string{
-		"README.md":                      readme,
-		"docs/phase2-evidence/README.md": evidenceIndex,
-	} {
-		if !strings.Contains(document, checksumCommand) {
-			t.Errorf("%s lacks the repository-root-safe checksum command", path)
-		}
-		if strings.Contains(document, "sha256sum --check docs/phase2-evidence/SHA256SUMS") {
-			t.Errorf("%s contains a checksum command whose manifest paths resolve from the wrong directory", path)
-		}
-	}
-	paths := []string{
-		"README.md",
-		"docs/TECHNICAL_PROJECT_PLAN.md",
-		"docs/phase2-evidence/README.md",
-		"docs/phase2-evidence/results.md",
-		"docs/phase2-evidence/limitations.md",
-	}
-	for _, path := range paths {
-		document := phase2Read(t, root, path)
-		if strings.Count(document, "```")%2 != 0 {
-			t.Errorf("%s has an unbalanced fenced code block", path)
-		}
-		phase2CheckMermaid(t, path, document)
-		phase2CheckRelativeLinks(t, root, path, document)
-	}
-
-	targets := []string{"build", "beads-contract", "quality", "beads-qualification", "full-campaign"}
-	for _, target := range targets {
-		matched, err := regexp.MatchString("(?m)^"+regexp.QuoteMeta(target)+":", makefile)
-		if err != nil || !matched {
-			t.Errorf("documented Make target %q is absent", target)
-		}
-	}
-	phase2SmokeMakeTargets(t, root, targets)
-	for _, path := range []string{"cmd/spk-phase1-helper", "scripts/install-qualified-beads.sh"} {
-		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
-			t.Errorf("documented local command path %s: %v", path, err)
-		}
-	}
-	storageKeys, err := phase2QualificationStorageModeContract(runner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := phase2ValidateStorageModeSemantics(storageKeys); err != nil {
-		t.Fatal(err)
-	}
-	if err := phase2ValidateQualificationCommand(readme, makefile, storageKeys); err != nil {
-		t.Error(err)
-	}
-	_, help := phase2SmokeHelperAndInstaller(t, root)
-	if !strings.Contains(help, "native local mission authority") || !strings.Contains(help, "operation resume") {
-		t.Errorf("compatibility helper does not delegate to the native command surface: %q", help)
-	}
-	if strings.Contains(help, "inspect-beads") {
-		t.Errorf("compatibility helper retained the retired inspect-beads surface: %q", help)
-	}
-	if err := phase2ValidateInstallerCommand(readme); err != nil {
-		t.Error(err)
-	}
-	providerArgv, err := phase2TypedProviderArgv(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	initArgv, err := phase2AcceptedDisposableInitArgv(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := phase2ValidateProviderCommands(readme, providerArgv, initArgv); err != nil {
-		t.Error(err)
-	}
-	phase2RunCommand(t, root, 0, "go", "test", "./internal/tracker/beads", "-run", "^TestCommandArgvVocabulary$", "-count=1")
-}
-
 func TestPhase2EvidenceIntegrity(t *testing.T) {
 	root := phase2RepositoryRoot(t)
 	evidenceDir := filepath.Join(root, "docs", "phase2-evidence")
@@ -309,7 +179,7 @@ func TestPhase2EvidenceDocumentationMutants(t *testing.T) {
 		}
 	})
 
-	root := phase2RepositoryRoot(t)
+	root := phase2HistoricalGrammarRoot(t)
 	readme := phase2Read(t, root, "README.md")
 	makefile := phase2Read(t, root, "Makefile")
 	runner := phase2Read(t, root, "internal/testcampaign/cmd/beads-qualification/runner.go")
@@ -832,49 +702,6 @@ func phase2FencedBlockContaining(document, needle string) (string, error) {
 	return "", fmt.Errorf("documentation lacks fenced command containing %q", needle)
 }
 
-func phase2SmokeMakeTargets(t *testing.T, root string, targets []string) {
-	t.Helper()
-	for _, target := range targets {
-		t.Run("make -n "+target, func(t *testing.T) {
-			phase2RunCommand(t, root, 0, "make", "-n", target,
-				"ARTIFACT_DIR=/tmp/spec-kitty-doc-smoke-artifacts",
-				"BUILD_DIR=/tmp/spec-kitty-doc-smoke-build",
-				"PROVIDER_TMP_DIR=/tmp/spec-kitty-doc-smoke-provider",
-				"BEADS_BIN=/absolute/path/to/verified/bd",
-				"BEADS_INSTALL_RESULT=/absolute/path/to/installer-identity.json",
-				"OFFLINE_ENFORCED=linux-network-namespace")
-		})
-	}
-}
-
-func phase2SmokeHelperAndInstaller(t *testing.T, root string) (string, string) {
-	t.Helper()
-	binary := filepath.Join(t.TempDir(), "spk-phase1-helper")
-	phase2RunCommand(t, root, 0, "go", "build", "-trimpath", "-o", binary, "./cmd/spk-phase1-helper")
-	help := phase2RunCommand(t, root, 0, binary, "--help")
-	if !strings.Contains(help, "spec-kitty") {
-		t.Fatalf("native helper help seam returned unexpected output: %q", help)
-	}
-	installer := filepath.Join(root, "scripts", "install-qualified-beads.sh")
-	relative := phase2RunCommand(t, root, 2, "sh", installer, "--dest", "relative")
-	if !strings.Contains(relative, "destination must be absolute") {
-		t.Fatalf("installer --dest parser seam returned unexpected output: %q", relative)
-	}
-	offlineDestination := filepath.Join(t.TempDir(), "verified-provider")
-	offline := phase2RunCommand(t, root, 1, "sh", installer, "--dest", offlineDestination, "--offline")
-	if !strings.Contains(offline, "offline installation requires an already verified target") {
-		t.Fatalf("installer --offline parser seam returned unexpected output: %q", offline)
-	}
-	return binary, help
-}
-
-func phase2ExpectedInspectHelp() string {
-	return strings.Join([]string{
-		"--project", "--executable", "--workspace", "--database-identity", "--protocol-schema",
-		"--mode", "--read-only", "--expected-digest",
-	}, " ")
-}
-
 func phase2RunCommand(t *testing.T, directory string, expectedExit int, name string, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1078,4 +905,37 @@ func phase2GitObjectID(value string) bool {
 	}
 	_, err := hex.DecodeString(value)
 	return err == nil
+}
+
+// Historical syntax fixtures are immutable source bytes, never executable provider
+// prerequisites. Current delivery is checked by hubnot_documentation_test.go.
+func phase2HistoricalGrammarRoot(t *testing.T) string {
+	t.Helper()
+	source := phase2RepositoryRoot(t)
+	root := t.TempDir()
+	for _, path := range []string{"README.md", "Makefile", "internal/testcampaign/cmd/beads-qualification/runner.go", "internal/testcampaign/cmd/beads-qualification/fixture.go", "internal/tracker/beads/command.go"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		command := exec.CommandContext(ctx, "git", "show", "94e7c8542d7e543558391ab6fffda7a28e6e3759:"+path)
+		command.Dir = source
+		raw, err := command.Output()
+		cancel()
+		if err != nil {
+			t.Fatalf("historical grammar %s unavailable: %v", path, err)
+		}
+		target := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func phase2ExpectedInspectHelp() string {
+	return strings.Join([]string{
+		"--project", "--executable", "--workspace", "--database-identity", "--protocol-schema",
+		"--mode", "--read-only", "--expected-digest",
+	}, " ")
 }

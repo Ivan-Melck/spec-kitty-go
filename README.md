@@ -15,7 +15,7 @@ successor missions and are not inferred from an M2 result.
 | Surface | Delivered implementation and evidence boundary | Ratified successor target |
 |---|---|---|
 | Authority and concurrency | The GapDB production host implements leases, lease-scoped workspaces, quarantine, stale-authority refusal, ActorID-independent review, and serialized Git integration; Phase 1 remains the historical source-bound proof | The M2 crown requalifies the complete laws on the sole production store before M3/M4 admission |
-| Work substrate | Provider-neutral ports and the exact Beads 1.2.2 JSON adapter tuple are delivered | M3 composes the admitted provider with the production host; Beads remains mutable work/discussion, never mission or execution authority |
+| Work substrate | Provider-neutral ports and the source-and-binary-pinned Hubnot public CLI adapter are delivered | M3 composes the admitted provider with the production host; Hubnot remains mutable work/discussion, never mission or execution authority |
 | Mission method | Specification, plan, provider-neutral decomposition, immutable WorkRevision generations, drift reconciliation, typed `next`, execution, review, acceptance, integration, progress, and recovery are implemented as native capabilities | M3 adds real-agent/provider composition without changing these authority laws |
 | Control state | GapDB is the sole compiled production authority; M2 has no SQLite package, module, fallback, importer, selector, or test driver | The exact M2 crown evidence and independent review passed; human adoption remains a separate decision |
 | Application surface | `cmd/spec-kitty` is the native authority command surface; `cmd/spk-m2-qualification` is release tooling and grants no authority | Orchestrator API 2.0 and the complete normal CLI remain M5 |
@@ -56,12 +56,12 @@ The original implementation is behavioral evidence, not a Go package template.
 
 | Concern | Go-native decision | Reason |
 |---|---|---|
-| Work representation | Provider-neutral tracker ports; Beads is the first qualified adapter | Agents work on the product instead of maintaining Markdown checkboxes |
+| Work representation | Provider-neutral tracker ports; Hubnot is the active first-party adapter | Agents work on the product instead of maintaining Markdown checkboxes |
 | Mission semantics | Spec Kitty owns lifecycle and gates | Ticket edits cannot authorize execution or acceptance |
 | Identity | Durable `ActorID`; per-execution `ProcessID` | Recovery and independent review need different answers |
 | Executable work | Immutable generation-numbered `WorkRevision` | Tracker drift becomes `continue`, `supersede`, `invalidate`, or `fork`, never an in-place contract edit |
 | Concurrency | Each lease owns one mutable workspace forever | A replacement cannot inherit an unfenceable stale writer's directory |
-| Provider integration | Narrow application-owned ports | Beads, GapDB, Git, qualification providers, and transports cannot leak vocabulary into the kernel |
+| Provider integration | Narrow application-owned ports | Hubnot, GapDB, Git, qualification providers, and transports cannot leak vocabulary into the kernel |
 | Evidence | Candidate-, revision-, and policy-bound records | A successful process or tracker status is not a verdict |
 
 ## Authority ownership
@@ -69,7 +69,7 @@ The original implementation is behavioral evidence, not a Go package template.
 The architectural shorthand remains:
 
 ```text
-Beads       -> what mutable work exists and what humans discuss
+Hubnot       -> what mutable work exists and what humans discuss
 Spec Kitty  -> whether work may execute and how it is reviewed and accepted
 Git         -> code, commits, trees, and ref outcomes
 GapDB       -> target ordered control-state substrate, not product semantics
@@ -77,13 +77,13 @@ GapDB       -> target ordered control-state substrate, not product semantics
 
 ```mermaid
 flowchart LR
-    Beads[Beads mutable work and discussion]
+    Hubnot[Hubnot mutable work and discussion]
     Host[Spec Kitty mission and execution authority]
     Git[Git commits trees and refs]
     GapDB[GapDB target journal substrate]
 
-    Beads -->|revisioned observation| Host
-    Host -->|attributed projection| Beads
+    Hubnot -->|revisioned observation| Host
+    Host -->|attributed projection| Hubnot
     Host -->|authorized operations| Git
     Git -->|observed facts| Host
     Host -->|durable target events| GapDB
@@ -92,9 +92,9 @@ flowchart LR
 
 Consequences:
 
-- A Beads assignment is not an execution lease.
-- Beads readiness is not permission to run.
-- Beads comments are not review verdicts.
+- A Hubnot assignment is not an execution lease.
+- Hubnot readiness is not permission to run.
+- Hubnot comments are not review verdicts.
 - A tracker closure or status is not mission acceptance.
 - A database fencing token cannot stop arbitrary POSIX writes.
 - A completed implementation is not an approved candidate.
@@ -148,7 +148,7 @@ flowchart TB
     subgraph Providers[Tracker adapters and conformance]
         Ports[provider-neutral tracker ports]
         Fake[fake and dishonest providers]
-        Beads[qualified Beads adapter]
+        Hubnot[qualified Hubnot adapter]
     end
 
     App --> Mission
@@ -159,7 +159,7 @@ flowchart TB
     Mission --> Ports
     Execution --> Ports
     Fake --> Ports
-    Beads --> Ports
+    Hubnot --> Ports
 ```
 
 ### Lease-scoped workspaces
@@ -231,13 +231,13 @@ normal CLI and API remain complete when MCP is absent.
 
 The module declares Go 1.26. The current checkout builds the native
 `spec-kitty` authority command, the M2 qualifier, and historical proving
-helpers. You also need Git. Portable development and Beads contract proof
-require neither a Beads binary nor a hosted service.
+helpers. You also need Git. Portable development and Hubnot contract proof
+require neither a Hubnot binary nor a hosted service.
 
 ```bash
 go mod download
 make preflight
-make beads-contract
+make hubnot-contract
 ```
 
 Build the production and qualification commands into an explicit directory:
@@ -309,115 +309,19 @@ outer archive using externally supplied source, manifest, producer-archive,
 and release-archive digests. A later documentation commit may project those
 identities, but it is not retroactively the source tree that was qualified.
 
-## Qualified Beads operating contract
+## Hubnot tracker operations
 
-The exact qualified tuple is:
+The compiled `spec-kitty tracker` surface uses pinned Hubnot through neutral ports.
+Read [Hubnot tracker](docs/HUBNOT_TRACKER.md) for explicit build/install, actor binding,
+full work examples, original-operation recovery, limits and qualification scopes.
+Use `tracker --help` for all fourteen actions. Tracker-only commands do not start the
+mission host. M2 remains release-ready and unadopted; M3 production agent integration
+is a separate admission. Old Beads bindings refuse without fallback or dual write.
 
-```text
-Beads executable: 1.2.2
-source tag commit: 6c124203e771433a3550c348771a5b5e27fd3c21
-JSON envelope:    BD_JSON_ENVELOPE=1
-schema_version:   1
-integration:      argv-only documented JSON CLI
-binary SHA-256:   0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6
-```
-
-Every linked worktree uses one canonical Beads workspace. Provider inspection
-is read-only and does not initialize Beads, repair provider state, install hooks,
-or edit agent files. The adapter refuses unavailable guarded arbitrary update
-and safe arbitrary compensation semantics before mutation.
-
-### Install and inspect the exact provider
-
-The reviewed installer supports Linux/amd64 with Go 1.26.4 and a C compiler.
-The destination is absolute, outside the source repository, and narrower than a
-top-level system directory.
-
-```bash
-tool_root="$(mktemp -d /tmp/spec-kitty-beads-tools.XXXXXX)"
-identity_file="$(mktemp /tmp/spec-kitty-beads-identity.XXXXXX.json)"
-scripts/install-qualified-beads.sh --dest "$tool_root" > "$identity_file"
-jq . "$identity_file"
-beads_bin="$(jq -r .executable_path "$identity_file")"
-sha256sum -- "$beads_bin"
-BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$beads_bin" version --json
-```
-
-Use the read-only helper only with absolute paths established by provider
-preflight:
-
-```bash
-go run ./cmd/spk-phase1-helper tracker inspect-beads \
-  --project example-project \
-  --executable "$beads_bin" \
-  --workspace /absolute/canonical/beads-workspace \
-  --database-identity /absolute/existing/database-directory \
-  --protocol-schema 1 \
-  --mode embedded_serialized \
-  --read-only=true \
-  --expected-digest 0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6
-```
-
-Initialization is an explicit operator action shown only for a disposable Git
-repository:
-
-```bash
-disposable="$(mktemp -d /tmp/spec-kitty-beads-disposable.XXXXXX)"
-git -C "$disposable" init
-(
-  cd "$disposable"
-  BD_NON_INTERACTIVE=1 "$beads_bin" init \
-    --stealth --skip-agents --skip-hooks --non-interactive --prefix skt
-)
-```
-
-The typed read-only preflight vocabulary is:
-
-```bash
-BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$beads_bin" version --json
-BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$beads_bin" where --json
-BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$beads_bin" dolt show --json
-BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 "$beads_bin" dolt status --json
-```
-
-### Export, backup, and real-provider qualification
-
-JSONL interchange is portable interchange, not a complete backup:
-
-```bash
-export_file="$(mktemp /tmp/spec-kitty-beads-export.XXXXXX.jsonl)"
-BD_JSON_ENVELOPE=1 BD_NON_INTERACTIVE=1 \
-  "$beads_bin" export --json > "$export_file"
-```
-
-A Dolt-native restorable backup uses an absolute destination and is restored
-only into a new disposable workspace after inspection:
-
-```bash
-backup_root="$(mktemp -d /tmp/spec-kitty-beads-backup.XXXXXX)"
-BD_NON_INTERACTIVE=1 "$beads_bin" backup init "$backup_root"
-BD_NON_INTERACTIVE=1 "$beads_bin" backup sync
-BD_NON_INTERACTIVE=1 "$beads_bin" backup status
-```
-
-The real-provider target requires the exact already-running disposable Dolt
-server tuple and an enforced offline namespace:
-
-```bash
-BEADS_BIN=/absolute/path/to/verified/bd \
-BEADS_INSTALL_RESULT=/absolute/path/to/installer-identity.json \
-BEADS_SERVER_ID=dolt-v0.40.5-1bf533220ab0 \
-BEADS_SERVER_ENDPOINT=127.0.0.1:3307 \
-DOLT_SERVER_HOST=127.0.0.1 \
-DOLT_SERVER_PORT=3307 \
-OFFLINE_ENFORCED=linux-network-namespace \
-make beads-qualification
-```
-
-`BEADS_SERVER_ENDPOINT` must equal
-`DOLT_SERVER_HOST:DOLT_SERVER_PORT`. Omitting any server variable selects the
-unqualified-for-this-record embedded mode. The target does not start or repair
-the server and never authorizes initialization in the project workspace.
+The [Phase 2 Beads evidence](docs/phase2-evidence/README.md) remains historical and
+unchanged; it does not qualify the new provider. Preserve original database/backups
+and recovery branches/stashes. This cutover performs no project initialization or
+automatic migration.
 
 ## Verification
 
@@ -426,7 +330,7 @@ The bounded local ladder is:
 ```bash
 make preflight
 make contract
-make beads-contract
+make hubnot-contract
 make mission-contract
 make mission-acceptance
 make quality
@@ -495,7 +399,7 @@ while the retired store disappears from every production surface.
 The next program decision is explicit human adoption of the exact M2 tuple.
 Until that record exists, consumers must say `release-ready`, never `adopted`,
 and M3/M4 must not infer admission from a branch, tag, tracker ticket, or this
-README. After adoption, M3 (real-agent/Beads/Git/workspace composition) and M4
+README. After adoption, M3 (real-agent/Hubnot/Git/workspace composition) and M4
 (stack-neutral acceptance) may proceed in parallel. Dual write, read fallback,
 legacy import, and runtime backend selection remain forbidden.
 

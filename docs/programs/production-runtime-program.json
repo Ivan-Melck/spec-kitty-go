@@ -49,13 +49,13 @@
     },
     {
       "id": "M3",
-      "title": "Production Mission Execution and Beads Composition",
+      "title": "Production Mission Execution and Hubnot Composition",
       "outcome": "Compose real agent, workspace, tracker, review, and Git integration paths without losing concurrency safety.",
-      "primary_falsification_target": "The concurrency crown jewel survives when GapDB, Beads, Git, workspaces, processes, agents, and human edits disagree.",
+      "primary_falsification_target": "The concurrency crown jewel survives when GapDB, Hubnot, Git, workspaces, processes, agents, and human edits disagree.",
       "dependencies": ["M2"],
       "entry_evidence": [
         "M2 GapDB authority is accepted.",
-        "A qualified Beads tuple and portable conformance contract are pinned.",
+        "A qualified Hubnot tuple and portable conformance contract are pinned.",
         "Git, workspace, review, and integration product laws are frozen."
       ],
       "exit_evidence": [
@@ -95,7 +95,7 @@
       "id": "M5",
       "title": "Orchestrator API 2.0, Native Operations, Progress, and CLI",
       "outcome": "Expose the complete production process through one typed application boundary and normal CLI.",
-      "primary_falsification_target": "A client can drive, disconnect from, resume, and understand a mission without reading Beads, Markdown, worktrees, Git refs, or GapDB directly.",
+      "primary_falsification_target": "A client can drive, disconnect from, resume, and understand a mission without reading Hubnot, Markdown, worktrees, Git refs, or GapDB directly.",
       "dependencies": ["M2", "M3", "M4"],
       "entry_evidence": [
         "M2 authority, M3 production execution, and M4 acceptance are accepted.",
@@ -119,7 +119,7 @@
       "dependencies": ["M5"],
       "entry_evidence": [
         "M5 process-complete runtime is accepted.",
-        "Signed GapDB and Beads production tuples are pinned.",
+        "Signed GapDB and Hubnot production tuples are pinned.",
         "Supported platform and load targets are ratified."
       ],
       "exit_evidence": [
