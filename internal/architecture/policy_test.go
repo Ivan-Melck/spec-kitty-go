@@ -1139,3 +1139,26 @@ func assertExactViolation(t *testing.T, policy Policy, graph Graph, rule RuleID,
 		t.Fatalf("edge=%s->%s diagnostics changed: first=%q repeated=%q", source, target, first.Error(), repeated)
 	}
 }
+
+func TestPolicyHubnotTransportBoundary(t *testing.T) {
+	policy, err := DefaultPolicy(fixtureModule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := fixtureModule + "/internal/tracker/hubnot"
+	assertTier(t, policy, adapter, TierAdapter)
+	for _, target := range []string{"internal/mission", "internal/artifact", "internal/execution", "internal/controlstore/gapdb"} {
+		path := fixtureModule + "/" + target
+		for _, edge := range []ImportEdge{{SourcePackage: adapter, TargetPackage: path, Kind: ImportModuleLocal}, {SourcePackage: path, TargetPackage: adapter, Kind: ImportModuleLocal}} {
+			if err := policy.Check(fixtureGraph([]string{adapter, path}, edge)); err == nil {
+				t.Fatalf("accepted authority/provider edge: %+v", edge)
+			}
+		}
+	}
+	for _, caller := range []string{"internal/helpercmd", "internal/testcampaign/cmd/hubnot-qualification"} {
+		path := fixtureModule + "/" + caller
+		if err := policy.Check(fixtureGraph([]string{adapter, path}, ImportEdge{SourcePackage: path, TargetPackage: adapter, Kind: ImportModuleLocal})); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
