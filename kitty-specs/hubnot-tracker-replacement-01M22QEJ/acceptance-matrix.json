@@ -12,7 +12,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:03.762135+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-002",
@@ -22,7 +22,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:08.875523+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-003",
@@ -32,7 +32,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:13.547081+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-004",
@@ -42,7 +42,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:18.177129+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-005",
@@ -52,7 +52,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:22.649757+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-006",
@@ -62,7 +62,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:27.196524+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-007",
@@ -72,7 +72,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:31.916046+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-008",
@@ -82,7 +82,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:36.325154+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-009",
@@ -92,7 +92,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:40.795113+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-010",
@@ -102,7 +102,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:45.474800+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-011",
@@ -112,7 +112,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:50.491217+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-012",
@@ -122,7 +122,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:33:55.187246+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-013",
@@ -132,7 +132,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:34:00.228970+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-014",
@@ -142,7 +142,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:34:04.621182+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "FR-015",
@@ -152,7 +152,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-postmerge-acceptance",
       "verified_at": "2026-09-09T22:48:07.926197+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "NFR-001",
@@ -162,7 +162,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:34:13.838269+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "NFR-002",
@@ -172,7 +172,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:34:18.690211+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "NFR-003",
@@ -182,7 +182,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-postmerge-acceptance",
       "verified_at": "2026-09-09T22:47:58.757273+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "NFR-004",
@@ -192,7 +192,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:34:28.666776+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "NFR-005",
@@ -202,7 +202,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-postmerge-acceptance",
       "verified_at": "2026-09-09T22:48:03.324549+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "C-001",
@@ -212,7 +212,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:34:38.252736+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "C-002",
@@ -222,7 +222,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:34:42.962706+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "C-003",
@@ -232,7 +232,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:34:47.709997+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "C-004",
@@ -242,7 +242,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-postmerge-acceptance",
       "verified_at": "2026-09-09T22:48:12.228215+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     },
     {
       "criterion_id": "C-005",
@@ -252,7 +252,7 @@
       "pass_fail": "pass",
       "verified_by": "codex-architect-acceptance",
       "verified_at": "2026-09-09T21:34:57.120269+00:00",
-      "notes": "Final integrated source-bound qualification and independent review remain required."
+      "notes": "Final source-bound local qualification and independent review completed; evidence and verification time are recorded above. Hosted execution is tracked separately."
     }
   ],
   "negative_invariants": []
