@@ -4,7 +4,7 @@ artifact_type: spec-kitty.analysis-report
 command: /spec-kitty.analyze
 mission_slug: hubnot-tracker-replacement-01M22QEJ
 mission_id: 01M22QEJPAAQJM91R01MCBR8QV
-generated_at: '2026-09-09T12:04:25.491511+00:00'
+generated_at: '2026-09-09T12:16:40.041708+00:00'
 analyzer_agent: codex
 input_artifacts:
   spec.md:
@@ -12,19 +12,19 @@ input_artifacts:
     sha256: cf862a7a3261277e4bbaf4ff3f7d785993e61087840cf70045ac19f93d9b7bb0
   plan.md:
     path: kitty-specs/hubnot-tracker-replacement-01M22QEJ/plan.md
-    sha256: 1e195ec630aaacecf4566f897f608079501eef4b00442e9bc76fd35da430039e
+    sha256: 0a7b94e80c32c177dbe3c6328e054f8c00f249ee830509fbecff88912c9e808a
   tasks.md:
     path: kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks.md
-    sha256: a6b0bcb5e8630b1dcf28a9fa84f7e8eab1d7f7e00563ca9e0b68f0ddef869400
+    sha256: 34041a9662b3f5e2cd6c6c5ed5e93fc6909f7a7a65e4027424c3832cf27c0bec
   charter:
     path: .kittify/charter/charter.yaml
     sha256: 4442a6e0d56d4a7df873f2f529b04bb4d4917f2481a4e47f4819bd92927388de
 verdict: ready
 issue_counts:
   high: 0
-  low: 0
-  medium: 0
   critical: 0
+  medium: 0
+  low: 0
   info: 0
 findings: []
 ---
@@ -88,3 +88,9 @@ The complete quality gate found a real coupling between the new scanner census a
 WP02 independent review verified lossless opaque framing, ordered criteria, current graph dependencies, shared retry budgets and source-head attribution. Graph readiness is now explicitly a diagnostic projection of mapped open work without open blockers; closed supplier relations remain definition dependencies. Stable edge IDs identify endpoint/kind tuples, with signed revisions retained separately in proof. Signed first-use state-noop intent preserves operation-key identity; replay requires historical lookup.
 
 The native consumer uses optional provider_metadata_json as JSON text, strictly decoded before the existing neutral constructor. This preserves supported opaque depth and exact numbers without request-envelope nesting narrowing the neutral model. Explicit DTOs expose all private neutral fields and proof bytes through accessors; ordered criteria cannot be verified solely with CanonicalData. These details fit the existing WP03/WP04/WP06 ownership, requirements and acceptance tests; no scope, DAG, guard, adoption or authority change. The earlier unapproved 505-test scanner pair is superseded by the independently approved exact 515-test pair; historical 489 remains admitted.
+
+## Exact comment attribution follow-through
+
+Independent public-contract inspection confirmed exact-body comments need a paired signed attribution revision. Keys permit deterministic sibling discovery while keeping author inside semantic identity, and partial/lost-response outcomes remain explicit. WP03 supplies a read-only actor-parameter original lookup in owned operation.go with full strict-validator equivalence coverage and snapshot retention; no approved transport file is changed. WP05 owns two new discussion_observation files for immutable neutral facts with signer and full proof, covering both append/replay and current observation. Legacy discussion methods project from the same implementation; the consumer uses the richer neutral port without a fresh read after append. Author and portable operation marker meanings remain unchanged.
+
+An initial shared-file ownership proposal was rejected by lane validation and was not adopted. The final disjoint-file design passes canonical finalization with ten unchanged lanes, no collapse, no ownership warnings and the same requirement coverage and DAG. The independent reviewer found no design blocker. Exact-body, cross-signer, global duplicate-key, snapshot and partial-child tests remain implementation and acceptance obligations; no passing application qualification is inferred from this analysis.
