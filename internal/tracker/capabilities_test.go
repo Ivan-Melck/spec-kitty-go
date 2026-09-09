@@ -334,3 +334,13 @@ type capabilityOnlyProvider struct{}
 func (capabilityOnlyProvider) Capabilities(context.Context) (tracker.ProviderCapabilities, error) {
 	return readOnlyCapabilities(), nil
 }
+
+func TestGitNativeBindingDoesNotGrantConcurrency(t *testing.T) {
+	binding := tracker.TrackerBinding{ProjectID: ids.ProjectID("project-a"), Provider: "hubnot", ExecutablePath: "/opt/hn", ExecutableVersion: "source", ExecutableDigest: strings.Repeat("a", 64), ProtocolSchema: 1, WorkspacePath: "/work", WorkspaceIdentity: "observed", ConcurrencyMode: tracker.ConcurrencyGitNative, ObservedAt: time.Unix(1, 0)}
+	if err := binding.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if tracker.ConcurrentWritersNone != "none" {
+		t.Fatal("native storage does not serialize portable writers")
+	}
+}

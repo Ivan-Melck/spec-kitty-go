@@ -702,12 +702,13 @@ type InspectRequest struct {
 type ConcurrencyMode string
 
 const (
+	ConcurrencyGitNative          ConcurrencyMode = "git_native"
 	ConcurrencyEmbeddedSerialized ConcurrencyMode = "embedded_serialized"
 	ConcurrencyServerMultiwriter  ConcurrencyMode = "server_multiwriter"
 )
 
 func (mode ConcurrencyMode) valid() bool {
-	return mode == ConcurrencyEmbeddedSerialized || mode == ConcurrencyServerMultiwriter
+	return mode == ConcurrencyEmbeddedSerialized || mode == ConcurrencyServerMultiwriter || mode == ConcurrencyGitNative
 }
 
 // TrackerBinding pins inspection and mutation to one executable and canonical
