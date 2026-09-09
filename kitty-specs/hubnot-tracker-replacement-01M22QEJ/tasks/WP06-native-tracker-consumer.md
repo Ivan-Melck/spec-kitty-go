@@ -95,6 +95,11 @@ with create_intent; report required ownership corrections before editing another
 package's file. Do not change frozen missions, receipts, real provider data,
 old stashes/branches, or internal/helpercmd/production.go.
 
+The consumer contract fixes opaque metadata as optional provider_metadata_json JSON text,
+strictly parsed before neutral construction. Use explicit accessor-based result DTOs;
+private neutral fields and canonical proofs must not disappear through direct marshaling.
+WorkDefinition.CanonicalData sorts criteria and is not an ordered field-fidelity oracle.
+
 ### Subtask T016: Strict provider request and dispatch grammar
 
 **Purpose**: Make tracker operations discoverable without mixing mission authority DTOs.
