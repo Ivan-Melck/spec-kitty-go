@@ -124,6 +124,13 @@ old stashes/branches, or internal/helpercmd/production.go.
 4. Do not fetch or execute arbitrary lifecycle scripts, discover hn from PATH or accept
    matching dev version as source proof.
 
+   The shell bootstrap requires an explicit absolute Go compiler path ending in
+   `/go`, resolves its directory physically and invokes literal `./go` with the
+   physical source root passed via `-C`. Reject unsupported basenames before
+   execution. Preserve full version output, compiler exit status, sanitized
+   environment and safe temporary capture; do not weaken executable analysis or
+   introduce this bootstrap-only restriction into the compiled installer API.
+
 5. Produce machine-readable installer identity distinguishing
    envelope/signed-event/adapter metadata schema versions.
 

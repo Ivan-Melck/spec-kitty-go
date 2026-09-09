@@ -4,6 +4,8 @@ One active Hubnot manifest owns exact accepted source/toolchain/target/build rec
 
 Build externally with pinned Go 1.26.7 and deterministic recipe. Verify source before build, bytes before execution. No mutable-branch/PATH fallback. Missing prerequisites, skipped tests, empty selectors and omitted scenarios are non-admissible. Record exact commands/source tree/binary/environment/exits and individual results.
 
+The shell installer bootstrap requires an explicit absolute compiler path ending in `/go`. It resolves the selected compiler directory physically and invokes literal `./go`, with the separately resolved physical source root passed through `-C`. Unsupported basenames are refused before execution. This keeps compiler selection explicit and executable source analysis intact; it does not add a basename restriction to the compiled installer or qualifier API. Preserve exact version output and compiler exit status, environment sanitization before execution, and safe temporary capture.
+
 Required scenario families, each concretely named with no skipped rows:
 1. Binding/identity/tuple/schema mismatches and legacy refusal.
 2. Rich create/read field equality, opaque/foreign preservation, simple update and guarded/bypass refusal.
