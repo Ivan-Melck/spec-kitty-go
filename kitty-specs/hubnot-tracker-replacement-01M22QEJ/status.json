@@ -1,19 +1,19 @@
 {
-  "event_count": 71,
-  "last_event_id": "01M23X2JA77WKGJA3G6V768RF9",
-  "materialized_at": "2026-09-09T20:17:15.079524+00:00",
+  "event_count": 72,
+  "last_event_id": "01M23XHWPZFVKB4X3J6ED3V5A0",
+  "materialized_at": "2026-09-09T20:25:37.247499+00:00",
   "mission_number": "",
   "mission_slug": "hubnot-tracker-replacement-01M22QEJ",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 8,
+    "approved": 9,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
     "done": 0,
     "for_review": 0,
     "in_progress": 0,
-    "in_review": 1,
+    "in_review": 0,
     "planned": 1
   },
   "work_packages": {
@@ -270,17 +270,23 @@
     "WP09": {
       "actor": "codex",
       "agent": "codex",
-      "agent_profile": "reviewer-renata",
-      "agent_profile_version": "1.0",
+      "agent_profile": "__resolved_profile_absent__",
+      "agent_profile_version": "__resolved_profile_version_absent__",
       "force_count": 0,
-      "lane": "in_review",
-      "last_event_id": "01M23X2JA77WKGJA3G6V768RF9",
-      "last_transition_at": "2026-09-09T20:17:15.079524+00:00",
+      "lane": "approved",
+      "last_event_id": "01M23XHWPZFVKB4X3J6ED3V5A0",
+      "last_transition_at": "2026-09-09T20:25:37.247499+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review: qualified application source 81f3d26a; six canonical planning artifacts reconciled at 1ef3a97a with application bytes unchanged. Complete quality, normal identity, offline census and focused races/build passed; evidence work/go-wp09-evidence/81f3d26a/final-evidence-index.json."
       ],
       "provider": "__resolved_provider_absent__",
+      "review_result": {
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP09-active-provider-cutover/review-cycle-1.md",
+        "reference": "review-cycle://hubnot-tracker-replacement-01M22QEJ/WP09-active-provider-cutover/review-cycle-1.md",
+        "reviewer": "codex-independent-cutover-review",
+        "verdict": "approved"
+      },
       "role": "reviewer",
       "shell_pid": 129046,
       "shell_pid_created_at": "1788985029.9",
