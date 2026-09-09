@@ -1,12 +1,12 @@
 {
-  "event_count": 63,
-  "last_event_id": "01M23RKWZ0XVAFQZ40BT7NGYTP",
-  "materialized_at": "2026-09-09T18:59:20.160232+00:00",
+  "event_count": 64,
+  "last_event_id": "01M23RXBKDFJRXFX3FNEG5T6MG",
+  "materialized_at": "2026-09-09T19:04:30.061127+00:00",
   "mission_number": "",
   "mission_slug": "hubnot-tracker-replacement-01M22QEJ",
   "mission_type": "software-dev",
   "summary": {
-    "approved": 8,
+    "approved": 7,
     "blocked": 0,
     "canceled": 0,
     "claimed": 0,
@@ -14,7 +14,7 @@
     "for_review": 0,
     "in_progress": 1,
     "in_review": 0,
-    "planned": 1
+    "planned": 2
   },
   "work_packages": {
     "WP01": {
@@ -205,10 +205,10 @@
       "agent": "codex",
       "agent_profile": "__resolved_profile_absent__",
       "agent_profile_version": "__resolved_profile_version_absent__",
-      "force_count": 0,
-      "lane": "approved",
-      "last_event_id": "01M23RH9T6BV90CXA17F6CPKC6",
-      "last_transition_at": "2026-09-09T18:57:55.014919+00:00",
+      "force_count": 1,
+      "lane": "planned",
+      "last_event_id": "01M23RXBKDFJRXFX3FNEG5T6MG",
+      "last_transition_at": "2026-09-09T19:04:30.061127+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review at source 6fd7b5a5a4a2cc56980752e08f9e2722729ace1c: compiled pinned installer and fixed system tools, normal identity smoke and installer/refusals, full quality and package races pass. Historical 6aaf2112 full-local evidence remains 27/28 with expected active-successor non-admissibility; final integrated qualification remains required.",
@@ -216,10 +216,10 @@
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
-        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP07-pinned-installation-real-qualifier/review-cycle-1.md",
-        "reference": "review-cycle://hubnot-tracker-replacement-01M22QEJ/WP07-pinned-installation-real-qualifier/review-cycle-1.md",
+        "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP07-pinned-installation-real-qualifier/review-cycle-2.md",
+        "reference": "review-cycle://hubnot-tracker-replacement-01M22QEJ/WP07-pinned-installation-real-qualifier/review-cycle-2.md",
         "reviewer": "codex-independent-qualification-review",
-        "verdict": "approved"
+        "verdict": "changes_requested"
       },
       "role": "reviewer",
       "shell_pid": 3929081,
