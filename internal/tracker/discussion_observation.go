@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -15,19 +16,22 @@ type AttributedDiscussionEntry struct {
 	proof  ProviderObservation
 }
 
+// ProviderObservation owns an immutable private payload: its constructor copies
+// input bytes and CanonicalFields copies output bytes. Value copies preserve scalar
+// isolation while sharing that payload, including the common proof across rows.
 func completeDiscussionProof(p ProviderObservation) bool {
-	return p.ExternalID != "" && p.Revision != 0 && p.Digest != "" && p.ProviderToken != "" && !p.ObservedAt.IsZero() && len(p.CanonicalFields()) > 0
+	return p.ExternalID != "" && p.Revision != 0 && p.Digest != "" && p.ProviderToken != "" && !p.ObservedAt.IsZero() && len(p.canonical) > 0
 }
 func NewAttributedDiscussionEntry(entry DiscussionEntry, signer string, proof ProviderObservation) (AttributedDiscussionEntry, error) {
 	if entry.ExternalCommentID == "" || strings.TrimSpace(entry.Author) == "" || strings.TrimSpace(entry.Body) == "" || !utf8.ValidString(entry.Author) || !utf8.ValidString(entry.Body) || signer == "" || !utf8.ValidString(signer) || entry.CreatedAt.IsZero() || !completeDiscussionProof(proof) || entry.Observation != proof.Revision {
 		return AttributedDiscussionEntry{}, fmt.Errorf("tracker discussion: complete entry, signer and matching proof required")
 	}
-	return AttributedDiscussionEntry{entry, signer, cloneProviderObservation(proof)}, nil
+	return AttributedDiscussionEntry{entry, signer, proof}, nil
 }
 func (e AttributedDiscussionEntry) Entry() DiscussionEntry { return e.entry }
 func (e AttributedDiscussionEntry) SigningActor() string   { return e.signer }
 func (e AttributedDiscussionEntry) Proof() ProviderObservation {
-	return cloneProviderObservation(e.proof)
+	return e.proof
 }
 
 // DiscussionObservation has a discussion-wide proof and a separately scoped
@@ -46,7 +50,9 @@ func NewDiscussionObservation(entries []AttributedDiscussionEntry, proof, curren
 	copied := make([]AttributedDiscussionEntry, len(entries))
 	seen := map[string]bool{}
 	for i, e := range entries {
-		if e.proof.ExternalID != proof.ExternalID || e.proof.Revision != proof.Revision || e.proof.Digest != proof.Digest || e.proof.ProviderToken != proof.ProviderToken || string(e.proof.CanonicalFields()) != string(proof.CanonicalFields()) || seen[e.entry.ExternalCommentID] {
+		// bytes.Equal does not allocate and short-circuits shared backing storage.
+		// Equal independent payloads still pass; identity alone is not evidence.
+		if e.proof.ExternalID != proof.ExternalID || e.proof.Revision != proof.Revision || e.proof.Digest != proof.Digest || e.proof.ProviderToken != proof.ProviderToken || !bytes.Equal(e.proof.canonical, proof.canonical) || seen[e.entry.ExternalCommentID] {
 			return DiscussionObservation{}, fmt.Errorf("tracker discussion: duplicate or incoherent entry")
 		}
 		var err error
@@ -56,20 +62,18 @@ func NewDiscussionObservation(entries []AttributedDiscussionEntry, proof, curren
 		}
 		seen[e.entry.ExternalCommentID] = true
 	}
-	return DiscussionObservation{copied, cloneProviderObservation(proof), cloneProviderObservation(currentWork)}, nil
+	return DiscussionObservation{copied, proof, currentWork}, nil
 }
 func (o DiscussionObservation) Entries() []AttributedDiscussionEntry {
 	entries := make([]AttributedDiscussionEntry, len(o.entries))
-	for i, e := range o.entries {
-		entries[i] = AttributedDiscussionEntry{e.entry, e.signer, cloneProviderObservation(e.proof)}
-	}
+	copy(entries, o.entries)
 	return entries
 }
 func (o DiscussionObservation) CommonProof() ProviderObservation {
-	return cloneProviderObservation(o.proof)
+	return o.proof
 }
 func (o DiscussionObservation) CurrentWorkObservation() ProviderObservation {
-	return cloneProviderObservation(o.currentWork)
+	return o.currentWork
 }
 
 // AttributedDiscussionMutation retains original signed evidence only. There is
