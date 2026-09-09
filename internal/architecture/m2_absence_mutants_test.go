@@ -62,6 +62,48 @@ func TestM2AbsenceMutants(t *testing.T) {
 			assertM2Finding(t, evidence.Findings, mutant.kind, mutant.path)
 		})
 	}
+	t.Run("inert-ignore-context", testM2InertIgnorePatternsPreserveExecutableDenials)
+}
+
+func testM2InertIgnorePatternsPreserveExecutableDenials(t *testing.T) {
+	for _, test := range []struct {
+		name, path, content, kind string
+		executable                bool
+	}{
+		{"observed-provider-patterns", ".beads/.gitignore", "# Ephemeral store (" + m2LegacyTitle + ")\nephemeral." + m2LegacyCLI + "\nephemeral." + m2LegacyCLI + "-journal\nephemeral." + m2LegacyCLI + "-wal\nephemeral." + m2LegacyCLI + "-shm\n", "", false},
+		{"nested-negated-globs", ".cache/.gitignore", "*." + m2LegacyCLI + "\n!keep." + m2LegacyCLI + "\n**/cache." + m2LegacyCLI + "-wal\n", "", false},
+		{"ignore-comment", ".gitignore", "# " + m2LegacyCLI + " is a database filename suffix\n", "", false},
+		{"plain-command", ".gitignore", m2LegacyCLI + " /tmp/db\n", "subprocess", false},
+		{"bare-command", ".gitignore", m2LegacyCLI + "\n", "subprocess", false},
+		{"split-command", ".gitignore", "sql'ite'3 /tmp/db\n", "subprocess", false},
+		{"shebang-command", ".gitignore", "#!/bin/sh\nsql\\ite3 /tmp/db\n", "subprocess", false},
+		{"executable-no-shebang", ".gitignore", "sql'ite'3 /tmp/db\n", "subprocess", true},
+		{"pattern-then-command", ".beads/.gitignore", "*." + m2LegacyCLI + "\n" + m2LegacyCLI + " /tmp/db\n", "subprocess", false},
+		{"hidden-extensionless", ".cache/run", "#!/bin/sh\nsql'ite'3 /tmp/db\n", "subprocess", true},
+		{"executable-pattern", ".gitignore", "ephemeral." + m2LegacyCLI + "\n", "subprocess", true},
+		{"hidden-import", ".cache/generated/x.go", "package x\nimport _ \"" + m2ModerncDriver + "\"\n", "go-import", false},
+		{"hidden-module", ".cache/go.mod", "module x\nrequire " + m2ModerncDriver + " v1.0.0\n", "module", false},
+		{"driver-in-ignore", ".gitignore", m2ModerncDriver + "\n", "driver", false},
+		{"lookalike-name", ".gitignore-copy", "*." + m2LegacyCLI + "\n", "subprocess", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeM2Mutant(t, root, test.path, []byte(test.content))
+			if test.executable {
+				if err := os.Chmod(filepath.Join(root, test.path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			evidence := inspectM2Absence(t, root, false)
+			if test.kind == "" {
+				if len(evidence.Findings) != 0 {
+					t.Fatalf("inert ignore patterns rejected: %s", formatM2Findings(evidence.Findings))
+				}
+			} else {
+				assertM2Finding(t, evidence.Findings, test.kind, test.path)
+			}
+		})
+	}
 }
 
 func TestM2AbsenceSymlinkAndHistoricalDiscrimination(t *testing.T) {

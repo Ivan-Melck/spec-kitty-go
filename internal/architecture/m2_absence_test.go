@@ -250,7 +250,7 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 			add("unreadable", rel, "read")
 			return nil
 		}
-		inspectM2Candidate(rel, data, add)
+		inspectM2CandidateMode(rel, data, info.Mode(), add)
 		return nil
 	})
 	if resolveGraph {
@@ -265,9 +265,14 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 }
 
 func inspectM2Candidate(path string, data []byte, add func(string, string, string)) {
+	inspectM2CandidateMode(path, data, 0, add)
+}
+
+func inspectM2CandidateMode(path string, data []byte, mode fs.FileMode, add func(string, string, string)) {
 	lower := strings.ToLower(string(data))
 	executable := lower
 	ext := strings.ToLower(filepath.Ext(path))
+	ignoreFile := filepath.Base(path) == ".gitignore"
 	if ext == ".go" {
 		parsed, err := parser.ParseFile(token.NewFileSet(), path, data, parser.ParseComments)
 		if err != nil {
@@ -281,8 +286,11 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 			}
 		}
 		executable = strings.ToLower(m2GoExecutableText(data) + "\n" + strings.Join(m2GoResolvedExecutables(parsed), "\n"))
-	} else if ext == ".sh" {
+	} else if ext == ".sh" || ignoreFile || bytes.HasPrefix(data, []byte("#!")) {
 		rawShell := string(data)
+		if ignoreFile && mode.Perm()&0o111 == 0 && !bytes.HasPrefix(data, []byte("#!")) {
+			rawShell = m2IgnoreExecutableText(rawShell)
+		}
 		shellIdentity := m2ShellIdentityFromSource(rawShell)
 		shellSource, heredocBodies, ambiguity := m2ShellWithoutHeredocBodies(rawShell)
 		if ambiguity != "" {
@@ -298,8 +306,10 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 				return
 			}
 		}
-		lower = strings.ToLower(shellSource)
-		executable = lower
+		if !ignoreFile {
+			lower = strings.ToLower(shellSource)
+		}
+		executable = strings.ToLower(shellSource)
 		resolved, ambiguity := m2ShellResolvedExecutables(shellSource, shellIdentity)
 		if ambiguity != "" {
 			add("ambiguous-shell", path, ambiguity)
@@ -325,6 +335,9 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 			exempt = false
 		}
 		present := strings.Contains(lower, pattern.token) || strings.Contains(executable, pattern.token)
+		if ignoreFile && pattern.kind == "subprocess" {
+			present = strings.Contains(executable, pattern.token)
+		}
 		if present &&
 			(pattern.kind != "linkname" || strings.Contains(lower, m2LegacyWord)) && !exempt {
 			add(pattern.kind, path, pattern.token)
@@ -344,6 +357,27 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 			}
 		}
 	}
+}
+
+// Recognize a conservative subset of plain ignore patterns, never shell syntax.
+// Other token classes still inspect the original bytes; this only prevents a
+// filename suffix or ignore comment from claiming a subprocess invocation.
+var m2PlainIgnorePattern = regexp.MustCompile(`^!?[A-Za-z0-9_./*?-]+$`)
+
+func m2IgnoreExecutableText(source string) string {
+	var executable strings.Builder
+	for line := range strings.SplitSeq(source, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if m2PlainIgnorePattern.MatchString(line) && filepath.Base(strings.ToLower(line)) != m2LegacyCLI {
+			continue
+		}
+		executable.WriteString(line)
+		executable.WriteByte('\n')
+	}
+	return executable.String()
 }
 
 func inspectM2GoGraph(t *testing.T, root string, evidence *m2AbsenceEvidence, add func(string, string, string)) {
