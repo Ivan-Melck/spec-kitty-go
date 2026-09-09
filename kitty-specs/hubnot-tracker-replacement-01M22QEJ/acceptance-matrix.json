@@ -188,10 +188,10 @@
       "criterion_id": "NFR-004",
       "description": "Invalid binding/input, unsupported guarantees, stale/conflicting requests and read-only failures cause zero unexpected provider/control/ref writes. Pre-dispatch refusal publishes zero adapter facts. A valid append followed by discovered distributed conflict or response loss is retained and reported as applied or ambiguous, never deleted or called unstarted.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "Qualified source e9b1ac659dcb40fe62ac6c991f26ed9fed9e544e; independent review /home/lynn/projects/go-kitty3/kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP10-integrated-public-acceptance/review-report-1.md, criterion NFR-004; final scenarios binding.refusals, work.simple-update-guards, graph.invalid-suppliers, assignment.refusals, operation.lookup-boundaries, operation.key-attempt-refusal, bounds.public-input-output, graph.partial-definition, discussion.partial-pair; receipt /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-qualification/e9b1ac65/full-local/qualification.json; gate audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-gate-evidence-review.md; full evidence audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-full-local-evidence-review.md",
+      "pass_fail": "pass",
+      "verified_by": "codex-architect-acceptance",
+      "verified_at": "2026-09-09T21:34:28.666776+00:00",
       "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
