@@ -180,6 +180,9 @@
       "last_event_id": "01M23D7WBFQMPTW7EDMMSTC0M5",
       "last_transition_at": "2026-09-09T15:40:31.983844+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review: 14-action native Hubnot consumer at 597de396; strict full-fidelity DTOs, common proofs, truthful partial outcomes, and cancellable borrowed IO. Complete make -k quality and full helper/Hubnot/compiled CLI races passed with qualified hn; independent bounded R1-R4 correction probes passed. Evidence: work/go-wp06-evidence/quality-597de396 and work/go-wp06-review/r4-bounded-review.md."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 2592777,
