@@ -1,0 +1,24 @@
+# Playback authority oracle — bounded independent clarification
+
+**Recommendation: replace the literal unused panic-provider tactic with actual production-composed playback plus structural boundary evidence; keep the real HostFactory tripwire separate.** No connectable provider port exists in playback.RunV2 itself. Do not add one or start a sidecar merely to make a panic object reachable.
+
+Read evidence:
+
+- playback.InputV2 contains materialized base/events, event registry, reducer set and budgets. RunV2 performs real in-memory reduction and returns sealed projection facts. It receives no tracker/decomposition provider, host or storage object.
+- TestPlaybackDeterministicPermutationAndMoreThan256ReducerInputs executes RunV2 over300 events and compares permuted projection digests, but its fixture uses payload-return reducers for most families. It proves engine behavior, not the exact complete production reducer composition.
+- TestMissionProjectionConsumesCheckpointAndSuffixPlaybackV2 executes RunV2 for origin versus checkpoint+suffix and asserts typed mission/blocker state. It uses the actual mission and operation reducers but substitutes other inactive family registrations.
+- TestProductionReducerCompositionIsCompleteAndRuntimePlaybackPure builds the real complete reducer set and applies one runtime event directly. It is useful composition evidence but does not itself execute RunV2.
+- TestPlaybackProductionSurfaceHasStructurallyNoIO checks playback.go's import allowlist and direct interface parameters. Keep its exact scope: ReducerSetV2 internally stores callbacks from ReducerRegistration. The existing structural test is not a proof that arbitrary caller-created reducer closures cannot perform I/O. Use the fixed production BuildReducerSetV2, not a custom closure capturing a panic provider, and inspect the actual registered reducers as the source-bound composition.
+- productionruntime.Config.DecompositionProvider belongs to admitted host/service composition. Start verifies adoption and starts the sidecar before restore/services; it is not a directly connectable parameter of pure RunV2. Using it would qualify a different, much larger startup path rather than sharpen this provider-replacement witness.
+
+Minimal witness combination:
+
+1. Retain the three exact existing leaf tests for structural engine boundary, deterministic real RunV2 behavior, and typed checkpoint/suffix mission projection. Record their exact started/terminal census; do not label a direct reducers.Apply test alone as playback.
+2. Add one small test in an already owned acceptance/qualifier test path that builds productionruntime.BuildReducerSetV2, materializes valid typed journal events, calls playback.RunV2 for origin and checkpoint+suffix, compares sealed digests and expected canonical/typed projection values, and checks the actual event/reducer descriptor identities. No runtime.Start, sidecar, provider object, fake host, arbitrary reducer wrapper or private production test helper is needed. Public constructors include mission.NewMissionAuthorityStateV2, NewMissionEventPayloadV2/EncodeMissionEventPayloadV2, journal.NewEventEnvelopeV2 and playback.NewMaterializedEventV2. This closes the gap between existing composition and existing engine tests without broadening production code.
+3. Separately execute the real tracker-dispatch HostFactory spy (classification/observation/start counters or immediate panic on those actually connectable methods) and the actual compiled tracker/control-root absence witness. These prove a different boundary and must not be claimed as calls observed during playback.
+
+WP07 may carry the additional pure-playback leaf in its owned runner_test.go and invoke it as an explicit source-bound unit supplement with wrapper activation stripped. WP10 can reuse that exact leaf plus existing tests, or express the equivalent small witness in its already owned hubnot_acceptance_test.go. Neither option changes ownership, M2 sidecar admission or the product API. The outer qualifier remains the external compiled entry; the Go test child is only the explicitly named leaf supplement.
+
+Proposed exact T028 wording: “Run true control-journal playback with the production reducer composition, including checkpoint-plus-suffix equivalence and typed projection assertions; verify the existing structural no-I/O boundary. Prove zero HostFactory calls on tracker dispatch with its actual connectable tripwire separately. Use a panic-on-provider-call sensor only where an existing execution seam can genuinely invoke it; do not introduce a provider dependency into pure playback or count an unused trap as evidence.”
+
+This faithfully tests C-001's zero-provider-I/O playback obligation. It changes the requested tactic to match the canonical architecture, not the required outcome. No application/runtime changes or tests were performed in this clarification.

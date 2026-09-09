@@ -125,8 +125,13 @@ old stashes/branches, or internal/helpercmd/production.go.
 7. Use hostile approval comment and same accountable actor with two signers without
    granting self-review or host permission.
 
-8. Run true control-journal playback with provider methods that panic if invoked;
-   require zero calls.
+8. Run true control-journal playback with the production reducer composition,
+   including checkpoint-plus-suffix equivalence and typed projection assertions;
+   verify the existing structural no-I/O boundary. Prove zero HostFactory calls on
+   tracker dispatch with its actual connectable tripwire separately. Use a
+   panic-on-provider-call sensor only where an existing execution seam can
+   genuinely invoke it; do not introduce a provider dependency into pure playback
+   or count an unused trap as evidence.
 
 9. Keep exact production tuple admission during real lost-response trials. Discard a
    completed compiled-consumer response externally and retry the same input in a fresh
