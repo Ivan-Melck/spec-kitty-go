@@ -20,19 +20,26 @@ FLAGS = ['--user', '--map-root-user', '--net', '--pid', '--fork', '--kill-child=
 # Fixed read-only privileged reader, used only after the guarded ordinary probe
 # fails. No caller-provided paths, commands or policy content cross this boundary.
 PRIVILEGED_INVENTORY = r"""
-import os,json
+import os,json,re
 budget=8192
 def read(path):
     global budget
     try:
-        with open(path,'rb') as f: data=f.read(min(1024,budget)+1)
+        fd=os.open(path,os.O_RDONLY|os.O_NONBLOCK)
+        try: data=os.read(fd,min(1024,budget)+1)
+        finally: os.close(fd)
         take=min(len(data),1024,budget); budget-=take
         return {'text':data[:take].decode('utf-8','replace'),'truncated':len(data)>take}
     except OSError as e: return {'unavailable':str(e)}
+def revision(path):
+    value=read(path)
+    if value.get('truncated') or not re.fullmatch(r'[0-9]+\n',value.get('text','')):
+        return {'unavailable':'incomplete revision record','observation':value}
+    return value
 root='/sys/kernel/security/apparmor/policy'
 r={'reader_uid':os.getuid(),'reader_label':read('/proc/self/attr/current'),
    'namespace_context':{n:read('/sys/kernel/security/apparmor/'+n) for n in ['.ns_name','.ns_level','.stacked','.ns_stacked']},
-   'revision_before':read(root+'/revision'),'entries':[],'errors':[],
+   'revision_before':revision(root+'/revision'),'entries':[],'errors':[],
    'complete_nonconflict_proof':False}
 count=0
 for directory,dirs,files in os.walk(root,followlinks=False,onerror=lambda e:r['errors'].append(str(e))):
@@ -44,18 +51,33 @@ for directory,dirs,files in os.walk(root,followlinks=False,onerror=lambda e:r['e
             path=os.path.join(directory,name)
             r['entries'].append({'path':path,**read(path)})
             if len(r['entries'])>=128: break
-r['revision_after']=read(root+'/revision')
-r['revision_changed']=r['revision_before']!=r['revision_after']
+r['revision_after']=revision(root+'/revision')
+r['revision_stable']='text' in r['revision_before'] and r['revision_before']==r['revision_after']
 print(json.dumps(r))
 """
 
 def read_file(path):
     try:
-        with open(path, 'rb') as f:
-            data = f.read(CAP + 1)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            data = os.read(fd, CAP + 1)
+        finally:
+            os.close(fd)
         return {'text': data[:CAP].decode('utf-8', 'replace'), 'truncated': len(data) > CAP}
     except OSError as e:
         return {'unavailable': str(e)}
+
+def revision(path):
+    value = read_file(path)
+    if value.get('truncated') or not re.fullmatch(r'[0-9]+\n', value.get('text', '')):
+        return {'unavailable': 'incomplete revision record', 'observation': value}
+    return value
+
+class HelperDeadline(Exception):
+    pass
+
+def deadline_expired(signum, frame):
+    raise HelperDeadline('total helper deadline exceeded')
 
 def capture(argv):
     start = time.monotonic()
@@ -70,6 +92,7 @@ def capture(argv):
     sel = selectors.DefaultSelector()
     for name in streams:
         sel.register(getattr(p, name), selectors.EVENT_READ, name)
+    deadline = None
     try:
         # EOF is not process completion: retain one deadline across both.
         while sel.get_map() or p.poll() is None:
@@ -92,6 +115,10 @@ def capture(argv):
                     break
             if result['bounded_stop']:
                 break
+    except HelperDeadline as e:
+        deadline = e
+        result['bounded_stop'] = True
+        result['capture_error'] = str(e)
     except Exception as e:
         result['bounded_stop'] = True
         result['capture_error'] = str(e)
@@ -116,13 +143,16 @@ def capture(argv):
             result[name] = buf.decode('utf-8', 'replace')
 
     result['duration_seconds'] = time.monotonic() - start
+    if deadline is not None:
+        deadline.capture_result = result
+        raise deadline
     return result
 
 def attachments():
     # Exported attachments are diagnostics, not a complete kernel match oracle.
     root = '/sys/kernel/security/apparmor/policy'
     result = {'root': root, 'entries': [], 'complete_nonconflict_proof': False,
-              'revision_before': read_file(root + '/revision'),
+              'revision_before': revision(root + '/revision'),
               'reader_context': {p: read_file('/proc/self/attr/' + p) for p in ['current', 'apparmor/current']},
               'namespace_context': {p: read_file('/sys/kernel/security/apparmor/' + p) for p in ['.ns_name', '.ns_level', '.stacked', '.ns_stacked']}}
     def unavailable(e):
@@ -139,8 +169,8 @@ def attachments():
                 result['entries'].append({'path': path, **read_file(path)})
                 if len(result['entries']) >= 128:
                     break
-    result['revision_after'] = read_file(root + '/revision')
-    result['revision_changed'] = result['revision_before'] != result['revision_after']
+    result['revision_after'] = revision(root + '/revision')
+    result['revision_stable'] = 'text' in result['revision_before'] and result['revision_before'] == result['revision_after']
     result['reader_uid'] = os.getuid()
     return result
 
@@ -180,12 +210,19 @@ def main():
     result = {'schema': 'go-kitty.ci-userns/1', 'run_id': env['GITHUB_RUN_ID'],
               'attempt': env['GITHUB_RUN_ATTEMPT'], 'job': env['GITHUB_JOB'],
               'verdict': 'refused', 'policy_changed': False, 'mode': 'diagnostic-only'}
+    save('started.json', result)
+    signal.signal(signal.SIGALRM, deadline_expired)
+    signal.setitimer(signal.ITIMER_REAL, 60)
+    diagnostics = {}
     try:
         diagnostics = {'uid': os.getuid(), 'gid': os.getgid(), 'uname': list(os.uname()),
             'files': {p: read_file(p) for p in ['/etc/os-release', '/proc/self/attr/current',
                 '/sys/module/apparmor/parameters/enabled', '/proc/sys/kernel/apparmor_restrict_unprivileged_userns',
+                '/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined',
                 '/proc/sys/user/max_user_namespaces', '/proc/sys/kernel/unprivileged_userns_clone',
-                '/sys/kernel/security/apparmor/profiles']}, 'attachments': attachments()}
+                '/sys/kernel/security/apparmor/profiles']}}
+        save('diagnostics-files.json', diagnostics)
+        diagnostics['attachments'] = attachments()
         save('diagnostics.json', diagnostics)
         launcher = next((pathlib.Path(p) for p in ['/usr/bin/unshare', '/bin/unshare'] if os.access(p, os.X_OK)), None)
         if launcher is None:
@@ -219,6 +256,12 @@ def main():
         result['reason'] = 'ordinary-user exact-flags probe passed; no policy change'
     except Exception as e:
         result['reason'] = str(e)
+        if hasattr(e, 'capture_result'):
+            save('interrupted-command.json', e.capture_result)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    if result['verdict'] != 'pass':
+        save('partial-diagnostics.json', diagnostics)
     save('result.json', result)
     print(json.dumps(result))
     return 0 if result['verdict'] == 'pass' else 1

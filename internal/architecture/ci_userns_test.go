@@ -107,6 +107,35 @@ assert r['bounded_stop'] and r['exit']==-9 and 10<=r['duration_seconds']<13, r
 assert not pathlib.Path('/proc',str(pid)).exists(), r
 # Audit records without namespace context are outside this helper's scope.
 assert 'capname=' not in code
+# Event-like readers produce a short record but do not close. Both literal
+# readers must return after a single nonblocking read, without any sudo call.
+priv={'__name__':'fixture'}
+exec(ns['PRIVILEGED_INVENTORY'].split("root='/sys/kernel/security/apparmor/policy'")[0],priv)
+with tempfile.TemporaryDirectory() as temp:
+    fifo=pathlib.Path(temp)/'revision'; os.mkfifo(fifo)
+    fd=os.open(fifo,os.O_RDWR|os.O_NONBLOCK)
+    try:
+        for reader in [ns['revision'],priv['revision']]:
+            os.write(fd,b'7\n')
+            assert reader(str(fifo))['text']=='7\n'
+            os.write(fd,b'8')
+            assert 'unavailable' in reader(str(fifo))
+            assert 'unavailable' in reader(str(fifo))
+    finally: os.close(fd)
+# The total deadline bypasses generic read/capture handlers, but capture still
+# kills/reaps and attaches the already captured output before propagating.
+import signal
+signal.signal(signal.SIGALRM,ns['deadline_expired'])
+signal.setitimer(signal.ITIMER_REAL,.15)
+try:
+    ns['capture'](['/usr/bin/python3','-I','-c',child])
+    raise AssertionError('deadline swallowed')
+except ns['HelperDeadline'] as e:
+    r=e.capture_result
+    assert r['bounded_stop'] and r['exit']==-9 and r['stdout'].strip(),r
+    assert not pathlib.Path('/proc',r['stdout'].strip()).exists()
+finally: signal.setitimer(signal.ITIMER_REAL,0)
+
 
 `
 	cmd := exec.Command("/usr/bin/python3", "-I", "-c", "import sys,os,json,pathlib\n"+harness)
