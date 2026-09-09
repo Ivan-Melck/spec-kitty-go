@@ -45,3 +45,7 @@ Graph preserves unrelated relations, correct direction, provenance; cycles/missi
 Discussion is observably idempotent only after signed-key evidence. Preserve comment ID/exact body/time/signer. Adapter comments carry versioned accountable-author/operation/semantic-digest attribution attested by pinned signer. Native foreign comments keep native attribution. Signer is not independent reviewer; no comment text grants authority.
 
 Final declarations: catalog unguarded, assignment unguarded, discussion observably_idempotent, revision content_derived, safe compensation unsupported, concurrent writers none, portable export/restorable backup unsupported. Reconstruction tests do not qualify stronger backup ports.
+
+## Accepted qualification identity
+
+The accepted source/build/byte tuple is recorded in qualified-provider.json. WP01 owns private immutable admission constants in binding.go and a scalar value-returning QualifiedProviderIdentity accessor. Open compares every claimed identity field to that compiled tuple before any child and verifies actual executable bytes. No exported alternative-pin, unqualified or injected-runner option exists. Package-private fake-child seams are test-only. WP07 may reuse this pure identity accessor or mirror-assert installer/reference constants; all behavioral qualification still invokes compiled CLI subprocesses. This uses existing owned files and preserves the public inward boundary.
