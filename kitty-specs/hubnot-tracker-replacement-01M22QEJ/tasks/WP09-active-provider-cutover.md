@@ -20,6 +20,9 @@ requirement_refs:
 planning_base_branch: feat/hubnot-tracker-replacement
 merge_target_branch: feat/hubnot-tracker-replacement
 branch_strategy: Planning artifacts for this mission were generated on feat/hubnot-tracker-replacement. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/hubnot-tracker-replacement unless the human explicitly redirects the landing branch.
+base_branch: kitty/mission-hubnot-tracker-replacement-01M22QEJ
+base_commit: c10593a91e24d746e4d8920510c43f072bdfa01e
+created_at: '2026-09-09T18:59:19.334440+00:00'
 subtasks:
 - T025
 - T026
