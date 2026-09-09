@@ -693,7 +693,13 @@ func TestM2PolicyDeletionMutantsFailClosed(t *testing.T) {
 			policy.ForbiddenImportPrefixes = removeM2String(policy.ForbiddenImportPrefixes, "modernc.org/sqlite")
 		}},
 		{"remove-gapdb-adapter-classification", func(policy *Policy) { removeM2Pattern(policy, m2ModulePath+"/internal/controlstore/gapdb") }},
-		{"remove-capability-gapdb-denial", func(policy *Policy) { policy.ForbiddenLocalDirections = policy.ForbiddenLocalDirections[1:] }},
+		{"remove-capability-gapdb-denial", func(policy *Policy) {
+			mutated, err := m2WithoutExactDirection(*policy, m2CapabilityGapDBDirection(policy.ModulePath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			*policy = mutated
+		}},
 		{"remove-kernel-direction", func(policy *Policy) {
 			for index := range policy.Tiers {
 				if policy.Tiers[index].Name == TierAuthority {
@@ -1352,6 +1358,11 @@ func cloneM2Policy(policy Policy) Policy {
 		clone.Tiers[index].AllowedExternalPrefixes = slices.Clone(policy.Tiers[index].AllowedExternalPrefixes)
 	}
 	clone.ForbiddenLocalDirections = slices.Clone(policy.ForbiddenLocalDirections)
+	for index := range clone.ForbiddenLocalDirections {
+		clone.ForbiddenLocalDirections[index].Sources = slices.Clone(policy.ForbiddenLocalDirections[index].Sources)
+		clone.ForbiddenLocalDirections[index].TargetTiers = slices.Clone(policy.ForbiddenLocalDirections[index].TargetTiers)
+		clone.ForbiddenLocalDirections[index].Targets = slices.Clone(policy.ForbiddenLocalDirections[index].Targets)
+	}
 	return clone
 }
 

@@ -259,7 +259,7 @@ func m2ExecutableMutants() []m2MutantCase {
 		cases = append(cases, m2DependencyCase("M-GAPDB-PRIVATE-"+strings.NewReplacer("/", "-").Replace(strings.ToUpper(target)), "GAPDB-PRIVATE", m2ModulePath+"/internal/controlstore/gapdb", target, ImportExternal, string(RuleDeferredSurface)))
 	}
 	for _, target := range []string{"acceptance", "artifact", "execution", "gitrepo", "handoff", "integration", "mission", "review", "workspace"} {
-		cases = append(cases, m2DependencyCase("M-TRACKER-"+strings.ToUpper(target), "TRACKER", m2ModulePath+"/internal/tracker/hubnot", m2ModulePath+"/internal/"+target, ImportModuleLocal, string(RuleLocalDirection)))
+		cases = append(cases, m2DependencyCase("M-TRACKER-"+strings.ToUpper(target), "TRACKER", m2ModulePath+"/internal/tracker/beads", m2ModulePath+"/internal/"+target, ImportModuleLocal, string(RuleLocalDirection)))
 	}
 	for _, fixture := range []string{"MISSING", "OPERATION-REDUCER", "OPERATION-SCHEMA", "ORDERING", "PUBLICATION", "REDUCER-VERSION", "REGISTRY-ID", "REGISTRY-SCHEMA", "RENAMED", "UNEXPECTED", "VERSION", "WRONG-OWNER"} {
 		cases = append(cases, m2Case("M-EVENT-"+fixture, m2ValidatorEvents, fixture, "EVENT_REGISTRY", fixture, ""))
@@ -664,7 +664,7 @@ func m2FixtureDigest(validator, fixture string) string {
 }
 
 func m2PolicyFixture(fixture string) (Policy, bool) {
-	policy, err := m2ClosedPolicyValue(m2ModulePath)
+	policy, err := m2HistoricalPolicyValue()
 	if err != nil {
 		return Policy{}, false
 	}
@@ -680,7 +680,10 @@ func m2PolicyFixture(fixture string) (Policy, bool) {
 	case "GAPDB-CLASS":
 		removeM2Pattern(&policy, m2ModulePath+"/internal/controlstore/gapdb")
 	case "GAPDB-DENIAL":
-		policy.ForbiddenLocalDirections = policy.ForbiddenLocalDirections[1:]
+		policy, err = m2WithoutExactDirection(policy, m2CapabilityGapDBDirection(policy.ModulePath))
+		if err != nil {
+			return Policy{}, false
+		}
 	case "PROVIDER":
 		policy.ForbiddenImportPrefixes = removeM2String(policy.ForbiddenImportPrefixes, "modernc.org/sqlite")
 	default:

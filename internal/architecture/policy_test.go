@@ -468,8 +468,10 @@ func TestDefaultPolicyPermanentlyDeniesCapabilityToGapDBAdapter(t *testing.T) {
 		})
 	}
 
-	mutant := policy
-	mutant.ForbiddenLocalDirections = append([]ForbiddenLocalDirection(nil), policy.ForbiddenLocalDirections[1:]...)
+	mutant, err := m2WithoutExactDirection(policy, m2CapabilityGapDBDirection(policy.ModulePath))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for index := range mutant.Tiers {
 		if mutant.Tiers[index].Name == TierAuthority {
 			mutant.Tiers[index].AllowedLocalTargets = append(mutant.Tiers[index].AllowedLocalTargets, TierAdapter)

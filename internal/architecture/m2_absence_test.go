@@ -93,6 +93,26 @@ var m2ForbiddenImports = []string{
 	"gorm.io/driver/" + m2LegacyWord, "github.com/uptrace/bun/driver/" + m2LegacyWord + "dialect",
 }
 
+// This one inert record is pinned by the authentic pre-mission local-files
+// baseline in internal/testcampaign/testdata/hubnot-qualification-reference.json.
+// Its legacy executable permissions must be preserved, not interpreted as an
+// authorization to execute JSON. This disposition only removes shell parsing;
+// raw forbidden-token checks still apply. No directory or extension is exempt.
+// Rationale and retirement tracking: https://github.com/spec-kitty/spec-kitty-redesign/issues/4.
+const m2HistoricalRecoveryPath = ".beads/embeddeddolt/r6/.dolt/repo_state.json"
+
+func m2HistoricalRecoveryData(path string, data []byte, mode fs.FileMode, add func(string, string, string)) bool {
+	if path != m2HistoricalRecoveryPath {
+		return false
+	}
+	digest := sha256.Sum256(data)
+	if mode != 0o777 || len(data) != 316 || hex.EncodeToString(digest[:]) != "d0f6078373e0c84e8d598ba2f6f56d405a13b4aab0e1ca8dad86e1fe19b7fd7e" {
+		add("historical-recovery-mismatch", path, "expected-recorded-regular-bytes-and-mode")
+		return false
+	}
+	return true
+}
+
 // m2HistoricalExemptions is deliberately closed and token-specific. These are
 // immutable evidence, mutation controls, and the bounded header classifier
 // that must continue to describe the retired implementation truthfully. Go
@@ -210,6 +230,9 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 		}
 		rel = filepath.ToSlash(rel)
 		if entry.IsDir() {
+			if rel == m2HistoricalRecoveryPath {
+				add("historical-recovery-mismatch", rel, "expected-regular-file")
+			}
 			if rel == ".git" || strings.HasPrefix(rel, ".git/") {
 				return filepath.SkipDir
 			}
@@ -235,6 +258,9 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 			return nil
 		}
 		if !info.Mode().IsRegular() {
+			if rel == m2HistoricalRecoveryPath {
+				add("historical-recovery-mismatch", rel, "expected-regular-file")
+			}
 			return nil
 		}
 		if info.Size() > 8<<20 {
@@ -266,6 +292,7 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 }
 
 func inspectM2Candidate(path string, data []byte, mode fs.FileMode, add func(string, string, string)) {
+	historicalRecovery := m2HistoricalRecoveryData(path, data, mode, add)
 	lower := strings.ToLower(string(data))
 	executable := lower
 	ext := strings.ToLower(filepath.Ext(path))
@@ -285,7 +312,9 @@ func inspectM2Candidate(path string, data []byte, mode fs.FileMode, add func(str
 		executable = strings.ToLower(m2GoExecutableText(data) + "\n" + strings.Join(m2GoResolvedExecutables(parsed), "\n"))
 	}
 	shellCandidate := ext == ".sh" || ignoreFile || bytes.HasPrefix(data, []byte("#!"))
-	if mode.Perm()&0o111 != 0 {
+	if historicalRecovery {
+		shellCandidate = false
+	} else if mode.Perm()&0o111 != 0 {
 		// Shell ENOEXEC fallback is independent of suffix, shebang and UTF-8.
 		// Only parsed executable containers avoid shell interpretation; unknown
 		// NUL-bearing material refuses explicitly and still gets byte-scanned.
