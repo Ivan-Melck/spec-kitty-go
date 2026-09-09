@@ -3,6 +3,9 @@ project:
   slug: go-kitty3
   node_id: 752e6076aa27
   build_id: 45eafaf7-536b-5207-8542-04ec80f01b11
+  path_conventions:
+    workspace: internal/
+    tests: internal/
 vcs:
   type: git
 agents:
