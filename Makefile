@@ -7,11 +7,16 @@ GOVULNCHECK ?= govulncheck
 GO_TEST_PARALLEL ?= 2
 ARTIFACT_DIR := $(if $(ARTIFACT_DIR),$(ARTIFACT_DIR),$(shell mktemp -d /tmp/go-kitty3-campaign.XXXXXX))
 BUILD_DIR := $(if $(BUILD_DIR),$(BUILD_DIR),$(shell mktemp -d /tmp/go-kitty3-build.XXXXXX))
-PROVIDER_TMP_DIR := $(if $(PROVIDER_TMP_DIR),$(PROVIDER_TMP_DIR),$(shell mktemp -d /tmp/go-kitty3-provider.XXXXXX))
-QUALIFIED_BEADS_DIGEST := 0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6
-BEADS_BIN ?=
-BEADS_INSTALL_RESULT ?=
-OFFLINE_ENFORCED ?=
+HUBNOT_GO ?=
+HUBNOT_SOURCE ?=
+HUBNOT_BINARY ?= $(BUILD_DIR)/hn
+HUBNOT_QUALIFIER ?= $(BUILD_DIR)/hubnot-qualification
+HUBNOT_PRODUCT ?= $(BUILD_DIR)/hubnot-spec-kitty
+HUBNOT_EVIDENCE_ROOT ?= $(ARTIFACT_DIR)/hubnot
+HUBNOT_ORIGINAL_REPOSITORY ?=
+HUBNOT_BUILD_ENV = env GOENV=off GOWORK=off GOFLAGS= GOEXPERIMENT= GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOOS=linux GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0 LANG=C.UTF-8
+HUBNOT_BUILD_FLAGS = -trimpath -buildvcs=false -mod=readonly -ldflags='-s -w'
+HUBNOT_RUN_ENV = GO_KITTY_HUBNOT_RUN=1 GO_KITTY_HUBNOT_QUALIFIER="$(HUBNOT_QUALIFIER)" GO_KITTY_HUBNOT_REPOSITORY="$(CURDIR)" GO_KITTY_HUBNOT_PRODUCT="$(HUBNOT_PRODUCT)" GO_KITTY_HUBNOT_BINARY="$(HUBNOT_BINARY)" GO_KITTY_HUBNOT_GO_BINARY="$(HUBNOT_GO)" GO_KITTY_HUBNOT_EVIDENCE_ROOT="$(HUBNOT_EVIDENCE_ROOT)" GO_KITTY_HUBNOT_ORIGINAL_REPOSITORY="$(HUBNOT_ORIGINAL_REPOSITORY)"
 M2_GAPDBD ?= /tmp/gapdb-m2-recovery-reviewed.2gq1WX/gapdbd
 M2_WP16_GAPDBD ?= /tmp/spec-kitty-gapdb-assertion-sidecar/gapdbd
 M2_RUN_ID ?= m2-$$(git rev-parse --short=12 HEAD)-$$(date -u +%Y%m%dT%H%M%SZ)
@@ -28,7 +33,7 @@ M2_PROFILE_DOCUMENT ?= $(CURDIR)/docs/programs/evidence/m2-producer-profile.json
 .DEFAULT_GOAL := help
 .NOTPARALLEL:
 
-.PHONY: help tools preflight contract contract-full acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 race-full static dependencies quality-bounded quality-core quality fault soak scenario-full full-campaign fmt-check build beads-contract beads-qualification beads-all m2-contract m2-capabilities m2-recovery m2-race-smoke m2-race m2-fault m2-mutants-smoke m2-mutants m2-absence-source m2-absence m2-sbom m2-build-candidate m2-performance m2-short m2-qualification m2-verify-evidence
+.PHONY: help tools preflight contract contract-full acceptance mission-contract mission-acceptance mission-adversarial phase3-publication scope race race-m1 race-full static dependencies quality-bounded quality-core quality fault soak scenario-full full-campaign fmt-check build hubnot-contract hubnot-qualification hubnot-hosted-provider hubnot-identity hubnot-all hubnot-build hubnot-install hubnot-product m2-contract m2-capabilities m2-recovery m2-race-smoke m2-race m2-fault m2-mutants-smoke m2-mutants m2-absence-source m2-absence m2-sbom m2-build-candidate m2-performance m2-short m2-qualification m2-verify-evidence
 
 help: ## Show the canonical local and CI validation targets.
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -58,7 +63,7 @@ contract: ## Run unit and portable contract packages, excluding expensive scenar
 	@packages="$$( $(GO) list ./internal/... | awk \
 		'$$0 !~ /\/scenario$$/ && \
 		 $$0 !~ /\/architecture$$/ && \
-		 $$0 !~ /\/tracker\/beads$$/ && \
+		 $$0 !~ /\/tracker\/hubnot$$/ && \
 		 $$0 !~ /\/testcampaign\/m2(\/|$$)/' )"; \
 	test -n "$$packages" || { echo "no contract packages discovered"; exit 1; }; \
 	$(GO) test -short -p=$(GO_TEST_PARALLEL) -count=1 $$packages
@@ -119,9 +124,9 @@ dependencies: ## Verify module bytes and scan reachable vulnerabilities.
 	@git diff --exit-code -- go.mod go.sum
 	$(GOVULNCHECK) ./...
 
-beads-contract: ## Run the exact portable and adversarial provider campaign without Beads or network.
+hubnot-contract: ## Run the exact portable and adversarial provider campaign without hn or network.
 	@mkdir -p "$(ARTIFACT_DIR)"
-	env -u BEADS_BIN -u BEADS_SERVER_ID -u BEADS_SERVER_ENDPOINT -u DOLT_SERVER_HOST -u DOLT_SERVER_PORT -u DOLT_CREDENTIALS_PATH GOPROXY=off GOSUMDB=off $(GO) run ./internal/testcampaign/cmd/campaign -campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
+	env -u GO_KITTY_TEST_HUBNOT_BINARY -u GO_KITTY_TEST_PRODUCT_BINARY -u GO_KITTY_HUBNOT_RUN -u BEADS_BIN -u BEADS_SERVER_ID -u BEADS_SERVER_ENDPOINT -u DOLT_SERVER_HOST -u DOLT_SERVER_PORT -u DOLT_CREDENTIALS_PATH GOPROXY=off GOSUMDB=off $(GO) run ./internal/testcampaign/cmd/campaign -campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
 
 quality-bounded: preflight contract mission-contract mission-acceptance static dependencies ## Run the non-race bounded pull-request campaign; race is an independent CI job.
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign quality -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m
@@ -130,43 +135,33 @@ quality-bounded: preflight contract mission-contract mission-acceptance static d
 quality-core: quality-bounded race ## Run the complete local core pull-request aggregate.
 	@printf 'core quality aggregate passed; evidence=%s\n' "$(ARTIFACT_DIR)"
 
-quality: beads-contract m2-short quality-core ## Run the complete local pull-request gate aggregate, including delegated provider and M2 tiers.
+quality: hubnot-contract m2-short quality-core ## Run the complete local pull-request gate aggregate, including delegated provider and M2 tiers.
 	@printf 'quality aggregate passed; evidence=%s\n' "$(ARTIFACT_DIR)"
 
-beads-qualification: ## Run real pinned Beads qualification only inside an enforced offline boundary.
-	@set -eu; mkdir -p "$(ARTIFACT_DIR)" "$(PROVIDER_TMP_DIR)"; \
-	fallback="$(ARTIFACT_DIR)/beads-qualification.non-admissible.json"; \
-	evidence="$(ARTIFACT_DIR)/beads-qualification.json"; \
-	started=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
-	commit=$$(git rev-parse HEAD); tree=$$(git rev-parse 'HEAD^{tree}'); \
-	goos=$$($(GO) env GOOS); goarch=$$($(GO) env GOARCH); \
-	write_fallback() { finished=$$(date -u +%Y-%m-%dT%H:%M:%SZ); temporary="$$fallback.tmp"; rm -f "$$temporary"; printf '{"schema_version":1,"source_commit":"%s","source_tree":"%s","provider_version":"1.2.2","provider_digest_sha256":"%s","protocol_schema":1,"storage_mode":"embedded_serialized","host":{"goos":"%s","goarch":"%s","runner":"local"},"started_at":"%s","finished_at":"%s","scenarios":{"expected":11,"started":0,"terminal":0,"passed":0,"failed":0},"authority_audits":0,"authority_invariant_failures":0,"issues":[{"kind":"prerequisite_missing","message":"verified offline Beads prerequisite unavailable"}],"verdict":"non_admissible"}\n' "$$commit" "$$tree" "$(QUALIFIED_BEADS_DIGEST)" "$$goos" "$$goarch" "$$started" "$$finished" > "$$temporary"; chmod 600 "$$temporary"; mv -f "$$temporary" "$$fallback"; }; \
-	write_fallback; \
-	case "$(BEADS_BIN)" in /*) ;; *) echo 'BEADS_BIN must be an absolute verified path' >&2; exit 1;; esac; \
-	case "$(BEADS_INSTALL_RESULT)" in /*) ;; *) echo 'BEADS_INSTALL_RESULT must be an absolute installer JSON path' >&2; exit 1;; esac; \
-	test "$(OFFLINE_ENFORCED)" = linux-network-namespace || { echo 'real qualification requires OFFLINE_ENFORCED=linux-network-namespace' >&2; exit 1; }; \
-	current_net=$$(readlink /proc/self/ns/net); host_net=$$(readlink /proc/1/ns/net); test "$$current_net" != "$$host_net" || { echo 'real qualification is not inside an isolated network namespace' >&2; exit 1; }; \
-	command -v jq >/dev/null 2>&1 || { echo 'jq is required to verify installer identity' >&2; exit 1; }; \
-	test -x "$(BEADS_BIN)" || { echo 'verified BEADS_BIN is not executable' >&2; exit 1; }; \
-	jq -e --arg path "$(BEADS_BIN)" --arg digest "$(QUALIFIED_BEADS_DIGEST)" --arg goos "$$goos" --arg goarch "$$goarch" 'type == "object" and (keys | length == 9) and .schema_version == 1 and .version == "1.2.2" and .digest_sha256 == $$digest and .executable_path == $$path and .source_version == "v1.2.2" and .source_commit == "6c124203e771433a3550c348771a5b5e27fd3c21" and .goos == $$goos and .goarch == $$goarch and .build_method == "go-install-cgo-gms_pure_go-trimpath-nobuildid-go1.26.4"' "$(BEADS_INSTALL_RESULT)" >/dev/null || { echo 'installer identity is not the qualified tuple' >&2; exit 1; }; \
-	observed=$$(sha256sum -- "$(BEADS_BIN)" | awk '{print $$1}'); \
-	test "$$observed" = "$(QUALIFIED_BEADS_DIGEST)" || { echo 'BEADS_BIN digest changed before qualification' >&2; exit 1; }; \
-	go_env="$(PROVIDER_TMP_DIR)/offline-go.env"; printf 'GOPROXY=off\nGOSUMDB=off\n' > "$$go_env"; chmod 600 "$$go_env"; \
-	rm -f "$$evidence"; \
-	set +e; TMPDIR="$(PROVIDER_TMP_DIR)" GOENV="$$go_env" GOPROXY=off GOSUMDB=off BEADS_BIN="$(BEADS_BIN)" BEADS_DIGEST_SHA256="$(QUALIFIED_BEADS_DIGEST)" $(GO) run ./internal/testcampaign/cmd/beads-qualification -beads-bin "$(BEADS_BIN)" -digest "$(QUALIFIED_BEADS_DIGEST)" -evidence "$$evidence" -repository "$$(pwd)" -timeout 20m; status=$$?; set -e; \
-	if test -f "$$evidence"; then rm -f "$$fallback"; fi; \
-	exit $$status
+hubnot-build: ## Build the external qualifier with explicit Go 1.26.7 and the pinned recipe.
+	@test -n "$(HUBNOT_GO)" || { echo 'Set HUBNOT_GO to the absolute Go 1.26.7 executable' >&2; exit 2; }
+	@mkdir -p "$(BUILD_DIR)"
+	$(HUBNOT_BUILD_ENV) PATH=/usr/bin:/bin "$(HUBNOT_GO)" build $(HUBNOT_BUILD_FLAGS) -o "$(HUBNOT_QUALIFIER)" ./internal/testcampaign/cmd/hubnot-qualification
 
-beads-all: beads-contract beads-qualification ## Run bounded provider evidence, then explicit real qualification.
+hubnot-install: hubnot-build ## Install hn from explicit clean accepted source; no workspace initialization.
+	@mkdir -p "$(ARTIFACT_DIR)"
+	"$(HUBNOT_QUALIFIER)" install --go-bin "$(HUBNOT_GO)" --source "$(HUBNOT_SOURCE)" --destination "$(HUBNOT_BINARY)" > "$(ARTIFACT_DIR)/hubnot-install.json" 2> "$(ARTIFACT_DIR)/hubnot-install.stderr.log" || { status=$$?; cat "$(ARTIFACT_DIR)/hubnot-install.stderr.log" >&2; exit $$status; }
 
-fault: ## Run crash, recovery, stale-writer, and zombie profiles.
-	$(GO) run ./internal/testcampaign/cmd/campaign -profile fault -artifact-dir "$(ARTIFACT_DIR)" -timeout 30m
+hubnot-product: ## Build the external tracker consumer with the identical qualified recipe.
+	@test -n "$(HUBNOT_GO)" || { echo 'Set HUBNOT_GO to the absolute Go 1.26.7 executable' >&2; exit 2; }
+	@mkdir -p "$(BUILD_DIR)"
+	$(HUBNOT_BUILD_ENV) PATH=/usr/bin:/bin "$(HUBNOT_GO)" build $(HUBNOT_BUILD_FLAGS) -o "$(HUBNOT_PRODUCT)" ./cmd/spec-kitty
 
-soak: ## Run the repeated contention and serialization profile once.
-	$(GO) run ./internal/testcampaign/cmd/campaign -profile soak -artifact-dir "$(ARTIFACT_DIR)" -timeout 45m
+hubnot-hosted-provider: ## Run the fixed hosted selection (27/28), explicitly not full qualification.
+	$(HUBNOT_RUN_ENV) $(GO) run ./internal/testcampaign/cmd/campaign -campaign provider_real -artifact-dir "$(ARTIFACT_DIR)" -timeout 58m
 
-scenario-full: ## Run every scenario with an exact top-level JSON census.
-	$(GO) run ./internal/testcampaign/cmd/campaign -profile full-scenario -artifact-dir "$(ARTIFACT_DIR)" -timeout 60m
+hubnot-qualification: ## Run all 28 local scenarios with actual original recovery files and refs.
+	$(HUBNOT_RUN_ENV) $(GO) run ./internal/testcampaign/cmd/campaign -profile provider-full-local -artifact-dir "$(ARTIFACT_DIR)" -timeout 58m
+
+hubnot-identity: ## Run the fixed five-scenario selected identity smoke (not full qualification).
+	$(HUBNOT_RUN_ENV) $(GO) run ./internal/testcampaign/cmd/campaign -profile mission-real-identity -artifact-dir "$(ARTIFACT_DIR)" -timeout 58m
+
+hubnot-all: hubnot-contract hubnot-qualification ## Run bounded contracts then explicit full local qualification.
 
 full-campaign: contract-full race-full quality ## Run full contracts/races plus the exhaustive scenario/fault/soak campaign.
 	$(GO) run ./internal/testcampaign/cmd/campaign -campaign full_campaign -artifact-dir "$(ARTIFACT_DIR)" -timeout 60m

@@ -45,7 +45,7 @@ The program is intentionally not a mega-mission:
 - M7 is optional, independently packaged, and off the core critical path.
 
 Candidate count, dependency edges, status, and ordering may change only through
-explicit program reconciliation. An informal issue edit, Beads status, branch
+explicit program reconciliation. An informal issue edit, Hubnot status, branch
 name, or MCP Task cannot change this program.
 
 ## 2. Dependency graph and critical path
@@ -86,10 +86,10 @@ Parallel groups are exact:
 |---|---|---|---|---|---|---|---|---|
 | M1 | Prove a narrow durable authority and recovery slice over a pinned `gapdbd` sidecar. | GapDB can atomically support the control journal, projection, checkpoint, restart epoch, and side-effect-free playback through the two-agent zombie scenario. | None | Ratified architecture; immutable GapDB tuple; existing two-agent harness. | Boundary crash/ambiguity proof; fresh replacement workspace and identical replay digest; fourteen external adoption scenarios plus human signature. | Full store migration. | Client-only integration can hide lifecycle, ambiguity, or replay faults. | Stop; retain current runtime as historical evidence; do not begin M2. |
 | M2 | Move every authority capability to the event/CAS model and erase SQLite from production. | Every authority capability can run without SQL constraints, dual truth, fallback, or lost refusal semantics. | M1 | Accepted M1 evidence; frozen behavior inventory; identified consumer-owned ports. | GapDB authority suites; recovery coverage for every event family; structural SQLite absence. | Silent legacy-state import. | Table-to-key transliteration preserves accidental semantics. | Revert the unshipped adapter as a unit; never enable dual write or fallback. |
-| M3 | Compose real agents, Beads, workspaces, review, and Git integration safely. | The concurrency crown jewel survives disagreement among GapDB, Beads, Git, filesystems, processes, agents, and humans. | M2 | Accepted GapDB authority; qualified Beads tuple; frozen Git/workspace/review/integration laws. | Concurrent isolated agents; zombie/tracker/reassignment/review/fence proof; conflict repair. | Neutral acceptance or public API. | Tracker, process, or filesystem state accidentally gains authority. | Remove the unqualified composition root; retain qualified domain services. |
+| M3 | Compose real agents, Hubnot, workspaces, review, and Git integration safely. | The concurrency crown jewel survives disagreement among GapDB, Hubnot, Git, filesystems, processes, agents, and humans. | M2 | Accepted GapDB authority; qualified Hubnot tuple; frozen Git/workspace/review/integration laws. | Concurrent isolated agents; zombie/tracker/reassignment/review/fence proof; conflict repair. | Neutral acceptance or public API. | Tracker, process, or filesystem state accidentally gains authority. | Remove the unqualified composition root; retain qualified domain services. |
 | M4 | Judge stack-neutral claims through explicitly bound providers. | One neutral gate judges the same claim through different providers without ecosystem semantics. | M2 | Accepted durable evidence substrate; stable candidate identities; ratified acceptance contract. | Cross-provider parity; explicit missing/stale/waiver behavior; ecosystem-import mutants fail. | Universalize this repository's Go commands. | Provider convenience leaks tool semantics into the kernel. | Disable bindings and retain their evidence as non-admissible history. |
 | M5 | Expose the complete process through API 2.0 and the normal CLI. | A client can drive, disconnect, resume, and understand a mission without direct external-state inspection. | M2, M3, M4 | Accepted authority, execution, and acceptance; ratified API/progress/operation contracts. | Black-box CLI/API parity; resumable operations and convergent progress; bounded API 1.3 translation/refusal. | Put MCP in the core binary. | Transport vocabulary recreates generic mutation or leaks host authority. | Retain application capabilities; remove unqualified transports or mappings. |
-| M6 | Qualify installation and sustained multi-mission operation as the core release. | Independently proven components remain safe under load, crashes, installation, restart, and recovery. | M5 | Accepted process-complete runtime; signed GapDB and Beads tuples; ratified platform/load targets. | Exact load/soak/crash/security/backup census; no Python/SQLite/MCP requirement; complete operator diagnosis. | Delay core for MCP. | Lifecycle, packaging, or recovery seams fail despite local proofs. | Withhold release artifact and retain source-bound failure evidence. |
+| M6 | Qualify installation and sustained multi-mission operation as the core release. | Independently proven components remain safe under load, crashes, installation, restart, and recovery. | M5 | Accepted process-complete runtime; signed GapDB and Hubnot tuples; ratified platform/load targets. | Exact load/soak/crash/security/backup census; no Python/SQLite/MCP requirement; complete operator diagnosis. | Delay core for MCP. | Lifecycle, packaging, or recovery seams fail despite local proofs. | Withhold release artifact and retain source-bound failure evidence. |
 | M7 | Add an independently packaged MCP `2026-07-28` Tasks adapter. | Connection loss, task expiry, input pauses, and cancellation races cannot alter durable mission authority. | M5 | Accepted API/native operations; pinned MCP core and Tasks revisions. | Core-absence proof; stateless/task-race/progress proof; CLI/MCP terminal equivalence. | MCP-only semantics or a core dependency. | MCP Task identity is mistaken for domain authority. | Remove the adapter without changing core state or behavior. |
 
 ## 4. Program-wide admission and evidence law
@@ -109,7 +109,7 @@ recorded Spec Kitty decision. Admission requires:
 5. an acyclic program manifest that includes the candidate and its current
    edges.
 
-Beads can display the decision, but cannot make it. An MCP Task can carry the
+Hubnot can display the decision, but cannot make it. An MCP Task can carry the
 request, but cannot make it. A branch, tag name, tracker assignment, or passing
 package scaffold is not admission evidence.
 
@@ -217,7 +217,7 @@ immutable before M1 is admitted.
   confined to its quarantined workspace;
 - restored live state and side-effect-free playback produce the same canonical
   digest;
-- playback makes zero Git, Beads, workspace, agent, or compensation calls;
+- playback makes zero Git, Hubnot, workspace, agent, or compensation calls;
 - all fourteen external adoption scenarios pass; and
 - the attributable human adoption record accepts exactly the tested tuple.
 
@@ -293,11 +293,11 @@ absence evidence, and the explicit historical-root refusal contract.
 Qualification packages and `cmd/spk-m2-qualification` are not production
 ports. Successors must not import them, open GapDB directly, import adapters
 into kernels, trust tracker/Git state as authority, revive SQLite, or add a
-fallback/import path. M3 owns real agents/Beads/Git/workspace composition; M4
+fallback/import path. M3 owns real agents/Hubnot/Git/workspace composition; M4
 owns stack-neutral acceptance; M5 owns API 2.0 and the ordinary complete CLI;
 Team Kitty and the optional stateless MCP adapter remain later consumers.
 
-### M3 — Production Mission Execution and Beads Composition
+### M3 — Production Mission Execution and Hubnot Composition
 
 **Status:** proposed; parallel group `after-M2`.
 
@@ -305,11 +305,11 @@ Team Kitty and the optional stateless MCP adapter remain later consumers.
 paths without losing concurrency safety.
 
 **Primary falsification target:** The concurrency crown jewel survives when
-GapDB, Beads, Git, workspaces, processes, agents, and human edits disagree.
+GapDB, Hubnot, Git, workspaces, processes, agents, and human edits disagree.
 
 **Dependencies:** M2.
 
-**Immutable entry evidence:** accepted M2 authority evidence; a qualified Beads
+**Immutable entry evidence:** accepted M2 authority evidence; a qualified Hubnot
 tuple and portable conformance contract; frozen Git, workspace, review, and
 integration product laws.
 
@@ -347,7 +347,7 @@ qualified domain services and provider evidence.
 
 **Successors consume:** typed production use cases, run capsules, candidate and
 review outcomes, integration records, recovery diagnostics, and real default
-Beads composition.
+Hubnot composition.
 
 ### M4 — Stack-Neutral Acceptance Runtime
 
@@ -414,7 +414,7 @@ admission without program and WorkRevision reconciliation.
 application boundary and normal CLI.
 
 **Primary falsification target:** A client can drive, disconnect from, resume,
-and understand a mission without reading Beads, Markdown, worktrees, Git refs,
+and understand a mission without reading Hubnot, Markdown, worktrees, Git refs,
 or GapDB directly.
 
 **Dependencies:** M2, M3, M4.
@@ -469,7 +469,7 @@ and operator recovery.
 **Dependencies:** M5.
 
 **Immutable entry evidence:** accepted M5 process-complete runtime; signed and
-pinned GapDB and Beads production tuples; ratified supported platform and load
+pinned GapDB and Hubnot production tuples; ratified supported platform and load
 targets.
 
 **Scope:** clean installation; reproducible core and sidecar binaries; sustained
@@ -637,7 +637,7 @@ result, including failures and non-admissible attempts.
 | GapDB release/lifecycle tuple is mutable or incomplete | M1 storage-adoption owner and human signer | Admission rejects mutable branch/PATH identities; tuple includes lifecycle policy and digest. |
 | Product journal is confused with GapDB WAL or watch history | M1 journal/reducer owner | Separate checkpoint/event/replay contracts and digest proof. |
 | SQLite semantics survive as a key-shaped clone | M2 authority owners | Capability-shaped ports, atomic mutants, and structural absence checks. |
-| Beads becomes execution or acceptance authority | M3 composition owner | Retained provider-neutral ports, dishonest-provider tests, and authority assertions. |
+| Hubnot becomes execution or acceptance authority | M3 composition owner | Retained provider-neutral ports, dishonest-provider tests, and authority assertions. |
 | Acceptance becomes Python-, Go-, or CI-shaped | M4 acceptance owner | Neutral kernel imports no provider; same claim passes through different fixtures. |
 | API or compatibility surface mints authority | M5 application-boundary owner | Closed commands, expected revisions, host-owned mutation, negative black-box tests. |
 | Optional MCP becomes required | M7 adapter owner and M6 release owner | Separate module/binary; core-absence and CLI parity are release evidence. |
@@ -713,7 +713,7 @@ admit a successor by weakening the census or substituting the short CI tier.
 - Estimate dates, story points, throughput, or agent counts without evidence.
 - Freeze Go package boundaries before vertical experiments earn them.
 - Let a failed M1 or M2 be bypassed by a consumer.
-- Treat a mutable branch, `latest` release, `PATH` binary, Beads ticket, or MCP
+- Treat a mutable branch, `latest` release, `PATH` binary, Hubnot ticket, or MCP
   Task as dependency evidence.
 - Move M7 onto the core critical path without explicit reconciliation.
 - Implement production behavior in this roadmap.

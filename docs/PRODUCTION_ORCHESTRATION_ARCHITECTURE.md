@@ -37,9 +37,9 @@ replicated, or multi-owner runtime requires a separate ADR and proving ground.
 | Surface | Current evidence-backed truth | Target disposition |
 |---|---|---|
 | Storage | **implemented for M2 qualification** — GapDB is the only compiled production control-state substrate; source/module/SBOM/binary/install/help/runtime guards forbid SQLite resurrection. Historical Phase 1–3 SQLite evidence remains immutable but is not executable fallback. | **qualification boundary** — release readiness belongs only to the exact source/tree/RunID admitted by the closed M2 manifest and independent review. |
-| Tracker | **delivered** — provider-neutral ports and the pinned Beads 1.2.2 JSON adapter are qualified by the [Phase 2 evidence](phase2-evidence/README.md). | **retained/amended** — Beads is the default first-party mutable work substrate, never execution, review, acceptance, integration, or mission authority. |
+| Tracker | **delivered** — provider-neutral ports, a pinned Hubnot public CLI adapter and compiled tracker consumer. [Phase 2 Beads evidence](phase2-evidence/README.md) remains historical. | **retained/amended** — Hubnot is the default first-party mutable work substrate, never execution, review, acceptance, integration, or mission authority. |
 | Git and workspaces | **delivered** — distinct concurrent workspaces, lease generations, quarantine, repository-first integration fencing, and conflict preservation are qualified inside the [Phase 1 boundary](adr/0001-phase1-authority-proving-ground-verdict.md). | **retained/strengthened** — every replacement lease receives a fresh workspace; remote callers never mutate host workspaces or Git directly. |
-| Executable work and composition | **implemented for M2 qualification** — the GapDB production host composes typed mission/workgraph, execution leases, workspaces, candidate handoff, independent review, acceptance, serialized integration, external effects, progress, restart, and playback. Earlier Phase 3 evidence remains the historical portable-method proof. | **M3 boundary** — compose real agents, the admitted Beads provider, and real repositories against the unchanged native capability laws. |
+| Executable work and composition | **implemented for M2 qualification** — the GapDB production host composes typed mission/workgraph, execution leases, workspaces, candidate handoff, independent review, acceptance, serialized integration, external effects, progress, restart, and playback. Earlier Phase 3 evidence remains the historical portable-method proof. | **M3 boundary** — compose real agents, the admitted Hubnot provider, and real repositories against the unchanged native capability laws. |
 | Application API | **historical/proposed compatibility** — [API 1.3](ORCHESTRATOR_API_1_3_PROJECTION.md) is a design projection; transport serving and several mission-wide operations are deferred. | **proposed** — process-complete Orchestrator API 2.0 is the sole application seam. It does not ship today. |
 | Acceptance | **delivered** — Phase 1–3 repository-specific Go campaigns and candidate-bound review evidence are source-bound proof, not a universal acceptance runtime; see the [Phase 1](phase1-evidence/README.md) and [Phase 3](phase3-evidence/README.md) indexes. | **proposed** — stack-neutral claims, revision-pinned provider bindings, evidence envelopes, and a policy gate. Neutral acceptance does not ship today. |
 | MCP | **retired as a core assumption** — no MCP runtime ships in Phases 1–3. | **proposed** — an optional, separately packaged MCP `2026-07-28` adapter projects API 2.0 and native operations. MCP does not ship today and contributes no unique workflow semantic. |
@@ -83,7 +83,7 @@ evidence. These are behavioral inputs, not Go package templates.
 | Behavior retained | Representation/boundary amendment |
 |---|---|
 | Durable ordered coordination | SQLite tables and Git-merged status files cease to define the target. Versioned product events, checkpoints, idempotency results, and outbox intent use GapDB atomic mutations. |
-| Work planning and visible discussion | Beads owns mutable work definition and discussion; Spec Kitty pins a generation and owns every execution consequence. |
+| Work planning and visible discussion | Hubnot owns mutable work definition and discussion; Spec Kitty pins a generation and owns every execution consequence. |
 | Lane lineage | Lane vocabulary may remain compatibility/display information. Product authority uses `WorkID`, `WorkRevisionID`, `RunID`, `LeaseID`, `WorkspaceID`, candidates, and integration identities. |
 | Simple agent `next` experience | `next` becomes an application query/action over typed capabilities, not filesystem/frontmatter interpretation. |
 | Local CLI and external access | CLI, hosted, automation, dashboard, and optional MCP adapters all invoke the same application capabilities. Remote access never opens the store or constructs workspace/Git authority. |
@@ -112,7 +112,7 @@ authority over the category named by the row.
 | State category | Single writable authority | Durable evidence | Allowed projections | Forbidden inference |
 |---|---|---|---|---|
 | Mission intent and lifecycle | Spec Kitty mission capability | Control events and mission checkpoint | CLI, API, Team Kitty, optional MCP | Tracker status or Markdown advances the mission |
-| Mutable work definition | Configured primary tracker (`Beads` by default) | Tracker-native revision and attributed observations | Human tracker views and WorkRevision input | Assignment grants execution authority |
+| Mutable work definition | Configured primary tracker (`Hubnot` by default) | Tracker-native revision and attributed observations | Human tracker views and WorkRevision input | Assignment grants execution authority |
 | Executable graph | Spec Kitty WorkRevision capability | Immutable generation plus reconciliation events | Scheduler, progress, compatibility tasks | A later tracker edit mutates a running contract |
 | Run and lease | Spec Kitty execution capability | Run, lease, epoch, heartbeat, expiry, and outcome events | Run capsule and progress | Process identity or ticket claim equals authority |
 | Mutable workspace | Host workspace capability | Lease binding and observed filesystem/Git facts | Scoped path inside a run capsule | A replacement inherits an expired directory |
@@ -121,14 +121,14 @@ authority over the category named by the row.
 | Acceptance | Spec Kitty acceptance capability | Policy decision and evidence references | CLI/API result and tracker summary | Closed tickets or successful prose imply acceptance |
 | Integration | Spec Kitty integration capability | Integration phase events and observed Git ref outcome | Progress and terminal work projection | Tracker merge slot or caller-provided ref result moves Git |
 | Native operation | Spec Kitty application operation capability | Operation events, input decisions, cancellation intent, and terminal result | CLI follow, API, optional MCP Task | Transport session or task TTL owns the operation |
-| Mission progress | Spec Kitty projection capability | Rebuildable checkpoint/journal/graph revision | List/Get/Watch clients | Percentage, Markdown, or Beads status is canonical progress |
+| Mission progress | Spec Kitty projection capability | Rebuildable checkpoint/journal/graph revision | List/Get/Watch clients | Percentage, Markdown, or Hubnot status is canonical progress |
 | External-effect intent and attribution | Spec Kitty effect/outbox capability | Stable intent, attempt, observation, and attribution events | Operator diagnostics and reconciliation | An intent proves the effect happened |
 | External provider state | The external provider named by its adapter contract | Provider revision/value plus Spec Kitty observation | Reconciliation and human/provider views | Spec Kitty's desired value proves provider state |
 
 The canonical ownership summary is:
 
 ```text
-Beads       -> what mutable work exists and its discussion
+Hubnot       -> what mutable work exists and its discussion
 Spec Kitty  -> whether work may execute, how it is reviewed and accepted
 Git         -> code, commits, trees, and ref outcomes
 GapDB       -> target ordered control-state substrate, not product semantics
@@ -148,7 +148,7 @@ flowchart TB
     App[Application capabilities]
     Kernel[Authority kernel and domain reducers]
     Ports[Application owned ports]
-    External[GapDB Beads Git workspace artifact adapters]
+    External[GapDB Hubnot Git workspace artifact adapters]
 
     Clients --> Inbound
     Inbound --> App
@@ -159,7 +159,7 @@ flowchart TB
 
 Boundary rules:
 
-1. The kernel imports no SQL/SQLite, GapDB, Beads, Git implementation,
+1. The kernel imports no SQL/SQLite, GapDB, Hubnot, Git implementation,
    filesystem allocation, qualification-provider, transport, or MCP package.
 2. Application capabilities own typed commands, queries, events, identities,
    policy checks, and port contracts.
@@ -240,7 +240,7 @@ Recovery separates five contracts that must not be collapsed:
    reconstructs what the accepted facts mean.
 3. **Runtime-epoch replacement** durably creates a new `RuntimeEpochID` before
    new commands are admitted. Every predecessor lease becomes non-current.
-4. **External reconciliation** observes Git refs/objects/workspaces, Beads,
+4. **External reconciliation** observes Git refs/objects/workspaces, Hubnot,
    artifacts, and pending outbox effects through typed adapters. It records
    `continue`, `supersede`, `invalidate`, `fork`, `retry`, `compensate`, or
    `decision_required`; it does not silently repair disagreement.
@@ -360,9 +360,9 @@ contains a valid Git commit.
 <a id="fr-009"></a>
 ## 11. Tracker, Git, and external effects
 
-Beads is the default first-party owner of mutable work definitions, dependency
+Hubnot is the default first-party owner of mutable work definitions, dependency
 discussion, assignment, and human-visible history. After finalization, tracker
-change is an observation that may trigger WorkRevision reconciliation. Beads
+change is an observation that may trigger WorkRevision reconciliation. Hubnot
 assignment or status never grants execution, review, acceptance, integration,
 or mission lifecycle authority.
 
@@ -435,7 +435,7 @@ or refuse legacy commands; it is not the source of API 2.0 semantics.
 The production program must close boundary violations by construction:
 
 1. Directional import guards classify kernel, application, ports, and adapters.
-   They reject SQLite/SQL, GapDB, Beads, Git implementation, filesystem,
+   They reject SQLite/SQL, GapDB, Hubnot, Git implementation, filesystem,
    ecosystem qualification, HTTP/RPC, MCP, Python, and Markdown-authority
    dependencies from the kernel.
 2. Reachability guards prove the production composition uses only approved
@@ -485,7 +485,7 @@ invented authority.
 | GapDB public lifecycle or packaging is insufficient | Pinned external sidecar; no internal imports or unpinned PATH discovery | M1 public Unix-socket lifecycle, crash, ambiguity, and signed-tuple qualification |
 | Storage recovery is mistaken for product recovery | Separate WAL/snapshot, journal/checkpoint, epoch, reconciliation, and playback contracts | M1 restored and playback digests plus zero playback adapter calls |
 | Zombie process corrupts replacement work | Permanent W1 quarantine and fresh W2 | M1 real two-agent zombie torture scenario |
-| Beads becomes scheduler/mission authority | Single-owner matrix and provider-neutral tracker port | M3 dishonest/stale/unavailable provider campaign |
+| Hubnot becomes scheduler/mission authority | Single-owner matrix and provider-neutral tracker port | M3 dishonest/stale/unavailable provider campaign |
 | Evidence remains ecosystem- or prose-shaped | Neutral claim/evidence kernel and explicit providers | M4 two-stack conformance and import guards |
 | API clients mint authority | Closed commands and host-generated/verified identities | M5 black-box negative contract suite |
 | Optional transport contaminates core | Separately packaged adapter over API 2.0 | M7 core build/install with MCP absent and task-loss/cancel races |

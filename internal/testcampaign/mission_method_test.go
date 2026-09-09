@@ -35,8 +35,8 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 		"contract-full:", "$(GO) test -short", "race-full:", "full-campaign: contract-full race-full quality",
 		"quality-bounded: preflight contract mission-contract mission-acceptance static dependencies",
 		"quality-core: quality-bounded race",
-		"quality: beads-contract m2-short quality-core",
-		`$$0 !~ /\/architecture$$/`, `$$0 !~ /\/tracker\/beads$$/`, `$$0 !~ /\/testcampaign\/m2(\/|$$)/`,
+		"quality: hubnot-contract m2-short quality-core",
+		`$$0 !~ /\/architecture$$/`, `$$0 !~ /\/tracker\/hubnot$$/`, `$$0 !~ /\/testcampaign\/m2(\/|$$)/`,
 	} {
 		if !strings.Contains(makefile, required) {
 			t.Fatalf("Makefile contract omitted %q", required)
@@ -65,17 +65,25 @@ func TestMissionMethodMakeAndWorkflowContracts(t *testing.T) {
 }
 
 func TestPhase3PublicationClosedSchemaAndDocumentationMutants(t *testing.T) {
+	if err := ValidatePhase3Publication(t.TempDir()); err == nil || !strings.Contains(err.Error(), "historical documentation prerequisite") {
+		t.Fatalf("missing historical Git baseline did not refuse explicitly: %v", err)
+	}
 	root := phase3RepositoryRoot(t)
 	if err := ValidatePhase3Publication(root); err != nil {
 		t.Fatalf("checked-in Phase 3 publication: %v", err)
 	}
 	fixture := phase3PublicationFixture(t, root)
 	phase3UpgradeFixtureSchema(t, fixture)
-	if err := ValidatePhase3Publication(fixture); err != nil {
+	if err := validatePhase3Fixture(t, fixture); err != nil {
 		t.Fatalf("schema-v2 fixture: %v", err)
 	}
 
 	tests := map[string]func(*testing.T, string){
+		"missing_preserved_publication_link": func(t *testing.T, path string) {
+			if err := os.Remove(filepath.Join(path, "docs/phase2-evidence/README.md")); err != nil {
+				t.Fatal(err)
+			}
+		},
 		"broken_link": func(t *testing.T, path string) {
 			phase3Replace(t, filepath.Join(path, "docs/phase3-evidence/README.md"), "[`qualification-evidence.json`](qualification-evidence.json)", "[`qualification-evidence.json`](missing-evidence.json)")
 		},
@@ -177,7 +185,7 @@ func TestPhase3PublicationClosedSchemaAndDocumentationMutants(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			candidate := phase3PublicationFixture(t, fixture)
 			mutate(t, candidate)
-			if err := ValidatePhase3Publication(candidate); err == nil {
+			if err := validatePhase3Fixture(t, candidate); err == nil {
 				t.Fatal("publication mutant survived")
 			}
 		})
@@ -202,7 +210,7 @@ func TestPhase3PublicationEveryRequiredFailureIdentityIsLoadBearing(t *testing.T
 					return value.(map[string]any)["id"] == id
 				})
 			})
-			if err := ValidatePhase3Publication(candidate); err == nil {
+			if err := validatePhase3Fixture(t, candidate); err == nil {
 				t.Fatalf("required failed-attempt identity %s deletion survived", id)
 			}
 		})
@@ -219,7 +227,7 @@ func TestPhase3PublicationEveryRequiredFailureIdentityIsLoadBearing(t *testing.T
 		attempts := record["failed_or_non_admissible_attempts"].([]any)
 		record["failed_or_non_admissible_attempts"] = attempts[:len(attempts)-1]
 	})
-	if err := ValidatePhase3Publication(candidate); err == nil {
+	if err := validatePhase3Fixture(t, candidate); err == nil {
 		t.Fatal("post-freeze failed-attempt tail deletion survived canonical commitment")
 	}
 }
@@ -259,7 +267,7 @@ func TestPhase3PublicationMachineEvidenceMutants(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			candidate := phase3PublicationFixture(t, fixture)
 			phase3MutateQualification(t, candidate, mutate)
-			if err := ValidatePhase3Publication(candidate); err == nil {
+			if err := validatePhase3Fixture(t, candidate); err == nil {
 				t.Fatal("machine-evidence mutant survived")
 			}
 		})
@@ -270,7 +278,7 @@ func TestPhase3PublicationMachineEvidenceMutants(t *testing.T) {
 			profile := record["supporting_profiles"].([]any)[0].(map[string]any)
 			profile["tests"].([]any)[0] = "TestSubstituted"
 		})
-		if err := ValidatePhase3Publication(candidate); err == nil {
+		if err := validatePhase3Fixture(t, candidate); err == nil {
 			t.Fatal("supporting-profile test substitution survived")
 		}
 	})
@@ -287,7 +295,7 @@ func TestPhase3PublicationMachineEvidenceMutants(t *testing.T) {
 			phase3MutateCensus(t, candidate, func(record map[string]any) {
 				record[mutant.field] = mutant.mutate(record[mutant.field])
 			})
-			if err := ValidatePhase3Publication(candidate); err == nil {
+			if err := validatePhase3Fixture(t, candidate); err == nil {
 				t.Fatal("census failure-history commitment mutant survived")
 			}
 		})
@@ -409,6 +417,17 @@ func phase3PublicationFixture(t *testing.T, source string) string {
 		"kitty-specs/gapdb-only-production-authority-01M1GWDJ/mission-review-report.md",
 	} {
 		input, err := os.ReadFile(filepath.Join(source, relative))
+		if source == phase3RepositoryRoot(t) && (relative == "README.md" || relative == "Makefile") {
+			h, e := loadPhase3HistoricalDocuments(source)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if relative == "README.md" {
+				input = []byte(h.README)
+			} else {
+				input = []byte(h.Makefile)
+			}
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -664,15 +683,15 @@ func TestMissionMethodProfilesAreExactSeparatedAndDefensive(t *testing.T) {
 			t.Fatalf("mission contract profile omitted %s", identity)
 		}
 	}
-	if slices.Contains(contract.ExpectedTests, "TestMissionMethodRealBeadsTwoItemQualification") {
+	if slices.Contains(contract.ExpectedTests, HubnotIdentityTest) {
 		t.Fatal("opt-in real-provider identity leaked into the portable contract profile")
 	}
 	realIdentity, err := ProfileByName(MissionRealIdentityProfile)
-	if err != nil || !slices.Equal(realIdentity.ExpectedTests, []string{"TestMissionMethodRealBeadsTwoItemQualification"}) {
+	if err != nil || !slices.Equal(realIdentity.ExpectedTests, []string{HubnotIdentityTest}) {
 		t.Fatalf("real-provider identity profile changed: profile=%+v err=%v", realIdentity, err)
 	}
 	full, err := CampaignByName(MissionFullCampaign)
-	if err != nil || slices.Contains(full.Profiles, MissionRealIdentityProfile) || slices.Contains(full.RequiredTests, "TestMissionMethodRealBeadsTwoItemQualification") {
+	if err != nil || slices.Contains(full.Profiles, MissionRealIdentityProfile) || slices.Contains(full.RequiredTests, HubnotIdentityTest) {
 		t.Fatalf("portable mission campaign acquired opt-in real-provider identity: campaign=%+v err=%v", full, err)
 	}
 }
@@ -723,4 +742,25 @@ func TestMissionMethodReportRejectsSkipMissingExtraDuplicateAndUnterminated(t *t
 			}
 		})
 	}
+}
+
+func validatePhase3Fixture(t *testing.T, root string) error {
+	t.Helper()
+	h, err := loadPhase3HistoricalDocuments(phase3RepositoryRoot(t))
+	if err != nil {
+		return err
+	}
+	if root != phase3RepositoryRoot(t) {
+		r, e := os.ReadFile(filepath.Join(root, "README.md"))
+		if e != nil {
+			return e
+		}
+		h.README = string(r)
+		m, e := os.ReadFile(filepath.Join(root, "Makefile"))
+		if e != nil {
+			return e
+		}
+		h.Makefile = string(m)
+	}
+	return validatePhase3PublicationWithDocuments(root, h)
 }

@@ -33,7 +33,7 @@ dispatch are representations or historical repairs. They are not the product.
 The architecture may proceed to foundational ADR ratification after the seven
 amendments in section 11 are folded into the project plan. Phase 1 remains a
 disproving experiment: failure of the two-agent crash-and-zombie scenario must
-reopen the authority, persistence, or workspace ADRs before Beads is added.
+reopen the authority, persistence, or workspace ADRs before Hubnot is added.
 
 ## 2. Evidence method
 
@@ -214,7 +214,7 @@ coordination-ref reconciliation, generated-artifact snapshots, and two-surface
 bookkeeping projection are consequences of the current storage design and
 should not be recreated.
 
-### 3.7 Trackers and the Beads boundary
+### 3.7 Trackers and the Hubnot boundary
 
 | ID | Observable contract | Treatment | Go consequence | Evidence |
 |---|---|---|---|---|
@@ -226,7 +226,7 @@ should not be recreated.
 | T-06 | Ticket assignment/status is useful visible coordination but is not an execution lease, review verdict, mission transition, or Git result. | **Strengthen** | Tracker changes are projections or saga steps around Spec Kitty commands. | Existing gaps, Beads roadmap issue #1173, project authority decision. |
 | T-07 | Compensation may undo only state still attributable to its operation. | **Strengthen** | Compare provider revision, assignee/value, and operation marker before compensating. | Mini review; required distributed-saga safety. |
 
-Beads is the preferred initial substrate for `WorkCatalog`, dependency graph,
+Hubnot is the preferred initial substrate for `WorkCatalog`, dependency graph,
 assignment, discussion, and structured criteria. It is deliberately not the
 source of truth for mission lifecycle, run leases, workspaces, reviews,
 acceptance, or integration.
@@ -335,9 +335,9 @@ No substantial reusable checklist engine was found. ThickTicket's acceptance
 criteria are structured strings in frontier materialization, not a production
 replacement for Spec Kitty's mission-wide acceptance method.
 
-## 7. Beads decision
+## 7. Hubnot decision
 
-Beads should be the default ticket substrate after Phase 1, behind a deliberately
+Hubnot should be the default ticket substrate after Phase 1, behind a deliberately
 small provider-neutral contract.
 
 Required initial capabilities:
@@ -350,7 +350,7 @@ Required initial capabilities:
 - optimistic revision or equivalent compare support;
 - backup/export and diagnostic support.
 
-Explicitly outside Beads authority:
+Explicitly outside Hubnot authority:
 
 - mission phase and step completion;
 - `WorkRevision` acceptance and reconciliation disposition;
@@ -360,7 +360,7 @@ Explicitly outside Beads authority:
 - Git integration ordering and results.
 
 The adapter conformance suite must also run against a deliberately stupid fake
-tracker. If a use case only works because Beads happens to supply extra mission
+tracker. If a use case only works because Hubnot happens to supply extra mission
 or execution semantics, the boundary has leaked.
 
 ## 8. External boundary decision
@@ -425,7 +425,7 @@ The importer must explicitly detect at least:
 | Review cycles and independence | Application scenarios + policy tests |
 | Acceptance coverage | Structured criterion/evidence model tests |
 | Merge/integration recovery | Real-Git crash matrix and model tests |
-| Tracker behavior | Fake-provider contract, then real Beads integration |
+| Tracker behavior | Fake-provider contract, then real Hubnot integration |
 | Team Kitty/offline delivery | Outbox retry, consent, and outage scenarios |
 | Orchestrator API | Versioned contract/golden envelope tests |
 | Python migration | Fixture corpus, dry-run, round-trip projection checks |
@@ -509,7 +509,7 @@ With the amendments above, the product laws and source-of-truth split are
 supported by the current behavior:
 
 ```text
-Tracker / Beads: what work exists and what humans discuss
+Tracker / Hubnot: what work exists and what humans discuss
 Spec Kitty:      whether it may run and how it is judged
 Git:             what source history actually happened
 ```

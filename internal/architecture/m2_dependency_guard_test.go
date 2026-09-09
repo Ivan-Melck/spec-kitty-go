@@ -56,6 +56,7 @@ var m2ExactGapDBCallers = []PackagePattern{
 }
 
 var m2TrackerForbiddenTargets = []PackagePattern{
+	ExactPackage(m2ModulePath + "/internal/controlstore/sqlite"),
 	PackagePrefix(m2ModulePath + "/internal/artifact"),
 	PackagePrefix(m2ModulePath + "/internal/mission"),
 	PackagePrefix(m2ModulePath + "/internal/execution"),
@@ -75,6 +76,8 @@ type m2LegacyExemption struct {
 	RemovalBoundary string
 }
 
+// m2LegacyExemptions is the frozen historical census; current enforcement uses
+// m2ActiveLegacyExemptions so retired provider grants cannot suppress edges.
 func m2LegacyExemptions(module string) []m2LegacyExemption {
 	return []m2LegacyExemption{
 		{module + "/internal/controlstore/sqlite", "database/sql", ImportStandardLibrary, m2TupleSHA, "WP16"},
@@ -94,6 +97,12 @@ func m2LegacyExemptions(module string) []m2LegacyExemption {
 		{module + "/internal/tracker/beads", module + "/internal/mission", ImportTestOnly, m2TupleSHA, "WP14"},
 		{module + "/internal/tracker/beads", module + "/internal/workspace", ImportTestOnly, m2TupleSHA, "WP14"},
 	}
+}
+
+func m2ActiveLegacyExemptions(module string) []m2LegacyExemption {
+	return slices.DeleteFunc(m2LegacyExemptions(module), func(row m2LegacyExemption) bool {
+		return row.Source == module+"/internal/tracker/beads" && row.Kind == ImportTestOnly
+	})
 }
 
 func TestM2DependencyPolicyAcceptsOnlyBoundedProviderComposition(t *testing.T) {
@@ -467,7 +476,7 @@ func TestM2DependencyPolicyRejectsForbiddenEdges(t *testing.T) {
 		{"kernel-to-gapdb-adapter", m2ModulePath + "/internal/execution", m2ModulePath + "/internal/controlstore/gapdb", ImportModuleLocal, RuleLocalDirection},
 		{"kernel-to-gapdb-provider", m2ModulePath + "/internal/mission", "github.com/spec-kitty/gapdb/gapdb", ImportExternal, RuleExternalDirection},
 		{"pure-journal-to-filesystem-capability", m2ModulePath + "/internal/controljournal/v2", m2ModulePath + "/internal/gitrepo", ImportModuleLocal, RuleLocalDirection},
-		{"tracker-to-mission-authority", m2ModulePath + "/internal/tracker/beads", m2ModulePath + "/internal/mission", ImportModuleLocal, RuleLocalDirection},
+		{"tracker-to-mission-authority", m2ModulePath + "/internal/tracker/hubnot", m2ModulePath + "/internal/mission", ImportModuleLocal, RuleLocalDirection},
 		{"unknown-production-package", m2ModulePath + "/internal/unclassified", m2ModulePath + "/internal/unclassified", ImportModuleLocal, RuleUnknownPackage},
 	}
 	for _, test := range tests {
@@ -1276,7 +1285,7 @@ func m2IsGapDBPrivatePath(target string) bool {
 }
 
 func m2EvaluateIncrementalRepository(policy Policy, graph Graph) Violations {
-	exemptions := m2LegacyExemptions(graph.ModulePath)
+	exemptions := m2ActiveLegacyExemptions(graph.ModulePath)
 	filtered := graph
 	filtered.Edges = make([]ImportEdge, 0, len(graph.Edges))
 	for _, edge := range graph.Edges {
