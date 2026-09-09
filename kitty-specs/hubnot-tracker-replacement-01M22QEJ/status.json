@@ -28,7 +28,8 @@
       "last_transition_at": "2026-09-09T11:12:19.227288+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for independent review. Application candidate 6deeeee8dca7eb5c4bcb43bd19f34d1f94ed622c; clean quality HEAD d403cf80566f2cba5e8a1a2cb76f5f8fdae3a66f adds only canonical planning wording. Full make -k quality exit 0, log /tmp/gk-hubnot-wp01-final-quality.log; focused public CLI plus unchanged independent overlay race PASS 3.938s; diff-scoped staticcheck and format/diff checks exit 0. No remaining independent pre-review blocker. T001-T003 complete; downstream port composition remains explicitly assigned to later WPs."
+        "Ready for independent review. Application candidate 6deeeee8dca7eb5c4bcb43bd19f34d1f94ed622c; clean quality HEAD d403cf80566f2cba5e8a1a2cb76f5f8fdae3a66f adds only canonical planning wording. Full make -k quality exit 0, log /tmp/gk-hubnot-wp01-final-quality.log; focused public CLI plus unchanged independent overlay race PASS 3.938s; diff-scoped staticcheck and format/diff checks exit 0. No remaining independent pre-review blocker. T001-T003 complete; downstream port composition remains explicitly assigned to later WPs.",
+        "Independent PASS of staged transport foundation. Shared observed/retained capture bound and per-kind null presence fixes independently pass race; exact qualified tuple/public wire checked. Fullquality passes on d403cf80 with application parity to6deeeee8. Synthetic,empty-return,requirements,frozen,locked-decisions,ownership,fragility PASS; external-caller deadcode N/A under explicit foundation stage. Future coherent/opaqueJSON/port behavior remains dependentWP scope. Report work/go-wp01-review/final-review.md."
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
