@@ -45,6 +45,9 @@ type ReachabilityTarget struct {
 // contains one authority guard and one concrete adapter composition seam.
 func DefaultReachabilityTargets(modulePath string) []ReachabilityTarget {
 	return []ReachabilityTarget{
+		{Package: modulePath + "/internal/tracker/hubnot", Symbol: "Open", RequiredCallerClass: CallerExternalPackage, ActivateWhenPackagePresent: true},
+		{Package: modulePath + "/internal/helpercmd", Symbol: "runTracker", RequiredCallerClass: CallerSamePackageProduction, ActivateWhenPackagePresent: true},
+		{Package: modulePath + "/internal/helpercmd", Symbol: "invokeTracker", RequiredCallerClass: CallerSamePackageProduction, ActivateWhenPackagePresent: true},
 		{
 			Package: modulePath + "/internal/handoff", Symbol: "VerifyCandidateAuthority",
 			RequiredCallerClass: CallerExternalPackage,
