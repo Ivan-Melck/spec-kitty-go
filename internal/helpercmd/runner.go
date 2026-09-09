@@ -94,6 +94,9 @@ func (r *Runner) Run(ctx context.Context, args []string, stdin io.Reader, stdout
 		_, _ = io.WriteString(stdout, usage)
 		return ExitSuccess
 	}
+	if options.command == "tracker" {
+		return runTracker(ctx, options, stdin, stdout, stderr)
+	}
 	if !knownCommand(options.command) {
 		return render(stdout, stderr, options.command, options.output, invalidEnvelope(options.command, "command"))
 	}
@@ -736,6 +739,7 @@ func exitForOutcome(outcome Outcome) int {
 const usage = `spec-kitty — native local mission authority
 
 Usage:
+  spec-kitty [--output json|human] tracker ACTION --binding FILE [--input FILE|-]
   spec-kitty --control-root ABSOLUTE_PATH [--output json|human] initialize
   spec-kitty --control-root ABSOLUTE_PATH [--output json|human] status
   spec-kitty --control-root ABSOLUTE_PATH [--output json|human] progress --project ID --mission ID

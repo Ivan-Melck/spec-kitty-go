@@ -852,3 +852,23 @@ func productionSurfaceViolations(files map[string]string) []string {
 	}
 	return violations
 }
+
+func TestTrackerEarlyDispatchNeverTouchesHostFactory(t *testing.T) {
+	factory := &factorySpy{}
+	runner, _ := NewRunner(factory)
+	for _, mode := range []string{"json", "human"} {
+		for action := range providerActions {
+			for _, tail := range [][]string{{"--help"}, {"--binding", "/nonexistent/binding"}, {"--binding", "--help"}} {
+				var out, diagnostic bytes.Buffer
+				args := append([]string{"--output", mode, "tracker", action}, tail...)
+				_ = runner.Run(t.Context(), args, strings.NewReader(""), &out, &diagnostic)
+				if factory.classified != 0 || factory.observed != 0 || factory.started != 0 {
+					t.Fatalf("tracker reached host: %v", args)
+				}
+				if tail[len(tail)-1] == "--help" && len(tail) == 2 && strings.Contains(out.String(), "Usage:") {
+					t.Fatal("flag value was interpreted as help")
+				}
+			}
+		}
+	}
+}

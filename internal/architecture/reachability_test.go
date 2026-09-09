@@ -248,6 +248,9 @@ func TestDefaultReachabilityRegistryPassesCurrentRepository(t *testing.T) {
 	module := "github.com/spec-kitty/go-kitty3"
 	want := map[string]bool{
 		module + "/internal/handoff.VerifyCandidateAuthority": false,
+		module + "/internal/tracker/hubnot.Open":              false,
+		module + "/internal/helpercmd.runTracker":             false,
+		module + "/internal/helpercmd.invokeTracker":          false,
 		module + "/internal/gitrepo.NewHandoffVerifier":       false,
 		module + "/internal/artifact.EvaluateFreshness":       false,
 		module + "/internal/mission.NewDefinition":            false,
@@ -280,6 +283,9 @@ func TestRemovingEachRegisteredTargetsOnlyProductionCallerReddensFixture(t *test
 		caller      string
 		target      ReachabilityTarget
 	}{
+		{name: "hubnot-public-composition", declaration: "package hubnot\nfunc Open() {}\n", callerPath: "internal/helpercmd/provider.go", caller: "package helpercmd\nimport \"github.com/spec-kitty/go-kitty3/internal/tracker/hubnot\"\nfunc runTracker() { hubnot.Open() }\n", target: ReachabilityTarget{Package: module + "/internal/tracker/hubnot", Symbol: "Open", RequiredCallerClass: CallerExternalPackage}},
+		{name: "tracker-early-dispatch", declaration: "package helpercmd\nfunc runTracker() {}\n", callerPath: "internal/helpercmd/runner.go", caller: "package helpercmd\nfunc Run() { runTracker() }\n", target: ReachabilityTarget{Package: module + "/internal/helpercmd", Symbol: "runTracker", RequiredCallerClass: CallerSamePackageProduction}},
+		{name: "tracker-neutral-invocation", declaration: "package helpercmd\nfunc invokeTracker() {}\n", callerPath: "internal/helpercmd/provider.go", caller: "package helpercmd\nfunc runTracker() { invokeTracker() }\n", target: ReachabilityTarget{Package: module + "/internal/helpercmd", Symbol: "invokeTracker", RequiredCallerClass: CallerSamePackageProduction}},
 		{
 			name: "authority-guard", declaration: "package handoff\nfunc VerifyCandidateAuthority() {}\n",
 			callerPath: "internal/gitrepo/handoff.go", caller: "package gitrepo\nimport \"github.com/spec-kitty/go-kitty3/internal/handoff\"\nfunc verify() { handoff.VerifyCandidateAuthority() }\n",
