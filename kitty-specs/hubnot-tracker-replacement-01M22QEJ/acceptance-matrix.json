@@ -6,153 +6,253 @@
   "criteria": [
     {
       "criterion_id": "FR-001",
-      "description": "Verify FR-001 is satisfied",
+      "description": "Bind project, canonical provider workspace, public signing actor, reviewed source/binary and schema identities. Inspection is read-only; mismatch refuses without init, sync, repair, PATH fallback or an issue write.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-002",
-      "description": "Verify FR-002 is satisfied",
+      "description": "Preserve ProjectID/WorkID/opening issue mapping and every representable full-definition field: design/cross-domain context, criterion outcome/verifier/required/evidence hint, scopes, dependencies, provenance and arbitrary opaque JSON. Use versioned owned metadata; reject malformed, contradictory, duplicate or oversized encodings before writes; preserve unrelated native/foreign fields.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-003",
-      "description": "Verify FR-003 is satisfied",
+      "description": "Implement create/read and honestly unguarded simple catalog update with stable mapping and replay. Generic update cannot bypass complete-definition guards.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-004",
-      "description": "Verify FR-004 is satisfied",
+      "description": "Create/read complete definitions through WorkDefinitionPort, including actual graph facts and accurate PriorMutation during saga recovery. GuardedUpdate=false; UpdateDefinition refuses before writes; existing per-proposal capability checks stay intact.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-005",
-      "description": "Verify FR-005 is satisfied",
+      "description": "Add/remove/list blocker-to-blocked relationships with stable internal IDs and provenance; preserve unrelated relations. Conflicts, cycles, missing targets and partial sagas are explicit; readiness remains diagnostic.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-006",
-      "description": "Verify FR-006 is satisfied",
+      "description": "Observe/project unguarded descriptive assignment with operation attribution and foreign-field preservation. Multiple native assignees are ambiguous. Atomic claim and conditional compensation refuse without writes.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-007",
-      "description": "Verify FR-007 is satisfied",
+      "description": "Append/list observably idempotent discussion with full original IDs, exact body/time, accountable author and distinct transport signer. Distinguish native third-party comments from signer-attested author claims; metadata grants no host identity.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-008",
-      "description": "Verify FR-008 is satisfied",
+      "description": "Derive stable action-scoped operation keys; look up original signed semantics before mutable-state checks. Identical retry after response loss/restart/later edits appends nothing. Divergent reuse, duplicates and incomplete lookup stay conflict/ambiguity.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-009",
-      "description": "Verify FR-009 is satisfied",
+      "description": "Assemble state, heads, mapping, relevant graph and discussion under matching snapshots with bounded restarts. Retain canonical full digest/provider token and equality-only portable revision. Never treat numeric revision as native ID or incomplete data as empty/ready.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-010",
-      "description": "Verify FR-010 is satisfied",
+      "description": "Ship a discoverable compiled Go Kitty provider inspection/consumer surface using the production adapter and portable ports. Exercise full work, graph, assignment, discussion and recovery without raw-ref manipulation or test-only helpers; distinguish tracker-only actions from unavailable mission execution.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-011",
-      "description": "Verify FR-011 is satisfied",
+      "description": "Replace active Beads adapter/reachability, installer, consumer, current docs and qualification/campaign/CI wiring with Hubnot. Keep frozen receipts/history. Legacy bindings refuse; no fallback or dual-write.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-012",
-      "description": "Verify FR-012 is satisfied",
+      "description": "Prove complete public-work reconstruction by explicit selected sync into a fresh path, missing-supplier refusal/recovery and restart. State same-owner signer recovery separately. Export/backup capabilities remain unsupported unless the complete advertised contract is qualified.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-013",
-      "description": "Verify FR-013 is satisfied",
+      "description": "Provide an explicit build/install path pinned to the independently accepted Hubnot prerequisite source, toolchain/build recipe and binary digest. Refuse mutable branch/PATH substitution; distinguish signed-event, JSON-envelope and metadata schemas.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-014",
-      "description": "Verify FR-014 is satisfied",
+      "description": "Run portable conformance, adversarial protocol and real public-consumer scenarios with exact started/terminal/passed census and source-bound evidence. Missing prerequisites or required skips cannot yield passing qualification.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
       "criterion_id": "FR-015",
-      "description": "Verify FR-015 is satisfied",
+      "description": "Preserve the nineteen inventoried Beads database/backup files and old stashes/branches. Record verified zero current issues without assuming backups are empty. No automatic old-operation rebinding or importer for this empty catalog.",
       "proof_type": "automated_test",
       "evidence": null,
       "pass_fail": "pending",
       "verified_by": null,
       "verified_at": null,
-      "notes": "TODO: replace with a real acceptance criterion"
+      "notes": "Final integrated source-bound qualification and independent review remain required."
+    },
+    {
+      "criterion_id": "NFR-001",
+      "description": "Enforce Hubnot's 256 KiB encoded request ceiling/native limits before mutation. Child bounds: 8 MiB stdout, 64 KiB stderr, 30 seconds. Logical observation: 64 MiB, 10,000 items, 120 seconds including all calls and at most 2 restarts after the initial attempt. Page sizing respects both child and aggregate bounds; never omit a record or truncate fields to fit. Cancellation stops child work.",
+      "proof_type": "automated_test",
+      "evidence": null,
+      "pass_fail": "pending",
+      "verified_by": null,
+      "verified_at": null,
+      "notes": "Final integrated source-bound qualification and independent review remain required."
+    },
+    {
+      "criterion_id": "NFR-002",
+      "description": "Timed compiled-consumer inventory recovers all 1,000 complete mapped current definitions within 120 seconds on the recorded host; separately measure one known-ref observation and one lost-response recovery. Use detailed bounded pages rather than per-issue full-history scans for mappings. Include real adapter metadata and some graph/discussion state; record field/history counts, page size, build/race mode, host/toolchain, commands and elapsed time. Fixture setup is outside timing.",
+      "proof_type": "automated_test",
+      "evidence": null,
+      "pass_fail": "pending",
+      "verified_by": null,
+      "verified_at": null,
+      "notes": "Final integrated source-bound qualification and independent review remain required."
+    },
+    {
+      "criterion_id": "NFR-003",
+      "description": "Formatting, all-package build/static/module checks and applicable complete make quality pass using installed Go 1.26.7. New adapter/codec/recovery tests pass race detection. Real provider qualification is separate from portable stubs.",
+      "proof_type": "automated_test",
+      "evidence": null,
+      "pass_fail": "pending",
+      "verified_by": null,
+      "verified_at": null,
+      "notes": "Final integrated source-bound qualification and independent review remain required."
+    },
+    {
+      "criterion_id": "NFR-004",
+      "description": "Invalid binding/input, unsupported guarantees, stale/conflicting requests and read-only failures cause zero unexpected provider/control/ref writes. Pre-dispatch refusal publishes zero adapter facts. A valid append followed by discovered distributed conflict or response loss is retained and reported as applied or ambiguous, never deleted or called unstarted.",
+      "proof_type": "automated_test",
+      "evidence": null,
+      "pass_fail": "pending",
+      "verified_by": null,
+      "verified_at": null,
+      "notes": "Final integrated source-bound qualification and independent review remain required."
+    },
+    {
+      "criterion_id": "NFR-005",
+      "description": "Inert SQLite filename patterns in plain .gitignore pass; hidden executable SQLite use and actual forbidden imports/dependencies still fail. No blanket exemption for ignored files/provider data.",
+      "proof_type": "automated_test",
+      "evidence": null,
+      "pass_fail": "pending",
+      "verified_by": null,
+      "verified_at": null,
+      "notes": "Final integrated source-bound qualification and independent review remain required."
+    },
+    {
+      "criterion_id": "C-001",
+      "description": "Existing Go Kitty/GapDB control authority stays intact. Tracker facts grant no lease, review verdict, acceptance or integration permission. Preserve immutable history and zero-provider-I/O playback.",
+      "proof_type": "automated_test",
+      "evidence": null,
+      "pass_fail": "pending",
+      "verified_by": null,
+      "verified_at": null,
+      "notes": "Final integrated source-bound qualification and independent review remain required."
+    },
+    {
+      "criterion_id": "C-002",
+      "description": "No global guarded update, atomic assignment or safe compensation follows from actor CAS/local locks. Do not weaken portable meanings. Complete-definition updates stay unsupported while create-only decomposition remains useful.",
+      "proof_type": "automated_test",
+      "evidence": null,
+      "pass_fail": "pending",
+      "verified_by": null,
+      "verified_at": null,
+      "notes": "Final integrated source-bound qualification and independent review remain required."
+    },
+    {
+      "criterion_id": "C-003",
+      "description": "Use pinned public Hubnot commands, no internal Hubnot imports or private key-file reads for runtime binding. Keep provider vocabulary outside inward-owned authority packages. No adapter database, hidden authority cache or mandatory new service.",
+      "proof_type": "automated_test",
+      "evidence": null,
+      "pass_fail": "pending",
+      "verified_by": null,
+      "verified_at": null,
+      "notes": "Final integrated source-bound qualification and independent review remain required."
+    },
+    {
+      "criterion_id": "C-004",
+      "description": "Preserve old missions, M1/M2/Phase 1\u20133 receipts, adoption fields and exact identifiers. Classify all Beads-to-Hubnot occurrences; amend active guidance with explicit historical dispositions.",
+      "proof_type": "automated_test",
+      "evidence": null,
+      "pass_fail": "pending",
+      "verified_by": null,
+      "verified_at": null,
+      "notes": "Final integrated source-bound qualification and independent review remain required."
+    },
+    {
+      "criterion_id": "C-005",
+      "description": "This qualifies/replaces the mutable-work provider. It does not fabricate M2 adoption, admit/complete M3, restore API 1.3, implement all API 2.0, add Hubnot governance authority or migrate control-store data.",
+      "proof_type": "automated_test",
+      "evidence": null,
+      "pass_fail": "pending",
+      "verified_by": null,
+      "verified_at": null,
+      "notes": "Final integrated source-bound qualification and independent review remain required."
     }
   ],
   "negative_invariants": []
