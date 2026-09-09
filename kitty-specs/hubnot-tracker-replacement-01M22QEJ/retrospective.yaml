@@ -5,14 +5,14 @@ mission_number: 4
 friendly_name: Hubnot Tracker Replacement
 mission_type: software-dev
 target_branch: feat/hubnot-tracker-replacement
-created_at: '2026-09-09T22:48:26.578216+00:00'
+created_at: '2026-09-09T22:51:01.742642+00:00'
 created_by:
-  kind: human
-  id: cli
-  display: spec-kitty retrospect
+  kind: agent
+  id: codex-architect-retrospective
+  display: Codex retrospective correction
 provenance:
   kind: explicit_create
-  invoked_at: '2026-09-09T22:48:26.578216+00:00'
+  invoked_at: '2026-09-09T22:51:01.742642+00:00'
   policy_resolved_from:
     enabled: <default>
     timing: <default>
@@ -29,7 +29,7 @@ provenance:
     permissions.apply_structural_changes: <default>
     precedence: <default>
     generator: <default>
-  command: spec-kitty retrospect create
+  command: go-hubnot-correct-closeout.py retrospective --apply (typed reporting correction; events unchanged)
 policy_source:
   enabled: <default>
   timing: <default>
@@ -70,9 +70,13 @@ helped:
   - e-015
 - id: h-005
   category: implementation
-  summary: WP05 completed without rejection cycles
+  summary: WP05 completed after a documented post-approval rejection and correction
   evidence_refs:
   - e-015
+  - e-017
+  - e-025
+  details: Event 01M2395WTTSPKGC0HY7QYHE6G4 records approved -> planned with reviewer changes_requested feedback; a
+    later approved event is retained. The earlier zero-rejection interpretation was incomplete.
 - id: h-006
   category: implementation
   summary: WP06 completed without rejection cycles
@@ -80,9 +84,13 @@ helped:
   - e-015
 - id: h-007
   category: implementation
-  summary: WP07 completed without rejection cycles
+  summary: WP07 completed after a documented post-approval rejection and correction
   evidence_refs:
   - e-015
+  - e-018
+  - e-026
+  details: Event 01M23RXBKDFJRXFX3FNEG5T6MG records approved -> planned with reviewer changes_requested feedback; a
+    later approved event is retained. The earlier zero-rejection interpretation was incomplete.
 - id: h-008
   category: implementation
   summary: WP09 completed without rejection cycles
@@ -96,53 +104,69 @@ helped:
 not_helpful:
 - id: n-008
   category: doc
-  summary: analysis-report.md present with findings
+  summary: analysis-report.md was available for retrospective review
   evidence_refs:
   - e-023
-  details: An analysis-report.md artifact is present for this mission. Review its findings to understand documented
-    issues and decisions.
+  details: Artifact presence alone does not establish unresolved findings or a failed verdict. Consult the cited report
+    for its actual verdict, scoped findings, and dispositions; this annotation does not change that report.
 - id: n-005
   category: implementation
   summary: WP05 needed 2 implementation cycles
   evidence_refs:
   - e-020
-  details: WP WP05 entered in_progress 2 times. Multiple implementation cycles suggest rework not captured as a
-    documented review rejection; the WP scope or contract may need refinement.
+  - e-017
+  - e-025
+  details: The recorded two implementation entries include a documented post-approval rejection,
+    01M2395WTTSPKGC0HY7QYHE6G4, followed by correction and independent reapproval. This rework was captured by review
+    evidence; implementation-entry count is not a separate rejection count.
 - id: n-006
   category: implementation
   summary: WP07 needed 2 implementation cycles
   evidence_refs:
   - e-021
-  details: WP WP07 entered in_progress 2 times. Multiple implementation cycles suggest rework not captured as a
-    documented review rejection; the WP scope or contract may need refinement.
+  - e-018
+  - e-026
+  details: The recorded two implementation entries include a documented post-approval rejection,
+    01M23RXBKDFJRXFX3FNEG5T6MG, followed by correction and independent reapproval. This rework was captured by review
+    evidence; implementation-entry count is not a separate rejection count.
 - id: n-007
   category: implementation
   summary: WP08 needed 2 implementation cycles
   evidence_refs:
   - e-022
-  details: WP WP08 entered in_progress 2 times. Multiple implementation cycles suggest rework not captured as a
-    documented review rejection; the WP scope or contract may need refinement.
+  - e-016
+  - e-027
+  details: The recorded two implementation entries include a documented in-review rejection, 01M22W82Y6EYZ3EPFTK2KV13G0,
+    followed by correction and independent approval. This rework was captured by review evidence; implementation-entry
+    count is not a separate rejection count.
 - id: n-002
   category: process
-  summary: WP05 required 1 --force override(s) during workflow
+  summary: WP05 recorded a backward review rewind with force:true
   evidence_refs:
   - e-017
-  details: WP WP05 required 1 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
-    guard failed or the operator routed around it; investigate the underlying cause.
+  - e-025
+  details: Event 01M2395WTTSPKGC0HY7QYHE6G4 preserves force:true and a canonical reviewer changes_requested reference.
+    That recorded bit alone does not establish that an operator supplied --force, bypassed a guard, or self-approved.
+    The review decision and subsequent approval remain unchanged.
 - id: n-003
   category: process
-  summary: WP07 required 1 --force override(s) during workflow
+  summary: WP07 recorded a backward review rewind with force:true
   evidence_refs:
   - e-018
-  details: WP WP07 required 1 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
-    guard failed or the operator routed around it; investigate the underlying cause.
+  - e-026
+  details: Event 01M23RXBKDFJRXFX3FNEG5T6MG preserves force:true and a canonical reviewer changes_requested reference.
+    That recorded bit alone does not establish that an operator supplied --force, bypassed a guard, or self-approved.
+    The review decision and subsequent approval remain unchanged.
 - id: n-004
   category: process
-  summary: WP08 required 1 --force override(s) during workflow
+  summary: WP08 recorded a backward review rewind with force:true
   evidence_refs:
   - e-019
-  details: WP WP08 required 1 operator-driven --force lane transition(s). Force overrides typically indicate the runtime
-    guard failed or the operator routed around it; investigate the underlying cause.
+  - e-016
+  - e-027
+  details: Event 01M22W82Y6EYZ3EPFTK2KV13G0 preserves force:true and a canonical reviewer changes_requested reference.
+    That recorded bit alone does not establish that an operator supplied --force, bypassed a guard, or self-approved.
+    The review decision and subsequent approval remain unchanged.
 - id: n-001
   category: review_loop
   summary: WP08 required 1 rejection cycle(s) before approval
@@ -151,11 +175,37 @@ not_helpful:
   details: WP WP08 was sent back from review to planning 1 time(s).
 - id: n-009
   category: review_loop
-  summary: mission-review-report.md present with findings
+  summary: mission-review-report.md was available for retrospective review
   evidence_refs:
   - e-024
-  details: A mission-review-report.md artifact is present for this mission. Review its findings to understand documented
-    review outcomes.
+  details: Artifact presence alone does not establish unresolved findings or a failed verdict. Consult the cited report
+    for its actual verdict, scoped findings, and dispositions; this annotation does not change that report.
+- id: n-010
+  category: tooling
+  summary: Retrospective generator missed documented post-approval review rejections
+  evidence_refs:
+  - e-017
+  - e-025
+  - e-018
+  - e-026
+  details: Installed Spec Kitty 3.2.6 counts review rejections only from in_review, omitting documented
+    approved-to-planned rejections. Its update writer retains old findings by category/summary. This authored correction
+    preserves original evidence, decisions and provenance; it changes no status event or generator code.
+- id: n-011
+  category: process
+  summary: Bounded selectors require explicit full-package follow-through for historical fixture changes
+  evidence_refs:
+  - e-024
+  - e-028
+  details: Post-merge full architecture testing exposed five mission-introduced fixture failures absent from earlier
+    bounded quality selectors. Correction 410d55f0500983999e6238d16982270afdf67598 pins six independently reviewed test
+    files, restores exact historical fixture identities while separately testing current Hubnot policy, and replaces
+    positional rule mutation with exact semantic selection. Recorded full architecture execution at the reviewed
+    pre-commit snapshot passed 134 top-level tests and 2,831 subtests, with only the expected wrapper-only
+    TestM2ShellProbe skip; exact 185-mutant and 515-absence cases passed. The correction commit contains those verified
+    bytes. Product and qualifier bytes remain equal to e9; this does not substitute for final committed-source quality.
+    Keep bounded PR receipts distinct from full-package execution and preserve historical fixtures rather than recasting
+    them as successor identities. No new CI design or recommendation application is recorded.
 gaps: []
 proposals: []
 evidence_refs:
@@ -238,8 +288,39 @@ evidence_refs:
 - id: e-024
   kind: file
   path: kitty-specs/hubnot-tracker-replacement-01M22QEJ/mission-review-report.md
+- id: e-025
+  kind: file
+  path: kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP05-assignment-attributed-discussion/review-cycle-2.md
+- id: e-026
+  kind: file
+  path: kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP07-pinned-installation-real-qualifier/review-cycle-2.md
+- id: e-027
+  kind: file
+  path: kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP08-inert-ignore-scanner/review-cycle-1.md
+- id: e-028
+  kind: file
+  path: /home/lynn/Documents/Codex/2026-09-09/h/work/go-hubnot-postmerge-review/correction-execution-review.md
 generator_version: '1.0'
 provenance_history:
+- kind: explicit_create
+  invoked_at: '2026-09-09T22:48:26.578216+00:00'
+  policy_resolved_from:
+    enabled: <default>
+    timing: <default>
+    failure_policy: <default>
+    write_record: <default>
+    generate_proposals: <default>
+    apply_proposals: <default>
+    permissions.write_record: <default>
+    permissions.inspect_mission_artifacts: <default>
+    permissions.propose_glossary_changes: <default>
+    permissions.propose_drg_changes: <default>
+    permissions.propose_doctrine_changes: <default>
+    permissions.apply_low_risk_changes: <default>
+    permissions.apply_structural_changes: <default>
+    precedence: <default>
+    generator: <default>
+  command: spec-kitty retrospect create
 - kind: runtime_post_completion
   invoked_at: '2026-09-09T21:41:54.557848+00:00'
   policy_resolved_from:
