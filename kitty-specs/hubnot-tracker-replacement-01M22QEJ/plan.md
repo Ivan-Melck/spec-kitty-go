@@ -58,7 +58,7 @@ internal/tracker/hubnot/         binding, protocol, codec, observation, ports
 internal/tracker/inventory.go   neutral current-definition inventory
 internal/helpercmd/provider*    separate tracker DTO and dispatch
 internal/testcampaign/          evidence, census and active selector
-scripts/install-qualified-hubnot.sh
+internal/testcampaign/cmd/hubnot-qualification/  compiled install and qualification
 .github/workflows/              active qualification and campaigns
 docs/HUBNOT_TRACKER.md
 docs/HUBNOT_QUALIFICATION.md
@@ -67,6 +67,14 @@ kitty-specs/hubnot-tracker-replacement-01M22QEJ/
 ```
 
 ## Implementation Concern Map
+
+Pinned installation uses the externally built qualifier's existing `install`
+subcommand. The redundant shell bootstrap is retired after its command dispatch
+failed the unchanged executable-analysis guard. This preserves FR-013 and the
+explicit compiler/source/destination and byte-admission contract, avoids a second
+launcher, and keeps installation and qualification on one manifest. Make and CI
+build the qualifier externally before invoking installation. No scanner or
+historical-census change is required.
 
 | Concern | Purpose and surfaces | Requirements | Dependencies and risks |
 |---|---|---|---|

@@ -182,6 +182,11 @@ exit results with the implemented behavior for independent review.
 1. Update Makefile provider targets, variables and package exclusions to the working
    Hubnot runner and tuple manifest.
 
+   Build the qualifier externally with the pinned recipe and invoke its canonical
+   `install --go-bin ABS --source CLEAN_ACCEPTED_CHECKOUT --destination ABS`
+   subcommand. The redundant shell bootstrap is retired by WP07; do not recreate
+   it or change the executable scanner to support it.
+
 2. Update active provider-adversarial, provider-real and mission-real-identity test
    selections with exact expected test names.
 

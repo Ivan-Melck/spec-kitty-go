@@ -1,3 +1,5 @@
+> Superseded after actual scanner probes by the compiled-installer decision in `compiled-installer-entrypoint.md`. This earlier design assessment is retained as history, not current guidance.
+
 # Installer bootstrap command visibility
 
 The M2 absence guard correctly rejects the initial WP07 shell command substitutions and then its unresolved executable variable. Both real failures are preserved against their exact candidates. The guard is not changed.

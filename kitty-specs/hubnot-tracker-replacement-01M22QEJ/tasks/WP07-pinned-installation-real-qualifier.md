@@ -57,6 +57,11 @@ tracker_refs: []
 
 # WP07 — Pinned installation and real qualifier
 
+The original shell path remains in ownership/create-intent metadata to authorize
+the transient earlier candidate and its retirement; the runtime requires this
+declaration for a literal owned path absent from the planning checkout. It is not
+a final deliverable. Do not recreate it; the compiled install subcommand is canonical.
+
 ## ⚡ Do This First: Load Agent Profile
 
 Use the `/ad-hoc-profile-load` skill to load the agent profile specified in the frontmatter, and behave according to its guidance before parsing the rest of this prompt.
@@ -124,12 +129,12 @@ old stashes/branches, or internal/helpercmd/production.go.
 4. Do not fetch or execute arbitrary lifecycle scripts, discover hn from PATH or accept
    matching dev version as source proof.
 
-   The shell bootstrap requires an explicit absolute Go compiler path ending in
-   `/go`, resolves its directory physically and invokes literal `./go` with the
-   physical source root passed via `-C`. Reject unsupported basenames before
-   execution. Preserve full version output, compiler exit status, sanitized
-   environment and safe temporary capture; do not weaken executable analysis or
-   introduce this bootstrap-only restriction into the compiled installer API.
+   Use the externally built qualifier's existing `install` subcommand as the
+   canonical installer. Retire the owned shell-bootstrap candidate and its
+   wrapper-specific tests; retain meaningful direct compiled installer admission,
+   failure, destination-preservation and idempotence coverage. Document the exact
+   external build recipe and explicit compiler/source/destination arguments. Do
+   not change the executable scanner or add a compiler-basename restriction.
 
 5. Produce machine-readable installer identity distinguishing
    envelope/signed-event/adapter metadata schema versions.
