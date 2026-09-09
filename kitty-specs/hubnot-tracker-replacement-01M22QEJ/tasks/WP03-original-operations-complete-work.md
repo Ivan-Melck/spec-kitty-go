@@ -74,6 +74,14 @@ Low-level relation replacement belongs here so complete definition creation comp
 without later Graph methods. Use WP02 read model and codec; do not add parallel codecs.
 Only actual completed catalog/definition interface assertions belong here.
 
+The shared operation engine also supplies a private read-only actor-parameter lookup
+in operation.go for later attribution reads. It uses bound execute and the public
+original-operation query, validates requested/returned actor and every existing strict
+identity/member/semantic invariant, and returns the envelope snapshot. Mutation signer
+selection remains pinned. Preserve approved adapter.go unchanged; narrowly duplicated
+wire validation must have equivalence/adversarial coverage rather than introducing
+a second semantic recovery engine. Per-issue history cannot prove global key uniqueness.
+
 The runtime chooses the worktree and dependency base; do not invent a base branch.
 Start only after root dispatch and required dependency approvals:
 

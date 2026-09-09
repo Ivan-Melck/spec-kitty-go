@@ -63,6 +63,14 @@ reviewed provider contract overrides provisional upstream research wording.
 The work package implements concern IC-05; its declared requirement references
 are acceptance obligations, not permission to broaden its write ownership.
 
+Use the shared actor-parameter read lookup for the actual comment signer, checking
+its snapshot against collected comments under the same cumulative budget/restarts.
+Pair a deterministic signed attribution revision with an exact-body comment; the
+comment key must derive its attribution key without recovering the portable ID first.
+Author is semantic payload, never action-key material. Validate global actor/key
+uniqueness and all signed child relationships; preserve surviving attribution if
+comment publication fails. Do not wrap or rewrite the native comment body.
+
 Atomic claim and conditional compensation refuse before mutation. Multiple native
 assignees are ambiguous. Neither an actor key nor comment body grants host identity,
 review independence or permission.
