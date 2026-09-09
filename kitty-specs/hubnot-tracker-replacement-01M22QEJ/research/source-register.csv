@@ -1,0 +1,7 @@
+source_id,title,identity,path
+S01,Go Kitty baseline,94e7c8542d7e543558391ab6fffda7a28e6e3759,docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md
+S02,Neutral ports,94e7c8542d7e543558391ab6fffda7a28e6e3759,internal/tracker/capabilities.go;internal/tracker/work_definition.go
+S03,Hubnot rich issues,5a0e9cda0639241cfb45d2780e1b50c487109747,/home/lynn/projects/nichthub/docs/issues-v1.md
+S04,Existing data inventory,qualified bd sha256 0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6,research/cutover-recon.md
+S05,Independent risk review,pre-spec,research/risk-recon.md
+S06,Baseline scanner execution,exit1 expected known defect,work/go-kitty-hubnot-baseline-absence.log

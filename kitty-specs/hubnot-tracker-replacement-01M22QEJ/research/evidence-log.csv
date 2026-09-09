@@ -1,0 +1,7 @@
+evidence_id,source_id,finding,status
+E01,S01,Provider replacement does not admit M3 or fabricate M2 adoption,verified
+E02,S02,Guarded update remains unsupported; create-only per-proposal path works,verified
+E03,S03,Actor CAS is not global issue CAS; strict rich issue bounds apply,verified
+E04,S04,Zero current issues on isolated copy; nineteen original hashes preserved,verified
+E05,S05,Ten adversarial proof obligations incorporated,reviewed
+E06,S06,Inert gitignore SQLite filename triggers absence scanner,reproduced
