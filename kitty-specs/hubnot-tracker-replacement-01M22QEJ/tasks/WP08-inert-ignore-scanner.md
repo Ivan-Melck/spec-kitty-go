@@ -24,6 +24,8 @@ owned_files:
 - internal/architecture/m2_absence_test.go
 - internal/architecture/m2_absence_mutants_test.go
 - scripts/m2-absence/expected-absence-tests.txt
+- internal/testcampaign/m2/absence.go
+- internal/testcampaign/m2/evidence_test.go
 role: implementer
 tags: []
 tracker_refs: []
@@ -231,3 +233,11 @@ Check precise no-write assertions, replay identity, invariant preservation and
 truthful capability declarations. Confirm there are no cross-owner edits or
 rewritten historical identities. Return defects to the owning implementation
 package; independent review must not manufacture passing evidence.
+
+## Scope extension: exact historical and current receipt admission
+
+The sixteen new observed cases increase the census from 489 to 505. Full quality exposed hardcoded 489 in the M2 production nested-absence verifier and its synthetic fixture. This necessary follow-through belongs to WP08; both files are explicitly owned.
+
+Admit exactly the original expected-contract SHA256/count pair 245af6f271f12f1905613c4140cb4b842cc117ab40465f559a545069e79af09d / 489 and current pair 838f3a6c78e60f2d2153ab90df675117c03a4afc8bc3c5cfd4ef756b013e61d3 / 505. Validate manifest count against the admitted contract, retaining exact expected/run/pass/raw-event equality and no-skip/no-duplicate checks. Never accept arbitrary input-derived counts. Historical verification retains original bytes; current generation uses the actual 505 script contract. Mirror the current digest against that file in a test.
+
+Derive the synthetic fixture count from its loaded admitted contract. Test both exact historical/current contracts and rejection of unknown/reduced/duplicate sets or forged counts. Preserve source/toolchain binding and other qualification requirements; no schema/adoption change or frozen receipt rewrite. Source scope is now five files. Run focused nested evidence regressions and final complete quality on corrected stable source.
