@@ -211,7 +211,8 @@
       "last_transition_at": "2026-09-09T18:57:55.014919+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for independent review at source 6fd7b5a5a4a2cc56980752e08f9e2722729ace1c: compiled pinned installer and fixed system tools, normal identity smoke and installer/refusals, full quality and package races pass. Historical 6aaf2112 full-local evidence remains 27/28 with expected active-successor non-admissibility; final integrated qualification remains required."
+        "Ready for independent review at source 6fd7b5a5a4a2cc56980752e08f9e2722729ace1c: compiled pinned installer and fixed system tools, normal identity smoke and installer/refusals, full quality and package races pass. Historical 6aaf2112 full-local evidence remains 27/28 with expected active-successor non-admissibility; final integrated qualification remains required.",
+        "Independent reviewer-renata approval: all eight checklist items pass; canonical compiled installer, closed real qualifier, exact-source quality and package race, hostile-tool correction, durable capture, and source-bound evidence verified. Report committed at 56389487. Historical 6aaf full-local remains non-admissible; WP09 cutover and final integrated WP10 remain required."
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
