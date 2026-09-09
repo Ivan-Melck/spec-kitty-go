@@ -77,7 +77,7 @@ kitty-specs/hubnot-tracker-replacement-01M22QEJ/
 | IC-05 Assignment/discussion | corresponding portable APIs | FR-006/007/008, NFR-004, C-001/002 | IC-03; signer and accountable author distinct, unsupported conditional effects refuse |
 | IC-06 Native consumer | aggregate inspect/capabilities, helpercmd provider dispatch, reachability | FR-001/010/011, C-001/005 | IC-03/04/05; no control-host startup or M2 composition changes |
 | IC-07 Qualification | installer, real runner, evidence/reference schema | FR-012/013/014, NFR-001/003, C-003 | IC-06 and accepted source; no omitted scenario admitted |
-| IC-08 Ignore scanner | absence scanner/mutants/exact census | NFR-005, C-004 | Independent; inert patterns are not hidden-file exemptions |
+| IC-08 Ignore scanner | absence scanner/mutants/exact census and closed M2 receipt admission | NFR-005, C-004 | Independent; inert patterns are not hidden-file exemptions |
 | IC-09 Atomic cutover | old runtime removal, execution/scenario callers, campaign/CI/current docs | FR-011/014/015, NFR-003, C-004/005 | IC-01–08; retain historical validators and asserted bytes |
 | IC-10 Integrated acceptance | compiled consumer/performance tests, final instructions/evidence | All 25 requirements and SC-001–005 | IC-09; full rich fixture, separate setup/read timing |
 
