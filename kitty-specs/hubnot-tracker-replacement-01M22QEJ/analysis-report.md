@@ -4,7 +4,7 @@ artifact_type: spec-kitty.analysis-report
 command: /spec-kitty.analyze
 mission_slug: hubnot-tracker-replacement-01M22QEJ
 mission_id: 01M22QEJPAAQJM91R01MCBR8QV
-generated_at: '2026-09-09T10:16:40.070297+00:00'
+generated_at: '2026-09-09T18:16:34.429081+00:00'
 analyzer_agent: codex
 input_artifacts:
   spec.md:
@@ -12,18 +12,18 @@ input_artifacts:
     sha256: cf862a7a3261277e4bbaf4ff3f7d785993e61087840cf70045ac19f93d9b7bb0
   plan.md:
     path: kitty-specs/hubnot-tracker-replacement-01M22QEJ/plan.md
-    sha256: 1e195ec630aaacecf4566f897f608079501eef4b00442e9bc76fd35da430039e
+    sha256: ea201d8744c545fa45160a39d549c15805b93b87067b7a6ea84376108abf6df9
   tasks.md:
     path: kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks.md
-    sha256: a6b0bcb5e8630b1dcf28a9fa84f7e8eab1d7f7e00563ca9e0b68f0ddef869400
+    sha256: 369c0ea5984c1c6e0f9d233681f450e0f3fa7396e5f3a9e2cd27e0c90345bcaa
   charter:
     path: .kittify/charter/charter.yaml
     sha256: 4442a6e0d56d4a7df873f2f529b04bb4d4917f2481a4e47f4819bd92927388de
 verdict: ready
 issue_counts:
-  high: 0
-  critical: 0
   medium: 0
+  critical: 0
+  high: 0
   low: 0
   info: 0
 findings: []
@@ -31,7 +31,7 @@ findings: []
 
 # Specification Analysis Report
 
-Reviewed final spec/plan/contracts/data model and finalized tasks after independent spec/plan review. No unresolved cross-artifact blocker. The external upstream acceptance requirement is explicitly sequenced before WP01 and final qualification; independent WP08 can proceed now. This report does not assert upstream acceptance.
+Reviewed final spec/plan/contracts/data model and finalized tasks after independent spec/plan review. No unresolved cross-artifact blocker. The upstream prerequisite is accepted, independently reviewed and pinned; WP01 through WP06 and WP08 are approved with source-bound evidence. WP07 correction, WP09 cutover and WP10 integrated qualification remain required.
 
 ## Coverage Summary
 
@@ -81,4 +81,22 @@ Architecture 001, fidelity 010, locality 024, efficient tools 028 and validation
 
 ## WP08 integration amendment review
 
-The complete quality gate found a real coupling between the new scanner census and hardcoded nested M2 receipt admission. WP08 now explicitly owns internal/testcampaign/m2/absence.go and evidence_test.go in addition to the original three files. Exact historical489/current505 contract hash/count pairs preserve old bytes and constrain current generation; arbitrary input-derived count admission is forbidden. Required tests cover both admitted contracts and unknown/reduced/duplicate/forged cases. This implements NFR-005/NFR-003/C-004 without new authority, adoption, schema or source scope outside the named boundary. Canonical task finalization passed with unchanged DAG and no ownership warnings. No additional cross-artifact blocker.
+The complete quality gate found a real coupling between the new scanner census and hardcoded nested M2 receipt admission. WP08 now explicitly owns internal/testcampaign/m2/absence.go and evidence_test.go in addition to the original three files. Exact historical489/current515 contract hash/count pairs preserve old bytes and constrain current generation; arbitrary input-derived count admission is forbidden. Required tests cover both admitted contracts and unknown/reduced/duplicate/forged cases. This implements NFR-005/NFR-003/C-004 without new authority, adoption, schema or source scope outside the named boundary. Canonical task finalization passed with unchanged DAG and no ownership warnings. No additional cross-artifact blocker.
+
+## Read-model and consumer follow-through
+
+WP02 independent review verified lossless opaque framing, ordered criteria, current graph dependencies, shared retry budgets and source-head attribution. Graph readiness is now explicitly a diagnostic projection of mapped open work without open blockers; closed supplier relations remain definition dependencies. Stable edge IDs identify endpoint/kind tuples, with signed revisions retained separately in proof. Signed first-use state-noop intent preserves operation-key identity; replay requires historical lookup.
+
+The native consumer uses optional provider_metadata_json as JSON text, strictly decoded before the existing neutral constructor. This preserves supported opaque depth and exact numbers without request-envelope nesting narrowing the neutral model. Explicit DTOs expose all private neutral fields and proof bytes through accessors; ordered criteria cannot be verified solely with CanonicalData. These details fit the existing WP03/WP04/WP06 ownership, requirements and acceptance tests; no scope, DAG, guard, adoption or authority change. The earlier unapproved 505-test scanner pair is superseded by the independently approved exact 515-test pair; historical 489 remains admitted.
+
+## Exact comment attribution follow-through
+
+Independent public-contract inspection confirmed exact-body comments need a paired signed attribution revision. Keys permit deterministic sibling discovery while keeping author inside semantic identity, and partial/lost-response outcomes remain explicit. WP03 supplies a read-only actor-parameter original lookup in owned operation.go with full strict-validator equivalence coverage and snapshot retention; no approved transport file is changed. WP05 owns two new discussion_observation files for immutable neutral facts with signer and full proof, covering both append/replay and current observation. Legacy discussion methods project from the same implementation; the consumer uses the richer neutral port without a fresh read after append. Author and portable operation marker meanings remain unchanged.
+
+An initial shared-file ownership proposal was rejected by lane validation and was not adopted. The final disjoint-file design passes canonical finalization with ten unchanged lanes, no collapse, no ownership warnings and the same requirement coverage and DAG. The independent reviewer found no design blocker. Exact-body, cross-signer, global duplicate-key, snapshot and partial-child tests remain implementation and acceptance obligations; no passing application qualification is inferred from this analysis.
+
+## Canonical compiled installer amendment
+
+Independent exact scanner probes demonstrated that the redundant shell bootstrap is not admitted by the current conservative executable grammar. FR-013 requires a pinned install path, not a shell wrapper. The existing externally built qualifier install subcommand already owns canonical source/toolchain/digest/destination/refusal semantics. The reviewed plan now uses that compiled entry and retires the wrapper; explicit external build and current Make/CI/docs invocation remain obligations. This is a removal of redundant launch logic, not a scanner exemption or a new provider capability.
+
+Ownership retains the shell path solely for deletion; its original create-intent authorization is retained because the runtime requires it for an absent literal owned path. No cross-owner edit, dependency edge, lane, task or requirement changes. WP09 consumes the same existing compiled API, and WP10 still requires final integrated full-local and hosted-scope evidence. All25 requirements remain mapped. Historical6aaf measurements and failed wrapper attempts are retained as exact-source evidence, not relabeled for a new commit. Independent correction review and actual quality gates remain pending and are not granted by this planning analysis.

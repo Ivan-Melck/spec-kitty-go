@@ -132,6 +132,8 @@
         "WP05"
       ],
       "write_scope": [
+        "internal/tracker/discussion_observation.go",
+        "internal/tracker/discussion_observation_test.go",
         "internal/tracker/hubnot/assignment.go",
         "internal/tracker/hubnot/assignment_test.go",
         "internal/tracker/hubnot/discussion.go",
@@ -296,7 +298,7 @@
       "parallel_group": 7
     }
   ],
-  "computed_at": "2026-09-09T10:15:26.765004+00:00",
+  "computed_at": "2026-09-09T12:15:42.984543+00:00",
   "computed_from": "dependency_graph+ownership",
   "planning_artifact_wps": [],
   "planning_commit_sha": "f042bf6af22ab571dc650000e43a8018c2af903f"

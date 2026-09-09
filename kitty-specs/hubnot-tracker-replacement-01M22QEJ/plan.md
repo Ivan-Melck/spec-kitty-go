@@ -58,7 +58,7 @@ internal/tracker/hubnot/         binding, protocol, codec, observation, ports
 internal/tracker/inventory.go   neutral current-definition inventory
 internal/helpercmd/provider*    separate tracker DTO and dispatch
 internal/testcampaign/          evidence, census and active selector
-scripts/install-qualified-hubnot.sh
+internal/testcampaign/cmd/hubnot-qualification/  compiled install and qualification
 .github/workflows/              active qualification and campaigns
 docs/HUBNOT_TRACKER.md
 docs/HUBNOT_QUALIFICATION.md
@@ -68,13 +68,21 @@ kitty-specs/hubnot-tracker-replacement-01M22QEJ/
 
 ## Implementation Concern Map
 
+Pinned installation uses the externally built qualifier's existing `install`
+subcommand. The redundant shell bootstrap is retired after its command dispatch
+failed the unchanged executable-analysis guard. This preserves FR-013 and the
+explicit compiler/source/destination and byte-admission contract, avoids a second
+launcher, and keeps installation and qualification on one manifest. Make and CI
+build the qualifier externally before invoking installation. No scanner or
+historical-census change is required.
+
 | Concern | Purpose and surfaces | Requirements | Dependencies and risks |
 |---|---|---|---|
 | IC-01 Bound transport | adapter/binding/transport/protocol/errors, neutral concurrency enum if needed, architecture policy | FR-001/008/009/013, NFR-001/004, C-001/003 | Accepted upstream contract; actor preflight alone is insufficient |
 | IC-02 Lossless reads | codec/observation/revision/mapping, neutral inventory port | FR-002/004/005/006/007/009, NFR-001/002/004 | IC-01; reject mixed snapshots and contradictory mappings; no N per-issue history inventory |
 | IC-03 Original operations and definitions | operation/catalog/definition, shared relation primitive | FR-003/004/008, NFR-004, C-002 | IC-02; replay original semantics, accurately report partial saga facts |
 | IC-04 Graph | graph portable API | FR-005/008/009, C-001/002 | IC-03; correct direction, cycles/missing/conflicts never become permission |
-| IC-05 Assignment/discussion | corresponding portable APIs | FR-006/007/008, NFR-004, C-001/002 | IC-03; signer and accountable author distinct, unsupported conditional effects refuse |
+| IC-05 Assignment/discussion | corresponding portable APIs, new neutral attributed-discussion values/port | FR-006/007/008, NFR-004, C-001/002 | IC-03; signer and accountable author distinct, unsupported conditional effects refuse |
 | IC-06 Native consumer | aggregate inspect/capabilities, helpercmd provider dispatch, reachability | FR-001/010/011, C-001/005 | IC-03/04/05; no control-host startup or M2 composition changes |
 | IC-07 Qualification | installer, real runner, evidence/reference schema | FR-012/013/014, NFR-001/003, C-003 | IC-06 and accepted source; no omitted scenario admitted |
 | IC-08 Ignore scanner | absence scanner/mutants/exact census and closed M2 receipt admission | NFR-005, C-004 | Independent; inert patterns are not hidden-file exemptions |
@@ -96,3 +104,7 @@ Independent review per package; failures return to owner. Final complete quality
 ## Complexity Tracking
 
 No charter exception. Small upstream changes avoid signer races, lost-response corruption and per-issue inventory process expansion. Global CAS emulation, direct adapter Git mutation, second persistent store and general migration were rejected as unnecessary or semantically unsound.
+
+### Attributed discussion results
+
+WP05 owns new internal/tracker/discussion_observation.go and its tests. A small immutable attributed-discussion port retains each existing portable entry, actual transport signer and complete signed/common proof, with both richer append results and coherent observation. Existing Discussion remains a compatibility projection over the same implementation. WP06 consumes the richer neutral port so original append/replay results expose both author and signer without a fresh current read or provider-proof parsing. Existing capability files remain unchanged; ownership stays disjoint and the original lane DAG is preserved.
