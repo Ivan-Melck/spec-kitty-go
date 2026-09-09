@@ -153,12 +153,15 @@ hubnot-product: ## Build the external tracker consumer with the identical qualif
 	$(HUBNOT_BUILD_ENV) PATH=/usr/bin:/bin "$(HUBNOT_GO)" build $(HUBNOT_BUILD_FLAGS) -o "$(HUBNOT_PRODUCT)" ./cmd/spec-kitty
 
 hubnot-hosted-provider: ## Run the fixed hosted selection (27/28), explicitly not full qualification.
+	@mkdir -p "$(HUBNOT_EVIDENCE_ROOT)"
 	$(HUBNOT_RUN_ENV) $(GO) run ./internal/testcampaign/cmd/campaign -campaign provider_real -artifact-dir "$(ARTIFACT_DIR)" -timeout 58m
 
 hubnot-qualification: ## Run all 28 local scenarios with actual original recovery files and refs.
+	@mkdir -p "$(HUBNOT_EVIDENCE_ROOT)"
 	$(HUBNOT_RUN_ENV) $(GO) run ./internal/testcampaign/cmd/campaign -profile provider-full-local -artifact-dir "$(ARTIFACT_DIR)" -timeout 58m
 
 hubnot-identity: ## Run the fixed five-scenario selected identity smoke (not full qualification).
+	@mkdir -p "$(HUBNOT_EVIDENCE_ROOT)"
 	$(HUBNOT_RUN_ENV) $(GO) run ./internal/testcampaign/cmd/campaign -profile mission-real-identity -artifact-dir "$(ARTIFACT_DIR)" -timeout 58m
 
 hubnot-all: hubnot-contract hubnot-qualification ## Run bounded contracts then explicit full local qualification.

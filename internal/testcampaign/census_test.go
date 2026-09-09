@@ -411,6 +411,13 @@ func TestMakeTargetsInvokeAuthoritativeCampaignsAndMutantsKillRealBindings(t *te
 		{"quality delegated campaigns", "quality: hubnot-contract m2-short quality-core", "quality: m2-short quality-core"},
 		{"quality delegated campaigns", "quality: hubnot-contract m2-short quality-core", "quality: hubnot-contract quality-core"},
 	}
+	for _, target := range []string{"hubnot-hosted-provider", "hubnot-qualification", "hubnot-identity"} {
+		start := strings.Index(makefile, target+":")
+		changed := makefile[:start] + strings.Replace(makefile[start:], `mkdir -p "$(HUBNOT_EVIDENCE_ROOT)"`, "true", 1)
+		if err := validateProviderMakeControls(changed); err == nil || !strings.Contains(err.Error(), "evidence parent") {
+			t.Fatalf("%s missing parent mutant survived: %v", target, err)
+		}
+	}
 	for _, mutant := range mutants {
 		t.Run(mutant.name, func(t *testing.T) {
 			changed := strings.Replace(makefile, mutant.old, mutant.new, 1)
@@ -493,6 +500,18 @@ func validateHubnotWorkflow(workflow string) error {
 	return nil
 }
 func validateProviderMakeControls(makefile string) error {
+	for _, target := range []string{"hubnot-hosted-provider", "hubnot-qualification", "hubnot-identity"} {
+		start := strings.Index(makefile, target+":")
+		if start < 0 {
+			return fmt.Errorf("evidence parent control missing target %s", target)
+		}
+		block := strings.SplitN(makefile[start:], "\n\n", 2)[0]
+		prepare := strings.Index(block, `mkdir -p "$(HUBNOT_EVIDENCE_ROOT)"`)
+		invoke := strings.Index(block, "$(HUBNOT_RUN_ENV)")
+		if prepare < 0 || invoke < prepare {
+			return fmt.Errorf("evidence parent control missing before wrapper %s", target)
+		}
+	}
 	for _, c := range []struct{ control, text string }{
 		{"one profile", "-campaign provider_bounded"},
 		{"raised PR budget", `-campaign provider_bounded -artifact-dir "$(ARTIFACT_DIR)" -timeout 8m`},
