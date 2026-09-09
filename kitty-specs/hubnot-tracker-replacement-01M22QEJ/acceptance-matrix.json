@@ -138,10 +138,10 @@
       "criterion_id": "FR-014",
       "description": "Run portable conformance, adversarial protocol and real public-consumer scenarios with exact started/terminal/passed census and source-bound evidence. Missing prerequisites or required skips cannot yield passing qualification.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "Qualified source e9b1ac659dcb40fe62ac6c991f26ed9fed9e544e; independent review /home/lynn/projects/go-kitty3/kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP10-integrated-public-acceptance/review-report-1.md, criterion FR-014; final scenarios binding.admitted, binding.refusals, work.rich-roundtrip, work.simple-update-guards, graph.lifecycle, graph.invalid-suppliers, graph.partial-definition, assignment.provenance, assignment.refusals, discussion.attribution, discussion.partial-pair, operation.historical-replay, operation.key-attempt-refusal, operation.lookup-boundaries, bounds.public-input-output, bounds.snapshot-pages, bounds.large-heads, bounds.transport, replicas.selected-withheld, replicas.reconstruction, integration.compiled-dispatch, integration.authority-boundaries, cutover.active-successor, cutover.frozen-source, cutover.local-recovery, performance.inventory-1000, performance.known-reference, performance.original-recovery; receipt /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-qualification/e9b1ac65/full-local/qualification.json; gate audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-gate-evidence-review.md; full evidence audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-full-local-evidence-review.md",
+      "pass_fail": "pass",
+      "verified_by": "codex-architect-acceptance",
+      "verified_at": "2026-09-09T21:34:04.621182+00:00",
       "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
