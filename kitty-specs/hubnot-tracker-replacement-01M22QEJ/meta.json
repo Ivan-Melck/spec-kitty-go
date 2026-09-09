@@ -1,4 +1,16 @@
 {
+  "acceptance_history": [
+    {
+      "acceptance_mode": "local",
+      "accepted_at": "2026-09-09T21:36:06.051408+00:00",
+      "accepted_by": "codex-architect-acceptance",
+      "accepted_from_commit": "300223721e40cd58f65061d65bf3ca5f5366374f"
+    }
+  ],
+  "acceptance_mode": "local",
+  "accepted_at": "2026-09-09T21:36:06.051408+00:00",
+  "accepted_by": "codex-architect-acceptance",
+  "accepted_from_commit": "300223721e40cd58f65061d65bf3ca5f5366374f",
   "change_mode": "bulk_edit",
   "created_at": "2026-09-09T09:19:42.794933+00:00",
   "flattened": false,
