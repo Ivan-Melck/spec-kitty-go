@@ -212,22 +212,24 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Ready for independent review at source 6fd7b5a5a4a2cc56980752e08f9e2722729ace1c: compiled pinned installer and fixed system tools, normal identity smoke and installer/refusals, full quality and package races pass. Historical 6aaf2112 full-local evidence remains 27/28 with expected active-successor non-admissibility; final integrated qualification remains required.",
-        "Independent reviewer-renata approval: all eight checklist items pass; canonical compiled installer, closed real qualifier, exact-source quality and package race, hostile-tool correction, durable capture, and source-bound evidence verified. Report committed at 56389487. Historical 6aaf full-local remains non-admissible; WP09 cutover and final integrated WP10 remain required."
+        "Independent reviewer-renata approval: all eight checklist items pass; canonical compiled installer, closed real qualifier, exact-source quality and package race, hostile-tool correction, durable capture, and source-bound evidence verified. Report committed at 56389487. Historical 6aaf full-local remains non-admissible; WP09 cutover and final integrated WP10 remain required.",
+        "New independent acceptance gap: separate known-reference and original-recovery rows lack child-process census required by qualification contract and WP10 T029. Scoped four-file correction; original approval and historical measurements preserved. Feedback committed f09f9b58."
       ],
       "provider": "__resolved_provider_absent__",
+      "review": null,
       "review_result": {
         "feedback_path": "/home/lynn/projects/go-kitty3/kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP07-pinned-installation-real-qualifier/review-cycle-2.md",
         "reference": "review-cycle://hubnot-tracker-replacement-01M22QEJ/WP07-pinned-installation-real-qualifier/review-cycle-2.md",
         "reviewer": "codex-independent-qualification-review",
         "verdict": "changes_requested"
       },
-      "role": "reviewer",
-      "shell_pid": 3929081,
-      "shell_pid_created_at": "1788979761.7",
+      "role": "implementer",
+      "shell_pid": null,
+      "shell_pid_created_at": null,
       "subtasks": {
-        "T019": "done",
-        "T020": "done",
-        "T021": "done"
+        "T019": "planned",
+        "T020": "planned",
+        "T021": "planned"
       }
     },
     "WP08": {
