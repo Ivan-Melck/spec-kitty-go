@@ -158,10 +158,10 @@
       "criterion_id": "NFR-001",
       "description": "Enforce Hubnot's 256 KiB encoded request ceiling/native limits before mutation. Child bounds: 8 MiB stdout, 64 KiB stderr, 30 seconds. Logical observation: 64 MiB, 10,000 items, 120 seconds including all calls and at most 2 restarts after the initial attempt. Page sizing respects both child and aggregate bounds; never omit a record or truncate fields to fit. Cancellation stops child work.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "Qualified source e9b1ac659dcb40fe62ac6c991f26ed9fed9e544e; independent review /home/lynn/projects/go-kitty3/kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP10-integrated-public-acceptance/review-report-1.md, criterion NFR-001; final scenarios bounds.public-input-output, bounds.transport, bounds.snapshot-pages, bounds.large-heads; receipt /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-qualification/e9b1ac65/full-local/qualification.json; gate audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-gate-evidence-review.md; full evidence audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-full-local-evidence-review.md",
+      "pass_fail": "pass",
+      "verified_by": "codex-architect-acceptance",
+      "verified_at": "2026-09-09T21:34:13.838269+00:00",
       "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
