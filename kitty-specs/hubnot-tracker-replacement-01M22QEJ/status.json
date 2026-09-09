@@ -278,7 +278,8 @@
       "last_transition_at": "2026-09-09T20:25:37.247499+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for independent review: qualified application source 81f3d26a; six canonical planning artifacts reconciled at 1ef3a97a with application bytes unchanged. Complete quality, normal identity, offline census and focused races/build passed; evidence work/go-wp09-evidence/81f3d26a/final-evidence-index.json."
+        "Ready for independent review: qualified application source 81f3d26a; six canonical planning artifacts reconciled at 1ef3a97a with application bytes unchanged. Complete quality, normal identity, offline census and focused races/build passed; evidence work/go-wp09-evidence/81f3d26a/final-evidence-index.json.",
+        "Independent PASS in committed review-report-1.md and lineage supplement5104463e. Exact dossier-only recovery4a445b56 verified against canonical7dff5693, runtime review lock preserved. Application bytes remain qualified81f3d26a; historical report reference1ef3a97a and receipts not rebound. All owned paths, terminal gates and actual public/offline evidence verified. No force; final integrated WP10 qualification remains required."
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
