@@ -113,6 +113,13 @@ naming; rename/isolate only when needed, never rewrite digests to resemble Hubno
 Existing execution/scenario references are Beads-named sensor/census text, not current
 direct imports. Preserve scenario/architecture_test.go deletion census unchanged.
 
+Wire hosted provider checks to WP07's fixed hosted-provider selection and strict
+selected wrapper, with explicit non-full scope in artifacts and current guidance.
+Retain a distinct full-local qualification target requiring actual original-file/ref
+preservation. Do not run the full wrapper and suppress its local-recovery failure;
+frozen-source preservation and every repeatable scenario remain required in hosted
+checks. Final mission acceptance still requires the full local census.
+
 The runtime chooses the worktree and dependency base; do not invent a base branch.
 Start only after root dispatch and required dependency approvals:
 

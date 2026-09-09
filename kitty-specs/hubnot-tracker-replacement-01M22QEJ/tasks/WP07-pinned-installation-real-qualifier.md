@@ -84,6 +84,13 @@ Accepted upstream prerequisite source is mandatory; old PR2 source or the dev ve
 string is insufficient. Do not edit Makefile/CI yet and do not disable scenarios waiting
 for future adapter code. Original provider data remains untouched.
 
+Implement the qualification contract's separate full-local and fixed hosted-provider
+scopes. Both require cutover.frozen-source; only the full-local scope additionally
+requires the actual cutover.local-recovery byte/ref comparison. The hosted selection
+excludes exactly that local row, remains explicitly non-full, and has its own strict
+selected validator/wrapper. It never makes the full validator ignore missing evidence
+or chooses a scope by discovering absent files. Keep identity smoke separately scoped.
+
 The runtime chooses the worktree and dependency base; do not invent a base branch.
 Start only after root dispatch and required dependency approvals:
 
@@ -213,6 +220,10 @@ exit results with the implemented behavior for independent review.
 
 7. Provide canonical manifest/runner CLI handoff to WP09 active Makefile/workflow
    selector.
+
+   Include the fixed hosted-provider selection, its exact wrapper and validator, and
+   the distinct full-local invocation. Add a mutant proving a passing hosted artifact
+   cannot satisfy full-local admission; keep original data and recovery refs local.
 
 8. Run qualifier/evidence tests and all-package build; save logs outside repository.
 
