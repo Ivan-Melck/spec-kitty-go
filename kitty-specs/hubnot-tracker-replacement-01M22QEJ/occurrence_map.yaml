@@ -82,3 +82,9 @@ exceptions:
 - path: .beads/**
   action: do_not_change
   reason: Existing ignored database and backup preserved; verified current catalog empty.
+- path: Makefile
+  action: manual_review
+  reason: WP09 atomically switches active installation and campaign dispatch to the compiled Hubnot installer and explicit successor profiles; frozen qualification identities remain unchanged.
+- path: scripts/install-qualified-beads.sh
+  action: manual_review
+  reason: WP09 retires the active Beads installer after qualified Hubnot installation is available; deletion does not rewrite historical release evidence or original provider data.
