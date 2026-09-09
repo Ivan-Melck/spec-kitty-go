@@ -1,0 +1,10 @@
+[
+ {"Name":"precision","JSON":"{\"n\":1234567890123456789012345678901234567890,\"fraction\":0.12345678901234567890123456789,\"huge_exp\":1e9999999999999999999999}","Valid":true},
+ {"Name":"null-array-object","JSON":"{\"nested\":[null,false,{},[],\"雪\"]}","Valid":true},
+ {"Name":"paired-surrogate","JSON":"{\"s\":\"\\ud83d\\ude00\",\"replacement\":\"�\"}","Valid":true},
+ {"Name":"duplicate-top","JSON":"{\"a\":1,\"a\":2}","Valid":false},
+ {"Name":"duplicate-nested","JSON":"{\"a\":{\"b\":1,\"\\u0062\":2}}","Valid":false},
+ {"Name":"lone-high","JSON":"{\"s\":\"\\ud800\"}","Valid":false},
+ {"Name":"lone-low","JSON":"{\"s\":\"\\udc00\"}","Valid":false},
+ {"Name":"trailing","JSON":"{} {}","Valid":false}
+]
