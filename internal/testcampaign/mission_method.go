@@ -982,19 +982,6 @@ func validatePhase3Documents(root, evidencePath string, census phase3Census, h p
 	return nil
 }
 
-func validatePhase3Links(path, contents string) error {
-	for _, match := range phase3LinkPattern.FindAllStringSubmatch(contents, -1) {
-		target := strings.SplitN(match[1], "#", 2)[0]
-		if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
-			continue
-		}
-		if _, err := os.Stat(filepath.Clean(filepath.Join(filepath.Dir(path), target))); err != nil {
-			return fmt.Errorf("phase3 broken link %s in %s", match[1], filepath.Base(path))
-		}
-	}
-	return nil
-}
-
 func validatePhase3Mermaid(path, contents string) error {
 	lines := strings.Split(contents, "\n")
 	inBlock := false
