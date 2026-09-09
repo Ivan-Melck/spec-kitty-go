@@ -86,7 +86,8 @@
       "model": "__resolved_model_absent__",
       "notes": [
         "Five owned source files committed; final quality and 505 absence race census passed; inherited metadata reconciled with canonical planning records.",
-        "Independent review rejects e28b01b9: executable hidden extensionless text without shebang bypasses shell resolution; Go 1.26.7 race overlay and safe shell fallback prove R1. Exact historical/current census and nested verifier checks pass. See review-feedback-1.md."
+        "Independent review rejects e28b01b9: executable hidden extensionless text without shebang bypasses shell resolution; Go 1.26.7 race overlay and safe shell fallback prove R1. Exact historical/current census and nested verifier checks pass. See review-feedback-1.md.",
+        "R1 corrected at6fe5f53c; fullquality passed; 515 exact absence race census and independent repros passed; planning metadata reconciled."
       ],
       "provider": "__resolved_provider_absent__",
       "review": null,
