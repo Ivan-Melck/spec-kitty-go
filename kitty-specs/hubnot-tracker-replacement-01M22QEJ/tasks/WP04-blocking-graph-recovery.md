@@ -63,6 +63,15 @@ No new global graph command, parallel operation engine or authoritative graph ca
 Ready remains a diagnostic projection. Definition creation already owns its low-level
 relation primitive; this package adds portable graph semantics.
 
+Readiness selects mapped open work with no incoming blocks from open suppliers.
+Closed work is excluded; relations from closed suppliers remain current definition
+dependencies. This status projection does not grant execution authority. ExternalEdgeID
+is stable for the endpoint/kind tuple; signed source actor and revision stay in proof.
+Existing cycles or incomplete suppliers refuse even unlink and require native
+reconciliation. A new valid relation intent already in the desired state records a
+signed operation stamp with Noop=true and Replayed=false; only verified original
+operation lookup can return Replayed=true.
+
 The runtime chooses the worktree and dependency base; do not invent a base branch.
 Start only after root dispatch and required dependency approvals:
 
