@@ -1,0 +1,15 @@
+{
+  "created_at": "2026-09-09T09:19:42.794933+00:00",
+  "flattened": false,
+  "friendly_name": "Hubnot Tracker Replacement",
+  "mission_id": "01M22QEJPAAQJM91R01MCBR8QV",
+  "mission_number": null,
+  "mission_slug": "hubnot-tracker-replacement-01M22QEJ",
+  "mission_type": "software-dev",
+  "pr_bound": true,
+  "purpose_context": "People and agents use Hubnot for rich mutable work definitions, relationships, assignments and discussion through Go Kitty provider-neutral capabilities, preserving Go Kitty execution authority, exact identity and retry safety. Replace active installation, inspection and qualification paths; preserve historical evidence and migrate existing work only through an explicit lossless mapping.",
+  "purpose_tldr": "Replace the active Beads work provider with qualified Hubnot integration.",
+  "slug": "hubnot-tracker-replacement-01M22QEJ",
+  "target_branch": "feat/hubnot-tracker-replacement",
+  "topology": "lanes"
+}
