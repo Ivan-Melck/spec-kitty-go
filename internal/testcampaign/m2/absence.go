@@ -86,6 +86,19 @@ var absenceDigestFiles = map[string]string{
 	"module_graph": "module-graph.txt", "sbom": "sbom.cdx.json", "evidence_inventory": "evidence-sha256.txt",
 }
 
+// Each admitted census is bound to the exact reviewed contract bytes. Keep the
+// historical contract admissible without accepting caller-selected test sets.
+func admittedAbsenceContractCount(contract []byte) (int, error) {
+	switch SHA256(contract) {
+	case "245af6f271f12f1905613c4140cb4b842cc117ab40465f559a545069e79af09d":
+		return 489, nil
+	case "fde13c95060b9ab8a559d2ad3f4319408768aa19aa4d47b58ff7ccbac604d380":
+		return 515, nil
+	default:
+		return 0, fmt.Errorf("WP16 absence contract is not an admitted byte identity")
+	}
+}
+
 func verifyNestedAbsence(root *os.Root, paths map[string]Artifact, source Source, qualificationSidecarSHA256 string) error {
 	read := func(name string) ([]byte, error) {
 		artifact, ok := paths["absence/"+name]
@@ -102,8 +115,16 @@ func verifyNestedAbsence(root *os.Root, paths map[string]Artifact, source Source
 	if err := DecodeStrict(manifestBytes, &manifest); err != nil {
 		return fmt.Errorf("decode WP16 manifest: %w", err)
 	}
+	contract, err := read("expected-absence-tests.txt")
+	if err != nil {
+		return err
+	}
+	absenceCount, err := admittedAbsenceContractCount(contract)
+	if err != nil {
+		return err
+	}
 	q := manifest.Qualification
-	if manifest.SchemaVersion != 3 || manifest.Verdict != "pass" || manifest.Source.Commit != source.Commit || manifest.Source.Tree != source.Tree || manifest.Source.GoModSHA256 != source.GoModSHA256 || manifest.Source.GoSumSHA256 != source.GoSumSHA256 || !strings.Contains(manifest.Toolchain.Version, source.GoVersion) || !q.Source || !q.Module || !q.VendorLike || q.AbsenceReceipts != 489 || q.DetectorLayers != 8 || !q.Binaries || !q.SBOM || !q.Install || !q.HelpConfig || q.Runtime != "observed" || q.RuntimeTests != 23 || q.HistoricalExemptions != "closed-token-and-path-map" {
+	if manifest.SchemaVersion != 3 || manifest.Verdict != "pass" || manifest.Source.Commit != source.Commit || manifest.Source.Tree != source.Tree || manifest.Source.GoModSHA256 != source.GoModSHA256 || manifest.Source.GoSumSHA256 != source.GoSumSHA256 || !strings.Contains(manifest.Toolchain.Version, source.GoVersion) || !q.Source || !q.Module || !q.VendorLike || q.AbsenceReceipts != absenceCount || q.DetectorLayers != 8 || !q.Binaries || !q.SBOM || !q.Install || !q.HelpConfig || q.Runtime != "observed" || q.RuntimeTests != 23 || q.HistoricalExemptions != "closed-token-and-path-map" {
 		return fmt.Errorf("WP16 absence manifest identity or closed qualification is incomplete")
 	}
 	for key, name := range absenceDigestFiles {
@@ -144,7 +165,7 @@ func verifyNestedAbsence(root *os.Root, paths map[string]Artifact, source Source
 			}
 		}
 	}
-	if err := verifyObservedAbsenceReceipt(read, "absence", 489); err != nil {
+	if err := verifyObservedAbsenceReceipt(read, "absence", absenceCount); err != nil {
 		return err
 	}
 	if err := verifyObservedAbsenceReceipt(read, "layer-mutant", 8); err != nil {
@@ -176,6 +197,15 @@ func verifyObservedAbsenceReceipt(read func(string) ([]byte, error), stem string
 	contract, err := read(contractName)
 	if err != nil {
 		return err
+	}
+	if stem == "absence" {
+		admittedCount, err := admittedAbsenceContractCount(contract)
+		if err != nil {
+			return err
+		}
+		if count != admittedCount {
+			return fmt.Errorf("WP16 absence count differs from its admitted contract")
+		}
 	}
 	var result absenceReceipt
 	if err := DecodeStrict(data, &result); err != nil {

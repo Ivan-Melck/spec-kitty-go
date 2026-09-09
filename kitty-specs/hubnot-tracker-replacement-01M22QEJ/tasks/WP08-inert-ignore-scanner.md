@@ -8,6 +8,9 @@ requirement_refs:
 planning_base_branch: feat/hubnot-tracker-replacement
 merge_target_branch: feat/hubnot-tracker-replacement
 branch_strategy: Planning artifacts for this mission were generated on feat/hubnot-tracker-replacement. During /spec-kitty.implement this WP may branch from a dependency-specific base, but completed changes must merge back into feat/hubnot-tracker-replacement unless the human explicitly redirects the landing branch.
+base_branch: kitty/mission-hubnot-tracker-replacement-01M22QEJ
+base_commit: c10593a91e24d746e4d8920510c43f072bdfa01e
+created_at: '2026-09-09T10:01:18.995997+00:00'
 subtasks:
 - T022
 - T023
@@ -21,6 +24,8 @@ owned_files:
 - internal/architecture/m2_absence_test.go
 - internal/architecture/m2_absence_mutants_test.go
 - scripts/m2-absence/expected-absence-tests.txt
+- internal/testcampaign/m2/absence.go
+- internal/testcampaign/m2/evidence_test.go
 role: implementer
 tags: []
 tracker_refs: []
@@ -228,3 +233,11 @@ Check precise no-write assertions, replay identity, invariant preservation and
 truthful capability declarations. Confirm there are no cross-owner edits or
 rewritten historical identities. Return defects to the owning implementation
 package; independent review must not manufacture passing evidence.
+
+## Scope extension: exact historical and current receipt admission
+
+The initial sixteen observed cases increased the census from 489 to 505. Independent R1 review rejected an executable-context gap; ten further regression rows make the successor census 515. The unapproved 505 candidate is superseded, not a new historical admission promise. Full quality exposed hardcoded 489 in the M2 production nested-absence verifier and its synthetic fixture. This necessary follow-through belongs to WP08; both files are explicitly owned.
+
+Admit exactly the original expected-contract SHA256/count pair 245af6f271f12f1905613c4140cb4b842cc117ab40465f559a545069e79af09d / 489 and current pair fde13c95060b9ab8a559d2ad3f4319408768aa19aa4d47b58ff7ccbac604d380 / 515. Validate manifest count against the admitted contract, retaining exact expected/run/pass/raw-event equality and no-skip/no-duplicate checks. Never accept arbitrary input-derived counts. Historical verification retains original bytes; current generation uses the actual 515 script contract. Mirror the current digest against that file in a test.
+
+Derive the synthetic fixture count from its loaded admitted contract. Test both exact historical/current contracts and rejection of unknown/reduced/duplicate sets or forged counts. Preserve source/toolchain binding and other qualification requirements; no schema/adoption change or frozen receipt rewrite. Source scope is now five files. Run focused nested evidence regressions and final complete quality on corrected stable source.

@@ -851,6 +851,16 @@ func fixtureAbsenceInputs(t *testing.T, source Source, qualificationSidecarSHA25
 	if err != nil {
 		t.Fatal(err)
 	}
+	return fixtureAbsenceInputsForContract(t, source, qualificationSidecarSHA256, absenceContract)
+}
+
+func fixtureAbsenceInputsForContract(t *testing.T, source Source, qualificationSidecarSHA256 string, absenceContract []byte) []ArtifactInput {
+	t.Helper()
+	absenceCount, err := admittedAbsenceContractCount(absenceContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := repositoryRoot(t)
 	layerContract, err := os.ReadFile(filepath.Join(root, "scripts/m2-absence/expected-layer-mutants.txt"))
 	if err != nil {
 		t.Fatal(err)
@@ -906,7 +916,7 @@ func fixtureAbsenceInputs(t *testing.T, source Source, qualificationSidecarSHA25
 	manifest.Qualification.Source = true
 	manifest.Qualification.Module = true
 	manifest.Qualification.VendorLike = true
-	manifest.Qualification.AbsenceReceipts = 489
+	manifest.Qualification.AbsenceReceipts = absenceCount
 	manifest.Qualification.DetectorLayers = 8
 	manifest.Qualification.Binaries = true
 	manifest.Qualification.SBOM = true
@@ -1022,4 +1032,117 @@ func stringOf(character byte, count int) string {
 		result[index] = character
 	}
 	return string(result)
+}
+func TestAbsenceContractAdmissionPreservesHistoricalAndCurrentCensuses(t *testing.T) {
+	current, err := os.ReadFile(filepath.Join(repositoryRoot(t), "scripts/m2-absence/expected-absence-tests.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if SHA256(current) != "fde13c95060b9ab8a559d2ad3f4319408768aa19aa4d47b58ff7ccbac604d380" {
+		t.Fatal("current expected absence contract differs from its reviewed bytes")
+	}
+	historical := bytes.Join(bytes.SplitAfter(current, []byte("\n"))[:489], nil)
+	if SHA256(historical) != "245af6f271f12f1905613c4140cb4b842cc117ab40465f559a545069e79af09d" {
+		t.Fatal("historical absence contract reconstruction differs from frozen bytes")
+	}
+	unknown := bytes.Clone(current)
+	unknown[0] = 'X'
+	duplicate := append(bytes.Clone(current), bytes.SplitAfter(current, []byte("\n"))[0]...)
+	for _, test := range []struct {
+		name     string
+		contract []byte
+		count    int
+		wantPass bool
+	}{
+		{"historical", historical, 489, true},
+		{"current", current, 515, true},
+		{"unknown-same-count", unknown, 515, false},
+		{"reduced-self-consistent", bytes.Join(bytes.SplitAfter(current, []byte("\n"))[1:], nil), 514, false},
+		{"duplicated-self-consistent", duplicate, 516, false},
+		{"forged-count", current, 489, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			names := nonemptyLines(test.contract)
+			slices.Sort(names)
+			var raw bytes.Buffer
+			for _, name := range names {
+				fmt.Fprintf(&raw, "{\"Action\":\"run\",\"Test\":%q}\n{\"Action\":\"pass\",\"Test\":%q}\n", name, name)
+			}
+			result := absenceReceipt{SchemaVersion: 1, Kind: "absence", Expected: names, Run: names, Passed: names, RawEventsSHA256: SHA256(raw.Bytes()), Verdict: "pass"}
+			result.Counts.Expected, result.Counts.Run, result.Counts.Passed = len(names), len(names), len(names)
+			encoded, err := CanonicalJSON(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			members := map[string][]byte{"absence-tests.json": encoded, "absence-events.jsonl": raw.Bytes(), "expected-absence-tests.txt": test.contract}
+			read := func(name string) ([]byte, error) {
+				data, ok := members[name]
+				if !ok {
+					return nil, fmt.Errorf("missing %s", name)
+				}
+				return data, nil
+			}
+			err = verifyObservedAbsenceReceipt(read, "absence", test.count)
+			if (err == nil) != test.wantPass {
+				t.Fatalf("closed contract admission: pass=%v error=%v", test.wantPass, err)
+			}
+		})
+	}
+}
+
+func TestNestedAbsenceBindsManifestCountToAdmittedContract(t *testing.T) {
+	current, err := os.ReadFile(filepath.Join(repositoryRoot(t), "scripts/m2-absence/expected-absence-tests.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	historical := bytes.Join(bytes.SplitAfter(current, []byte("\n"))[:489], nil)
+	source := Source{Commit: strings.Repeat("a", 40), Tree: strings.Repeat("b", 40), GoVersion: runtime.Version(), GoModSHA256: strings.Repeat("c", 64), GoSumSHA256: strings.Repeat("d", 64)}
+	sidecar := []byte("isolated test sidecar bytes")
+	for _, test := range []struct {
+		name        string
+		contract    []byte
+		forgedCount int
+	}{
+		{"historical", historical, 0}, {"current", current, 0}, {"forged-manifest-count", current, 489},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inputs := fixtureAbsenceInputsForContract(t, source, SHA256(sidecar), test.contract)
+			inputs = append(inputs, ArtifactInput{Path: "sidecar/wp16-gapdbd", Kind: "sidecar", Data: sidecar})
+			directory := t.TempDir()
+			paths := map[string]Artifact{}
+			for _, input := range inputs {
+				if test.forgedCount != 0 && input.Path == "absence/manifest.json" {
+					var manifest absenceManifest
+					if err := DecodeStrict(input.Data, &manifest); err != nil {
+						t.Fatal(err)
+					}
+					manifest.Qualification.AbsenceReceipts = test.forgedCount
+					input.Data, err = CanonicalJSON(manifest)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				path := filepath.Join(directory, filepath.FromSlash(input.Path))
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, input.Data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				paths[input.Path] = Artifact{Path: input.Path, Kind: input.Kind, SHA256: SHA256(input.Data)}
+			}
+			root, err := os.OpenRoot(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			err = verifyNestedAbsence(root, paths, source, SHA256(sidecar))
+			if test.forgedCount == 0 && err != nil {
+				t.Fatalf("admitted historical/current nested evidence: %v", err)
+			}
+			if test.forgedCount != 0 && (err == nil || !strings.Contains(err.Error(), "closed qualification")) {
+				t.Fatalf("forged manifest count was not rejected at qualification: %v", err)
+			}
+		})
+	}
 }

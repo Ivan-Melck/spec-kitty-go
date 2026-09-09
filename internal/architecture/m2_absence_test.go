@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -250,7 +251,7 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 			add("unreadable", rel, "read")
 			return nil
 		}
-		inspectM2Candidate(rel, data, add)
+		inspectM2Candidate(rel, data, info.Mode(), add)
 		return nil
 	})
 	if resolveGraph {
@@ -264,10 +265,11 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 	return evidence
 }
 
-func inspectM2Candidate(path string, data []byte, add func(string, string, string)) {
+func inspectM2Candidate(path string, data []byte, mode fs.FileMode, add func(string, string, string)) {
 	lower := strings.ToLower(string(data))
 	executable := lower
 	ext := strings.ToLower(filepath.Ext(path))
+	ignoreFile := filepath.Base(path) == ".gitignore"
 	if ext == ".go" {
 		parsed, err := parser.ParseFile(token.NewFileSet(), path, data, parser.ParseComments)
 		if err != nil {
@@ -281,8 +283,27 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 			}
 		}
 		executable = strings.ToLower(m2GoExecutableText(data) + "\n" + strings.Join(m2GoResolvedExecutables(parsed), "\n"))
-	} else if ext == ".sh" {
+	}
+	shellCandidate := ext == ".sh" || ignoreFile || bytes.HasPrefix(data, []byte("#!"))
+	if mode.Perm()&0o111 != 0 {
+		// Shell ENOEXEC fallback is independent of suffix, shebang and UTF-8.
+		// Only parsed executable containers avoid shell interpretation; unknown
+		// NUL-bearing material refuses explicitly and still gets byte-scanned.
+		switch {
+		case m2ELFExecutable(data):
+			shellCandidate = false
+		case bytes.IndexByte(data, 0) >= 0:
+			add("ambiguous-shell", path, "unclassified-executable-bytes")
+			shellCandidate = false
+		default:
+			shellCandidate = true
+		}
+	}
+	if shellCandidate {
 		rawShell := string(data)
+		if ignoreFile && mode.Perm()&0o111 == 0 && !bytes.HasPrefix(data, []byte("#!")) {
+			rawShell = m2IgnoreExecutableText(rawShell)
+		}
 		shellIdentity := m2ShellIdentityFromSource(rawShell)
 		shellSource, heredocBodies, ambiguity := m2ShellWithoutHeredocBodies(rawShell)
 		if ambiguity != "" {
@@ -298,8 +319,10 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 				return
 			}
 		}
-		lower = strings.ToLower(shellSource)
-		executable = lower
+		if !ignoreFile {
+			lower = strings.ToLower(shellSource)
+		}
+		executable = strings.ToLower(shellSource)
 		resolved, ambiguity := m2ShellResolvedExecutables(shellSource, shellIdentity)
 		if ambiguity != "" {
 			add("ambiguous-shell", path, ambiguity)
@@ -325,6 +348,9 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 			exempt = false
 		}
 		present := strings.Contains(lower, pattern.token) || strings.Contains(executable, pattern.token)
+		if ignoreFile && pattern.kind == "subprocess" {
+			present = strings.Contains(executable, pattern.token)
+		}
 		if present &&
 			(pattern.kind != "linkname" || strings.Contains(lower, m2LegacyWord)) && !exempt {
 			add(pattern.kind, path, pattern.token)
@@ -344,6 +370,52 @@ func inspectM2Candidate(path string, data []byte, add func(string, string, strin
 			}
 		}
 	}
+}
+
+// Linux is the qualified execution target. Recognize a structurally parsed ELF
+// executable/shared object with a bounded, file-backed executable load segment.
+// Other executable containers are deliberately ambiguous, not silently exempt.
+func m2ELFExecutable(data []byte) bool {
+	if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+		return false
+	}
+	file, err := elf.NewFile(bytes.NewReader(data))
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	if file.Type != elf.ET_EXEC && file.Type != elf.ET_DYN {
+		return false
+	}
+	for _, program := range file.Progs {
+		if program.Type == elf.PT_LOAD && program.Flags&elf.PF_X != 0 &&
+			program.Filesz > 0 && program.Memsz >= program.Filesz &&
+			program.Off <= uint64(len(data)) && program.Filesz <= uint64(len(data))-program.Off {
+			return true
+		}
+	}
+	return false
+}
+
+// Recognize a conservative subset of plain ignore patterns, never shell syntax.
+// Other token classes still inspect the original bytes; this only prevents a
+// filename suffix or ignore comment from claiming a subprocess invocation.
+var m2PlainIgnorePattern = regexp.MustCompile(`^!?[A-Za-z0-9_./*?-]+$`)
+
+func m2IgnoreExecutableText(source string) string {
+	var executable strings.Builder
+	for line := range strings.SplitSeq(source, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if m2PlainIgnorePattern.MatchString(line) && filepath.Base(strings.ToLower(line)) != m2LegacyCLI {
+			continue
+		}
+		executable.WriteString(line)
+		executable.WriteByte('\n')
+	}
+	return executable.String()
 }
 
 func inspectM2GoGraph(t *testing.T, root string, evidence *m2AbsenceEvidence, add func(string, string, string)) {

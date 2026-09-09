@@ -4,7 +4,7 @@ artifact_type: spec-kitty.analysis-report
 command: /spec-kitty.analyze
 mission_slug: hubnot-tracker-replacement-01M22QEJ
 mission_id: 01M22QEJPAAQJM91R01MCBR8QV
-generated_at: '2026-09-09T10:00:31.660384+00:00'
+generated_at: '2026-09-09T10:16:40.070297+00:00'
 analyzer_agent: codex
 input_artifacts:
   spec.md:
@@ -12,19 +12,19 @@ input_artifacts:
     sha256: cf862a7a3261277e4bbaf4ff3f7d785993e61087840cf70045ac19f93d9b7bb0
   plan.md:
     path: kitty-specs/hubnot-tracker-replacement-01M22QEJ/plan.md
-    sha256: 2ddc2fb55714d19e9adf8a211af24c4ce3f3daea26d1ba1a632448d01edd51c2
+    sha256: 1e195ec630aaacecf4566f897f608079501eef4b00442e9bc76fd35da430039e
   tasks.md:
     path: kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks.md
-    sha256: 518c780a11fc058ad842c0fa47d476b7f33c44a3b6726dddff0cbda227dd82ff
+    sha256: a6b0bcb5e8630b1dcf28a9fa84f7e8eab1d7f7e00563ca9e0b68f0ddef869400
   charter:
     path: .kittify/charter/charter.yaml
     sha256: 4442a6e0d56d4a7df873f2f529b04bb4d4917f2481a4e47f4819bd92927388de
 verdict: ready
 issue_counts:
+  high: 0
   critical: 0
   medium: 0
   low: 0
-  high: 0
   info: 0
 findings: []
 ---
@@ -78,3 +78,7 @@ Architecture 001, fidelity 010, locality 024, efficient tools 028 and validation
 ## Metrics
 
 25 requirements; 30 subtasks in 10 WPs; 100% requirement coverage; zero unresolved ambiguity, harmful duplication or critical issues. Implementation evidence is still pending.
+
+## WP08 integration amendment review
+
+The complete quality gate found a real coupling between the new scanner census and hardcoded nested M2 receipt admission. WP08 now explicitly owns internal/testcampaign/m2/absence.go and evidence_test.go in addition to the original three files. Exact historical489/current505 contract hash/count pairs preserve old bytes and constrain current generation; arbitrary input-derived count admission is forbidden. Required tests cover both admitted contracts and unknown/reduced/duplicate/forged cases. This implements NFR-005/NFR-003/C-004 without new authority, adoption, schema or source scope outside the named boundary. Canonical task finalization passed with unchanged DAG and no ownership warnings. No additional cross-artifact blocker.
