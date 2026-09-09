@@ -181,7 +181,8 @@
       "last_transition_at": "2026-09-09T15:44:06.187260+00:00",
       "model": "__resolved_model_absent__",
       "notes": [
-        "Ready for independent review: 14-action native Hubnot consumer at 597de396; strict full-fidelity DTOs, common proofs, truthful partial outcomes, and cancellable borrowed IO. Complete make -k quality and full helper/Hubnot/compiled CLI races passed with qualified hn; independent bounded R1-R4 correction probes passed. Evidence: work/go-wp06-evidence/quality-597de396 and work/go-wp06-review/r4-bounded-review.md."
+        "Ready for independent review: 14-action native Hubnot consumer at 597de396; strict full-fidelity DTOs, common proofs, truthful partial outcomes, and cancellable borrowed IO. Complete make -k quality and full helper/Hubnot/compiled CLI races passed with qualified hn; independent bounded R1-R4 correction probes passed. Evidence: work/go-wp06-evidence/quality-597de396 and work/go-wp06-review/r4-bounded-review.md.",
+        "Independent review passed: exact14 owned sources and6 approved dependency hashes verified; nine clean source-bound receipts/seven raw censuses and complete package races pass. R1-R4 red/green evidence, strict accessor fidelity, actual compiled dispatch and input/output cancellation cleanup verified. Full report retained externally in work/go-wp06-review/final-review.md."
       ],
       "provider": "__resolved_provider_absent__",
       "review_result": {
