@@ -57,6 +57,9 @@
       "last_event_id": "01M230C7WAWN0ZRQ9JR6D4EFP8",
       "last_transition_at": "2026-09-09T11:55:43.370310+00:00",
       "model": "__resolved_model_absent__",
+      "notes": [
+        "Ready for independent review at 44b2988aafafd8a4e8e713019083031236f01720: full make quality passed; targeted package race and admitted Hubnot public CLI readback passed; 1000 complete definitions used 125 bounded detail pages. Independent bounded pre-review passed; formal verdict pending."
+      ],
       "provider": "__resolved_provider_absent__",
       "role": "implementer",
       "shell_pid": 2045598,
