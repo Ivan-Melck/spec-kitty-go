@@ -55,3 +55,9 @@ Earlier failures remain evidence: the 42e732d9 normal-run missing-parent failure
 PASS for WP09, with no unresolved package blocker. This is local cutover approval, not hosted-run or branch-protection completion. WP10 still must perform final integrated full-local 28-row qualification, including the 1,000-issue and staged-resolution obligations. Earlier measured candidates do not qualify this source by relabeling.
 
 The optional Python review gate reports `no_coverage`; existing outbox/publication warnings remain separate from the verified Go gates and local verdict. M2 remains unadopted and M3 incomplete. Record approval normally with the exact approval reference above and no force flag; do not advance another package in this review.
+
+## Supplemental approval lineage
+
+The first normal approval attempt against `1ef3a97ab68733ad86f801b3a3c0e1f995cf3555` exited 1 because the lane dossier differed from the committed canonical target after review claim. The original refusal is retained in external `work/go-wp09-review/approval.log`; no force was requested. Root then reconciled exactly that dossier file from canonical report commit `7dff5693ae836ba2c0b87c778ce93d45d0b79628`, producing lane commit `4a445b56dde9616cfb53ee6c44a9ddce52128a90`. Independent verification confirms the one-path diff, exact canonical dossier equality and unchanged runtime review-lock bytes (SHA-256 `137295d3be34d7d05e4ce7ed8b9a1c53ff2e08c8f2c74a41a2f860a0975ab7b9`).
+
+The normal approval retry uses `4a445b56dde9616cfb53ee6c44a9ddce52128a90`. The earlier report reference remains historical. Qualified application source is still `81f3d26a8000e222ca9bbf99f754ff936890ed4f`; every subsequent change is planning metadata, and no receipt is rebound. This supplement changes only the review report, not the canonical dossier.
