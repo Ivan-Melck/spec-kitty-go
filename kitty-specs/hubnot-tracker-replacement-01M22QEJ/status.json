@@ -1,7 +1,7 @@
 {
-  "event_count": 3,
-  "last_event_id": "01M22SHYAJXA4BRFGWX2Z63V4W",
-  "materialized_at": "2026-09-09T09:56:30.162280+00:00",
+  "event_count": 4,
+  "last_event_id": "01M22SJ18QY9A7T731Q4MKEDE4",
+  "materialized_at": "2026-09-09T09:56:33.175313+00:00",
   "mission_number": "",
   "mission_slug": "hubnot-tracker-replacement-01M22QEJ",
   "mission_type": "software-dev",
@@ -14,7 +14,7 @@
     "for_review": 0,
     "in_progress": 0,
     "in_review": 0,
-    "planned": 3
+    "planned": 4
   },
   "work_packages": {
     "WP01": {
@@ -37,6 +37,13 @@
       "lane": "planned",
       "last_event_id": "01M22SHYAJXA4BRFGWX2Z63V4W",
       "last_transition_at": "2026-09-09T09:56:30.162280+00:00"
+    },
+    "WP04": {
+      "actor": "finalize-tasks",
+      "force_count": 0,
+      "lane": "planned",
+      "last_event_id": "01M22SJ18QY9A7T731Q4MKEDE4",
+      "last_transition_at": "2026-09-09T09:56:33.175313+00:00"
     }
   }
 }
