@@ -1056,8 +1056,12 @@ func TestM2ShellProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var findings []m2AbsenceFinding
-	inspectM2Candidate(filepath.ToSlash(path), data, func(kind, candidate, detail string) {
+	inspectM2Candidate(filepath.ToSlash(path), data, info.Mode(), func(kind, candidate, detail string) {
 		findings = append(findings, m2AbsenceFinding{Kind: kind, Path: candidate, Detail: detail})
 	})
 	if len(findings) != 0 {

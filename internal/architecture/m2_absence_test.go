@@ -250,7 +250,7 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 			add("unreadable", rel, "read")
 			return nil
 		}
-		inspectM2CandidateMode(rel, data, info.Mode(), add)
+		inspectM2Candidate(rel, data, info.Mode(), add)
 		return nil
 	})
 	if resolveGraph {
@@ -264,11 +264,7 @@ func inspectM2Absence(t *testing.T, root string, resolveGraph bool) m2AbsenceEvi
 	return evidence
 }
 
-func inspectM2Candidate(path string, data []byte, add func(string, string, string)) {
-	inspectM2CandidateMode(path, data, 0, add)
-}
-
-func inspectM2CandidateMode(path string, data []byte, mode fs.FileMode, add func(string, string, string)) {
+func inspectM2Candidate(path string, data []byte, mode fs.FileMode, add func(string, string, string)) {
 	lower := strings.ToLower(string(data))
 	executable := lower
 	ext := strings.ToLower(filepath.Ext(path))
