@@ -27,7 +27,7 @@ Provisional public contract from the prerequisite mission (must be independently
 - `hn identity show --json`: `hn.identity/1`, public actor/name/public key only.
 - `hn issue <mutation> ... --actor ACTOR --json`: optional backward-compatible expected signer, checked against the identity actually used. Mismatch gives `actor_mismatch`, zero append.
 - `hn issue operation --actor ACTOR --operation KEY --json`: `hn.issue/1` plus snapshot, returning unique original issue/event ID, actor, operation, intent, kind, timestamp, parents, full state or body and signed request digest. Absent is `not_found`, duplicate is `operation_conflict`.
-- `hn issue list --details`: bounded full-state rows `{id,creator,state,conflict,head_count}`, with details bound to continuation identity. Conflicted state is null; head inspection remains separately paged, avoiding unbounded nested head lists.
+- `hn issue list --details`: bounded full-state rows `{id,creator,opening_metadata,state,conflict,head_count}`, with details bound to continuation identity. Conflicted state is null; head inspection remains separately paged, avoiding unbounded nested head lists.
 
 The qualified source commit/build digest is deliberately not guessed here. Planning records the wire contract; qualification pins the accepted prerequisite source and exact build identity.
 
