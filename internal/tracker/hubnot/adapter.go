@@ -43,8 +43,12 @@ func (b *BoundAdapter) execute(ctx context.Context, budget *observationBudget, c
 	if err := ctx.Err(); err != nil {
 		return fail(failure(tracker.ErrorTimeout, "bounded_retry", "command canceled before dispatch", err), "", "")
 	}
-	if err := budget.charge(0, 0); err != nil {
-		return fail(failure(tracker.ErrorTimeout, "bounded_retry", "observation budget exhausted", err), "", "")
+	if err := budget.beforeDispatch(); err != nil {
+		kind := tracker.ErrorUnavailable
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			kind = tracker.ErrorTimeout
+		}
+		return fail(failure(kind, "bounded_retry", "observation budget exhausted", err), "", "")
 	}
 	if err := b.verifyDispatch(); err != nil {
 		return fail(err, "", "")
@@ -58,11 +62,11 @@ func (b *BoundAdapter) execute(ctx context.Context, budget *observationBudget, c
 	childctx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(budget.ctx, cancel)
 	defer func() { stop(); cancel() }()
-	result := runProcess(childctx, b.binding.ExecutablePath, b.binding.WorkspacePath, c.argv, c.input)
+	result := runProcessBudget(childctx, b.binding.ExecutablePath, b.binding.WorkspacePath, c.argv, c.input, budget)
 	if result.started && c.mutating {
 		response.outcome = OutcomeAmbiguous
 	}
-	budgetErr := budget.charge(result.outputBytes, 0)
+	budgetErr := budget.charge(0, 0)
 	if result.err != nil || budgetErr != nil {
 		cause := errors.Join(result.err, budgetErr)
 		kind := tracker.ErrorUnavailable
@@ -245,6 +249,13 @@ func (b *BoundAdapter) lookupOperation(ctx context.Context, budget *observationB
 		if !validEventID(p) || (i > 0 && result.Parents[i-1] >= p) {
 			return result, response.envelope, protocolFailure(errors.New("invalid operation parents"))
 		}
+	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(response.envelope.Data, &fields)
+	_, hasState := fields["state"]
+	_, hasBody := fields["body"]
+	if result.Kind == "issue.comment" && hasState || result.Kind != "issue.comment" && hasBody {
+		return result, response.envelope, protocolFailure(errors.New("forbidden original-operation member"))
 	}
 	valid := false
 	switch result.Intent {

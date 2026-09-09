@@ -30,6 +30,8 @@ type observationBudget struct {
 	cancel                 context.CancelFunc
 	mu                     sync.Mutex
 	bytes, items, restarts int
+	retained               int
+	exhausted              bool
 }
 
 // The same budget must survive stale-snapshot restarts and failed attempts.
@@ -41,12 +43,46 @@ func (b *observationBudget) close() { b.cancel() }
 func (b *observationBudget) charge(bytes, items int) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if bytes < 0 || items < 0 {
+	if b.exhausted || bytes < 0 || items < 0 {
 		return errObservationLimit
 	}
 	b.bytes += bytes
 	b.items += items
+	remaining := maxObservationBytes - b.retained
+	b.retained += min(bytes, remaining)
 	if b.bytes > maxObservationBytes || b.items > maxObservationItems {
+		b.exhausted = true
+		return errObservationLimit
+	}
+	return b.ctx.Err()
+}
+
+// capture records original observed pipe bytes before any stream truncation.
+// Retention is separately capped across stdout/stderr. At most the final
+// in-flight chunk from each stream can be observed beyond the logical limit;
+// those bytes are recorded, discarded, and cause immediate cancellation.
+func (b *observationBudget) capture(observed, streamRemaining int) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.bytes += observed
+	if b.exhausted {
+		return 0, errObservationLimit
+	}
+	if err := b.ctx.Err(); err != nil {
+		return 0, err
+	}
+	allowed := min(observed, streamRemaining, maxObservationBytes-b.retained)
+	b.retained += allowed
+	if allowed < observed {
+		b.exhausted = true
+		return allowed, errObservationLimit
+	}
+	return allowed, nil
+}
+func (b *observationBudget) beforeDispatch() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.exhausted || b.bytes >= maxObservationBytes {
 		return errObservationLimit
 	}
 	return b.ctx.Err()
@@ -55,7 +91,7 @@ func (b *observationBudget) restart() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.restarts++
-	if b.restarts > 2 || b.bytes > maxObservationBytes || b.items > maxObservationItems {
+	if b.exhausted || b.restarts > 2 || b.bytes >= maxObservationBytes {
 		return errObservationLimit
 	}
 	return b.ctx.Err()
@@ -74,18 +110,30 @@ type limitCapture struct {
 	limit, total int
 	cancel       context.CancelFunc
 	overflow     bool
+	budget       *observationBudget
 }
 
 func (w *limitCapture) Write(p []byte) (int, error) {
 	w.total += len(p)
+	size := len(p)
 	remaining := w.limit - w.buffer.Len()
-	if len(p) > remaining {
-		_, _ = w.buffer.Write(p[:remaining])
+	var err error
+	if size > remaining {
+		size = remaining
+		err = errOutputLimit
+	}
+	if w.budget != nil {
+		var budgetErr error
+		size, budgetErr = w.budget.capture(len(p), size)
+		err = errors.Join(err, budgetErr)
+	}
+	_, _ = w.buffer.Write(p[:size])
+	if err != nil {
 		w.overflow = true
 		w.cancel()
-		return len(p), errOutputLimit
+		return size, err
 	}
-	return w.buffer.Write(p)
+	return size, nil
 }
 
 // Fixed ambient policy: no caller-supplied Git alternate repository, credentials,
@@ -94,6 +142,9 @@ func processEnvironment() []string {
 	return []string{"PATH=/usr/bin:/bin", "HOME=/nonexistent", "LC_ALL=C", "LANG=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0"}
 }
 func runProcess(parent context.Context, executable, workspace string, args []string, input []byte) processResult {
+	return runProcessBudget(parent, executable, workspace, args, input, nil)
+}
+func runProcessBudget(parent context.Context, executable, workspace string, args []string, input []byte, budget *observationBudget) processResult {
 	result := processResult{exitCode: -1, start: time.Now()}
 	if parent == nil {
 		result.err = errors.New("context is missing")
@@ -122,8 +173,8 @@ func runProcess(parent context.Context, executable, workspace string, args []str
 	}
 	cmd.Cancel = kill
 	cmd.WaitDelay = 250 * time.Millisecond
-	stdout := &limitCapture{limit: maxStdoutBytes, cancel: cancel}
-	stderr := &limitCapture{limit: maxStderrBytes, cancel: cancel}
+	stdout := &limitCapture{limit: maxStdoutBytes, cancel: cancel, budget: budget}
+	stderr := &limitCapture{limit: maxStderrBytes, cancel: cancel, budget: budget}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {

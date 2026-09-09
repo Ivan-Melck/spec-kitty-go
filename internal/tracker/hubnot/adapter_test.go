@@ -271,3 +271,67 @@ func TestQueryGrammarAndNativeMutationBoundaries(t *testing.T) {
 		t.Fatal("escaped native payload exceeds signed bound")
 	}
 }
+
+func TestAdapterLogicalCaptureStopsAtRemainingByte(t *testing.T) {
+	b := testBound(t, testChild(t))
+	scenario(t, b, strings.Repeat("x", 1<<20), 0)
+	budget := newObservationBudget()
+	defer budget.close()
+	if err := budget.charge(maxObservationBytes-1, 0); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	_, err := b.execute(context.Background(), budget, command{argv: []string{"issue", "list", "--json", "--details"}, schema: issueSchema})
+	if err == nil {
+		t.Fatal("logical overflow accepted")
+	}
+	if budget.retained > maxObservationBytes {
+		t.Fatalf("retained cumulative bytes exceeded cap by %d", budget.retained-maxObservationBytes)
+	}
+	if budget.bytes <= maxObservationBytes || budget.bytes > maxObservationBytes+(64<<10) {
+		t.Fatalf("observed pipe overage missing or unbounded: %d", budget.bytes-maxObservationBytes)
+	}
+	if time.Since(started) > 3*time.Second {
+		t.Fatal("logical overflow did not cancel promptly")
+	}
+}
+func TestAdapterOriginalOperationRejectsForbiddenNullFields(t *testing.T) {
+	child := testChild(t)
+	for _, intent := range []string{"comment", "open", "revise", "resolve", "close", "reopen"} {
+		t.Run(intent, func(t *testing.T) {
+			b := testBound(t, child)
+			budget := newObservationBudget()
+			defer budget.close()
+			s := state()
+			body := "exact comment"
+			op := issueOperation{IssueID: testID, EventID: testID, Actor: b.config.ExpectedActor, Operation: "key", Intent: intent, Timestamp: "2026-09-09T00:00:00Z", Parents: []string{}, Request: testID}
+			forbidden := "body"
+			switch intent {
+			case "comment":
+				op.Kind = "issue.comment"
+				op.Body = &body
+				forbidden = "state"
+			case "open":
+				op.Kind = "issue.open"
+				op.State = &s
+			default:
+				op.Kind = "issue.revise"
+				op.State = &s
+				op.Parents = []string{testID}
+				if intent == "resolve" {
+					op.Parents = append(op.Parents, testSnapshot)
+				}
+			}
+			raw := success(op, testSnapshot)
+			scenario(t, b, raw, 0)
+			if _, _, err := b.lookupOperation(context.Background(), budget, "key"); err != nil {
+				t.Fatal("valid original operation rejected", err)
+			}
+			raw = strings.Replace(raw, `"data":{`, `"data":{"`+forbidden+`":null,`, 1)
+			scenario(t, b, raw, 0)
+			if _, _, err := b.lookupOperation(context.Background(), budget, "key"); err == nil {
+				t.Fatal("forbidden null field accepted")
+			}
+		})
+	}
+}

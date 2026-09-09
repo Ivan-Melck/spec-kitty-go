@@ -34,8 +34,11 @@ func decodeEnvelope(raw []byte, schema string, exit int) (envelope, error) {
 	if result.Schema != schema || result.OK == nil {
 		return result, errors.New("schema or outcome missing")
 	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	_, errorPresent := fields["error"]
 	if *result.OK {
-		if exit != 0 || result.Error != nil || len(result.Data) == 0 || bytes.Equal(bytes.TrimSpace(result.Data), []byte("null")) {
+		if exit != 0 || errorPresent || len(result.Data) == 0 || bytes.Equal(bytes.TrimSpace(result.Data), []byte("null")) {
 			return result, errors.New("contradictory success")
 		}
 	} else {

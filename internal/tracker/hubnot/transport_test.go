@@ -59,3 +59,27 @@ func TestTransportUnstarted(t *testing.T) {
 		t.Fatal("canceled child started")
 	}
 }
+
+func TestTransportStreamsShareLogicalCaptureLimit(t *testing.T) {
+	budget := newObservationBudget()
+	defer budget.close()
+	if err := budget.charge(maxObservationBytes-5, 0); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stdout := &limitCapture{limit: maxStdoutBytes, cancel: cancel, budget: budget}
+	stderr := &limitCapture{limit: maxStderrBytes, cancel: cancel, budget: budget}
+	if _, err := stdout.Write([]byte("four")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stderr.Write([]byte("more")); err == nil {
+		t.Fatal("stderr retained beyond shared remaining budget")
+	}
+	if stdout.buffer.Len()+stderr.buffer.Len() != 5 || budget.retained != maxObservationBytes || budget.bytes != maxObservationBytes+3 || ctx.Err() == nil {
+		t.Fatal("capture budget or cancellation not shared")
+	}
+	if _, err := stdout.Write([]byte("later")); err == nil || stdout.buffer.Len() != 4 {
+		t.Fatal("exhausted stream resumed capture")
+	}
+}
