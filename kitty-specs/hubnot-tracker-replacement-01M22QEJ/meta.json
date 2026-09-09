@@ -12,5 +12,7 @@
   "purpose_tldr": "Replace the active Beads work provider with qualified Hubnot integration.",
   "slug": "hubnot-tracker-replacement-01M22QEJ",
   "target_branch": "feat/hubnot-tracker-replacement",
-  "topology": "lanes"
+  "topology": "lanes",
+  "vcs": "git",
+  "vcs_locked_at": "2026-09-09T10:01:18.852252+00:00"
 }
