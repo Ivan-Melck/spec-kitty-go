@@ -3,11 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"github.com/spec-kitty/go-kitty3/internal/tracker/hubnot"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -48,7 +48,7 @@ func TestInstallerQualifiedBuildAndDestinationPreservation(t *testing.T) {
 		t.Skip("explicit local Hubnot Git source required")
 	}
 	root := t.TempDir()
-	source := filepath.Join(root, "source")
+	source := filepath.Join(root, "accepted source with spaces")
 	git := func(dir string, args ...string) {
 		t.Helper()
 		c := exec.Command("/usr/bin/git", args...)
@@ -60,12 +60,28 @@ func TestInstallerQualifiedBuildAndDestinationPreservation(t *testing.T) {
 	}
 	git(root, "clone", "--quiet", "--no-checkout", origin, source)
 	git(source, "checkout", "--quiet", "--detach", hubnot.QualifiedProviderIdentity().SourceCommit)
-	options := installOptions{Source: source, Destination: filepath.Join(root, "hn"), GoBinary: filepath.Join(runtime.GOROOT(), "bin", "go")}
+	options := installOptions{Source: source, Destination: filepath.Join(root, "hn"), GoBinary: qualificationTestGo(t)}
 	t.Setenv("GOFLAGS", "-this-ambient-setting-must-not-apply")
 	t.Setenv("GOWORK", "/missing/ambient/work")
+	t.Setenv("GOEXPERIMENT", "invalid-ambient-experiment")
+	t.Setenv("GOTOOLCHAIN", "invalid-ambient-toolchain")
+	t.Setenv("GOROOT", "/missing/ambient/goroot")
+	t.Setenv("GOPROXY", "https://invalid.example")
+	poison := filepath.Join(root, "poison")
+	if err := os.Mkdir(poison, 0700); err != nil {
+		t.Fatal(err)
+	}
+	gitMarker := filepath.Join(root, "ambient-git-executed")
+	if err := os.WriteFile(filepath.Join(poison, "git"), []byte("#!/bin/sh\nprintf invoked > '"+gitMarker+"'\nexit 91\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", poison)
 	receipt, err := installProvider(context.Background(), options)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(gitMarker); !os.IsNotExist(err) {
+		t.Fatal("ambient Git executed for valid source")
 	}
 	if receipt.AlreadyInstalled || receipt.Binary.SHA256 != hubnot.QualifiedProviderIdentity().BinarySHA256 || len(receipt.Argv) == 0 {
 		t.Fatal("exact accepted recipe not executed")
@@ -144,32 +160,6 @@ exit 1
 		t.Fatal("wrong source created destination")
 	}
 }
-func TestInstallerBootstrapControlsAmbientSettings(t *testing.T) {
-	root, err := filepath.Abs("../../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	temp := t.TempDir()
-	poison := filepath.Join(temp, "bin")
-	if err = os.Mkdir(poison, 0700); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"go", "dirname"} {
-		if err = os.WriteFile(filepath.Join(poison, name), []byte("#!/bin/sh\necho ambient-helper-was-used >&2\nexit 77\n"), 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	destination := filepath.Join(temp, "hn")
-	c := exec.Command("/bin/sh", filepath.Join(root, "scripts/install-qualified-hubnot.sh"), "--go-bin", filepath.Join(runtime.GOROOT(), "bin", "go"), "--source", filepath.Join(temp, "missing"), "--destination", destination)
-	c.Env = append(os.Environ(), "PATH="+poison, "GOFLAGS=-ambient-invalid", "GOWORK=/missing/work", "GOEXPERIMENT=invalid-experiment", "GOTOOLCHAIN=missing")
-	out, err := c.CombinedOutput()
-	if err == nil || strings.Contains(string(out), "ambient-helper-was-used") || strings.Contains(string(out), "ambient-invalid") || !strings.Contains(string(out), "exact accepted commit") {
-		t.Fatalf("bootstrap environment: %v %s", err, out)
-	}
-	if _, err = os.Lstat(destination); !os.IsNotExist(err) {
-		t.Fatal("invalid source bootstrap wrote destination")
-	}
-}
 func TestInstallerToolOverflowCancelsPromptlyAndArtifactRejectsFIFO(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -201,6 +191,86 @@ func TestInstallerWrongToolchainAndTargetRefuseWithoutWrite(t *testing.T) {
 			}
 			if _, err := os.Lstat(destination); !os.IsNotExist(err) {
 				t.Fatal("toolchain refusal changed destination")
+			}
+		})
+	}
+}
+
+func qualificationTestGo(t *testing.T) string {
+	t.Helper()
+	compiler := os.Getenv("GO_KITTY_TEST_GO_BINARY")
+	if compiler == "" {
+		var err error
+		compiler, err = exec.LookPath("go")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	compiler, err := filepath.Abs(compiler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, err = filepath.EvalSymlinks(compiler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compiler
+}
+
+func TestInstallerAmbientGitCannotAdmitUntrackedSource(t *testing.T) {
+	hn := os.Getenv("GO_KITTY_TEST_HUBNOT_BINARY")
+	if hn == "" {
+		t.Skip("explicit admitted binary required for existing-destination adversary")
+	}
+	admitted, err := os.ReadFile(hn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprint(existing), func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "not-a-git-source")
+			poison := filepath.Join(root, "poison")
+			for _, dir := range []string{source, poison} {
+				if err := os.Mkdir(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			gitMarker := filepath.Join(root, "git-executed")
+			buildMarker := filepath.Join(root, "build-executed")
+			stub := fmt.Sprintf("#!/bin/sh\nprintf invoked > '%s'\ncase \"$*\" in\n 'rev-parse --show-toplevel') printf '%%s\\n' \"$PWD\";;\n 'rev-parse HEAD') printf '%%s\\n' '%s';;\n 'rev-parse HEAD^{tree}') printf '%%s\\n' '61c2f2e87f7828e71e82bc422f98c172e17539c9';;\n 'status --porcelain=v1 --untracked-files=all') exit 0;;\n *) exit 94;;\nesac\n", gitMarker, hubnot.QualifiedProviderIdentity().SourceCommit)
+			if err := os.WriteFile(filepath.Join(poison, "git"), []byte(stub), 0700); err != nil {
+				t.Fatal(err)
+			}
+			compiler := filepath.Join(root, "compiler-spy")
+			spy := "#!/bin/sh\nif test \"$1\" = version; then echo 'go version go1.26.7 linux/amd64'; exit 0; fi\nprintf build > '" + buildMarker + "'\nexit 93\n"
+			if err := os.WriteFile(compiler, []byte(spy), 0700); err != nil {
+				t.Fatal(err)
+			}
+			destination := filepath.Join(root, "hn")
+			if existing {
+				if err := os.WriteFile(destination, admitted, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("PATH", poison)
+			var stdout, stderr bytes.Buffer
+			code := commandMain([]string{"install", "--source", source, "--destination", destination, "--go-bin", compiler}, &stdout, &stderr)
+			if code == 0 {
+				t.Fatalf("forged source admitted: %s", stdout.String())
+			}
+			for _, marker := range []string{gitMarker, buildMarker} {
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Errorf("untrusted source reached external effect %s", marker)
+				}
+			}
+			if existing {
+				after, err := os.ReadFile(destination)
+				if err != nil || !bytes.Equal(after, admitted) {
+					t.Fatal("existing binary changed")
+				}
+			} else if _, err := os.Stat(destination); !os.IsNotExist(err) {
+				t.Fatal("absent destination created")
 			}
 		})
 	}

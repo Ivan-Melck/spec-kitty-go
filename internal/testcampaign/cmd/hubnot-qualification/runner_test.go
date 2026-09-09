@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -46,7 +45,7 @@ func buildQualifierTest(t *testing.T) string {
 		t.Fatal(err)
 	}
 	target := filepath.Join(t.TempDir(), "qualifier")
-	c := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-trimpath", "-buildvcs=false", "-mod=readonly", "-ldflags=-s -w", "-o", target, testcampaign.HubnotQualificationPackage)
+	c := exec.Command(qualificationTestGo(t), "build", "-trimpath", "-buildvcs=false", "-mod=readonly", "-ldflags=-s -w", "-o", target, testcampaign.HubnotQualificationPackage)
 	c.Dir = root
 	c.Env = buildEnvironment()
 	if out, err := c.CombinedOutput(); err != nil {
@@ -62,13 +61,21 @@ func TestNormalQualifierIsolatesWorkerAndPreservesMissingPrerequisite(t *testing
 	binary := buildQualifierTest(t)
 	evidence := filepath.Join(t.TempDir(), "attempt")
 	c := exec.Command(binary, "--scope", "identity-smoke", "--repository", "/missing/qualified-source", "--evidence-dir", evidence, "--timeout", "30s")
-	c.Env = buildEnvironment()
+	poison := t.TempDir()
+	marker := filepath.Join(poison, "ambient-launcher-executed")
+	if err := os.WriteFile(filepath.Join(poison, "unshare"), []byte("#!/bin/sh\nprintf invoked > '"+marker+"'\nexit 92\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c.Env = append(buildEnvironment(), "PATH="+poison)
 	if err := c.Run(); err == nil {
 		t.Fatal("missing prerequisite admitted")
 	}
 	raw, err := os.ReadFile(filepath.Join(evidence, "qualification.json"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("ambient launcher executed")
 	}
 	var e testcampaign.HubnotEvidence
 	if err = json.Unmarshal(raw, &e); err != nil {

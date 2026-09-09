@@ -148,7 +148,7 @@ func emptyEvidence(o qualificationOptions) testcampaign.HubnotEvidence {
 }
 func currentIsolation() (string, []string, error) {
 	if runtime.GOOS != "linux" {
-		return "", nil, errors.New("Linux network namespaces required")
+		return "", nil, errors.New("network namespaces on Linux required")
 	}
 	ns, err := os.Readlink("/proc/self/ns/net")
 	if err != nil {
@@ -193,15 +193,7 @@ func superviseQualification(ctx context.Context, o qualificationOptions) (e test
 	if err != nil {
 		return e, err
 	}
-	launcher, err := exec.LookPath("unshare")
-	if err != nil {
-		return e, err
-	}
-	launcher, err = filepath.EvalSymlinks(launcher)
-	if err != nil {
-		return e, err
-	}
-	launcher, err = filepath.Abs(launcher)
+	launcher, err := systemTool("unshare")
 	if err != nil {
 		return e, err
 	}

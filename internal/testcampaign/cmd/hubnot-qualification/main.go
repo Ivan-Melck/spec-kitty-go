@@ -72,8 +72,25 @@ func commandMain(args []string, stdout, stderr io.Writer) int {
 	return qualificationMain(ctx, args, stdout, stderr)
 }
 
+const systemToolPath = "/usr/bin:/bin"
+
+// Resolve parent-side tools under the same fixed policy as their children.
+// Setting Cmd.Env cannot constrain exec.Command's earlier PATH lookup.
+func systemTool(name string) (string, error) {
+	if name != "git" && name != "unshare" {
+		return "", errors.New("unsupported system tool")
+	}
+	for _, dir := range filepath.SplitList(systemToolPath) {
+		path, err := filepath.EvalSymlinks(filepath.Join(dir, name))
+		if err == nil && canonicalRegular(path, true) == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("required system tool %s unavailable in %s", name, systemToolPath)
+}
+
 func buildEnvironment() []string {
-	return []string{"PATH=/usr/bin:/bin", "HOME=" + os.Getenv("HOME"), "LANG=C.UTF-8", "GOENV=off", "GOWORK=off", "GOFLAGS=", "GOEXPERIMENT=", "GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off", "GOOS=linux", "GOARCH=amd64", "GOAMD64=v1", "CGO_ENABLED=0"}
+	return []string{"PATH=" + systemToolPath, "HOME=" + os.Getenv("HOME"), "LANG=C.UTF-8", "GOENV=off", "GOWORK=off", "GOFLAGS=", "GOEXPERIMENT=", "GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off", "GOOS=linux", "GOARCH=amd64", "GOAMD64=v1", "CGO_ENABLED=0"}
 }
 func canonicalRegular(path string, executable bool) error {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
@@ -148,11 +165,7 @@ func gitIdentity(ctx context.Context, source string) (string, string, error) {
 	if err != nil || resolved != source {
 		return "", "", errors.New("source path must be canonical")
 	}
-	git, err := exec.LookPath("git")
-	if err != nil {
-		return "", "", err
-	}
-	git, err = filepath.Abs(git)
+	git, err := systemTool("git")
 	if err != nil {
 		return "", "", err
 	}
@@ -185,7 +198,7 @@ func verifyGo(ctx context.Context, path string) error {
 	out, err := toolOutput(ctx, "", buildEnvironment(), path, "version")
 	want := "go version " + hubnot.QualifiedProviderIdentity().Toolchain + " linux/amd64"
 	if err != nil || strings.TrimSpace(string(out)) != want {
-		return errors.New("Go toolchain is not the qualified version/host")
+		return errors.New("toolchain is not the qualified Go version/host")
 	}
 	return nil
 }

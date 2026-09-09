@@ -531,7 +531,7 @@ func validateHubnotRow(source HubnotSource, r HubnotScenarioResult) error {
 			}
 			var git int
 			if json.Unmarshal(r.Measurements["git_processes"], &git) != nil || git < 125 {
-				return fmt.Errorf("Git process census missing")
+				return fmt.Errorf("git process census missing")
 			}
 		}
 	}
