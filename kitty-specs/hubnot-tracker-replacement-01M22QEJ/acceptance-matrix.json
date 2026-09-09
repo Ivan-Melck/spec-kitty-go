@@ -108,10 +108,10 @@
       "criterion_id": "FR-011",
       "description": "Replace active Beads adapter/reachability, installer, consumer, current docs and qualification/campaign/CI wiring with Hubnot. Keep frozen receipts/history. Legacy bindings refuse; no fallback or dual-write.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "Qualified source e9b1ac659dcb40fe62ac6c991f26ed9fed9e544e; independent review /home/lynn/projects/go-kitty3/kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP10-integrated-public-acceptance/review-report-1.md, criterion FR-011; final scenarios cutover.active-successor, binding.refusals; receipt /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-qualification/e9b1ac65/full-local/qualification.json; gate audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-gate-evidence-review.md; full evidence audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-full-local-evidence-review.md",
+      "pass_fail": "pass",
+      "verified_by": "codex-architect-acceptance",
+      "verified_at": "2026-09-09T21:33:50.491217+00:00",
       "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
