@@ -96,4 +96,3 @@ Independent review per package; failures return to owner. Final complete quality
 ## Complexity Tracking
 
 No charter exception. Small upstream changes avoid signer races, lost-response corruption and per-issue inventory process expansion. Global CAS emulation, direct adapter Git mutation, second persistent store and general migration were rejected as unnecessary or semantically unsound.
-
