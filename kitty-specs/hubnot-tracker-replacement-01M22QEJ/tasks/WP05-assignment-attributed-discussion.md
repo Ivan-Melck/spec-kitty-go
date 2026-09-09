@@ -21,12 +21,16 @@ history: []
 agent_profile: implementer-ivan
 authoritative_surface: internal
 create_intent:
+- internal/tracker/discussion_observation.go
+- internal/tracker/discussion_observation_test.go
 - internal/tracker/hubnot/assignment.go
 - internal/tracker/hubnot/assignment_test.go
 - internal/tracker/hubnot/discussion.go
 - internal/tracker/hubnot/discussion_test.go
 execution_mode: code_change
 owned_files:
+- internal/tracker/discussion_observation.go
+- internal/tracker/discussion_observation_test.go
 - internal/tracker/hubnot/assignment.go
 - internal/tracker/hubnot/assignment_test.go
 - internal/tracker/hubnot/discussion.go
@@ -70,6 +74,16 @@ comment key must derive its attribution key without recovering the portable ID f
 Author is semantic payload, never action-key material. Validate global actor/key
 uniqueness and all signed child relationships; preserve surviving attribution if
 comment publication fails. Do not wrap or rewrite the native comment body.
+
+Add a small neutral attributed-discussion port/value surface in the two declared
+discussion_observation files. Immutable entries retain the existing DiscussionEntry,
+actual SigningActor, and full signed/common observation proof. Include both richer
+append results and coherent discussion observation; the compiled consumer uses this
+port. Legacy AppendDiscussion/ListDiscussion project from the same implementation.
+Do not obtain a richer append result by a new current read after publication: original
+replay remains historical even if current state is unreadable. Keep Author and
+OperationMarker meanings unchanged; signer is transport provenance, not authority.
+No existing neutral capability file or port is modified.
 
 Atomic claim and conditional compensation refuse before mutation. Multiple native
 assignees are ambiguous. Neither an actor key nor comment body grants host identity,

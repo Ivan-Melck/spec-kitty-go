@@ -11,3 +11,5 @@ Opaque metadata uses optional provider_metadata_json, a JSON-text string in requ
 Versioned result: action, typed outcome, bounded diagnostic, portable result and observation proof. Preserve replay/applied/prior-mutation/ambiguous distinctions, existing exit meanings and JSON/text ergonomics. Native refs/signers may be provenance only.
 
 Every successful command calls real adapter through neutral ports. Reachability tests kill removal of actual connection. HostFactory test fails if touched for tracker actions; old mission tests retain original path. Missing executable, wrong tuple and legacy binding produce actionable refusal without fallback. No automatic init, real project sync/publish or rebinding.
+
+Discussion DTOs use the neutral attributed-discussion port for both append and observation. Expose signing_actor separately from author and operation_marker, retain complete proof via accessors, and preserve historical replay results without a post-append current read. Signing actor is transport provenance, never independent accountable identity or execution/review permission.

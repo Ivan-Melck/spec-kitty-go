@@ -74,7 +74,7 @@ kitty-specs/hubnot-tracker-replacement-01M22QEJ/
 | IC-02 Lossless reads | codec/observation/revision/mapping, neutral inventory port | FR-002/004/005/006/007/009, NFR-001/002/004 | IC-01; reject mixed snapshots and contradictory mappings; no N per-issue history inventory |
 | IC-03 Original operations and definitions | operation/catalog/definition, shared relation primitive | FR-003/004/008, NFR-004, C-002 | IC-02; replay original semantics, accurately report partial saga facts |
 | IC-04 Graph | graph portable API | FR-005/008/009, C-001/002 | IC-03; correct direction, cycles/missing/conflicts never become permission |
-| IC-05 Assignment/discussion | corresponding portable APIs | FR-006/007/008, NFR-004, C-001/002 | IC-03; signer and accountable author distinct, unsupported conditional effects refuse |
+| IC-05 Assignment/discussion | corresponding portable APIs, new neutral attributed-discussion values/port | FR-006/007/008, NFR-004, C-001/002 | IC-03; signer and accountable author distinct, unsupported conditional effects refuse |
 | IC-06 Native consumer | aggregate inspect/capabilities, helpercmd provider dispatch, reachability | FR-001/010/011, C-001/005 | IC-03/04/05; no control-host startup or M2 composition changes |
 | IC-07 Qualification | installer, real runner, evidence/reference schema | FR-012/013/014, NFR-001/003, C-003 | IC-06 and accepted source; no omitted scenario admitted |
 | IC-08 Ignore scanner | absence scanner/mutants/exact census and closed M2 receipt admission | NFR-005, C-004 | Independent; inert patterns are not hidden-file exemptions |
@@ -96,3 +96,7 @@ Independent review per package; failures return to owner. Final complete quality
 ## Complexity Tracking
 
 No charter exception. Small upstream changes avoid signer races, lost-response corruption and per-issue inventory process expansion. Global CAS emulation, direct adapter Git mutation, second persistent store and general migration were rejected as unnecessary or semantically unsound.
+
+### Attributed discussion results
+
+WP05 owns new internal/tracker/discussion_observation.go and its tests. A small immutable attributed-discussion port retains each existing portable entry, actual transport signer and complete signed/common proof, with both richer append results and coherent observation. Existing Discussion remains a compatibility projection over the same implementation. WP06 consumes the richer neutral port so original append/replay results expose both author and signer without a fresh current read or provider-proof parsing. Existing capability files remain unchanged; ownership stays disjoint and the original lane DAG is preserved.

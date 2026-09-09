@@ -130,6 +130,8 @@ work_packages:
   dependencies:
   - WP03
   owned_files:
+  - internal/tracker/discussion_observation.go
+  - internal/tracker/discussion_observation_test.go
   - internal/tracker/hubnot/assignment.go
   - internal/tracker/hubnot/assignment_test.go
   - internal/tracker/hubnot/discussion.go
