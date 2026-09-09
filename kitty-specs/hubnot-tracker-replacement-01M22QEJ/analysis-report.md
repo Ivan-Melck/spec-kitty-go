@@ -4,7 +4,7 @@ artifact_type: spec-kitty.analysis-report
 command: /spec-kitty.analyze
 mission_slug: hubnot-tracker-replacement-01M22QEJ
 mission_id: 01M22QEJPAAQJM91R01MCBR8QV
-generated_at: '2026-09-09T10:16:40.070297+00:00'
+generated_at: '2026-09-09T12:04:25.491511+00:00'
 analyzer_agent: codex
 input_artifacts:
   spec.md:
@@ -22,16 +22,16 @@ input_artifacts:
 verdict: ready
 issue_counts:
   high: 0
-  critical: 0
-  medium: 0
   low: 0
+  medium: 0
+  critical: 0
   info: 0
 findings: []
 ---
 
 # Specification Analysis Report
 
-Reviewed final spec/plan/contracts/data model and finalized tasks after independent spec/plan review. No unresolved cross-artifact blocker. The external upstream acceptance requirement is explicitly sequenced before WP01 and final qualification; independent WP08 can proceed now. This report does not assert upstream acceptance.
+Reviewed final spec/plan/contracts/data model and finalized tasks after independent spec/plan review. No unresolved cross-artifact blocker. The upstream prerequisite is accepted, independently reviewed and pinned; WP01, WP02 and WP08 are approved with source-bound evidence. Remaining packages and integrated qualification are still required.
 
 ## Coverage Summary
 
@@ -81,4 +81,10 @@ Architecture 001, fidelity 010, locality 024, efficient tools 028 and validation
 
 ## WP08 integration amendment review
 
-The complete quality gate found a real coupling between the new scanner census and hardcoded nested M2 receipt admission. WP08 now explicitly owns internal/testcampaign/m2/absence.go and evidence_test.go in addition to the original three files. Exact historical489/current505 contract hash/count pairs preserve old bytes and constrain current generation; arbitrary input-derived count admission is forbidden. Required tests cover both admitted contracts and unknown/reduced/duplicate/forged cases. This implements NFR-005/NFR-003/C-004 without new authority, adoption, schema or source scope outside the named boundary. Canonical task finalization passed with unchanged DAG and no ownership warnings. No additional cross-artifact blocker.
+The complete quality gate found a real coupling between the new scanner census and hardcoded nested M2 receipt admission. WP08 now explicitly owns internal/testcampaign/m2/absence.go and evidence_test.go in addition to the original three files. Exact historical489/current515 contract hash/count pairs preserve old bytes and constrain current generation; arbitrary input-derived count admission is forbidden. Required tests cover both admitted contracts and unknown/reduced/duplicate/forged cases. This implements NFR-005/NFR-003/C-004 without new authority, adoption, schema or source scope outside the named boundary. Canonical task finalization passed with unchanged DAG and no ownership warnings. No additional cross-artifact blocker.
+
+## Read-model and consumer follow-through
+
+WP02 independent review verified lossless opaque framing, ordered criteria, current graph dependencies, shared retry budgets and source-head attribution. Graph readiness is now explicitly a diagnostic projection of mapped open work without open blockers; closed supplier relations remain definition dependencies. Stable edge IDs identify endpoint/kind tuples, with signed revisions retained separately in proof. Signed first-use state-noop intent preserves operation-key identity; replay requires historical lookup.
+
+The native consumer uses optional provider_metadata_json as JSON text, strictly decoded before the existing neutral constructor. This preserves supported opaque depth and exact numbers without request-envelope nesting narrowing the neutral model. Explicit DTOs expose all private neutral fields and proof bytes through accessors; ordered criteria cannot be verified solely with CanonicalData. These details fit the existing WP03/WP04/WP06 ownership, requirements and acceptance tests; no scope, DAG, guard, adoption or authority change. The earlier unapproved 505-test scanner pair is superseded by the independently approved exact 515-test pair; historical 489 remains admitted.
