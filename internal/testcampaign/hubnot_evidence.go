@@ -427,7 +427,7 @@ func validateHubnotRow(source HubnotSource, r HubnotScenarioResult) error {
 		"integration.authority-boundaries": {"authority"}, "cutover.active-successor": {"active_wiring_sha256"},
 		"cutover.frozen-source": {"historical_paths_compared", "baseline_input_sha256"}, "cutover.local-recovery": {"original_repository", "original_files_compared", "local_baseline_inputs"},
 		"performance.inventory-1000":  {"setup_seconds", "setup_mode", "fixture_counts", "consumer_seconds", "comparison_seconds", "rows", "process_trace", "traced_seconds", "details_processes", "git_processes", "host", "loadavg"},
-		"performance.known-reference": {"consumer_seconds", "host", "loadavg"}, "performance.original-recovery": {"consumer_seconds", "host", "loadavg"}}
+		"performance.known-reference": {"consumer_seconds", "host", "loadavg", "process_trace", "traced_seconds", "exec_counts", "observed_exec_child_pids", "untraced_command", "traced_command"}, "performance.original-recovery": {"consumer_seconds", "host", "loadavg", "process_trace", "traced_seconds", "exec_counts", "observed_exec_child_pids", "untraced_command", "traced_command"}}
 	for _, key := range required[r.Scenario.ID] {
 		v, ok := r.Measurements[key]
 		if !ok || !json.Valid(v) || bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
@@ -494,6 +494,50 @@ func validateHubnotRow(source HubnotSource, r HubnotScenarioResult) error {
 		value, err := stringMeasurement("setup_mode")
 		if err != nil || value != "compiled-single-issue-template-and-public-exact-opening-copy" {
 			return fmt.Errorf("fixture setup mode differs")
+		}
+	}
+	if r.Scenario.ID == "performance.known-reference" || r.Scenario.ID == "performance.original-recovery" {
+		var trace HubnotArtifact
+		var seconds float64
+		var fields map[string]*int
+		counts := map[string]int{}
+		var untracedIndex, tracedIndex int
+		if json.Unmarshal(r.Measurements["process_trace"], &trace) != nil || !validHubnotArtifact(trace) || trace.Bytes == 0 || !slices.Contains(r.Artifacts, trace) {
+			return fmt.Errorf("separate query trace artifact missing")
+		}
+		if json.Unmarshal(r.Measurements["traced_seconds"], &seconds) != nil || seconds <= 0 {
+			return fmt.Errorf("separate query traced timing missing")
+		}
+		if json.Unmarshal(r.Measurements["exec_counts"], &fields) != nil || len(fields) != 5 {
+			return fmt.Errorf("separate query process counts missing")
+		}
+		for _, key := range []string{"consumer", "hubnot", "git", "other", "failed_exec"} {
+			n, ok := fields[key]
+			if !ok || n == nil || *n < 0 {
+				return fmt.Errorf("separate query process count %s invalid", key)
+			}
+			counts[key] = *n
+		}
+		var childPIDs int
+		if json.Unmarshal(r.Measurements["observed_exec_child_pids"], &childPIDs) != nil || childPIDs <= 0 || childPIDs > counts["hubnot"]+counts["git"]+counts["other"] {
+			return fmt.Errorf("observed successful-exec child PID census invalid")
+		}
+		if counts["consumer"] != 1 || counts["hubnot"] == 0 || counts["git"] == 0 {
+			return fmt.Errorf("separate query child census incomplete")
+		}
+		if json.Unmarshal(r.Measurements["untraced_command"], &untracedIndex) != nil || json.Unmarshal(r.Measurements["traced_command"], &tracedIndex) != nil || untracedIndex < 0 || tracedIndex <= untracedIndex || tracedIndex >= len(r.Commands) {
+			return fmt.Errorf("separate query command indices invalid")
+		}
+		u, t := r.Commands[untracedIndex], r.Commands[tracedIndex]
+		action := "definition"
+		if r.Scenario.ID == "performance.original-recovery" {
+			action = "define"
+		}
+		if len(u.Argv) != 11 || u.Argv[0] != source.Consumer.Path || u.Argv[5] != "tracker" || u.Argv[6] != action || u.Stdin == nil || t.Stdin == nil || u.Stdin.SHA256 != t.Stdin.SHA256 || u.Stdin.Bytes != t.Stdin.Bytes || u.Directory != t.Directory || u.Exit != 0 || t.Exit != 0 || t.StartedAt.Before(u.FinishedAt) {
+			return fmt.Errorf("separate query input/action differs")
+		}
+		if len(t.Argv) != 9+len(u.Argv) || filepath.Base(t.Argv[0]) != "strace" || !slices.Equal(t.Argv[1:9], []string{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-o", trace.Path}) || !slices.Equal(t.Argv[9:], u.Argv) {
+			return fmt.Errorf("separate query trace command differs")
 		}
 	}
 	if r.Scenario.Mode == HubnotPartial {

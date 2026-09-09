@@ -65,6 +65,21 @@ func syntheticHubnotEvidence(t *testing.T, scope string) HubnotEvidence {
 		added.Measurements["git_processes"] = json.RawMessage(`625`)
 		added.Measurements["process_trace"], _ = json.Marshal(artifact)
 		added.Artifacts = []HubnotArtifact{artifact}
+		if row.ID == "performance.known-reference" || row.ID == "performance.original-recovery" {
+			action := "definition"
+			if row.ID == "performance.original-recovery" {
+				action = "define"
+			}
+			added.Commands[0].Argv = []string{artifact.Path, "--output", "json", "--control-root", "/external/control", "tracker", action, "--binding", "/external/binding", "--input", "-"}
+			added.Commands[0].Stdin = &artifact
+			traced := added.Commands[0]
+			traced.Argv = append([]string{"/usr/bin/strace", "--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-o", artifact.Path}, added.Commands[0].Argv...)
+			added.Commands = append(added.Commands, traced)
+			added.Measurements["exec_counts"] = json.RawMessage(`{"consumer":1,"hubnot":3,"git":5,"other":0,"failed_exec":0}`)
+			added.Measurements["observed_exec_child_pids"] = json.RawMessage(`8`)
+			added.Measurements["untraced_command"] = json.RawMessage(`0`)
+			added.Measurements["traced_command"] = json.RawMessage(`1`)
+		}
 		var reference struct {
 			Baselines map[string]struct {
 				Hash string `json:"recorded_input_sha256"`
@@ -269,5 +284,69 @@ func TestHubnotArtifactRejectsFIFOAndSymlinkWithoutWaiting(t *testing.T) {
 	e.Source.Consumer.Path = link
 	if VerifyHubnotArtifacts(e) == nil {
 		t.Fatal("symlink artifact admitted")
+	}
+}
+
+func TestHubnotSeparateQueryRequiresProcessEvidence(t *testing.T) {
+	baseline := syntheticHubnotEvidence(t, "full-local")
+	for _, original := range baseline.Results {
+		if original.Scenario.ID != "performance.known-reference" && original.Scenario.ID != "performance.original-recovery" {
+			continue
+		}
+		if err := validateHubnotRow(baseline.Source, original); err != nil {
+			t.Fatal(err)
+		}
+		for _, defect := range []string{"trace-missing", "trace-null", "trace-unlisted", "duration-missing", "duration-type", "counts-missing", "counts-zero", "counts-negative", "counts-extra", "counts-other-null", "counts-failed-null", "command-missing", "command-input", "command-action", "pids-missing", "pids-zero", "pids-exceed-execs"} {
+			t.Run(original.Scenario.ID+"/"+defect, func(t *testing.T) {
+				r := original
+				r.Measurements = make(map[string]json.RawMessage, len(original.Measurements))
+				for key, value := range original.Measurements {
+					r.Measurements[key] = value
+				}
+				r.Commands = append([]HubnotCommand(nil), original.Commands...)
+				switch defect {
+				case "trace-missing":
+					delete(r.Measurements, "process_trace")
+				case "trace-null":
+					r.Measurements["process_trace"] = json.RawMessage(`null`)
+				case "trace-unlisted":
+					r.Artifacts = nil
+				case "duration-missing":
+					delete(r.Measurements, "traced_seconds")
+				case "duration-type":
+					r.Measurements["traced_seconds"] = json.RawMessage(`"1"`)
+				case "counts-missing":
+					delete(r.Measurements, "exec_counts")
+				case "counts-zero":
+					r.Measurements["exec_counts"] = json.RawMessage(`{"consumer":1,"hubnot":0,"git":5,"other":0,"failed_exec":0}`)
+				case "counts-negative":
+					r.Measurements["exec_counts"] = json.RawMessage(`{"consumer":1,"hubnot":3,"git":-1,"other":0,"failed_exec":0}`)
+				case "counts-other-null":
+					r.Measurements["exec_counts"] = json.RawMessage(`{"consumer":1,"hubnot":3,"git":5,"other":null,"failed_exec":0}`)
+				case "counts-failed-null":
+					r.Measurements["exec_counts"] = json.RawMessage(`{"consumer":1,"hubnot":3,"git":5,"other":0,"failed_exec":null}`)
+				case "counts-extra":
+					r.Measurements["exec_counts"] = json.RawMessage(`{"consumer":1,"hubnot":3,"git":5,"other":0,"failed_exec":0,"invented":3}`)
+				case "pids-missing":
+					delete(r.Measurements, "observed_exec_child_pids")
+				case "pids-zero":
+					r.Measurements["observed_exec_child_pids"] = json.RawMessage(`0`)
+				case "pids-exceed-execs":
+					r.Measurements["observed_exec_child_pids"] = json.RawMessage(`99`)
+				case "command-missing":
+					r.Commands = r.Commands[:1]
+				case "command-input":
+					x := *r.Commands[1].Stdin
+					x.SHA256 = strings.Repeat("b", 64)
+					r.Commands[1].Stdin = &x
+				case "command-action":
+					r.Commands[1].Argv = append([]string(nil), r.Commands[1].Argv...)
+					r.Commands[1].Argv[len(r.Commands[1].Argv)-5] = "create"
+				}
+				if validateHubnotRow(baseline.Source, r) == nil {
+					t.Fatal("incomplete separate query process evidence admitted")
+				}
+			})
+		}
 	}
 }
