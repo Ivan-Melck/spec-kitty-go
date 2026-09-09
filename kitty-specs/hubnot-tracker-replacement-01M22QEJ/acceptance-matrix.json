@@ -68,10 +68,10 @@
       "criterion_id": "FR-007",
       "description": "Append/list observably idempotent discussion with full original IDs, exact body/time, accountable author and distinct transport signer. Distinguish native third-party comments from signer-attested author claims; metadata grants no host identity.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "Qualified source e9b1ac659dcb40fe62ac6c991f26ed9fed9e544e; independent review /home/lynn/projects/go-kitty3/kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP10-integrated-public-acceptance/review-report-1.md, criterion FR-007; final scenarios discussion.attribution, discussion.partial-pair; receipt /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-qualification/e9b1ac65/full-local/qualification.json; gate audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-gate-evidence-review.md; full evidence audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-full-local-evidence-review.md",
+      "pass_fail": "pass",
+      "verified_by": "codex-architect-acceptance",
+      "verified_at": "2026-09-09T21:33:31.916046+00:00",
       "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
