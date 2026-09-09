@@ -38,10 +38,10 @@
       "criterion_id": "FR-004",
       "description": "Create/read complete definitions through WorkDefinitionPort, including actual graph facts and accurate PriorMutation during saga recovery. GuardedUpdate=false; UpdateDefinition refuses before writes; existing per-proposal capability checks stay intact.",
       "proof_type": "automated_test",
-      "evidence": null,
-      "pass_fail": "pending",
-      "verified_by": null,
-      "verified_at": null,
+      "evidence": "Qualified source e9b1ac659dcb40fe62ac6c991f26ed9fed9e544e; independent review /home/lynn/projects/go-kitty3/kitty-specs/hubnot-tracker-replacement-01M22QEJ/tasks/WP10-integrated-public-acceptance/review-report-1.md, criterion FR-004; final scenarios work.rich-roundtrip, graph.partial-definition; receipt /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-qualification/e9b1ac65/full-local/qualification.json; gate audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-gate-evidence-review.md; full evidence audit /home/lynn/Documents/Codex/2026-09-09/h/work/go-wp10-review/final-full-local-evidence-review.md",
+      "pass_fail": "pass",
+      "verified_by": "codex-architect-acceptance",
+      "verified_at": "2026-09-09T21:33:18.177129+00:00",
       "notes": "Final integrated source-bound qualification and independent review remain required."
     },
     {
