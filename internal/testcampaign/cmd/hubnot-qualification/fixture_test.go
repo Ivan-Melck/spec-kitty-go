@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,6 +134,10 @@ func TestPublicPerformanceFixtureSmallOracle(t *testing.T) {
 	for _, id := range []string{"performance.known-reference", "performance.original-recovery"} {
 		if err = r.performanceScenario(ctx, id); err != nil {
 			t.Fatal(err)
+		}
+		var affinity map[string]any
+		if json.Unmarshal(r.row.Measurements["trace_affinity"], &affinity) != nil || affinity["mode"] != "diagnostic-only-first-allowed-cpu/1" {
+			t.Fatal("current separate trace lacks affinity mode")
 		}
 		var counts map[string]int
 		if json.Unmarshal(r.row.Measurements["exec_counts"], &counts) != nil || counts["consumer"] != 1 || counts["hubnot"] < 1 || counts["git"] < 1 {
@@ -317,7 +322,7 @@ func TestInventoryTraceRetainsFailureAndFiltersSignalNotices(t *testing.T) {
 		t.Run(outcome, func(t *testing.T) {
 			dir := t.TempDir()
 			child := filepath.Join(dir, "signal-child")
-			script := "#!/usr/bin/python3\nimport os,signal,subprocess,sys,time\nseen=[]\nsignal.signal(signal.SIGUSR1,lambda *_:seen.append(1))\nfor _ in range(20):os.kill(os.getpid(),signal.SIGUSR1)\nsubprocess.run(['/usr/bin/true'],check=True)\nprint(len(seen),flush=True)\n" + map[string]string{"success": "sys.exit(0)", "failure": "sys.exit(7)", "canceled": "time.sleep(30)"}[outcome] + "\n"
+			script := "#!/usr/bin/python3\nimport os,signal,subprocess,sys,time,json\nseen=[]\nsignal.signal(signal.SIGUSR1,lambda *_:seen.append(1))\nfor _ in range(20):os.kill(os.getpid(),signal.SIGUSR1)\nsubprocess.run(['/usr/bin/true'],check=True)\nprint(json.dumps({\"signals\":len(seen),\"cpus\":sorted(os.sched_getaffinity(0))}),flush=True)\n" + map[string]string{"success": "sys.exit(0)", "failure": "sys.exit(7)", "canceled": "time.sleep(30)"}[outcome] + "\n"
 			if err := os.WriteFile(child, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -338,8 +343,13 @@ func TestInventoryTraceRetainsFailureAndFiltersSignalNotices(t *testing.T) {
 			if outcome == "canceled" && !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("original deadline lost: %v", err)
 			}
-			if strings.TrimSpace(string(out)) != "20" {
-				t.Fatalf("signal delivery changed: %q", out)
+			observed, decodeErr := decodeObject(out)
+			var affinity map[string]any
+			if json.Unmarshal(r.row.Measurements["trace_affinity"], &affinity) != nil || affinity["mode"] != "diagnostic-only-first-allowed-cpu/1" {
+				t.Fatal("current affinity metadata missing")
+			}
+			if decodeErr != nil || fmt.Sprint(observed["signals"]) != "20" || len(list(observed["cpus"])) != 1 || fmt.Sprint(list(observed["cpus"])[0]) != fmt.Sprint(affinity["requested_cpu"]) {
+				t.Fatalf("signal delivery or child affinity differs: %q", out)
 			}
 			var index int
 			var seconds float64
@@ -380,5 +390,31 @@ func TestInventoryTraceRetainsFailureAndFiltersSignalNotices(t *testing.T) {
 				t.Fatalf("actual execs lost: %v", found)
 			}
 		})
+	}
+}
+
+func TestTraceAffinityMaskSelection(t *testing.T) {
+	for _, test := range []struct {
+		mask  string
+		first int
+	}{{"0", 0}, {"3-7,11,20-22", 3}, {"9", 9}, {"1024-2147483647", 1024}} {
+		got, err := firstTraceCPU(test.mask)
+		if err != nil || got != test.first {
+			t.Fatalf("%s got%d: %v", test.mask, got, err)
+		}
+	}
+	for _, mask := range []string{"", "0,", "-1", "+1", "01", "2-1", "0-2,2", "4,3", "1--2", "0 1", "2147483648", strings.Repeat("1", 4097)} {
+		if _, err := firstTraceCPU(mask); err == nil {
+			t.Fatalf("invalid parent mask %q admitted", mask)
+		}
+	}
+}
+func TestTraceAffinityMissingTracerRefusesWithoutExecution(t *testing.T) {
+	dir := t.TempDir()
+	r := newScenarioRunner(qualificationOptions{Product: "/usr/bin/true", EvidenceDir: dir})
+	r.row = &testcampaign.HubnotScenarioResult{Measurements: map[string]json.RawMessage{}}
+	_, err := r.traceInventory(context.Background(), &publicFixture{directory: dir}, filepath.Join(dir, "missing-strace"), filepath.Join(dir, "trace"))
+	if err == nil || len(r.row.Commands) != 0 {
+		t.Fatal("missing system tracer did not refuse before child execution")
 	}
 }

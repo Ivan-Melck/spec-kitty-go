@@ -1881,6 +1881,90 @@ func validateUnitCensus(raw []byte, pkg string, tests []string) (testcampaign.Hu
 	return testcampaign.ValidateHubnotUnitOutput(raw, pkg, tests)
 }
 
+// firstTraceCPU validates the kernel CPU-list notation without expanding ranges.
+func firstTraceCPU(mask string) (int, error) {
+	if mask == "" || len(mask) > 4096 {
+		return 0, errors.New("allowed CPU list missing or excessive")
+	}
+	first, previous := -1, -1
+	for _, part := range strings.Split(mask, ",") {
+		bounds := strings.Split(part, "-")
+		if len(bounds) > 2 {
+			return 0, errors.New("invalid CPU range")
+		}
+		values := []int{}
+		for _, bound := range bounds {
+			n, err := strconv.ParseUint(bound, 10, 31)
+			if err != nil || strconv.FormatUint(n, 10) != bound {
+				return 0, errors.New("invalid CPU number")
+			}
+			values = append(values, int(n))
+		}
+		low, high := values[0], values[len(values)-1]
+		if low <= previous || high < low {
+			return 0, errors.New("unordered or overlapping CPU ranges")
+		}
+		if first < 0 {
+			first = low
+		}
+		previous = high
+	}
+	return first, nil
+}
+
+// Only diagnostic census children inherit this affinity. Normal measurements
+// keep their original scheduling and every child keeps the existing deadline.
+func (r *scenarioRunner) traceDiagnostic(ctx context.Context, dir string, input []byte, trace, tracePath string, consumer []string) ([]byte, error) {
+	status, err := os.Open("/proc/self/status")
+	if err != nil {
+		return nil, err
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(status, 65537))
+	closeErr := status.Close()
+	if readErr != nil || closeErr != nil {
+		return nil, errors.Join(readErr, closeErr)
+	}
+	if len(raw) > 65536 {
+		return nil, errors.New("parent status exceeds bound")
+	}
+	mask := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "Cpus_allowed_list:") {
+			if mask != "" {
+				return nil, errors.New("duplicate allowed CPU list")
+			}
+			mask = strings.TrimSpace(strings.TrimPrefix(line, "Cpus_allowed_list:"))
+		}
+	}
+	cpu, err := firstTraceCPU(mask)
+	if err != nil {
+		return nil, err
+	}
+	taskset := ""
+	for _, base := range []string{"/usr/bin", "/bin"} {
+		candidate, e := filepath.EvalSymlinks(filepath.Join(base, "taskset"))
+		if e == nil && canonicalRegular(candidate, true) == nil {
+			taskset = candidate
+			break
+		}
+	}
+	if taskset == "" {
+		return nil, prerequisite("diagnostic census requires system taskset")
+	}
+	if (trace != "/usr/bin/strace" && trace != "/bin/strace") || canonicalRegular(trace, true) != nil {
+		return nil, prerequisite("diagnostic census requires system strace")
+	}
+	tool, err := fileArtifact(taskset)
+	if err != nil {
+		return nil, err
+	}
+	// Scalar identity fields describe an external system executable; they do not
+	// claim its bytes are present in the uploaded evidence archive.
+	r.measure("trace_affinity", object{"mode": "diagnostic-only-first-allowed-cpu/1", "parent_allowed_cpus": mask, "requested_cpu": cpu, "taskset_path": tool.Path, "taskset_sha256": tool.SHA256, "taskset_bytes": tool.Bytes})
+	args := append([]string{"--cpu-list", strconv.Itoa(cpu), trace, "--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", tracePath}, consumer...)
+	return r.command(ctx, dir, input, 0, taskset, args...)
+}
+
 // traceInventory executes the separate diagnostic query on the prepared fixture.
 func (r *scenarioRunner) traceInventory(ctx context.Context, f *publicFixture, trace, tracePath string) ([]byte, error) {
 	file, err := os.OpenFile(tracePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -1893,7 +1977,7 @@ func (r *scenarioRunner) traceInventory(ctx context.Context, f *publicFixture, t
 	tracedIndex := len(r.row.Commands)
 	started := time.Now()
 	// Suppress signal notices only; signal delivery and exec tracing are unchanged.
-	output, commandErr := r.command(ctx, f.directory, nil, 0, trace, "--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", tracePath, r.options.Product, "--output", "json", "tracker", "inventory", "--binding", f.binding)
+	output, commandErr := r.traceDiagnostic(ctx, f.directory, nil, trace, tracePath, []string{r.options.Product, "--output", "json", "tracker", "inventory", "--binding", f.binding})
 	r.measure("traced_seconds", time.Since(started).Seconds())
 	r.measure("traced_command", tracedIndex)
 	a, artifactErr := fileArtifact(tracePath)
@@ -1936,10 +2020,9 @@ func (r *scenarioRunner) traceSeparateQuery(ctx context.Context, id, action stri
 	if err = file.Close(); err != nil {
 		return err
 	}
-	args := append([]string{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", tracePath}, untraced.Argv...)
 	tracedIndex := len(r.row.Commands)
 	started := time.Now()
-	output, commandErr := r.command(ctx, untraced.Directory, input, 0, trace, args...)
+	output, commandErr := r.traceDiagnostic(ctx, untraced.Directory, input, trace, tracePath, untraced.Argv)
 	r.measure("traced_seconds", time.Since(started).Seconds())
 	a, err := fileArtifact(tracePath)
 	if err != nil {

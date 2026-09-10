@@ -234,13 +234,15 @@ func auditSeparateQuery(a *publicAudit, id, action string) (auditObject, auditTr
 		t.Fatal("query indices")
 	}
 	u, c := r.Commands[uIndex], r.Commands[tIndex]
-	if a.action(u) != action || len(c.Argv) != 20 {
+	if a.action(u) != action {
 		t.Fatal("trace query shape")
 	}
 	trace := auditTraceArtifact(t, r)
-	auditEqual(t, c.Argv[1:8], []string{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-o"}, "trace prefix")
-	auditEqual(t, c.Argv[8], trace.Path, "trace path")
-	auditEqual(t, c.Argv[9:], u.Argv, "traced original argv")
+	suffix, err := auditObserverArgs(r, c, trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditEqual(t, suffix, u.Argv, "traced original argv")
 	auditEqual(t, u.Directory, c.Directory, "traced original directory")
 	if u.Stdin == nil || c.Stdin == nil {
 		t.Fatal("query input missing")
@@ -462,23 +464,25 @@ func TestHubnotIntegratedPerformanceEvidence(t *testing.T) {
 	inv := a.result(direct[0], "inventory")
 	auditInventoryFields(a, l, inv)
 	auditQueryTimes(t, r, direct[0])
-	var traced *testcampaign.HubnotCommand
-	for i, c := range r.Commands {
-		if filepath.Base(c.Argv[0]) == "strace" {
-			if traced != nil {
-				t.Fatal("duplicate inventory trace")
-			}
-			traced = &r.Commands[i]
-		}
-	}
-	if traced == nil {
-		t.Fatal("missing inventory trace")
-	}
-	auditEqual(t, auditStableResult(t, a.result(*traced, "inventory"), "inventory"), auditStableResult(t, inv, "inventory"), "traced full inventory")
 	trace := auditTraceArtifact(t, r)
-	if len(traced.Argv) < 10 || traced.Argv[8] != trace.Path {
-		t.Fatal("inventory trace artifact binding")
+	tracedIndex, err := auditInventoryObserverIndex(r, trace)
+	if err != nil {
+		t.Fatal(err)
 	}
+	traced := r.Commands[tracedIndex]
+	suffix, err := auditObserverArgs(r, traced, trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(direct[0].Argv) != 9 {
+		t.Fatal("normal inventory argv differs")
+	}
+	auditEqual(t, suffix, []string{a.evidence.Source.Consumer.Path, "--output", "json", "tracker", "inventory", "--binding", direct[0].Argv[8]}, "inventory trace original binding/argv")
+	auditEqual(t, traced.Directory, direct[0].Directory, "inventory trace original directory")
+	if traced.StartedAt.Before(direct[0].FinishedAt) {
+		t.Fatal("inventory trace precedes untraced completion")
+	}
+	auditEqual(t, auditStableResult(t, a.result(traced, "inventory"), "inventory"), auditStableResult(t, inv, "inventory"), "traced full inventory")
 	counts, e := auditExecTrace(auditArtifact(t, trace), a.evidence.Source.Consumer.Path, a.evidence.Source.ProviderExecutable.Path)
 	if e != nil {
 		t.Fatal(e)
@@ -613,4 +617,250 @@ func auditKnownFacts(t testing.TB, canonical auditObject, w *auditExpectedWork, 
 		want[f] = event[f]
 	}
 	auditEqual(t, comments[0], want, "known exact original comment facts")
+}
+
+// Independently interpret the three closed observer command forms. This oracle
+// does not delegate command or affinity validation to the receipt validator.
+func auditObserverArgs(r testcampaign.HubnotScenarioResult, c testcampaign.HubnotCommand, trace testcampaign.HubnotArtifact) ([]string, error) {
+	argv := c.Argv
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("observer argv missing")
+	}
+	metadata, present := r.Measurements["trace_affinity"]
+	offset := 1
+	if argv[0] == "/usr/bin/taskset" || argv[0] == "/bin/taskset" {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(metadata, &fields) != nil || len(fields) != 6 {
+			return nil, fmt.Errorf("observer affinity object required")
+		}
+		var mode, parent, path, digest string
+		var selected *int
+		var size *int64
+		if json.Unmarshal(fields["mode"], &mode) != nil || mode != "diagnostic-only-first-allowed-cpu/1" || json.Unmarshal(fields["parent_allowed_cpus"], &parent) != nil || json.Unmarshal(fields["requested_cpu"], &selected) != nil || selected == nil || json.Unmarshal(fields["taskset_path"], &path) != nil || path != argv[0] || json.Unmarshal(fields["taskset_sha256"], &digest) != nil || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(digest) || json.Unmarshal(fields["taskset_bytes"], &size) != nil || size == nil || *size <= 0 {
+			return nil, fmt.Errorf("observer affinity identity invalid")
+		}
+		if len(parent) > 4096 || !regexp.MustCompile(`^(0|[1-9][0-9]*)(-(0|[1-9][0-9]*))?(,(0|[1-9][0-9]*)(-(0|[1-9][0-9]*))?)*$`).MatchString(parent) {
+			return nil, fmt.Errorf("observer parent mask invalid")
+		}
+		first, last := -1, -1
+		for _, span := range strings.Split(parent, ",") {
+			pair := strings.Split(span, "-")
+			low, e := strconv.ParseInt(pair[0], 10, 32)
+			if e != nil || low < 0 {
+				return nil, fmt.Errorf("observer CPU invalid")
+			}
+			high := low
+			if len(pair) == 2 {
+				high, e = strconv.ParseInt(pair[1], 10, 32)
+				if e != nil {
+					return nil, fmt.Errorf("observer CPU invalid")
+				}
+			}
+			if low <= int64(last) || high < low {
+				return nil, fmt.Errorf("observer CPU order invalid")
+			}
+			if first < 0 {
+				first = int(low)
+			}
+			last = int(high)
+		}
+		if first != *selected || len(argv) < 15 || argv[1] != "--cpu-list" || argv[2] != strconv.Itoa(first) || (argv[3] != "/usr/bin/strace" && argv[3] != "/bin/strace") {
+			return nil, fmt.Errorf("observer selected CPU or launcher differs")
+		}
+		prefix := []string{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", trace.Path}
+		for i, want := range prefix {
+			if argv[4+i] != want {
+				return nil, fmt.Errorf("affinity observer prefix differs")
+			}
+		}
+		return argv[14:], nil
+	}
+	if present {
+		return nil, fmt.Errorf("historical observer has affinity field")
+	}
+	if argv[0] != "/usr/bin/strace" && argv[0] != "/bin/strace" {
+		return nil, fmt.Errorf("observer launcher unsupported")
+	}
+	for _, prefix := range [][]string{{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-o", trace.Path}, {"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", trace.Path}} {
+		if len(argv) <= offset+len(prefix) {
+			continue
+		}
+		same := true
+		for i, want := range prefix {
+			if argv[offset+i] != want {
+				same = false
+				break
+			}
+		}
+		if same {
+			return argv[offset+len(prefix):], nil
+		}
+	}
+	return nil, fmt.Errorf("historical observer prefix unsupported")
+}
+func auditInventoryObserverIndex(r testcampaign.HubnotScenarioResult, trace testcampaign.HubnotArtifact) (int, error) {
+	if raw, present := r.Measurements["traced_command"]; present {
+		var index *int
+		if json.Unmarshal(raw, &index) != nil || index == nil || *index < 0 || *index >= len(r.Commands) {
+			return 0, fmt.Errorf("observer index invalid")
+		}
+		if _, e := auditObserverArgs(r, r.Commands[*index], trace); e != nil {
+			return 0, e
+		}
+		return *index, nil
+	}
+	if _, present := r.Measurements["trace_affinity"]; present {
+		return 0, fmt.Errorf("current observer index required")
+	}
+	found := -1
+	for i, c := range r.Commands {
+		if len(c.Argv) == 0 {
+			continue
+		}
+		if filepath.Base(c.Argv[0]) == "taskset" {
+			return 0, fmt.Errorf("current observer index required")
+		}
+		if filepath.Base(c.Argv[0]) != "strace" {
+			continue
+		}
+		if found != -1 {
+			return 0, fmt.Errorf("historical observer ambiguous")
+		}
+		if _, e := auditObserverArgs(r, c, trace); e != nil {
+			return 0, e
+		}
+		found = i
+	}
+	if found < 0 {
+		return 0, fmt.Errorf("historical observer absent")
+	}
+	return found, nil
+}
+
+func TestHubnotObserverArgumentBoundaries(t *testing.T) {
+	trace := testcampaign.HubnotArtifact{Path: "/evidence/trace", SHA256: strings.Repeat("a", 64), Bytes: 10}
+	suffix := []string{"/product", "--output", "json", "tracker", "inventory", "--binding", "/binding"}
+	for _, form := range []string{"old", "filtered", "affinity"} {
+		t.Run(form, func(t *testing.T) {
+			prefix := []string{"/usr/bin/strace", "--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve"}
+			if form != "old" {
+				prefix = append(prefix, "-e", "signal=none")
+			}
+			prefix = append(prefix, "-o", trace.Path)
+			row := testcampaign.HubnotScenarioResult{Measurements: map[string]json.RawMessage{}}
+			metadata := map[string]any{"mode": "diagnostic-only-first-allowed-cpu/1", "parent_allowed_cpus": "3-5,8", "requested_cpu": 3, "taskset_path": "/usr/bin/taskset", "taskset_sha256": strings.Repeat("a", 64), "taskset_bytes": 42}
+			if form == "affinity" {
+				prefix = append([]string{"/usr/bin/taskset", "--cpu-list", "3"}, prefix...)
+				row.Measurements["trace_affinity"], _ = json.Marshal(metadata)
+				row.Measurements["traced_command"] = json.RawMessage(`1`)
+			}
+			command := testcampaign.HubnotCommand{Argv: append(prefix, suffix...)}
+			row.Commands = []testcampaign.HubnotCommand{{Argv: []string{"/unrelated"}}, command}
+			got, err := auditObserverArgs(row, command, trace)
+			if err != nil || strings.Join(got, "\x00") != strings.Join(suffix, "\x00") {
+				t.Fatalf("valid %s refused: %v", form, err)
+			}
+			if index, err := auditInventoryObserverIndex(row, trace); err != nil || index != 1 {
+				t.Fatalf("valid observer index refused: %d %v", index, err)
+			}
+			defects := []string{"launcher", "prefix", "affinity-null", "duplicate"}
+			if form == "affinity" {
+				defects = append(defects, "missing", "cpu-null", "cpu-wrong", "mask-overlap", "mask-malformed", "tool", "hash", "size-null", "extra-field", "index-null", "index-wrong", "index-absent")
+			}
+			for _, defect := range defects {
+				t.Run(defect, func(t *testing.T) {
+					changed := row
+					changed.Measurements = map[string]json.RawMessage{}
+					for k, v := range row.Measurements {
+						changed.Measurements[k] = v
+					}
+					changed.Commands = append([]testcampaign.HubnotCommand(nil), row.Commands...)
+					changed.Commands[1].Argv = append([]string(nil), command.Argv...)
+					m := map[string]any{}
+					for k, v := range metadata {
+						m[k] = v
+					}
+					switch defect {
+					case "launcher":
+						changed.Commands[1].Argv[0] = "/usr/bin/env"
+					case "prefix":
+						changed.Commands[1].Argv[1] = "--unexpected"
+					case "affinity-null":
+						changed.Measurements["trace_affinity"] = json.RawMessage(`null`)
+					case "duplicate":
+						changed.Commands = append(changed.Commands, command)
+						delete(changed.Measurements, "traced_command")
+					case "missing":
+						delete(changed.Measurements, "trace_affinity")
+					case "cpu-null":
+						m["requested_cpu"] = nil
+					case "cpu-wrong":
+						m["requested_cpu"] = 4
+					case "mask-overlap":
+						m["parent_allowed_cpus"] = "3-5,4"
+					case "mask-malformed":
+						m["parent_allowed_cpus"] = "03-5"
+					case "tool":
+						m["taskset_path"] = "/bin/taskset"
+					case "hash":
+						m["taskset_sha256"] = "missing"
+					case "size-null":
+						m["taskset_bytes"] = nil
+					case "extra-field":
+						m["observed_child_mask"] = "invented"
+					case "index-null":
+						changed.Measurements["traced_command"] = json.RawMessage(`null`)
+					case "index-wrong":
+						changed.Measurements["traced_command"] = json.RawMessage(`0`)
+					case "index-absent":
+						delete(changed.Measurements, "traced_command")
+					}
+					if strings.HasPrefix(defect, "cpu-") || strings.HasPrefix(defect, "mask-") || defect == "tool" || defect == "hash" || defect == "size-null" || defect == "extra-field" {
+						changed.Measurements["trace_affinity"], _ = json.Marshal(m)
+					}
+					if _, err := auditInventoryObserverIndex(changed, trace); err == nil {
+						t.Fatal("malformed observer/index admitted")
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestHubnotObserverZeroPresence(t *testing.T) {
+	trace := testcampaign.HubnotArtifact{Path: "/trace", SHA256: strings.Repeat("a", 64), Bytes: 1}
+	c := testcampaign.HubnotCommand{Argv: []string{"/usr/bin/taskset", "--cpu-list", "0", "/usr/bin/strace", "--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", "/trace", "/product"}}
+	m := map[string]any{"mode": "diagnostic-only-first-allowed-cpu/1", "parent_allowed_cpus": "0,3-5", "requested_cpu": 0, "taskset_path": "/usr/bin/taskset", "taskset_sha256": strings.Repeat("a", 64), "taskset_bytes": 1}
+	raw, _ := json.Marshal(m)
+	r := testcampaign.HubnotScenarioResult{Commands: []testcampaign.HubnotCommand{c}, Measurements: map[string]json.RawMessage{"trace_affinity": raw, "traced_command": json.RawMessage(`0`)}}
+	if i, e := auditInventoryObserverIndex(r, trace); e != nil || i != 0 {
+		t.Fatalf("actual zero refused: %v", e)
+	}
+	for _, key := range []string{"requested_cpu", "traced_command"} {
+		for _, missing := range []bool{false, true} {
+			changed := r
+			changed.Measurements = map[string]json.RawMessage{"trace_affinity": raw, "traced_command": json.RawMessage(`0`)}
+			if key == "traced_command" {
+				if missing {
+					delete(changed.Measurements, key)
+				} else {
+					changed.Measurements[key] = json.RawMessage(`null`)
+				}
+			} else {
+				values := map[string]any{}
+				for k, v := range m {
+					values[k] = v
+				}
+				if missing {
+					delete(values, key)
+				} else {
+					values[key] = nil
+				}
+				changed.Measurements["trace_affinity"], _ = json.Marshal(values)
+			}
+			if _, e := auditInventoryObserverIndex(changed, trace); e == nil {
+				t.Fatalf("%s missing=%v became zero", key, missing)
+			}
+		}
+	}
 }

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -536,8 +537,37 @@ func validateHubnotRow(source HubnotSource, r HubnotScenarioResult) error {
 		if len(u.Argv) != 11 || u.Argv[0] != source.Consumer.Path || u.Argv[5] != "tracker" || u.Argv[6] != action || u.Stdin == nil || t.Stdin == nil || u.Stdin.SHA256 != t.Stdin.SHA256 || u.Stdin.Bytes != t.Stdin.Bytes || u.Directory != t.Directory || u.Exit != 0 || t.Exit != 0 || t.StartedAt.Before(u.FinishedAt) {
 			return fmt.Errorf("separate query input/action differs")
 		}
-		if len(t.Argv) != 9+len(u.Argv) || filepath.Base(t.Argv[0]) != "strace" || !slices.Equal(t.Argv[1:9], []string{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-o", trace.Path}) || !slices.Equal(t.Argv[9:], u.Argv) {
+		suffix, traceErr := hubnotTraceSuffix(r, t, trace)
+		if traceErr != nil || !slices.Equal(suffix, u.Argv) {
 			return fmt.Errorf("separate query trace command differs")
+		}
+	}
+	if r.Scenario.ID == "performance.inventory-1000" {
+		var trace HubnotArtifact
+		if json.Unmarshal(r.Measurements["process_trace"], &trace) != nil || !validHubnotArtifact(trace) || trace.Bytes <= 0 || !slices.Contains(r.Artifacts, trace) {
+			return fmt.Errorf("inventory trace artifact missing")
+		}
+		index, err := hubnotInventoryTraceIndex(r, trace)
+		if err != nil {
+			return err
+		}
+		traced := r.Commands[index]
+		suffix, err := hubnotTraceSuffix(r, traced, trace)
+		if err != nil {
+			return err
+		}
+		originals := 0
+		for _, c := range r.Commands {
+			if len(c.Argv) == 9 && c.Argv[0] == source.Consumer.Path && slices.Equal(c.Argv[1:3], []string{"--output", "json"}) && c.Argv[3] == "--control-root" && slices.Equal(c.Argv[5:8], []string{"tracker", "inventory", "--binding"}) {
+				originals++
+				expected := []string{source.Consumer.Path, "--output", "json", "tracker", "inventory", "--binding", c.Argv[8]}
+				if !slices.Equal(suffix, expected) || c.Directory != traced.Directory || c.Exit != 0 || traced.Exit != 0 || traced.StartedAt.Before(c.FinishedAt) {
+					return fmt.Errorf("inventory trace query differs")
+				}
+			}
+		}
+		if originals != 1 {
+			return fmt.Errorf("inventory normal query census differs")
 		}
 	}
 	if r.Scenario.Mode == HubnotPartial {
@@ -586,4 +616,113 @@ func validateHubnotRow(source HubnotSource, r HubnotScenarioResult) error {
 		}
 	}
 	return nil
+}
+
+// Trace command forms are closed: the two recorded historical strace layouts,
+// or the current diagnostic-affinity launcher with complete matching metadata.
+func hubnotTraceSuffix(r HubnotScenarioResult, c HubnotCommand, trace HubnotArtifact) ([]string, error) {
+	args := c.Argv
+	raw, present := r.Measurements["trace_affinity"]
+	if len(args) == 0 {
+		return nil, fmt.Errorf("trace argv missing")
+	}
+	if args[0] == "/usr/bin/taskset" || args[0] == "/bin/taskset" {
+		var fields map[string]json.RawMessage
+		if !present || json.Unmarshal(raw, &fields) != nil || len(fields) != 6 {
+			return nil, fmt.Errorf("affinity metadata missing")
+		}
+		var mode, mask, path, digest string
+		var cpu *int
+		var size *int64
+		if json.Unmarshal(fields["mode"], &mode) != nil || mode != "diagnostic-only-first-allowed-cpu/1" || json.Unmarshal(fields["parent_allowed_cpus"], &mask) != nil || json.Unmarshal(fields["requested_cpu"], &cpu) != nil || cpu == nil || json.Unmarshal(fields["taskset_path"], &path) != nil || json.Unmarshal(fields["taskset_sha256"], &digest) != nil || !hexSize(digest, 32) || json.Unmarshal(fields["taskset_bytes"], &size) != nil || size == nil || *size <= 0 || path != args[0] {
+			return nil, fmt.Errorf("affinity fields invalid")
+		}
+		first, err := hubnotFirstCPU(mask)
+		if err != nil || first != *cpu {
+			return nil, fmt.Errorf("requested CPU differs from parent first allowed CPU")
+		}
+		if len(args) < 15 || (args[3] != "/usr/bin/strace" && args[3] != "/bin/strace") || !slices.Equal(args[1:3], []string{"--cpu-list", strconv.Itoa(*cpu)}) || !slices.Equal(args[4:14], []string{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", trace.Path}) {
+			return nil, fmt.Errorf("affinity trace prefix differs")
+		}
+		return args[14:], nil
+	}
+	if present {
+		return nil, fmt.Errorf("legacy trace contains affinity metadata")
+	}
+	if args[0] != "/usr/bin/strace" && args[0] != "/bin/strace" {
+		return nil, fmt.Errorf("unknown trace launcher")
+	}
+	for _, prefix := range [][]string{{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-o", trace.Path}, {"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", trace.Path}} {
+		if len(args) > len(prefix)+1 && slices.Equal(args[1:len(prefix)+1], prefix) {
+			return args[len(prefix)+1:], nil
+		}
+	}
+	return nil, fmt.Errorf("historical trace prefix differs")
+}
+func hubnotFirstCPU(mask string) (int, error) {
+	if len(mask) == 0 || len(mask) > 4096 {
+		return 0, fmt.Errorf("CPU list missing or excessive")
+	}
+	first, previous := -1, -1
+	for _, part := range strings.Split(mask, ",") {
+		ends := strings.Split(part, "-")
+		if len(ends) > 2 {
+			return 0, fmt.Errorf("CPU range malformed")
+		}
+		bounds := []int{}
+		for _, v := range ends {
+			n, e := strconv.ParseUint(v, 10, 31)
+			if e != nil || strconv.FormatUint(n, 10) != v {
+				return 0, fmt.Errorf("CPU integer malformed")
+			}
+			bounds = append(bounds, int(n))
+		}
+		lo, hi := bounds[0], bounds[len(bounds)-1]
+		if lo <= previous || hi < lo {
+			return 0, fmt.Errorf("CPU ranges unordered")
+		}
+		if first < 0 {
+			first = lo
+		}
+		previous = hi
+	}
+	return first, nil
+}
+func hubnotInventoryTraceIndex(r HubnotScenarioResult, trace HubnotArtifact) (int, error) {
+	if raw, exists := r.Measurements["traced_command"]; exists {
+		var index *int
+		if json.Unmarshal(raw, &index) != nil || index == nil || *index < 0 || *index >= len(r.Commands) {
+			return 0, fmt.Errorf("inventory trace index invalid")
+		}
+		if _, err := hubnotTraceSuffix(r, r.Commands[*index], trace); err != nil {
+			return 0, err
+		}
+		return *index, nil
+	}
+	if _, present := r.Measurements["trace_affinity"]; present {
+		return 0, fmt.Errorf("affinity inventory index missing")
+	}
+	found := -1
+	for i, c := range r.Commands {
+		if len(c.Argv) == 0 {
+			continue
+		}
+		if filepath.Base(c.Argv[0]) == "taskset" {
+			return 0, fmt.Errorf("affinity inventory index missing")
+		}
+		if filepath.Base(c.Argv[0]) != "strace" {
+			continue
+		}
+		if found >= 0 {
+			return 0, fmt.Errorf("duplicate historical inventory trace")
+		}
+		if _, err := hubnotTraceSuffix(r, c, trace); err != nil {
+			return 0, err
+		}
+		found = i
+	}
+	if found < 0 {
+		return 0, fmt.Errorf("inventory trace missing")
+	}
+	return found, nil
 }

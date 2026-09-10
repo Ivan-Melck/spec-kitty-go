@@ -65,6 +65,12 @@ func syntheticHubnotEvidence(t *testing.T, scope string) HubnotEvidence {
 		added.Measurements["git_processes"] = json.RawMessage(`625`)
 		added.Measurements["process_trace"], _ = json.Marshal(artifact)
 		added.Artifacts = []HubnotArtifact{artifact}
+		if row.ID == "performance.inventory-1000" {
+			added.Commands[0].Argv = []string{artifact.Path, "--output", "json", "--control-root", "/external/control", "tracker", "inventory", "--binding", "/external/binding"}
+			traced := added.Commands[0]
+			traced.Argv = []string{"/usr/bin/strace", "--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-o", artifact.Path, artifact.Path, "--output", "json", "tracker", "inventory", "--binding", "/external/binding"}
+			added.Commands = append(added.Commands, traced)
+		}
 		if row.ID == "performance.known-reference" || row.ID == "performance.original-recovery" {
 			action := "definition"
 			if row.ID == "performance.original-recovery" {
@@ -347,6 +353,139 @@ func TestHubnotSeparateQueryRequiresProcessEvidence(t *testing.T) {
 					t.Fatal("incomplete separate query process evidence admitted")
 				}
 			})
+		}
+	}
+}
+
+func TestHubnotTraceFormsAndAffinityMutants(t *testing.T) {
+	for _, id := range []string{"performance.inventory-1000", "performance.known-reference", "performance.original-recovery"} {
+		for _, form := range []string{"legacy", "filtered", "affinity"} {
+			t.Run(id+"/"+form, func(t *testing.T) {
+				ev := syntheticHubnotEvidence(t, "full-local")
+				var row HubnotScenarioResult
+				for _, r := range ev.Results {
+					if r.Scenario.ID == id {
+						row = r
+					}
+				}
+				old := row.Commands[1].Argv
+				suffix := append([]string(nil), old[9:]...)
+				if form != "legacy" {
+					row.Commands[1].Argv = append([]string{"/usr/bin/strace", "--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", "/external/artifact"}, suffix...)
+				}
+				metadata := map[string]any{"mode": "diagnostic-only-first-allowed-cpu/1", "parent_allowed_cpus": "9-11,20", "requested_cpu": 9, "taskset_path": "/usr/bin/taskset", "taskset_sha256": strings.Repeat("a", 64), "taskset_bytes": 42}
+				if form == "affinity" {
+					row.Commands[1].Argv = append([]string{"/usr/bin/taskset", "--cpu-list", "9"}, row.Commands[1].Argv...)
+					row.Measurements["trace_affinity"], _ = json.Marshal(metadata)
+					row.Measurements["traced_command"] = json.RawMessage(`1`)
+				}
+				if err := validateHubnotRow(ev.Source, row); err != nil {
+					t.Fatal(err)
+				}
+				defects := []string{"wrong-launcher", "extra-option", "changed-suffix", "affinity-null", "missing-affinity", "cpu-null", "cpu-missing", "cpu-wrong", "parent-invalid", "tool-wrong", "hash-invalid", "size-null", "unknown-field", "index-null", "index-wrong", "index-missing"}
+				if form != "affinity" {
+					defects = defects[:4]
+				}
+				for _, defect := range defects {
+					t.Run(defect, func(t *testing.T) {
+						r := row
+						r.Commands = append([]HubnotCommand(nil), row.Commands...)
+						r.Commands[1].Argv = append([]string(nil), row.Commands[1].Argv...)
+						r.Measurements = map[string]json.RawMessage{}
+						for k, v := range row.Measurements {
+							r.Measurements[k] = v
+						}
+						m := map[string]any{}
+						for k, v := range metadata {
+							m[k] = v
+						}
+						switch defect {
+						case "wrong-launcher":
+							r.Commands[1].Argv[0] = "/usr/bin/env"
+						case "extra-option":
+							r.Commands[1].Argv = append(r.Commands[1].Argv[:1], append([]string{"--unexpected"}, r.Commands[1].Argv[1:]...)...)
+						case "changed-suffix":
+							r.Commands[1].Argv[len(r.Commands[1].Argv)-1] = "altered"
+						case "affinity-null":
+							r.Measurements["trace_affinity"] = json.RawMessage(`null`)
+						default:
+							if form != "affinity" {
+								return
+							}
+							switch defect {
+							case "missing-affinity":
+								delete(r.Measurements, "trace_affinity")
+							case "cpu-null":
+								m["requested_cpu"] = nil
+							case "cpu-missing":
+								delete(m, "requested_cpu")
+							case "cpu-wrong":
+								m["requested_cpu"] = 10
+							case "parent-invalid":
+								m["parent_allowed_cpus"] = "9-11,10"
+							case "tool-wrong":
+								m["taskset_path"] = "/bin/taskset"
+							case "hash-invalid":
+								m["taskset_sha256"] = "not-a-digest"
+							case "size-null":
+								m["taskset_bytes"] = nil
+							case "unknown-field":
+								m["observed_child_mask"] = "invented"
+							case "index-null":
+								r.Measurements["traced_command"] = json.RawMessage(`null`)
+							case "index-wrong":
+								r.Measurements["traced_command"] = json.RawMessage(`0`)
+							case "index-missing":
+								delete(r.Measurements, "traced_command")
+							}
+							if strings.HasPrefix(defect, "cpu-") || defect == "parent-invalid" || defect == "tool-wrong" || defect == "hash-invalid" || defect == "size-null" || defect == "unknown-field" {
+								r.Measurements["trace_affinity"], _ = json.Marshal(m)
+							}
+						}
+						if err := validateHubnotRow(ev.Source, r); err == nil {
+							t.Fatal("invalid trace evidence admitted")
+						}
+					})
+				}
+			})
+		}
+	}
+}
+
+func TestHubnotAffinityZeroIsDistinctFromMissing(t *testing.T) {
+	trace := HubnotArtifact{Path: "/trace", SHA256: strings.Repeat("a", 64), Bytes: 1}
+	command := HubnotCommand{Argv: []string{"/usr/bin/taskset", "--cpu-list", "0", "/usr/bin/strace", "--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", "/trace", "/product"}}
+	fields := map[string]any{"mode": "diagnostic-only-first-allowed-cpu/1", "parent_allowed_cpus": "0-3", "requested_cpu": 0, "taskset_path": "/usr/bin/taskset", "taskset_sha256": strings.Repeat("a", 64), "taskset_bytes": 1}
+	raw, _ := json.Marshal(fields)
+	row := HubnotScenarioResult{Commands: []HubnotCommand{command}, Measurements: map[string]json.RawMessage{"trace_affinity": raw, "traced_command": json.RawMessage(`0`)}}
+	if index, err := hubnotInventoryTraceIndex(row, trace); err != nil || index != 0 {
+		t.Fatalf("real zero refused: %v", err)
+	}
+	for _, key := range []string{"requested_cpu", "traced_command"} {
+		for _, missing := range []bool{false, true} {
+			r := row
+			r.Measurements = map[string]json.RawMessage{"trace_affinity": raw, "traced_command": json.RawMessage(`0`)}
+			if key == "traced_command" {
+				if missing {
+					delete(r.Measurements, key)
+				} else {
+					r.Measurements[key] = json.RawMessage(`null`)
+				}
+			} else {
+				m := map[string]any{}
+				for k, v := range fields {
+					m[k] = v
+				}
+				if missing {
+					delete(m, key)
+				} else {
+					m[key] = nil
+				}
+				r.Measurements["trace_affinity"], _ = json.Marshal(m)
+			}
+			if _, err := hubnotInventoryTraceIndex(r, trace); err == nil {
+				t.Fatalf("%s missing=%v became zero", key, missing)
+			}
 		}
 	}
 }
