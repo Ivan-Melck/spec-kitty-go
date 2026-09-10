@@ -38,3 +38,44 @@ historical branches, and two stashes passed preservation checks at 410d. Backup
 classification and the original export-receipt limitations are unchanged.
 The e9 full-local 28-scenario trial remains attributed to its actual execution;
 later production equivalence and hosted checks have their own evidence scope.
+
+
+## Hosted qualification follow-through
+
+Fresh source `782f75579a2349dd438c7519297cbb452425349f` closes the later hosted
+namespace and diagnostic-trace follow-through. Its normal full-local execution
+passed all 28 rows with `full_admissible=true`; both activated same-receipt
+acceptance and performance audits actually passed. Hosted
+[run 34427078951](https://github.com/spec-kitty/spec-kitty-redesign/actions/runs/34427078951)
+passed its fixed 27 rows with `scope=hosted-provider`, `full_admissible=false`.
+The separate local preservation obligation is fulfilled by the local execution.
+All source identities, command records, full 1,000-definition semantics, proof
+bytes, repository refs and complete process traces were independently verified.
+
+Standard PR
+[workflow 34427081432](https://github.com/spec-kitty/spec-kitty-redesign/actions/runs/34427081432)
+passed quality, race and M2 on a synthetic checkout with the exact 782f source
+tree. The [final independent review](hosted-qualification-review.md) records
+PASS WITH NOTES, exact archive digests, executable identity and evidence limits.
+Its committed bytes have SHA-256
+`c59a9e11cae67cc6f33395127c8f82fd20c488f18d4ce4e5f95e5797d9c0ba65`.
+The product digest remains `ecd5fc241b72ea30afe8572fcfab40df99deb312b0ed90c415e48e6fcef7e898`;
+the freshly qualified diagnostic executable is
+`2671dce14c6a62b06f6967f33b20b391bc05b59d51319c9cb5de038886f8b2d5`.
+The accepted HN pin and binary are unchanged.
+
+Normal completion closed the standalone follow-through Op
+`01M246Q0AS2V02GKKRDT1E7CEA` as `done`, linking actual implementation782f,
+the independent review and qualification documents. Completion journal commit:
+`4898af0a7deb0475fe90f3cc5d2296326f923d85`. The generated evidence promotion
+preserves the review and completion record. Runtime-recorded model metadata is
+not independent verification of the executing model.
+
+Fresh preservation observation at 782f again passed all 829 frozen paths,
+19 original provider files, five allocation branches, two other historical
+branches and two stashes. One original worktree remains. The earlier failed,
+interrupted and diagnostic attempts keep their actual outcomes in the
+[chronological record](hosted-namespace-prerequisite.md). This closeout does not
+relabel them, expand time limits, reclassify backups or remove the original
+export-provenance limitation. Publication is to the existing feature PR; main,
+the previous release and the M2 `adopted=false` state are unchanged.
