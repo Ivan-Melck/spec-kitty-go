@@ -187,12 +187,13 @@ for outcome in ['success','collision','timeout']:
 realread=ns['read_file']
 controls={'/etc/os-release':'ID=ubuntu\nVERSION_ID="24.04"\n','/proc/self/attr/current':'unconfined\n','/sys/module/apparmor/parameters/enabled':'Y\n','/proc/sys/kernel/apparmor_restrict_unprivileged_userns':'1\n','/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined':'0\n','/proc/sys/kernel/unprivileged_userns_clone':'1\n','/proc/sys/user/max_user_namespaces':'31633\n'}
 context={k:{'text':v+'\n'} for k,v in {'.ns_name':'root','.ns_level':'0','.stacked':'no','.ns_stacked':'no'}.items()}
-for outcome in ['success','alternate-kernel','uncorrelated','collision','failed-retry','changed-controls']:
+for outcome in ['success','alternate-kernel','different-pid','missing-denial','unrelated-denial','unsupported-context','collision','failed-retry','changed-controls']:
  with tempfile.TemporaryDirectory() as temp:
   art=pathlib.Path(temp)/'artifact';art.mkdir();envfile=pathlib.Path(temp)/'env';envfile.touch()
   env={'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','GITHUB_RUN_ID':'12','GITHUB_RUN_ATTEMPT':'1','GITHUB_JOB':'quality','RUNNER_TEMP':temp,'ARTIFACT_DIR':str(art),'GITHUB_ENV':str(envfile)}
   calls=[];loaded=False
   def read(path):
+   if outcome=='unsupported-context' and path.endswith('unprivileged_userns_clone'):return {'text':'0\n','truncated':False}
    if outcome=='changed-controls' and loaded and path.endswith('max_user_namespaces'):return {'text':'1\n','truncated':False}
    return {'text':controls.get(path,''),'truncated':False}
   def capture(argv):
@@ -200,7 +201,10 @@ for outcome in ['success','alternate-kernel','uncorrelated','collision','failed-
    global loaded
    calls.append(argv);r={'argv':argv,'exit':0,'bounded_stop':False,'stdout':'','stderr':'','pid':1234}
    if argv[0]=='/usr/bin/unshare' and '--map-root-user' in argv:r.update(exit=1,stderr='unshare: write failed /proc/self/uid_map: Operation not permitted\n')
-   elif '/usr/bin/journalctl' in argv:r['stdout']='apparmor="DENIED" profile="unprivileged_userns" comm="unshare" capability=21 capname="sys_admin" pid='+('999' if outcome=='uncorrelated' else '1234')
+   elif '/usr/bin/journalctl' in argv:
+    r['stdout']='apparmor="DENIED" profile="unprivileged_userns" comm="unshare" capability=21 capname="sys_admin" pid='+('999' if outcome=='different-pid' else '1234')
+    if outcome=='missing-denial':r['stdout']=''
+    if outcome=='unrelated-denial':r['stdout']=r['stdout'].replace('comm="unshare"','comm="unrelated"')
    elif ns['PROFILE_LOADER'] in argv:
     loaded=True
     assert argv[-4:]==parts
@@ -218,10 +222,13 @@ for outcome in ['success','alternate-kernel','uncorrelated','collision','failed-
   with patch.dict(os.environ,env,clear=True),patch.dict(ns,{'read_file':read,'attachments':lambda:{'namespace_context':context},'capture':capture}),patch.object(ns['secrets'],'token_hex',return_value='a'*32),patch.object(os,'uname',return_value=('Linux','host','6.18.1-fixture' if outcome=='alternate-kernel' else '6.17.0-1022-azure','version','x86_64')),patch.object(pathlib.Path,'stat',fake_stat),patch.object(pathlib.Path,'read_bytes',fake_bytes),patch.object(os,'access',lambda p,m:True if str(p)=='/usr/bin/aa-exec' else realaccess(p,m)):
    status=ns['main']()
   result=json.loads((art/'userns-prerequisite/result.json').read_text())
-  assert (status==0)==(outcome in ('success','alternate-kernel')),result
-  if outcome in ('success','alternate-kernel'):assert 'GO_KITTY_USERNS_MODE=selected' in envfile.read_text() and result['policy_changed'] is True
+  assert (status==0)==(outcome in ('success','alternate-kernel','different-pid')),result
+  if outcome in ('success','alternate-kernel','different-pid'):assert 'GO_KITTY_USERNS_MODE=selected' in envfile.read_text() and result['policy_changed'] is True
   else:assert envfile.read_text()==''
-  if outcome=='uncorrelated':assert not any(ns['PROFILE_LOADER'] in a for a in calls)
+  if outcome in ('missing-denial','unrelated-denial','unsupported-context'):assert not any(ns['PROFILE_LOADER'] in a for a in calls)
+  if outcome=='different-pid':
+   assert result['audit_correlation']=='unestablished' and result['observed_probe_pid']==1234 and result['observed_audit_pids']==[999]
+   assert any(ns['PROFILE_LOADER'] in a for a in calls)
   if outcome=='collision':assert not any(a[0]=='/usr/bin/aa-exec' for a in calls) and result['policy_changed'] is None
 `
 	cmd := exec.Command("/usr/bin/python3", "-I", "-c", code)

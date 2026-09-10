@@ -114,6 +114,8 @@ def profile_identity(parts):
     return name, 'abi <abi/4.0>,\nprofile ' + name + ' flags=(unconfined) {\n  userns,\n}\n'
 
 def supported_denial(diagnostics, probe, audit):
+    # Corroborates only the authorized fixed trial; it does not prove lineage
+    # or determine the policy, privileges, executable or downstream command.
     def text(path): return diagnostics['files'].get(path, {}).get('text', '').strip()
     context = diagnostics['attachments']['namespace_context']
     if (diagnostics['uid'] == 0 or diagnostics['gid'] == 0 or
@@ -128,7 +130,7 @@ def supported_denial(diagnostics, probe, audit):
         'write failed /proc/self/uid_map: Operation not permitted' not in probe.get('stderr','') or
         audit.get('exit') != 0 or audit.get('bounded_stop') or not isinstance(probe.get('pid'),int)):
         return False
-    return any(all(re.search(pattern,line) for pattern in [r'apparmor="DENIED"',r'profile="unprivileged_userns"',r'comm="unshare"',r'capability=21\b',r'capname="sys_admin"',r'\bpid='+str(probe['pid'])+r'\b']) for line in audit['stdout'].splitlines())
+    return any(all(re.search(pattern,line) for pattern in [r'apparmor="DENIED"',r'profile="unprivileged_userns"',r'comm="unshare"',r'capability=21\b',r'capname="sys_admin"']) for line in audit['stdout'].splitlines())
 
 def publish_state(env, temp, mode, profile):
     path=pathlib.Path(env.get('GITHUB_ENV',''))
@@ -333,8 +335,10 @@ def main():
             save('privileged-inventory.json', capture(['/usr/bin/sudo', '-n', '/usr/bin/python3', '-I', '-c', PRIVILEGED_INVENTORY]))
             privileged_audit = capture(['/usr/bin/sudo', '-n', '/usr/bin/journalctl', '-k', '--since', '-2 minutes', '-n', '80', '--no-pager', '-o', 'cat', '--grep', 'apparmor=.*DENIED.*(userns|unshare)'])
             save('privileged-audit.json', privileged_audit)
+            result.update(audit_correlation='unestablished', observed_probe_pid=probe.get('pid'),
+                          observed_audit_pids=[int(pid) for pid in re.findall(r'\bpid=([0-9]+)',privileged_audit.get('stdout',''))])
             if not supported_denial(diagnostics, probe, privileged_audit):
-                raise ValueError('supported PID-correlated unconfined-userns denial not established; no policy change attempted')
+                raise ValueError('supported context and corroborating unconfined-userns denial not established; no policy change attempted')
             if time.monotonic()-helper_started > 40:
                 raise ValueError('insufficient total deadline remaining for bounded privileged loader')
             parts=[env['GITHUB_RUN_ID'],env['GITHUB_RUN_ATTEMPT'],env['GITHUB_JOB'],secrets.token_hex(16)]
