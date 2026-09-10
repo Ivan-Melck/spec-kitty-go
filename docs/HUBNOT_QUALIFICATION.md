@@ -58,7 +58,7 @@ Run the normal external executable directly, once per final candidate:
 
 A full pass requires all 28 closed rows started and terminal passing, including both preservation rows. The actual normal process exits 0 and `qualification.json` records `scope=full-local`, `verdict=pass`, `full_admissible=true`. Missing prerequisites, skipped selected tests, stale identity, omitted rows, failed sensors or incomplete captures refuse. Keep failed attempts in their original directories; never change their verdict, source or evidence mode.
 
-Linux unprivileged user/network/PID namespaces and the fixed system Git/unshare tools are prerequisites. The actual isolated worker verifies its PID namespace, distinct network namespace and current loopback-only interfaces; it is not admitted by an environment marker. Namespace teardown cleans descendant process groups. Durable launch intent, confirmed starts and bounded streamed input/output survive cancellation, with unknown completion left honestly incomplete.
+Linux unprivileged user/network/PID namespaces and the fixed system Git, unshare, strace, and taskset tools are prerequisites. The actual isolated worker verifies its PID namespace, distinct network namespace and current loopback-only interfaces; it is not admitted by an environment marker. Namespace teardown cleans descendant process groups. Durable launch intent, confirmed starts and bounded streamed input/output survive cancellation, with unknown completion left honestly incomplete.
 
 `hosted-provider` is a fixed 27-row selection excluding only `cutover.local-recovery`. It checks tracked frozen history and every repeatable provider scenario, but is explicitly non-full. `identity-smoke` is a separate five-row preflight. Neither can satisfy full-local acceptance. Local absence never selects a different scope. The actual original nineteen files and historical branch/stash references are required for full local acceptance and are checked again after integration; a hosted receipt cannot stand in for them.
 
@@ -90,6 +90,8 @@ The fixture prepares 1,000 complete definitions, 2,000 ordered criteria, 20 attr
 
 Inventory admission measures the untraced compiled process, startup, detailed pages, normalization, graph derivation, complete serialization/capture and parsing. It must return the full result within 120 seconds on the recorded host; this is not an unmeasured platform promise. Comparison and setup durations are separate. Default detail pages have 8 rows, yielding 125 successful detail-page execs for 1,000 records. The process-filtered trace is a separate read, not part of the admission time.
 
+Each separate process-count trace uses taskset outside strace to select the first CPU in the parent's allowed list. This reduces diagnostic overhead while normal queries retain their original affinity and environment. Signal notices are omitted from the trace output; signal delivery, exec records, full-result comparisons and the existing 120-second command and observation limits remain unchanged. Missing tools or invalid affinity refuse execution. `trace_affinity` records the observed parent list, requested CPU and external taskset identity; it does not claim a separately sampled child affinity or archived tool binary. Inventory also records its explicit `traced_command` index, and failed traces retain their bytes and elapsed time.
+
 Known-reference observation and original-operation recovery are separate rows and untraced timings. Each also records its own later trace:
 
 - `untraced_command` and `traced_command`: zero-based indices into that row's commands, binding identical original argv/input/directory.
@@ -98,6 +100,8 @@ Known-reference observation and original-operation recovery are separate rows an
 - `observed_exec_child_pids`: distinct PIDs with successful execs, excluding the consumer PID. It does not count fork-only children.
 
 The audit rejoins unfinished/resumed execve records by PID and recomputes counts from raw records. Missing or truncated records refuse. It compares complete traced/untraced results, excluding only the consistent valid per-invocation `observed_at` fields; canonical proof bytes, digest, revision, token and all semantic facts remain exact. Original recovery remains historical replay with prior-mutation evidence and unchanged signed refs. The literal process-count obligation comes from the qualification contract and T029; NFR-002 itself asks for separate query measurements and recorded commands/elapsed time.
+
+Evidence readers retain strict support for the original and signal-filtered historical strace forms. The current taskset form requires consistent affinity metadata and an explicit trace index. Historical receipts retain their original source and execution context.
 
 ## Requirement and story evidence map
 
