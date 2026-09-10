@@ -37,6 +37,9 @@ func TestCIUsernsWorkflowWiring(t *testing.T) {
 		if strings.Count(s, "run: bash scripts/ci/prepare-userns.sh") != 1 {
 			t.Fatalf("%s missing single prerequisite", name)
 		}
+		if strings.Count(s, "/usr/bin/python3 -I scripts/ci/with-userns.py -- make ") != 1 {
+			t.Fatalf("%s missing selected campaign boundary", name)
+		}
 		if !strings.Contains(s, "if: always()") {
 			t.Fatalf("%s loses diagnostics upload", name)
 		}
@@ -60,7 +63,8 @@ exec(compile(code, 'prepare-userns.sh', 'exec'), ns)
 for outcome in ('pass','unknown-denial','missing-attachments','overlapping-attachments','bad-topology','bounded-probe'):
     with tempfile.TemporaryDirectory() as temp:
         artifact = pathlib.Path(temp) / 'evidence'; artifact.mkdir()
-        env = {'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','GITHUB_RUN_ID':'12','GITHUB_RUN_ATTEMPT':'1','GITHUB_JOB':'quality','RUNNER_TEMP':temp,'ARTIFACT_DIR':str(artifact)}
+        env = {'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','GITHUB_RUN_ID':'12','GITHUB_RUN_ATTEMPT':'1','GITHUB_JOB':'quality','RUNNER_TEMP':temp,'ARTIFACT_DIR':str(artifact),'GITHUB_ENV':str(pathlib.Path(temp)/'env')}
+        pathlib.Path(env['GITHUB_ENV']).touch()
         calls = []
         def capture(argv):
             calls.append(argv)
@@ -77,7 +81,7 @@ for outcome in ('pass','unknown-denial','missing-attachments','overlapping-attac
         root = artifact/'userns-prerequisite'
         result=json.loads((root/'result.json').read_text())
         assert (status == 0) == (outcome == 'pass'), result
-        assert result['policy_changed'] is False and result['mode']=='diagnostic-only'
+        assert result['policy_changed'] is False and result['mode']==('direct' if outcome=='pass' else 'diagnostic-only')
         assert (root/'probe.json').is_file() and (root/'audit.json').is_file()
         failed_probe = outcome in ('unknown-denial','missing-attachments','overlapping-attachments','bounded-probe')
         assert len(calls)==(5 if failed_probe else 3)
@@ -106,7 +110,7 @@ pid=int(r['stdout'].strip())
 assert r['bounded_stop'] and r['exit']==-9 and 10<=r['duration_seconds']<13, r
 assert not pathlib.Path('/proc',str(pid)).exists(), r
 # Audit records without namespace context are outside this helper's scope.
-assert 'capname=' not in code
+assert '(userns|unshare|capname=)' not in code
 # Event-like readers produce a short record but do not close. Both literal
 # readers must return after a single nonblocking read, without any sudo call.
 priv={'__name__':'fixture'}
@@ -142,5 +146,87 @@ finally: signal.setitimer(signal.ITIMER_REAL,0)
 	cmd.Stdin = strings.NewReader(source[start:end])
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fixture outcomes: %v\n%s", err, out)
+	}
+}
+
+func TestCIUsernsConditionalProfile(t *testing.T) {
+	source := usernsHelper(t)
+	source = source[strings.Index(source, "import hashlib\n"):strings.LastIndex(source, "\nPY\n")]
+	code := `import sys,os,json,io,pathlib,tempfile,types,subprocess,signal
+from unittest.mock import patch
+ns={'__name__':'fixture'};exec(sys.stdin.read(),ns)
+parts=['12','1','quality','a'*32];name,policy=ns['profile_identity'](parts)
+loader={'__name__':'fixture'}
+with patch.object(signal,'signal'),patch.object(signal,'alarm'):exec(ns['PROFILE_LOADER'],loader)
+assert loader['profile_parts'](parts)==(name,policy)
+assert policy=='abi <abi/4.0>,\nprofile '+name+' flags=(unconfined) {\n  userns,\n}\n'
+for bad in [['12','1','bad/job','a'*32],['12','1','bad\n','a'*32],['0','1','quality','a'*32],['12','1','quality','*']]:
+ for fn in [ns['profile_identity'],loader['profile_parts']]:
+  try:fn(bad)
+  except ValueError:pass
+  else:raise AssertionError('profile identity injection')
+# Execute fixed loader logic with mocked root/parser; no privileged subprocess.
+for outcome in ['success','collision','timeout']:
+ calls=[]
+ class Child:
+  pid=999999
+  def __init__(self,argv,**kw):
+   assert argv==['/usr/sbin/apparmor_parser','--add','--skip-cache'];calls.append(argv);self.kw=kw;self.returncode=None
+  def communicate(self,data,timeout):
+   assert data==policy.encode() and timeout==3
+   if outcome=='timeout':raise subprocess.TimeoutExpired('parser',3)
+   self.returncode=0 if outcome=='success' else 1
+  def wait(self,timeout):return 0 if outcome=='success' else (1 if outcome=='collision' else -9)
+ fakeos=types.SimpleNamespace(geteuid=lambda:0,stat=lambda p:types.SimpleNamespace(st_mode=0o100755,st_uid=0),access=lambda p,m:True,X_OK=os.X_OK,killpg=lambda p,s:calls.append(['kill',p,s]))
+ with patch.dict(loader,{'os':fakeos,'open':lambda *a:io.BytesIO(b'parser'),'subprocess':types.SimpleNamespace(Popen=Child,TimeoutExpired=subprocess.TimeoutExpired,PIPE=subprocess.PIPE)}):
+  record=loader['load'](parts)
+ assert record['policy']==policy and record['timed_out']==(outcome=='timeout')
+ assert record['exit']==(0 if outcome=='success' else (1 if outcome=='collision' else -9))
+ assert len(calls)==(2 if outcome=='timeout' else 1)
+# Actual observed diagnostic fixture; all privileged/selection commands mocked.
+realread=ns['read_file']
+controls={'/etc/os-release':'ID=ubuntu\nVERSION_ID="24.04"\n','/proc/self/attr/current':'unconfined\n','/sys/module/apparmor/parameters/enabled':'Y\n','/proc/sys/kernel/apparmor_restrict_unprivileged_userns':'1\n','/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined':'0\n','/proc/sys/kernel/unprivileged_userns_clone':'1\n','/proc/sys/user/max_user_namespaces':'31633\n'}
+context={k:{'text':v+'\n'} for k,v in {'.ns_name':'root','.ns_level':'0','.stacked':'no','.ns_stacked':'no'}.items()}
+for outcome in ['success','alternate-kernel','uncorrelated','collision','failed-retry','changed-controls']:
+ with tempfile.TemporaryDirectory() as temp:
+  art=pathlib.Path(temp)/'artifact';art.mkdir();envfile=pathlib.Path(temp)/'env';envfile.touch()
+  env={'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','GITHUB_RUN_ID':'12','GITHUB_RUN_ATTEMPT':'1','GITHUB_JOB':'quality','RUNNER_TEMP':temp,'ARTIFACT_DIR':str(art),'GITHUB_ENV':str(envfile)}
+  calls=[];loaded=False
+  def read(path):
+   if outcome=='changed-controls' and loaded and path.endswith('max_user_namespaces'):return {'text':'1\n','truncated':False}
+   return {'text':controls.get(path,''),'truncated':False}
+  def capture(argv):
+   nonlocal_dummy=None
+   global loaded
+   calls.append(argv);r={'argv':argv,'exit':0,'bounded_stop':False,'stdout':'','stderr':'','pid':1234}
+   if argv[0]=='/usr/bin/unshare' and '--map-root-user' in argv:r.update(exit=1,stderr='unshare: write failed /proc/self/uid_map: Operation not permitted\n')
+   elif '/usr/bin/journalctl' in argv:r['stdout']='apparmor="DENIED" profile="unprivileged_userns" comm="unshare" capability=21 capname="sys_admin" pid='+('999' if outcome=='uncorrelated' else '1234')
+   elif ns['PROFILE_LOADER'] in argv:
+    loaded=True
+    assert argv[-4:]==parts
+    r.update(exit=1 if outcome=='collision' else 0,stdout=json.dumps({'name':name,'policy':policy,'policy_sha256':ns['hashlib'].sha256(policy.encode()).hexdigest(),'exit':1 if outcome=='collision' else 0,'timed_out':False}))
+   elif argv[0]=='/usr/bin/aa-exec':
+    assert argv[:6]==['/usr/bin/aa-exec','-i','-p',name,'--','/usr/bin/python3']
+    selected={'selected_uid':os.getuid(),'selected_gid':os.getgid(),'selected_label':name+' (unconfined)\n'}
+    child={'pid':1,'uid':0,'gid':0,'label':name+' (unconfined)\n','namespaces':{'net':'fixture','pid':'fixture','user':'fixture'},'uid_map':'0 %d 1'%os.getuid(),'gid_map':'0 %d 1'%os.getgid(),'setgroups':'deny','interfaces':'lo: 0\n'}
+    r.update(exit=1 if outcome=='failed-retry' else 0,stdout=json.dumps(selected)+'\n'+json.dumps(child)+'\n')
+   return r
+  actualstat=pathlib.Path.stat;actualbytes=pathlib.Path.read_bytes
+  def fake_stat(path,*a,**kw):return types.SimpleNamespace(st_mode=0o100755,st_uid=0) if str(path)=='/usr/bin/aa-exec' else actualstat(path,*a,**kw)
+  def fake_bytes(path):return b'aa-exec' if str(path)=='/usr/bin/aa-exec' else actualbytes(path)
+  realaccess=os.access
+  with patch.dict(os.environ,env,clear=True),patch.dict(ns,{'read_file':read,'attachments':lambda:{'namespace_context':context},'capture':capture}),patch.object(ns['secrets'],'token_hex',return_value='a'*32),patch.object(os,'uname',return_value=('Linux','host','6.18.1-fixture' if outcome=='alternate-kernel' else '6.17.0-1022-azure','version','x86_64')),patch.object(pathlib.Path,'stat',fake_stat),patch.object(pathlib.Path,'read_bytes',fake_bytes),patch.object(os,'access',lambda p,m:True if str(p)=='/usr/bin/aa-exec' else realaccess(p,m)):
+   status=ns['main']()
+  result=json.loads((art/'userns-prerequisite/result.json').read_text())
+  assert (status==0)==(outcome in ('success','alternate-kernel')),result
+  if outcome in ('success','alternate-kernel'):assert 'GO_KITTY_USERNS_MODE=selected' in envfile.read_text() and result['policy_changed'] is True
+  else:assert envfile.read_text()==''
+  if outcome=='uncorrelated':assert not any(ns['PROFILE_LOADER'] in a for a in calls)
+  if outcome=='collision':assert not any(a[0]=='/usr/bin/aa-exec' for a in calls) and result['policy_changed'] is None
+`
+	cmd := exec.Command("/usr/bin/python3", "-I", "-c", code)
+	cmd.Stdin = strings.NewReader(source)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("conditional profile fixtures: %v\n%s", err, out)
 	}
 }
