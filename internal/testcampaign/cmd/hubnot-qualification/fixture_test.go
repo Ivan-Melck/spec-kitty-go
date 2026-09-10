@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -147,6 +149,9 @@ func TestPublicPerformanceFixtureSmallOracle(t *testing.T) {
 		if _, err = parseExecTrace(string(raw)); err != nil {
 			t.Fatal(err)
 		}
+		if strings.Contains(string(raw), "--- SIG") {
+			t.Fatal("separate query signal notices not filtered")
+		}
 		var uniqueChildren int
 		if json.Unmarshal(r.row.Measurements["observed_exec_child_pids"], &uniqueChildren) != nil || uniqueChildren <= 0 {
 			t.Fatal("missing distinct exec-child PID census")
@@ -154,6 +159,9 @@ func TestPublicPerformanceFixtureSmallOracle(t *testing.T) {
 		var u, v int
 		_ = json.Unmarshal(r.row.Measurements["untraced_command"], &u)
 		_ = json.Unmarshal(r.row.Measurements["traced_command"], &v)
+		if !strings.Contains(strings.Join(r.row.Commands[v].Argv, " "), "-e signal=none") {
+			t.Fatal("separate query signal filter absent")
+		}
 		leftRaw, _ := os.ReadFile(r.row.Commands[u].Stdout.Path)
 		rightRaw, _ := os.ReadFile(r.row.Commands[v].Stdout.Path)
 		left, _ := decodeObject(leftRaw)
@@ -294,6 +302,82 @@ func TestPublicRecordedPreservationLeaves(t *testing.T) {
 			defer cancel()
 			if err = r.preservationScenario(ctx, id); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// Exercise the actual inventory tracer, including its failure evidence boundary.
+func TestInventoryTraceRetainsFailureAndFiltersSignalNotices(t *testing.T) {
+	trace, err := exec.LookPath("strace")
+	if err != nil {
+		t.Skip("strace required")
+	}
+	for _, outcome := range []string{"success", "failure", "canceled"} {
+		t.Run(outcome, func(t *testing.T) {
+			dir := t.TempDir()
+			child := filepath.Join(dir, "signal-child")
+			script := "#!/usr/bin/python3\nimport os,signal,subprocess,sys,time\nseen=[]\nsignal.signal(signal.SIGUSR1,lambda *_:seen.append(1))\nfor _ in range(20):os.kill(os.getpid(),signal.SIGUSR1)\nsubprocess.run(['/usr/bin/true'],check=True)\nprint(len(seen),flush=True)\n" + map[string]string{"success": "sys.exit(0)", "failure": "sys.exit(7)", "canceled": "time.sleep(30)"}[outcome] + "\n"
+			if err := os.WriteFile(child, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			r := newScenarioRunner(qualificationOptions{Product: child, EvidenceDir: dir})
+			r.row = &testcampaign.HubnotScenarioResult{Measurements: map[string]json.RawMessage{}}
+			f := &publicFixture{directory: dir, binding: "unused"}
+			path := filepath.Join(dir, "inventory.execve.trace")
+			timeout := 10 * time.Second
+			if outcome == "canceled" {
+				timeout = 300 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			out, err := r.traceInventory(ctx, f, trace, path)
+			if outcome != "success" && err == nil || outcome == "success" && err != nil {
+				t.Fatalf("outcome=%s error=%v", outcome, err)
+			}
+			if outcome == "canceled" && !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("original deadline lost: %v", err)
+			}
+			if strings.TrimSpace(string(out)) != "20" {
+				t.Fatalf("signal delivery changed: %q", out)
+			}
+			var index int
+			var seconds float64
+			if json.Unmarshal(r.row.Measurements["traced_command"], &index) != nil || index != 0 || len(r.row.Commands) != 1 {
+				t.Fatal("actual trace command index missing")
+			}
+			if json.Unmarshal(r.row.Measurements["traced_seconds"], &seconds) != nil || seconds <= 0 {
+				t.Fatal("actual trace duration missing")
+			}
+			if _, present := r.row.Measurements["details_processes"]; present {
+				t.Fatal("helper fabricated successful census")
+			}
+			var artifact testcampaign.HubnotArtifact
+			if json.Unmarshal(r.row.Measurements["process_trace"], &artifact) != nil || artifact.Path != path || artifact.Bytes == 0 || len(r.row.Artifacts) != 1 {
+				t.Fatal("trace artifact missing after command terminal")
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if artifact.SHA256 != shaBytes(raw) {
+				t.Fatal("trace digest differs")
+			}
+			if strings.Contains(string(raw), "--- SIG") {
+				t.Fatal("signal notices were not filtered")
+			}
+			records, err := parseExecTrace(string(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := map[string]int{}
+			for _, record := range records {
+				if record.Success {
+					found[record.Path]++
+				}
+			}
+			if found[child] != 1 || found["/usr/bin/true"] != 1 {
+				t.Fatalf("actual execs lost: %v", found)
 			}
 		})
 	}

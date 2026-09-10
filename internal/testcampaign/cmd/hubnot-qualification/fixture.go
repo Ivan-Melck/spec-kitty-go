@@ -1788,8 +1788,7 @@ func (r *scenarioRunner) performanceScenario(ctx context.Context, id string) (re
 			return err
 		}
 		tracePath := filepath.Join(r.options.EvidenceDir, "inventory.execve.trace")
-		tracedStart := time.Now()
-		output, err := r.command(ctx, f.directory, nil, 0, trace, "--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-o", tracePath, r.options.Product, "--output", "json", "tracker", "inventory", "--binding", f.binding)
+		output, err := r.traceInventory(ctx, f, trace, tracePath)
 		if err != nil {
 			return err
 		}
@@ -1821,13 +1820,6 @@ func (r *scenarioRunner) performanceScenario(ctx context.Context, id string) (re
 		if pages != 125 {
 			return fmt.Errorf("measured page process census %d, expected125", pages)
 		}
-		a, err := fileArtifact(tracePath)
-		if err != nil {
-			return err
-		}
-		r.row.Artifacts = append(r.row.Artifacts, a)
-		r.measure("process_trace", a)
-		r.measure("traced_seconds", time.Since(tracedStart).Seconds())
 		r.measure("details_processes", pages)
 		r.measure("git_processes", gitProcesses)
 	case "performance.known-reference":
@@ -1889,6 +1881,30 @@ func validateUnitCensus(raw []byte, pkg string, tests []string) (testcampaign.Hu
 	return testcampaign.ValidateHubnotUnitOutput(raw, pkg, tests)
 }
 
+// traceInventory executes the separate diagnostic query on the prepared fixture.
+func (r *scenarioRunner) traceInventory(ctx context.Context, f *publicFixture, trace, tracePath string) ([]byte, error) {
+	file, err := os.OpenFile(tracePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = file.Close(); err != nil {
+		return nil, err
+	}
+	tracedIndex := len(r.row.Commands)
+	started := time.Now()
+	// Suppress signal notices only; signal delivery and exec tracing are unchanged.
+	output, commandErr := r.command(ctx, f.directory, nil, 0, trace, "--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", tracePath, r.options.Product, "--output", "json", "tracker", "inventory", "--binding", f.binding)
+	r.measure("traced_seconds", time.Since(started).Seconds())
+	r.measure("traced_command", tracedIndex)
+	a, artifactErr := fileArtifact(tracePath)
+	if artifactErr != nil {
+		return output, errors.Join(commandErr, artifactErr)
+	}
+	r.row.Artifacts = append(r.row.Artifacts, a)
+	r.measure("process_trace", a)
+	return output, commandErr
+}
+
 // Separate query tracing follows the untraced measurement on its existing fixture.
 // The exact original argv/input are reused; tracing never supplies admission latency.
 func (r *scenarioRunner) traceSeparateQuery(ctx context.Context, id, action string, original object) error {
@@ -1920,7 +1936,7 @@ func (r *scenarioRunner) traceSeparateQuery(ctx context.Context, id, action stri
 	if err = file.Close(); err != nil {
 		return err
 	}
-	args := append([]string{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-o", tracePath}, untraced.Argv...)
+	args := append([]string{"--seccomp-bpf", "-f", "-s", "8192", "-e", "trace=execve", "-e", "signal=none", "-o", tracePath}, untraced.Argv...)
 	tracedIndex := len(r.row.Commands)
 	started := time.Now()
 	output, commandErr := r.command(ctx, untraced.Directory, input, 0, trace, args...)
