@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "program_id": "production-runtime",
+  "mission_id": "M2",
+  "decision": "adopt",
+  "source_commit": "416138f490ad6d908fc445c12b91440ca66ef18c",
+  "source_tree": "2b68ee733305465d5acdfe8680f053b91d867a8d",
+  "run_id": "wp17-qualification-416138f4-cycle2-final23",
+  "manifest_sha256": "8d7731992a35b0ace4cdcd816651df302d4459c8af91d1a2c31cf5d3aeb285a0",
+  "producer_archive_sha256": "250bad6ef3115b154794db61407736133ec0b1f5a5fc61117ec1267e77057fc2",
+  "review_receipt_sha256": "a35f944548bd766887344192f59c36fd6002519d88588e07e3cdc48989510e50",
+  "release_archive_sha256": "098fa8d3fae6f33e227ce290530fc172f820c961ffd326adb820a26aa44e2414",
+  "release_url": "https://github.com/spec-kitty/spec-kitty-redesign/releases/tag/m2-gapdb-release-ready-v1",
+  "signer": "github:lynncoleart",
+  "rationale": "Human approval supplied in-session: \"Yes please, document looks great\" in direct response to the exact M2 adoption proposal and the request to proceed through M3/M4, M5, and deterministic Nano adapter evaluation.",
+  "signed_at": "2026-09-11T03:07:01Z",
+  "signature": {
+    "kind": "approved-local-reference",
+    "value": "conversation-approval:2026-09-11T03:07:01Z"
+  },
+  "scope": "Adopt only the exact verified M2 release tuple as input to M3 and M4. Future mission qualification and adoption gates remain separate."
+}

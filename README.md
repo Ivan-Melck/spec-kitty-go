@@ -369,8 +369,11 @@ capabilities and closed qualifier for source, module graph, SBOM, binaries,
 install, configuration, fallback, and migration absence. The exact M2 candidate
 has now completed its clean qualification run, independent review, recursive
 release verification, mission acceptance, lane integration, and post-merge
-mission review. The machine verdict is `release_ready=true`; the deliberately
-separate human field remains `adopted=false`. There is no dual-write interval.
+mission review. Its machine verdict is `release_ready=true`. The exact tuple
+is now adopted by the separate human [M2 adoption record](docs/programs/evidence/m2-adoption.json).
+The frozen release receipt retains its original `adopted=false` qualification
+state; [the closeout](docs/programs/evidence/m2-adoption-closeout.md) records the
+subsequent decision. There is no dual-write interval.
 
 The release-ready evidence is bound to:
 
@@ -391,17 +394,19 @@ not compiled, selectable, importable, or available as production fallback.
 ## What happens next
 
 M1 is complete and adopted. M2, **GapDB-Only Production Authority**, is merged,
-post-merge reviewed, and technically release-ready. Its falsification target was
+post-merge reviewed, technically release-ready, and adopted at the exact tuple above. Its falsification target was
 deliberately stronger than “the new adapter works”: every authority capability
 preserves its behavioral and refusal contract on the M1 event/CAS substrate
 while the retired store disappears from every production surface.
 
-The next program decision is explicit human adoption of the exact M2 tuple.
-Until that record exists, consumers must say `release-ready`, never `adopted`,
-and M3/M4 must not infer admission from a branch, tag, tracker ticket, or this
-README. After adoption, M3 (real-agent/Hubnot/Git/workspace composition) and M4
-(stack-neutral acceptance) may proceed in parallel. Dual write, read fallback,
-legacy import, and runtime backend selection remain forbidden.
+The explicit human M2 adoption decision is recorded. M3
+(real-agent/Hubnot/Git/workspace composition) and M4 (stack-neutral acceptance)
+may now proceed against that exact input, subject to their remaining entry
+criteria and their own qualification gates. M5 then delivers the complete
+API 2.0 host, followed by Nano Kitty's adapter qualification. Neither a branch,
+tag, tracker ticket, nor this README substitutes for source-bound evidence.
+Dual write, read fallback, legacy import, and runtime backend selection remain
+forbidden.
 
 ## Evidence
 
