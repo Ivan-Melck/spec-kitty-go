@@ -17,7 +17,7 @@ successor missions and are not inferred from an M2 result.
 | Authority and concurrency | The GapDB production host implements leases, lease-scoped workspaces, quarantine, stale-authority refusal, ActorID-independent review, and serialized Git integration; Phase 1 remains the historical source-bound proof | The M2 crown requalifies the complete laws on the sole production store before M3/M4 admission |
 | Work substrate | Provider-neutral ports and the source-and-binary-pinned Hubnot public CLI adapter are delivered | M3 composes the admitted provider with the production host; Hubnot remains mutable work/discussion, never mission or execution authority |
 | Mission method | Specification, plan, provider-neutral decomposition, immutable WorkRevision generations, drift reconciliation, typed `next`, execution, review, acceptance, integration, progress, and recovery are implemented as native capabilities | M3 adds real-agent/provider composition without changing these authority laws |
-| Control state | GapDB is the sole compiled production authority; M2 has no SQLite package, module, fallback, importer, selector, or test driver | The exact M2 crown evidence and independent review passed; human adoption remains a separate decision |
+| Control state | GapDB is the sole compiled production authority; M2 has no SQLite package, module, fallback, importer, selector, or test driver | The exact M2 crown evidence and independent review passed; its separate human adoption record now admits that tuple for M3/M4 entry checks |
 | Application surface | `cmd/spec-kitty` is the native authority command surface; `cmd/spk-m2-qualification` is release tooling and grants no authority | Orchestrator API 2.0 and the complete normal CLI remain M5 |
 | Acceptance | Repository-specific Go campaigns and candidate-bound evidence | Stack-neutral claims, approved provider bindings, typed evidence envelopes, and a policy gate |
 | MCP | Not shipped and not required | Optional, separately packaged MCP `2026-07-28` adapter with Tasks as a projection of native operations |
@@ -47,7 +47,7 @@ what happens next:
    [Python behavior inventory](docs/PYTHON_BEHAVIOR_INVENTORY.md) for provenance.
 6. [Build and run the current repository](#build-and-run-the-current-repository)
    and [Evidence](#evidence) for reproducible present-tense claims.
-7. [What happens next](#what-happens-next) for the M2 adoption boundary and M3/M4 stop rule.
+7. [What happens next](#what-happens-next) for the adopted M2 input and remaining M3/M4 gates.
 
 ## What makes this port distinct
 
@@ -315,8 +315,8 @@ The compiled `spec-kitty tracker` surface uses pinned Hubnot through neutral por
 Read [Hubnot tracker](docs/HUBNOT_TRACKER.md) for explicit build/install, actor binding,
 full work examples, original-operation recovery, limits and qualification scopes.
 Use `tracker --help` for all fourteen actions. Tracker-only commands do not start the
-mission host. M2 remains release-ready and unadopted; M3 production agent integration
-is a separate admission. Old Beads bindings refuse without fallback or dual write.
+mission host. The exact M2 tuple is adopted; M3 production agent integration
+still requires its separate provider/composition admission and qualification. Old Beads bindings refuse without fallback or dual write.
 
 The [Phase 2 Beads evidence](docs/phase2-evidence/README.md) remains historical and
 unchanged; it does not qualify the new provider. Preserve original database/backups

@@ -652,9 +652,11 @@ authority.
 
 ## 9. Machine/human parity and validation
 
-The published manifest is a location-adjusted copy of the mission-source
-manifest: every field except `$schema` must be byte-equivalent after canonical
-JSON ordering. This roadmap displays every machine field:
+The published manifest preserves the mission-source design while projecting
+recorded program status and the approved Beads-to-Hubnot provider replacement.
+After those explicit projections and the `$schema` location adjustment, every
+field must be equivalent after canonical JSON ordering. This roadmap displays every
+machine field:
 
 | Machine field | Human location |
 |---|---|
@@ -663,6 +665,13 @@ JSON ordering. This roadmap displays every machine field:
 | `outcome`, `primary_falsification_target` | Program summary and each mission card |
 | `entry_evidence`, `exit_evidence` | Mission-card admission and exit sections |
 | `non_goals`, `risk`, `rollback` | Mission cards and stop/go table |
+
+The mission-source manifest is the immutable design baseline and retains its
+original proposed statuses and Beads references. The published manifest projects
+subsequent recorded program decisions. Normalize only the five provider fields
+changed by the merged Hubnot mission, then compare all fields except schema
+location and mission status. Validate the current status projection separately
+against the adoption records.
 
 Reproduce the contract checks from the repository root:
 
@@ -677,19 +686,25 @@ jq -e '([.missions[].id] | length) == ([.missions[].id] | unique | length)' "$PR
 jq -e 'all(.missions[]; (.dependencies | length) <= 3)' "$PROGRAM"
 jq -e '([.missions[].id] as $ids | all(.missions[]; .dependencies as $deps | all($deps[]; . as $dep | ($ids | index($dep)) != null)))' "$PROGRAM"
 jq -e '.critical_path == ["M1", "M2", "M3", "M5", "M6"]' "$PROGRAM"
+jq -e '([.missions[] | {key:.id,value:.status}] | from_entries) == {M1:"complete",M2:"complete",M3:"proposed",M4:"proposed",M5:"proposed",M6:"proposed",M7:"proposed"}' "$PROGRAM"
 jq -e '. as $root | .critical_path as $path | all(range(0; ($path | length) - 1); . as $index | $path[$index] as $from | $path[$index + 1] as $to | any($root.missions[]; .id == $to and (.dependencies | index($from) != null)))' "$PROGRAM"
 jq -e '([.missions[] | {key:.id,value:.dependencies}] | from_entries) == {M1:[],M2:["M1"],M3:["M2"],M4:["M2"],M5:["M2","M3","M4"],M6:["M5"],M7:["M5"]}' "$PROGRAM"
 
 jq -r '.missions[] as $mission | $mission.dependencies[]? | "\(.) \($mission.id)"' "$PROGRAM" | tsort
 
 diff -u \
-  <(jq -S 'del(."$schema")' "$SOURCE") \
-  <(jq -S 'del(."$schema")' "$PROGRAM")
+  <(jq -S '
+    (.missions[] | select(.id == "M3") | (.title, .entry_evidence[1], .primary_falsification_target)) |= gsub("Beads"; "Hubnot") |
+    (.missions[] | select(.id == "M5") | .primary_falsification_target) |= gsub("Beads"; "Hubnot") |
+    (.missions[] | select(.id == "M6") | .entry_evidence[1]) |= gsub("Beads"; "Hubnot") |
+    del(."$schema", .missions[].status)' "$SOURCE") \
+  <(jq -S 'del(."$schema", .missions[].status)' "$PROGRAM")
 ```
 
 Expected topological constraints are `M1 < M2`, `M2 < M3`, `M2 < M4`,
 `M2 < M5`, `M3 < M5`, `M4 < M5`, `M5 < M6`, and `M5 < M7`.
-`tsort` must exit zero. The human comparison must find seven proposed missions,
+`tsort` must exit zero. The current manifest must contain seven missions,
+with M1/M2 complete and M3–M7 proposed pending their own admission records,
 one falsification target per mission, no hidden dependency, parallel groups
 `after-M2` and `after-M5`, and no package-scaffolding exit criterion.
 
