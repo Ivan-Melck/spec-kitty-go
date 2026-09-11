@@ -1,6 +1,6 @@
 # Production Runtime Program
 
-Status: **active implementation program — M1 adopted; M2 release-ready, adoption pending**
+Status: **active implementation program — M1 and exact M2 tuple adopted; M3/M4 remaining entry gates pending**
 
 Program ID: `production-runtime`
 
@@ -28,11 +28,12 @@ M1 is **accepted** at the exact identities recorded in
 its [adoption closeout](programs/evidence/m1-adoption-closeout.md). M2's exact
 GapDB-only production-authority candidate completed the clean crown campaign,
 independent review, recursive release verification, mission acceptance,
-integration, and post-merge mission review. It is technically release-ready;
-its release receipt intentionally records `adopted=false`. M3–M7 remain
-dependency-blocked until the exact M2 tuple receives a separate attributable
-human adoption record. This result does not transfer M2 proof to API 2.0,
-neutral acceptance, real-agent composition, or MCP.
+integration, and post-merge mission review. Its exact release tuple is now
+adopted by the separate attributable [M2 decision](programs/evidence/m2-adoption.json).
+The frozen release receipt intentionally retains its pre-adoption
+`adopted=false` outcome. M3/M4 may resolve their remaining entry criteria and
+proceed; M5–M7 remain gated on their own predecessors. This decision does not
+transfer M2 proof to API 2.0, neutral acceptance, real-agent composition, or MCP.
 
 The program is intentionally not a mega-mission:
 
@@ -238,8 +239,9 @@ and signed adoption evidence.
 
 ### M2 — GapDB-Only Production Authority
 
-**Status:** implementation complete, accepted, merged, and post-merge reviewed;
-exact source-bound release is ready for a separate human adoption decision
+**Status:** implementation complete, accepted, merged, post-merge reviewed,
+and adopted at the exact source-bound release tuple in the
+[M2 adoption record](programs/evidence/m2-adoption.json).
 
 **Outcome:** Move all authority capabilities to the event and CAS model and
 erase SQLite from the production graph.
@@ -650,9 +652,11 @@ authority.
 
 ## 9. Machine/human parity and validation
 
-The published manifest is a location-adjusted copy of the mission-source
-manifest: every field except `$schema` must be byte-equivalent after canonical
-JSON ordering. This roadmap displays every machine field:
+The published manifest preserves the mission-source design while projecting
+recorded program status and the approved Beads-to-Hubnot provider replacement.
+After those explicit projections and the `$schema` location adjustment, every
+field must be equivalent after canonical JSON ordering. This roadmap displays every
+machine field:
 
 | Machine field | Human location |
 |---|---|
@@ -661,6 +665,13 @@ JSON ordering. This roadmap displays every machine field:
 | `outcome`, `primary_falsification_target` | Program summary and each mission card |
 | `entry_evidence`, `exit_evidence` | Mission-card admission and exit sections |
 | `non_goals`, `risk`, `rollback` | Mission cards and stop/go table |
+
+The mission-source manifest is the immutable design baseline and retains its
+original proposed statuses and Beads references. The published manifest projects
+subsequent recorded program decisions. Normalize only the five provider fields
+changed by the merged Hubnot mission, then compare all fields except schema
+location and mission status. Validate the current status projection separately
+against the adoption records.
 
 Reproduce the contract checks from the repository root:
 
@@ -675,34 +686,40 @@ jq -e '([.missions[].id] | length) == ([.missions[].id] | unique | length)' "$PR
 jq -e 'all(.missions[]; (.dependencies | length) <= 3)' "$PROGRAM"
 jq -e '([.missions[].id] as $ids | all(.missions[]; .dependencies as $deps | all($deps[]; . as $dep | ($ids | index($dep)) != null)))' "$PROGRAM"
 jq -e '.critical_path == ["M1", "M2", "M3", "M5", "M6"]' "$PROGRAM"
+jq -e '([.missions[] | {key:.id,value:.status}] | from_entries) == {M1:"complete",M2:"complete",M3:"proposed",M4:"proposed",M5:"proposed",M6:"proposed",M7:"proposed"}' "$PROGRAM"
 jq -e '. as $root | .critical_path as $path | all(range(0; ($path | length) - 1); . as $index | $path[$index] as $from | $path[$index + 1] as $to | any($root.missions[]; .id == $to and (.dependencies | index($from) != null)))' "$PROGRAM"
 jq -e '([.missions[] | {key:.id,value:.dependencies}] | from_entries) == {M1:[],M2:["M1"],M3:["M2"],M4:["M2"],M5:["M2","M3","M4"],M6:["M5"],M7:["M5"]}' "$PROGRAM"
 
 jq -r '.missions[] as $mission | $mission.dependencies[]? | "\(.) \($mission.id)"' "$PROGRAM" | tsort
 
 diff -u \
-  <(jq -S 'del(."$schema")' "$SOURCE") \
-  <(jq -S 'del(."$schema")' "$PROGRAM")
+  <(jq -S '
+    (.missions[] | select(.id == "M3") | (.title, .entry_evidence[1], .primary_falsification_target)) |= gsub("Beads"; "Hubnot") |
+    (.missions[] | select(.id == "M5") | .primary_falsification_target) |= gsub("Beads"; "Hubnot") |
+    (.missions[] | select(.id == "M6") | .entry_evidence[1]) |= gsub("Beads"; "Hubnot") |
+    del(."$schema", .missions[].status)' "$SOURCE") \
+  <(jq -S 'del(."$schema", .missions[].status)' "$PROGRAM")
 ```
 
 Expected topological constraints are `M1 < M2`, `M2 < M3`, `M2 < M4`,
 `M2 < M5`, `M3 < M5`, `M4 < M5`, `M5 < M6`, and `M5 < M7`.
-`tsort` must exit zero. The human comparison must find seven proposed missions,
+`tsort` must exit zero. The current manifest must contain seven missions,
+with M1/M2 complete and M3–M7 proposed pending their own admission records,
 one falsification target per mission, no hidden dependency, parallel groups
 `after-M2` and `after-M5`, and no package-scaffolding exit criterion.
 
 ## 10. Admitting the M2 successors
 
-M1 is adopted and M2 is technically release-ready. Its full clean run,
+M1 and the exact M2 release tuple are adopted. M2's full clean run,
 independent archive verification, and post-merge mission review completed with
-no unresolved critical/high finding. Do not admit a successor from source
-presence, a green local test, a tracker state, or this roadmap. The remaining
-program decision is an attributable human adoption record binding the exact
-source commit, tree, RunID, manifest digest, producer and release archive
-digests, sidecar chain, and reviewer identity.
+no unresolved critical/high finding. Its separate attributable human
+[adoption record](programs/evidence/m2-adoption.json) binds the source commit,
+tree, RunID, manifest, producer/review/release digests, and frozen evidence chain.
+Do not admit a successor from source presence, a green local test, a tracker
+state, or this roadmap.
 
-After that human decision, M3 and M4 may be created in the `after-M2` parallel
-group.
+M3 and M4 may now be created in the `after-M2` parallel group, subject to their
+remaining entry criteria and the immutable dependency-admission law above.
 Each consumes the M2 successor contract rather than database keys or qualifier
 internals. If M2 fails, preserve the attempt and repair a new candidate; do not
 admit a successor by weakening the census or substituting the short CI tier.

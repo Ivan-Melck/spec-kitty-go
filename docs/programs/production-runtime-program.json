@@ -3,7 +3,13 @@
   "schema_version": "1.0",
   "program_id": "production-runtime",
   "title": "Spec Kitty Production Runtime",
-  "critical_path": ["M1", "M2", "M3", "M5", "M6"],
+  "critical_path": [
+    "M1",
+    "M2",
+    "M3",
+    "M5",
+    "M6"
+  ],
   "missions": [
     {
       "id": "M1",
@@ -21,17 +27,21 @@
         "Replacement authority receives a fresh workspace and replay produces the same canonical digest.",
         "All external GapDB adoption scenarios pass and a human signs the exact adoption tuple."
       ],
-      "non_goals": ["Migrate every existing authority repository."],
+      "non_goals": [
+        "Migrate every existing authority repository."
+      ],
       "risk": "A client-only integration may hide owner lifecycle, response ambiguity, or replay defects.",
       "rollback": "Stop after the proving slice and retain the current runtime as historical evidence; do not begin M2.",
-      "status": "proposed"
+      "status": "complete"
     },
     {
       "id": "M2",
       "title": "GapDB-Only Production Authority",
       "outcome": "Move all authority capabilities to the event and CAS model and erase SQLite from the production graph.",
       "primary_falsification_target": "Every authority capability can run without SQL constraints, dual truth, SQLite fallback, or loss of refusal semantics.",
-      "dependencies": ["M1"],
+      "dependencies": [
+        "M1"
+      ],
       "entry_evidence": [
         "M1 journal, checkpoint, epoch, sidecar, and adoption evidence is accepted.",
         "The Phase 1-3 authority behavior inventory is frozen.",
@@ -42,17 +52,21 @@
         "Recovery and ambiguous-response tests cover every authority-changing event family.",
         "Source, module graph, SBOM, and binaries contain no SQLite production implementation."
       ],
-      "non_goals": ["Silently import unsupported legacy SQLite state."],
+      "non_goals": [
+        "Silently import unsupported legacy SQLite state."
+      ],
       "risk": "A table-shaped key translation could preserve accidental SQLite semantics and weaken atomicity.",
       "rollback": "Revert the unshipped adapter branch as a unit; never ship dual writes or a fallback.",
-      "status": "proposed"
+      "status": "complete"
     },
     {
       "id": "M3",
       "title": "Production Mission Execution and Hubnot Composition",
       "outcome": "Compose real agent, workspace, tracker, review, and Git integration paths without losing concurrency safety.",
       "primary_falsification_target": "The concurrency crown jewel survives when GapDB, Hubnot, Git, workspaces, processes, agents, and human edits disagree.",
-      "dependencies": ["M2"],
+      "dependencies": [
+        "M2"
+      ],
       "entry_evidence": [
         "M2 GapDB authority is accepted.",
         "A qualified Hubnot tuple and portable conformance contract are pinned.",
@@ -63,7 +77,9 @@
         "Zombie, dishonest tracker, human reassignment, review-independence, and repository-fence scenarios pass.",
         "Conflicts preserve candidates and create explicit repair work."
       ],
-      "non_goals": ["Implement the neutral acceptance kernel or public API."],
+      "non_goals": [
+        "Implement the neutral acceptance kernel or public API."
+      ],
       "parallel_group": "after-M2",
       "risk": "Production composition can accidentally grant authority through tracker, process, or filesystem state.",
       "rollback": "Keep the qualified domain services and remove the unqualified production composition root.",
@@ -74,7 +90,9 @@
       "title": "Stack-Neutral Acceptance Runtime",
       "outcome": "Judge stack-neutral claims using explicitly bound, provenance-rich evidence providers.",
       "primary_falsification_target": "One neutral gate can judge the same claim through materially different providers without importing ecosystem semantics.",
-      "dependencies": ["M2"],
+      "dependencies": [
+        "M2"
+      ],
       "entry_evidence": [
         "M2 durable event and evidence substrate is accepted.",
         "Candidate, WorkRevision, review, and governance identities are stable.",
@@ -85,7 +103,9 @@
         "Missing providers, stale evidence, waivers, and targeted invalidation behave explicitly.",
         "Architecture mutants prove the acceptance kernel contains no ecosystem or provider imports."
       ],
-      "non_goals": ["Make this repository's Go commands universal product law."],
+      "non_goals": [
+        "Make this repository's Go commands universal product law."
+      ],
       "parallel_group": "after-M2",
       "risk": "Convenient provider behavior could leak language or tool semantics back into the kernel.",
       "rollback": "Disable unqualified provider bindings while retaining durable evidence as non-admissible history.",
@@ -96,7 +116,11 @@
       "title": "Orchestrator API 2.0, Native Operations, Progress, and CLI",
       "outcome": "Expose the complete production process through one typed application boundary and normal CLI.",
       "primary_falsification_target": "A client can drive, disconnect from, resume, and understand a mission without reading Hubnot, Markdown, worktrees, Git refs, or GapDB directly.",
-      "dependencies": ["M2", "M3", "M4"],
+      "dependencies": [
+        "M2",
+        "M3",
+        "M4"
+      ],
       "entry_evidence": [
         "M2 authority, M3 production execution, and M4 acceptance are accepted.",
         "API 2.0, progress, operation, and compatibility contracts are ratified."
@@ -106,7 +130,9 @@
         "Operations survive disconnect and restart; snapshot plus watch converges after resynchronization.",
         "API 1.3 fixtures translate safely or return typed incompatibility."
       ],
-      "non_goals": ["Implement MCP inside the core binary."],
+      "non_goals": [
+        "Implement MCP inside the core binary."
+      ],
       "risk": "A transport-shaped API could recreate generic mutation or leak host authority.",
       "rollback": "Retain internal application capabilities and remove unqualified public transports or compatibility mappings.",
       "status": "proposed"
@@ -116,7 +142,9 @@
       "title": "Core Production Qualification and Release",
       "outcome": "Qualify clean installation and sustained multi-mission operation as the core production release.",
       "primary_falsification_target": "Independently proven components remain safe under sustained concurrency, arbitrary crash timing, installation, restart, and operator recovery.",
-      "dependencies": ["M5"],
+      "dependencies": [
+        "M5"
+      ],
       "entry_evidence": [
         "M5 process-complete runtime is accepted.",
         "Signed GapDB and Hubnot production tuples are pinned.",
@@ -127,7 +155,9 @@
         "Installed core requires no Python, SQLite, or MCP.",
         "Operators can diagnose every durable blocked state without editing GapDB directly."
       ],
-      "non_goals": ["Delay the core release for the optional MCP adapter."],
+      "non_goals": [
+        "Delay the core release for the optional MCP adapter."
+      ],
       "parallel_group": "after-M5",
       "risk": "Correct components may fail at lifecycle, load, packaging, or operator-recovery seams.",
       "rollback": "Withhold the release artifact and preserve source-bound qualification evidence for repair.",
@@ -138,7 +168,9 @@
       "title": "Optional Stateless MCP 2026-07-28 Tasks Adapter",
       "outcome": "Provide an independently packaged agent-native projection over API 2.0.",
       "primary_falsification_target": "Connection loss, task expiry, input pauses, and cancellation races cannot alter or replace durable mission authority.",
-      "dependencies": ["M5"],
+      "dependencies": [
+        "M5"
+      ],
       "entry_evidence": [
         "M5 API 2.0 and native operations are accepted.",
         "MCP 2026-07-28 core and Tasks extension revisions are pinned."
@@ -148,7 +180,9 @@
         "Stateless multi-instance, task-loss, input, cancellation-race, and progress-resume scenarios pass.",
         "CLI-only and MCP-driven workflows produce equivalent terminal evidence."
       ],
-      "non_goals": ["Create MCP-only workflow semantics or place MCP on the core release critical path."],
+      "non_goals": [
+        "Create MCP-only workflow semantics or place MCP on the core release critical path."
+      ],
       "parallel_group": "after-M5",
       "risk": "Transport task identity or lifecycle could be mistaken for domain authority.",
       "rollback": "Remove or disable the independent adapter without changing the core application or mission state.",
