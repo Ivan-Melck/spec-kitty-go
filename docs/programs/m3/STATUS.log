@@ -1,0 +1,18 @@
+# STATUS.log — M3 production mission execution
+
+Append-only audit journal. Every plan change and every spec-kitty issue gets a
+dated entry. Never rewrite prior lines.
+
+---
+
+- 2026-09-11 — scaffold — MISSION-OUTLINE.md, PERMISSION_GRANT.md, STATUS.log
+  created by Kat (session with Lynn) from the program's M3 section
+  (docs/PRODUCTION_RUNTIME_PROGRAM.md §M3) + live 2026-09-11 production-host
+  findings. Entry contracts landed via PR #8 (ADR 0003 + NATIVE_REQUEST_SURFACE.md,
+  tracking issue #7 auto-closed). M2 adoption ratified same-day on PR #6
+  (comment 5638402807). Baseline commit on main precedes the feature branch
+  (phantom-coordination-branch guard, spec-kitty-mission-bootstrap skill).
+- 2026-09-11 — note — pre-existing empty branches `feat/m3-production-composition`
+  and `feat/m4-neutral-acceptance` (both at a08531d7, zero own commits) are
+  placeholder stubs from the adoption session; left untouched. The M3 feature
+  branch for specify will be cut fresh from post-merge main.
