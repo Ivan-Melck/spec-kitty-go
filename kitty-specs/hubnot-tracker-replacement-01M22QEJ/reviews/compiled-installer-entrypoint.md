@@ -1,0 +1,15 @@
+# Bootstrap/scanner design review
+
+The existing scanner does not support the proposed `command ./go` escape from conservative dispatch analysis. The independent external overlay tested `exec ./go`, direct `./go`, `command ./go` and `command -- ./go` with the same tracked physical-root argument. All four refused: the wrappers reported ambiguous command expansion; direct execution reported unsupported unknown-path dispatch. The focused probe passed in 0.009 seconds and scanner source hashes remained unchanged. No application files or runtime state were edited.
+
+Evidence: `bootstrap-command-probe.log`, `bootstrap_command_probe_test.go`, `bootstrap-command-overlay.json`, and `bootstrap-command-scanner-source.json` in this directory.
+
+Recommendation: retire the redundant source-bootstrap shell wrapper and document the already implemented externally built qualifier's `install` subcommand as the canonical installer. Current spec FR-013 requires an explicit pinned build/install path; FR-012 concerns reconstruction. Neither requires a shell wrapper. Keep the existing accepted-source, explicit toolchain, deterministic recipe, binary-digest, destination and idempotence/refusal behavior. Document the exact initial qualifier build and use an explicit qualifier path; no mutable branch or PATH fallback. Canonically amend the plan, ownership expectation, wrapper tests and later WP09 Make/CI/docs before adoption. The user tradeoff is a separate initial qualifier build, which qualification already needs. Test the compiled entry's accepted and refused cases, including source/destination paths with spaces and exact compiler status/output behavior.
+
+If the wrapper is retained, merely clearing sticky wrapper-dispatch state is insufficient: direct unknown path invocation deliberately refuses tracked arguments too. A scanner change would require a principled target/argument grammar and preservation of unknown executable/indirect dispatch refusals, not an arbitrary basename allowlist. That is a separate WP08 ownership/review task with explicit mutant census and regenerated source-bound absence evidence. No such parser change is recommended to preserve this redundant launcher, and no syntax exploiting untracked-variable gaps is acceptable.
+
+This is a design recommendation, not an adopted scope decision or formal WP verdict. The scanner and application remain untouched.
+
+## Adopted implementation decision
+
+The root architect adopted the compiled installer recommendation. WP07 retains the obsolete shell path in its ownership only to delete that candidate; its original create-intent authorization is retained because the runtime requires it for an absent literal owned path. The compiled API, manifest, compiler/source/destination admission and idempotence/refusal guarantees remain unchanged. WP09 current Make/CI/docs must build the external qualifier with the pinned recipe and call its install subcommand. No scanner or frozen census change is authorized. Corrected source and full quality still require independent validation; prior 6aaf2112 receipts remain tied to their original source.

@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "mission_slug": "hubnot-tracker-replacement-01M22QEJ",
+  "mission_id": "01M22QEJPAAQJM91R01MCBR8QV",
+  "mission_branch": "kitty/mission-hubnot-tracker-replacement-01M22QEJ",
+  "target_branch": "feat/hubnot-tracker-replacement",
+  "lanes": [
+    {
+      "lane_id": "lane-a",
+      "wp_ids": [
+        "WP01"
+      ],
+      "write_scope": [
+        "internal/architecture/policy.go",
+        "internal/architecture/policy_test.go",
+        "internal/tracker/capabilities.go",
+        "internal/tracker/capabilities_test.go",
+        "internal/tracker/hubnot/adapter.go",
+        "internal/tracker/hubnot/adapter_test.go",
+        "internal/tracker/hubnot/binding.go",
+        "internal/tracker/hubnot/binding_test.go",
+        "internal/tracker/hubnot/errors.go",
+        "internal/tracker/hubnot/errors_test.go",
+        "internal/tracker/hubnot/protocol.go",
+        "internal/tracker/hubnot/protocol_test.go",
+        "internal/tracker/hubnot/testdata/protocol_cases.json",
+        "internal/tracker/hubnot/testdata/protocol_child.go",
+        "internal/tracker/hubnot/transport.go",
+        "internal/tracker/hubnot/transport_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-h",
+      "wp_ids": [
+        "WP08"
+      ],
+      "write_scope": [
+        "internal/architecture/m2_absence_mutants_test.go",
+        "internal/architecture/m2_absence_test.go",
+        "internal/testcampaign/m2/absence.go",
+        "internal/testcampaign/m2/evidence_test.go",
+        "scripts/m2-absence/expected-absence-tests.txt"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-b",
+      "wp_ids": [
+        "WP02"
+      ],
+      "write_scope": [
+        "internal/tracker/hubnot/codec.go",
+        "internal/tracker/hubnot/codec_test.go",
+        "internal/tracker/hubnot/mapping.go",
+        "internal/tracker/hubnot/mapping_test.go",
+        "internal/tracker/hubnot/observation.go",
+        "internal/tracker/hubnot/observation_test.go",
+        "internal/tracker/hubnot/revision.go",
+        "internal/tracker/hubnot/revision_test.go",
+        "internal/tracker/hubnot/testdata/codec-fixtures.json",
+        "internal/tracker/inventory.go",
+        "internal/tracker/inventory_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-a"
+      ],
+      "parallel_group": 1
+    },
+    {
+      "lane_id": "lane-c",
+      "wp_ids": [
+        "WP03"
+      ],
+      "write_scope": [
+        "internal/tracker/hubnot/catalog.go",
+        "internal/tracker/hubnot/catalog_test.go",
+        "internal/tracker/hubnot/definition.go",
+        "internal/tracker/hubnot/definition_test.go",
+        "internal/tracker/hubnot/operation.go",
+        "internal/tracker/hubnot/operation_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-b"
+      ],
+      "parallel_group": 2
+    },
+    {
+      "lane_id": "lane-d",
+      "wp_ids": [
+        "WP04"
+      ],
+      "write_scope": [
+        "internal/tracker/hubnot/graph.go",
+        "internal/tracker/hubnot/graph_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-c"
+      ],
+      "parallel_group": 3
+    },
+    {
+      "lane_id": "lane-e",
+      "wp_ids": [
+        "WP05"
+      ],
+      "write_scope": [
+        "internal/tracker/discussion_observation.go",
+        "internal/tracker/discussion_observation_test.go",
+        "internal/tracker/hubnot/assignment.go",
+        "internal/tracker/hubnot/assignment_test.go",
+        "internal/tracker/hubnot/discussion.go",
+        "internal/tracker/hubnot/discussion_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-c"
+      ],
+      "parallel_group": 3
+    },
+    {
+      "lane_id": "lane-f",
+      "wp_ids": [
+        "WP06"
+      ],
+      "write_scope": [
+        "cmd/spec-kitty/main_test.go",
+        "internal/architecture/reachability.go",
+        "internal/architecture/reachability_test.go",
+        "internal/helpercmd/model.go",
+        "internal/helpercmd/provider.go",
+        "internal/helpercmd/provider_request.go",
+        "internal/helpercmd/provider_request_test.go",
+        "internal/helpercmd/provider_test.go",
+        "internal/helpercmd/runner.go",
+        "internal/helpercmd/runner_test.go",
+        "internal/tracker/hubnot/capability.go",
+        "internal/tracker/hubnot/capability_test.go",
+        "internal/tracker/hubnot/inspect.go",
+        "internal/tracker/hubnot/inspect_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration",
+        "workspace"
+      ],
+      "depends_on_lanes": [
+        "lane-c",
+        "lane-d",
+        "lane-e"
+      ],
+      "parallel_group": 4
+    },
+    {
+      "lane_id": "lane-g",
+      "wp_ids": [
+        "WP07"
+      ],
+      "write_scope": [
+        "internal/testcampaign/cmd/hubnot-qualification/fixture.go",
+        "internal/testcampaign/cmd/hubnot-qualification/fixture_test.go",
+        "internal/testcampaign/cmd/hubnot-qualification/main.go",
+        "internal/testcampaign/cmd/hubnot-qualification/main_test.go",
+        "internal/testcampaign/cmd/hubnot-qualification/runner.go",
+        "internal/testcampaign/cmd/hubnot-qualification/runner_test.go",
+        "internal/testcampaign/hubnot_evidence.go",
+        "internal/testcampaign/hubnot_evidence_test.go",
+        "internal/testcampaign/hubnot_manifest.go",
+        "internal/testcampaign/hubnot_manifest_test.go",
+        "internal/testcampaign/testdata/hubnot-qualification-reference.json",
+        "scripts/install-qualified-hubnot.sh"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-f"
+      ],
+      "parallel_group": 5
+    },
+    {
+      "lane_id": "lane-i",
+      "wp_ids": [
+        "WP09"
+      ],
+      "write_scope": [
+        ".github/workflows/beads-qualification.yml",
+        ".github/workflows/full-campaign.yml",
+        ".github/workflows/hubnot-qualification.yml",
+        ".github/workflows/m2-qualification.yml",
+        ".github/workflows/quality.yml",
+        "Makefile",
+        "README.md",
+        "docs/HISTORICAL_ARCHITECTURE_DISPOSITIONS.md",
+        "docs/HUBNOT_TRACKER.md",
+        "docs/MCP_2026_07_28_ADAPTER.md",
+        "docs/ORCHESTRATOR_API_2_0.md",
+        "docs/PRODUCTION_ORCHESTRATION_ARCHITECTURE.md",
+        "docs/PRODUCTION_RUNTIME_PROGRAM.md",
+        "docs/PYTHON_BEHAVIOR_INVENTORY.md",
+        "docs/TECHNICAL_PROJECT_PLAN.md",
+        "docs/adr/0002-production-orchestration-architecture.md",
+        "docs/programs/production-runtime-program.json",
+        "internal/architecture/beads_documentation_test.go",
+        "internal/architecture/closeout_documentation_test.go",
+        "internal/architecture/hubnot_cutover_test.go",
+        "internal/architecture/hubnot_documentation_test.go",
+        "internal/architecture/m2_dependency_guard_test.go",
+        "internal/architecture/m2_mutant_control_test.go",
+        "internal/execution/effect_authority_v2_test.go",
+        "internal/scenario/behavior_parity_test.go",
+        "internal/testcampaign/beads_evidence.go",
+        "internal/testcampaign/beads_evidence_test.go",
+        "internal/testcampaign/census_test.go",
+        "internal/testcampaign/cmd/beads-qualification/**",
+        "internal/testcampaign/cmd/campaign/main.go",
+        "internal/testcampaign/cmd/campaign/main_test.go",
+        "internal/testcampaign/historical_beads_evidence.go",
+        "internal/testcampaign/historical_beads_evidence_test.go",
+        "internal/testcampaign/manifest.go",
+        "internal/testcampaign/mission_method.go",
+        "internal/testcampaign/mission_method_test.go",
+        "internal/testcampaign/testdata/qualification-reference.json",
+        "internal/tracker/beads/**",
+        "scripts/install-qualified-beads.sh"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "artifact-rendering",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-a",
+        "lane-b",
+        "lane-c",
+        "lane-d",
+        "lane-e",
+        "lane-f",
+        "lane-g",
+        "lane-h"
+      ],
+      "parallel_group": 6
+    },
+    {
+      "lane_id": "lane-j",
+      "wp_ids": [
+        "WP10"
+      ],
+      "write_scope": [
+        "docs/HUBNOT_QUALIFICATION.md",
+        "internal/helpercmd/hubnot_acceptance_test.go",
+        "internal/helpercmd/hubnot_performance_test.go"
+      ],
+      "predicted_surfaces": [
+        "api",
+        "legacy-cleanup",
+        "tracker-integration"
+      ],
+      "depends_on_lanes": [
+        "lane-i"
+      ],
+      "parallel_group": 7
+    }
+  ],
+  "computed_at": "2026-09-09T12:15:42.984543+00:00",
+  "computed_from": "dependency_graph+ownership",
+  "planning_artifact_wps": [],
+  "planning_commit_sha": "f042bf6af22ab571dc650000e43a8018c2af903f"
+}

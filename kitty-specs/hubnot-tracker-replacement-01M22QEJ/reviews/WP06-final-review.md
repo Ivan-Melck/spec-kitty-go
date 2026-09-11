@@ -1,0 +1,60 @@
+# WP06 independent formal review
+
+Verdict: **PASS — normal exact-source approval requested**. No concrete blocker remains within WP06. Reviewer codex-independent-consumer-review acts under reviewer-renata and did not implement or fix application source.
+
+## Source and gate results
+
+Reviewed source597de396e5d93b77196b5aae63a9d0f01dcd55e2, tree a5e37e9e16f76d841e679f711a8b73645f64396a. The commit changes exactly fourteen owned files. Every committed/current source hash matches the independent final R4 checkpoint; all six reapproved WP05 dependency hashes also match. The qualified lane was clean. All retained independent probe/artifact hashes remain intact. The full generated review prompt was read and action-scoped governance refresh completed exit0. Its embedded implementer identity does not supersede the explicit reviewer-renata claim.
+
+- PASS: complete source-bound make -k quality, exit0, including GapDB race291.652s and both successful aggregate conclusions, using installed Go1.26.7/GOTOOLCHAIN=local.
+- PASS: nine exact commit/tree/source_dirty=false receipt JSONs. Seven individual profiles have exit0, no skips/failures/timeouts, equal expected/started/terminal/passed sets/counts. Independently checked raw censuses are acceptance3, architecture72, mission-acceptance3, mission-contract4, provider-adversarial23, provider-portable2 and scope3; both aggregate receipts pass.
+- PASS: final committed-source package races helpercmd1.534s, Hubnot45.036s, compiled CLI7.362s, with the exact admitted public hn enabled. Complete output retained; these are separate from the quality campaign.
+- PASS: independent final additive strict/DTO/partial-fact/input-output lifetime race1.797s; unchanged seventeen-call actual compiled public flow with zero findings; actual held stdin and saturated stdout signal probes. Source bytes remain identical to qualification. No broad suite was repeated during formal review.
+- N/A: optional runtime Python no_coverage is a separate limitation, not a passing Python gate. Logged-out/publication/outbox warnings remain separate from actual Go results and verified durable local status.
+
+Final-source-gate-verification.json binds all source and receipt/raw-event hashes. qualification/ preserves complete receipts, raw streams, quality/package logs and owner handoff. r4-pre-review-evidence.json binds the independent probes and external binary. Readiness event01M23D7WBFQMPTW7EDMMSTC0M5 is normal and force=false. Unrelated root metadata dirt was not application-source dirt and did not require a guard bypass.
+
+## Requirement fidelity and useful production path
+
+FR-001: actual inspection revalidates explicit qualified public binary/workspace/actor identity and advertises only completed conservative capabilities. Runtime binding does not initialize, repair, discover an ambient executable, read a private signer file or rebind a project. Wrong tuple, missing executable, legacy/read-only and unsupported guarantees refuse through the public route. Inspection health is explicitly limited to public transport/binding; it does not claim a complete graph or production-host admission.
+
+FR-010: runner.Run routes tracker before control-root classification and HostFactory, then runTracker strictly decodes the explicit binding/request, calls actual hubnot.Open and dispatches through the completed neutral ports in invokeTracker. All fourteen actions are exercised by the committed compiled lifecycle test, including both assignment modes, graph operations, richer discussion, current/full definitions and actual proof fields. Targeted production call-site inspection and unchanged registered removal mutants establish live consumer/adapter reachability. The HostFactory spy is zero across all tracker action help/refusal paths; compiled public actions leave a nonexistent control root absent. Existing mission lifecycle remains covered by complete helper/package and quality gates.
+
+Request JSON is separate from authority DTOs. The action allowlist rejects unknown/duplicate keys, malformed UTF-8/surrogates, explicit nulls, trailing values, action/project mismatch and oversized input before provider mutation. Independently encoded opaque JSON text preserves the full accepted depth9999 and exact9007199254740993/1e400/-0 lexemes. Explicit accessor-based result DTOs preserve criterion order, full definitions, discussion values, full proof bytes/digest/token and immutable references. CanonicalData sorting is not used as an ordered-fidelity oracle.
+
+Assignment observe reaches the real neutral ObserveAssignment; it does not reinterpret the catalog's plain assignee. Discussion carries actual signer separately from accountable author, one common proof plus resolvable per-entry references, and a separate fresh current-work proof. Historical append/replay proof is not substituted for a fresh expected-observation token. Dependencies truthfully expose portable_relations_only because their neutral port has no proof return. Unavailable ready results retain diagnostics with proof=null and availability=unavailable; diagnostic_only never becomes execution authority.
+
+The unchanged independent seventeen-call compiled flow verifies large structured work and exact metadata, signed effects, ordered criteria, assignment provenance, exact native comment body, original replay under changed retry-time expected observation, proof digest equality, shared/current proof scopes, strict/refusal/read-only no-write sensors and control-root absence. The owner compiled lifecycle covers the additional full fourteen-action census and executes the displayed stdin-create/returned-reference-read example literally.
+
+FR-011 is satisfied for this package's consumer/reachability contribution: the first-party Hubnot route is real, discoverable and refuses unsupported legacy binding without fallback/dual-write. Active installer/campaign/CI retirement and current-documentation cutover remain explicitly WP07/WP09 work. Their completion and final1000-item performance qualification are not claimed by this approval.
+
+C-001/C-005: tracker facts remain descriptive. This delta leaves production.go, main.go, GapDB host admission, immutable authority/history, old mission grammar and adoption state untouched. There is no API1.3 restoration, M3/M4 admission, hidden service/cache, unsafe compensation or global-CAS claim. M2 remains adopted=false. The later hosted/local preservation scope clarification concerns WP07/WP09 and does not change this package's source or obligations.
+
+## Independent finding closure and retained history
+
+R1 initially fabricated a proof-shaped zero value for unavailable ready data; actual public duplicate mapping through a valid native opening reproduced it. Explicit absent proof/scope now passes the unchanged test. R2 human/help rendering initially ignored output failures; checked writes now preserve unavailable exits, including short writes and diagnostics. A runnable help example was added and executed.
+
+R3 actual inherited stdin initially ignored SIGINT/SIGTERM while waiting for EOF. Both initial runs required SIGKILL after1.5s. Context-aware input now borrows an owned pollable duplicate, stops/joins its watcher, closes the duplicate and restores exact original flags. Fixed actual signals exit130 in approximately1ms, emit the canceled envelope when writable and preserve refs/control state. Named files reject FIFOs using nonblocking open plus descriptor regular-file validation. Independent48 input lifetimes cover cancellation before/during, completion, initially blocking/nonblocking flags, caller reuse and no descriptor leak.
+
+R4 was found after the R1–R3 bounded pass: actual saturated stdout also blocked both signals. That intermediate pass and subsequent superseding finding remain preserved. Context now reaches result/help output and protects stdout/stderr with owned pollable descriptors; interrupted writes return130 with no fallback. Independent32 output lifetimes preserve flags, caller usability and descriptor census. A first diagnostic after cancellation has one250ms delivery context; independently tested saturated stdout/human stderr remains bounded, and writable output retains actual applied/prior facts. Complete successfully accepted output retains its delivered outcome when cancellation only races with cleanup.
+
+The initial stdout witness required a kernel anon_pipe_write thread, which disappears in a correct pollable implementation. That instrumentation failure is retained. The revised witness checks the public condition directly: known186,676-byte complete read response, sustained full4096-byte pipe and live process. That exact revised witness is red on the previous binary and green on final source: both stdout signals exit130 in0.003s, with only the unavoidable4096-byte prefix, no fallback, unchanged refs and absent control root. No partial prefix is claimed to be complete JSON/evidence. All disposable fixtures are removed and children reaped. This is a scoped measurement, not a universal timing guarantee.
+
+Initial findings, cancellation/output-cancellation reports, all red runs, intermediate pass reports, revised harness sources and final green evidence remain under this directory. Corrections were made by the owner before formal readiness; no review history was overwritten to manufacture a pass.
+
+## Mandatory anti-pattern checklist
+
+1. Dead code — PASS: live runner→tracker→bound adapter→neutral methods, Inspector/Capabilities and explicit DTO helpers; registered removal sensors cover actual production connections. No delivered behavior relies only on a test caller.
+2. Synthetic fixtures — PASS: positive assertions execute the actual compiled product against admitted public hn. Injected writer/neutral errors and malformed boundaries are explicitly unit evidence and supplement actual pipe/ref/control sensors.
+3. Silent empty returns — PASS: absent proof and deliberate scope are explicit; errors become typed diagnostics. The complete-output cap refuses rather than truncating fields into successful results. Interrupted output cannot promise a complete envelope and never retries presentation as a mutation.
+4. FR coverage — PASS for FR-001/010 and the scoped FR-011 contribution, with C-001/005 as traced above. Later installer/cutover/performance acceptance remains separate.
+5. Frozen surface — PASS: exact fourteen-file owned delta; no frozen main/production/authority/history/evidence changes. Approved dependency correction was integrated by root and remains exact.
+6. Locked decisions — PASS: strict JSON, full neutral fidelity, explicit signer/author and proof scope, honest unavailable readiness/capabilities, original/current observation separation and no host authority.
+7. Shared-file ownership — PASS: declared helper/model/reachability refinements stay within WP06 ownership. No approved provider file or existing neutral API was modified by this package; corrected WP05 integration was explicit and verified.
+8. Production fragility — PASS: actual pipe cancellation and descriptor cleanup are verified; output failure does not hang, fabricate delivery or retry effects. Known applied/prior facts survive when delivery is possible. Borrowed streams require exclusive use during the operation; arbitrary concurrent external flag changes are not promised.
+
+## Runtime verdict
+
+Normal exact-source verdict command and durable event verification follow. No forced transition, source edit or self-review fallback is authorized or needed.
+
+Normal approval completed exit0. Canonical event01M23DEDHBCRZK8BPCRR9Y8MQ9 records in_review→approved, reviewer codex-independent-consumer-review, force=false. The generated review-cycle-1.md binds approval to source597de396e5d93b77196b5aae63a9d0f01dcd55e2. Runtime reports verdict_durably_persisted=true and durability_classification=durable. Exact event, command output and unchanged canonical render are preserved in approval-event.json, approval-runtime.log and canonical-review-render.md. Remote publication/outbox warnings remain separate. Runtime ownership is released; no command remains in flight.

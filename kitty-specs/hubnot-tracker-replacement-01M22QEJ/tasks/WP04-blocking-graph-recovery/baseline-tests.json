@@ -1,0 +1,13 @@
+{
+  "wp_id": "WP04",
+  "captured_at": "2026-09-09T12:55:56Z",
+  "base_branch": "feat/hubnot-tracker-replacement",
+  "base_commit": "5c5ac9dc44dbcb2032f9a5ddc7c2d7edd103c437",
+  "test_runner": "pytest",
+  "total": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "failures": [],
+  "source_identity": "GateCoverageScopeSource/junit_xml"
+}

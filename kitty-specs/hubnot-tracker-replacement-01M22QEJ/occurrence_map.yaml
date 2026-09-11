@@ -1,0 +1,90 @@
+# Manual occurrence review required: provider replacement is not a textual rename.
+target:
+  term: Beads
+  replacement: Hubnot
+  operation: rename
+categories:
+  code_symbols:
+    action: manual_review
+  import_paths:
+    action: manual_review
+  filesystem_paths:
+    action: manual_review
+  serialized_keys:
+    action: manual_review
+  cli_commands:
+    action: manual_review
+  user_facing_strings:
+    action: manual_review
+  tests_fixtures:
+    action: manual_review
+  logs_telemetry:
+    action: manual_review
+exceptions:
+- path: kitty-specs/beads-tracker-integration-01M0YG7E/**
+  action: do_not_change
+  reason: Frozen completed mission at original source; new provider does not rewrite its evidence.
+- path: kitty-specs/gapdb-control-journal-proving-ground-01M18EVR/**
+  action: do_not_change
+  reason: Frozen completed mission at original source; new provider does not rewrite its evidence.
+- path: kitty-specs/gapdb-only-production-authority-01M1GWDJ/**
+  action: do_not_change
+  reason: Frozen completed mission at original source; new provider does not rewrite its evidence.
+- path: kitty-specs/phase-one-architecture-closeout-01M0WZQ9/**
+  action: do_not_change
+  reason: Frozen completed mission at original source; new provider does not rewrite its evidence.
+- path: kitty-specs/phase1-two-agent-authority-proving-ground-01M0Q4A8/**
+  action: do_not_change
+  reason: Frozen completed mission at original source; new provider does not rewrite its evidence.
+- path: kitty-specs/production-runtime-architecture-01M16GVA/**
+  action: do_not_change
+  reason: Frozen completed mission at original source; new provider does not rewrite its evidence.
+- path: kitty-specs/software-development-mission-method-01M11EX2/**
+  action: do_not_change
+  reason: Frozen completed mission at original source; new provider does not rewrite its evidence.
+- path: docs/phase1-evidence/**
+  action: do_not_change
+  reason: Historical qualification or retired contract; retain source-bound names/identities and add successor evidence
+    elsewhere.
+- path: docs/phase2-evidence/**
+  action: do_not_change
+  reason: Historical qualification or retired contract; retain source-bound names/identities and add successor evidence
+    elsewhere.
+- path: docs/phase3-evidence/**
+  action: do_not_change
+  reason: Historical qualification or retired contract; retain source-bound names/identities and add successor evidence
+    elsewhere.
+- path: docs/programs/evidence/**
+  action: do_not_change
+  reason: Historical qualification or retired contract; retain source-bound names/identities and add successor evidence
+    elsewhere.
+- path: docs/adr/0001*
+  action: do_not_change
+  reason: Historical qualification or retired contract; retain source-bound names/identities and add successor evidence
+    elsewhere.
+- path: docs/MINI_REVIEW*
+  action: do_not_change
+  reason: Historical qualification or retired contract; retain source-bound names/identities and add successor evidence
+    elsewhere.
+- path: docs/ORCHESTRATOR_API_1_3_PROJECTION.md
+  action: do_not_change
+  reason: Historical qualification or retired contract; retain source-bound names/identities and add successor evidence
+    elsewhere.
+- path: kitty-ops/01M0XXB2SGJVE23B4ZXDYVQP8Z.jsonl
+  action: do_not_change
+  reason: Historical invocation record; only new mission invocations and append-only lifecycle events may be added.
+- path: kitty-ops/01M16DMFVV2F4GF1P87AR8DGBN.jsonl
+  action: do_not_change
+  reason: Historical invocation record; only new mission invocations and append-only lifecycle events may be added.
+- path: kitty-ops/01M174TXD5Q9GFK82H0NHYDBGV.jsonl
+  action: do_not_change
+  reason: Historical invocation record; only new mission invocations and append-only lifecycle events may be added.
+- path: .beads/**
+  action: do_not_change
+  reason: Existing ignored database and backup preserved; verified current catalog empty.
+- path: Makefile
+  action: manual_review
+  reason: WP09 atomically switches active installation and campaign dispatch to the compiled Hubnot installer and explicit successor profiles; frozen qualification identities remain unchanged.
+- path: scripts/install-qualified-beads.sh
+  action: manual_review
+  reason: WP09 retires the active Beads installer after qualified Hubnot installation is available; deletion does not rewrite historical release evidence or original provider data.

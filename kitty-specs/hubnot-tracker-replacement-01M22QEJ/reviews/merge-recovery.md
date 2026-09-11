@@ -1,0 +1,7 @@
+# Integration recovery
+
+The normal merge with strategy `merge` integrated all ten approved lanes. Its first target merge stopped on the generated dossier snapshot; the metadata driver's logged-out warning was not the conflict. A read-only `git merge-tree --write-tree` diagnostic identified only `snapshot-latest.json`. Root reconciled that file with the accepted target's newer complete snapshot in commit `62316376`, then normal `spec-kitty merge --resume --strategy merge` completed successfully and performed the managed worktree/branch cleanup.
+
+The normal merge had assigned mission number 4 in durable commit `42aa13fb171d056646cb4272c9c7d2c545215d64`. The metadata merge driver's target-authoritative field policy subsequently retained the target's null value. Root restored the already assigned number through `specify_cli.mission_metadata.load_meta` and `write_meta(validate=True)`, preserving every other field. No new number was allocated, approval overridden, driver disabled, or application file changed. The retrospective is refreshed through its normal command after review.
+
+The integrated application matches qualified source `e9b1ac659dcb40fe62ac6c991f26ed9fed9e544e`, which remains reachable through merge ancestry. All ten work packages reached done through the normal runtime. Actual postmerge preservation at `b8d5875631be67fc46d7ea7416f12578b759e2e5` passed for all 829 historical paths, 19 original provider files, and recorded recovery refs/stashes. These observations do not claim hosted execution or change historical adoption.

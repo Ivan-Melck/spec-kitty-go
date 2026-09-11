@@ -1,0 +1,5 @@
+{"event": "started", "invocation_id": "01M242XANGF9SGW0ZKVH25JYJJ", "profile_id": "architect-alphonso", "action": "audit", "request_text": "Cool. Let's do the beads replacement in go kitty", "actor": "operator", "mode_of_work": "task_execution", "governance_context_hash": "a7a76dbab17286d5", "governance_context_available": true, "started_at": "2026-09-09T21:59:19.084882+00:00", "model_id": "claude-opus-4-6"}
+{"event": "completed", "invocation_id": "01M242XANGF9SGW0ZKVH25JYJJ", "completed_at": "2026-09-09T22:52:00.665416+00:00", "outcome": "done", "closed_by": "agent"}
+{"event": "artifact_link", "invocation_id": "01M242XANGF9SGW0ZKVH25JYJJ", "at": "2026-09-09T22:52:00.665843+00:00", "kind": "artifact", "ref": "kitty-specs/hubnot-tracker-replacement-01M22QEJ/mission-review-report.md"}
+{"event": "artifact_link", "invocation_id": "01M242XANGF9SGW0ZKVH25JYJJ", "at": "2026-09-09T22:52:00.666085+00:00", "kind": "artifact", "ref": "kitty-specs/hubnot-tracker-replacement-01M22QEJ/retrospective.yaml"}
+{"event": "commit_link", "invocation_id": "01M242XANGF9SGW0ZKVH25JYJJ", "at": "2026-09-09T22:52:00.666255+00:00", "sha": "410d55f0500983999e6238d16982270afdf67598"}

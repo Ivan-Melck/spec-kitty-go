@@ -26,7 +26,7 @@ GapDB-only production host.
 The stable ownership model is:
 
 ```text
-Beads       -> mutable work definition, dependencies, discussion, assignment
+Hubnot       -> mutable work definition, dependencies, discussion, assignment
 Spec Kitty  -> mission, WorkRevision, execution, review, acceptance, integration
 Git         -> source objects, commits, trees, ancestry, and ref outcomes
 GapDB       -> target ordered control-state substrate, never product semantics
@@ -140,7 +140,7 @@ Every category has one writable owner:
 | State | Writable owner | Never inferred from |
 |---|---|---|
 | Mission lifecycle | Spec Kitty mission capability | Tracker status or Markdown |
-| Mutable work definition | Configured primary tracker; Beads by default | Assignment as execution authority |
+| Mutable work definition | Configured primary tracker; Hubnot by default | Assignment as execution authority |
 | Executable graph | Spec Kitty WorkRevision capability | A later provider edit |
 | Run and lease | Spec Kitty execution capability | Process identity or ticket claim |
 | Mutable workspace | Host workspace capability | A path or previous lease |
@@ -162,7 +162,7 @@ flowchart TB
     App[Application capabilities]
     Kernel[Authority kernel and pure reducers]
     Ports[Application owned ports]
-    External[GapDB Beads Git workspace artifact providers]
+    External[GapDB Hubnot Git workspace artifact providers]
 
     Clients --> Inbound
     Inbound --> App
@@ -171,37 +171,22 @@ flowchart TB
     External --> Ports
 ```
 
-The kernel imports no SQLite/SQL, GapDB, Beads, Git implementation, filesystem
+The kernel imports no SQLite/SQL, GapDB, Hubnot, Git implementation, filesystem
 allocator, qualification ecosystem, transport, or MCP package. Adapters report
 observations and typed failures; they do not author product verdicts.
 
-## 6. Current Beads delivery boundary
+## 6. Current Hubnot delivery boundary
 
-The accepted Phase 2 tuple remains:
+The active provider is the source-and-binary-pinned public Hubnot CLI through
+neutral ports and the compiled tracker consumer. See [Hubnot tracker](HUBNOT_TRACKER.md)
+for installation, actor binding, complete work, effects and bounded recovery.
+Simple catalog and assignment are unguarded; guarded definition replacement,
+atomic claims and conditional compensation refuse. Discussion distinguishes
+claimed author from actual signing actor. Read revisions are equality-only.
 
-```text
-Beads executable: 1.2.2
-source tag commit: 6c124203e771433a3550c348771a5b5e27fd3c21
-JSON envelope:    BD_JSON_ENVELOPE=1
-schema_version:   1
-integration:      argv-only documented JSON CLI
-binary SHA-256:   0c9990691b3b574d4772c0a9fed260769d68af57eb8072ee2a60ff0b619c7bb6
-```
-
-Every linked worktree observes the same canonical Beads workspace. Provider
-inspection is read-only. `embedded_serialized` coordinates Spec Kitty
-processes only; `server_multiwriter` requires the pinned qualified tuple.
-Content-derived observation revisions are neither ordered CAS tokens nor proof
-that a read/write pair is guarded.
-
-The 1.2.2 adapter supports catalog, graph, discussion, visible assignment,
-interchange, and backup behavior at its evidence boundary. It deliberately
-reports guarded arbitrary update and safe arbitrary compensation as unsupported
-when their guarantees cannot be supplied. Human or external changes are
-preserved and reconciled rather than overwritten.
-
-Beads assignment is coordination, not authority. Beads readiness is diagnostic,
-comments are not review, and closing an issue does not accept a mission.
+The exact Beads 1.2.2 tuple and its capabilities remain historical Phase 2 evidence;
+they are not current installation instructions or inherited Hubnot guarantees.
+M2 adoption and M3 real-agent composition remain separate program gates.
 
 ## 7. Target GapDB journal, checkpoint, and recovery
 
@@ -258,7 +243,7 @@ outbox, or compensation adapter. Unknown event/reducer versions fail closed.
 
 ## 8. Production execution, review, and integration
 
-Beads observations become an immutable executable generation only after graph
+Hubnot observations become an immutable executable generation only after graph
 validation and explicit finalization. Drift yields one of `continue`,
 `supersede`, `invalidate`, or `fork`; a running contract never changes in place.
 
@@ -412,7 +397,7 @@ publication; later commits do not inherit the verdict.
 | GapDB lifecycle is not a stable public product boundary | M1 pins the external sidecar tuple and rejects internal imports or arbitrary PATH discovery |
 | Storage recovery is confused with product resumability | Separate storage, checkpoint/journal, epoch, reconciliation, playback, and portable terminal record proofs |
 | Fencing is mistaken for filesystem control | Permanent W1 quarantine, fresh W2, and real zombie-writer fault campaign |
-| Beads semantics leak into the kernel | Layered import/reachability guards and deliberately stupid/dishonest tracker conformance |
+| Hubnot semantics leak into the kernel | Layered import/reachability guards and deliberately stupid/dishonest tracker conformance |
 | SQLite survives as a hidden safety net | M2 structural absence gates across every production surface |
 | External compensation overwrites human work | Compare provider revision, value, and operation attribution; ambiguity requires a decision |
 | API clients manufacture facts | Closed commands, host-generated authority identities, black-box negative and mutant suites |
@@ -429,7 +414,7 @@ The core production release is complete only when:
 - a pinned project-local `gapdbd` lifecycle passes its signed adoption proof;
 - checkpoint plus journal restore, new epoch, reconciliation, playback, and
   terminal export are deterministic and operationally documented;
-- Beads-backed work finalizes into immutable executable generations without
+- Hubnot-backed work finalizes into immutable executable generations without
   tracker authority leakage;
 - two or more agents execute independent work in distinct lease-owned
   workspaces, and stale/zombie authority cannot hand off or integrate;

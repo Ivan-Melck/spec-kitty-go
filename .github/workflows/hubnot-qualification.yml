@@ -1,0 +1,100 @@
+name: hubnot-qualification
+
+on:
+  pull_request:
+  push:
+    branches: ["feat/**"]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hubnot-qualification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bounded-provider:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.7
+      - name: Warm module cache
+        run: go mod download
+      - name: Run offline exact portable and adversarial census
+        env:
+          GOTOOLCHAIN: local
+          GOPROXY: "off"
+          GOSUMDB: "off"
+        run: make hubnot-contract ARTIFACT_DIR="$RUNNER_TEMP/hubnot-bounded"
+      - name: Upload bounded failure and census evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hubnot-bounded-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hubnot-bounded
+          if-no-files-found: error
+          retention-days: 14
+
+  real-provider:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.7
+      - name: Prepare explicit external paths and durable setup evidence
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/hubnot-real" "$RUNNER_TEMP/hubnot-build"
+          printf '{"schema":"go-kitty.hubnot-setup/1","scope":"hosted-provider","full_admissible":false,"verdict":"non_admissible","reason":"setup has not completed"}\n' > "$RUNNER_TEMP/hubnot-real/setup.json"
+          echo "HUBNOT_GO=$(command -v go)" >> "$GITHUB_ENV"
+          echo "HUBNOT_SOURCE=$RUNNER_TEMP/hubnot-source" >> "$GITHUB_ENV"
+          echo "BUILD_DIR=$RUNNER_TEMP/hubnot-build" >> "$GITHUB_ENV"
+          echo "ARTIFACT_DIR=$RUNNER_TEMP/hubnot-real" >> "$GITHUB_ENV"
+      - name: Verify ordinary-user namespace prerequisite
+        run: bash scripts/ci/prepare-userns.sh
+
+      - name: Build canonical qualifier and fetch its exact accepted prerequisite
+        shell: bash
+        run: |
+          go mod download
+          make hubnot-build HUBNOT_GO="$HUBNOT_GO" BUILD_DIR="$BUILD_DIR"
+          "$BUILD_DIR/hubnot-qualification" manifest > "$ARTIFACT_DIR/manifest.json"
+          source_commit=$(jq -er .provider.source_commit "$ARTIFACT_DIR/manifest.json")
+          git init -q "$HUBNOT_SOURCE"
+          git -C "$HUBNOT_SOURCE" fetch --depth=1 https://github.com/LynnColeArt/hubnot.git "$source_commit"
+          git -C "$HUBNOT_SOURCE" checkout --detach FETCH_HEAD
+          (cd "$HUBNOT_SOURCE" && "$HUBNOT_GO" mod download)
+      - name: Install exact provider through compiled installer and build product
+        run: |
+          make hubnot-install hubnot-product HUBNOT_GO="$HUBNOT_GO" HUBNOT_SOURCE="$HUBNOT_SOURCE" BUILD_DIR="$BUILD_DIR"
+          printf '{"schema":"go-kitty.hubnot-setup/1","scope":"hosted-provider","full_admissible":false,"verdict":"pass"}\n' > "$ARTIFACT_DIR/setup.json"
+      - name: Run fixed hosted selection with actual qualifier isolation admission
+        env:
+          GOPROXY: "off"
+          GOSUMDB: "off"
+        run: /usr/bin/python3 -I scripts/ci/with-userns.py -- make hubnot-hosted-provider HUBNOT_GO="$HUBNOT_GO" BUILD_DIR="$BUILD_DIR" ARTIFACT_DIR="$ARTIFACT_DIR"
+      - name: Upload selected non-full qualification including failed attempts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hubnot-hosted-provider-non-full-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hubnot-real
+          if-no-files-found: error
+          retention-days: 14

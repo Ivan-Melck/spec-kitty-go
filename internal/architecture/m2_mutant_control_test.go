@@ -664,7 +664,7 @@ func m2FixtureDigest(validator, fixture string) string {
 }
 
 func m2PolicyFixture(fixture string) (Policy, bool) {
-	policy, err := m2ClosedPolicyValue(m2ModulePath)
+	policy, err := m2HistoricalPolicyValue()
 	if err != nil {
 		return Policy{}, false
 	}
@@ -680,7 +680,10 @@ func m2PolicyFixture(fixture string) (Policy, bool) {
 	case "GAPDB-CLASS":
 		removeM2Pattern(&policy, m2ModulePath+"/internal/controlstore/gapdb")
 	case "GAPDB-DENIAL":
-		policy.ForbiddenLocalDirections = policy.ForbiddenLocalDirections[1:]
+		policy, err = m2WithoutExactDirection(policy, m2CapabilityGapDBDirection(policy.ModulePath))
+		if err != nil {
+			return Policy{}, false
+		}
 	case "PROVIDER":
 		policy.ForbiddenImportPrefixes = removeM2String(policy.ForbiddenImportPrefixes, "modernc.org/sqlite")
 	default:

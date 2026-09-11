@@ -3,6 +3,7 @@ package testcampaign
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 const (
@@ -27,8 +29,6 @@ const (
 )
 
 var phase3ArchitectureTests = []string{
-	"TestBeadsDocumentationDeliveryClaims",
-	"TestBeadsDocumentationLinksMermaidAndCommands",
 	"TestCloseoutBinaryAndReviewPolicyDocumentation",
 	"TestCloseoutOrchestratorAPI13ProjectionContract",
 	"TestCurrentProductionGraphPassesClosedPolicy",
@@ -43,6 +43,8 @@ var phase3ArchitectureTests = []string{
 	"TestDeferredRuntimeSurfaceRejectsMarkdownAuthorityParsing",
 	"TestDeferredRuntimeSurfaceRejectsPackageAliasDeclaredInAnotherFile",
 	"TestDeferredRuntimeSurfaceRejectsProductionPythonButIgnoresTests",
+	"TestHubnotDocumentationDeliveryClaims",
+	"TestHubnotDocumentationLinksMermaidAndCommands",
 	"TestLoadGraphDistinguishesProductionAndTestImports",
 	"TestLoadGraphReturnsTypedAndBoundedFailures",
 	"TestLoadedUnknownRootCannotDisappearThroughGraphExemption",
@@ -78,11 +80,7 @@ var missionProfiles = map[string]Profile{
 			"TestUniversalCampaignCensusMutants",
 		},
 	},
-	MissionRealIdentityProfile: {
-		Name: MissionRealIdentityProfile, Package: "./internal/tracker/beads",
-		Pattern:       "^(TestMissionMethodRealBeadsTwoItemQualification)$",
-		ExpectedTests: []string{"TestMissionMethodRealBeadsTwoItemQualification"},
-	},
+	MissionRealIdentityProfile: {Name: MissionRealIdentityProfile, Package: HubnotQualificationPackage, ExpectedTests: []string{HubnotIdentityTest}},
 	MissionAcceptanceProfile: {
 		Name: MissionAcceptanceProfile, Package: "./internal/scenario",
 		Pattern: "^(TestProductionCapabilityCompositionHasOnePublicationBoundary|TestTerminalSemanticEquivalenceControlledMutants|TestWorkCoordinateAgreementControlledMutants)$",
@@ -436,6 +434,13 @@ type phase3ProviderRun struct {
 // claims without assigning qualification to the checkout that happens to
 // contain them; source, payload, and attestation remain distinct identities.
 func ValidatePhase3Publication(root string) error {
+	h, err := loadPhase3HistoricalDocuments(root)
+	if err != nil {
+		return err
+	}
+	return validatePhase3PublicationWithDocuments(root, h)
+}
+func validatePhase3PublicationWithDocuments(root string, h phase3HistoricalDocuments) error {
 	evidencePath := filepath.Join(root, "docs", "phase3-evidence")
 	var evidence phase3Qualification
 	if err := phase3DecodeClosed(filepath.Join(evidencePath, "qualification-evidence.json"), &evidence); err != nil {
@@ -451,7 +456,7 @@ func ValidatePhase3Publication(root string) error {
 	if err := validatePhase3Checksums(evidencePath); err != nil {
 		return err
 	}
-	if err := validatePhase3Documents(root, evidencePath, census); err != nil {
+	if err := validatePhase3Documents(root, evidencePath, census, h); err != nil {
 		return err
 	}
 	return nil
@@ -917,16 +922,20 @@ func validatePhase3Checksums(evidencePath string) error {
 	return nil
 }
 
-func validatePhase3Documents(root, evidencePath string, census phase3Census) error {
+func validatePhase3Documents(root, evidencePath string, census phase3Census, h phase3HistoricalDocuments) error {
 	paths := []string{filepath.Join(root, "README.md"), filepath.Join(evidencePath, "README.md"), filepath.Join(evidencePath, "results.md"), filepath.Join(evidencePath, "limitations.md")}
 	contents := make(map[string]string, len(paths))
 	for _, path := range paths {
 		value, err := os.ReadFile(path)
+		if path == filepath.Join(root, "README.md") {
+			value = []byte(h.README)
+			err = nil
+		}
 		if err != nil {
 			return err
 		}
 		contents[path] = string(value)
-		if err = validatePhase3Links(path, string(value)); err != nil {
+		if err = validatePhase3HistoricalLinks(root, path, string(value), h); err != nil {
 			return err
 		}
 		if err = validatePhase3Mermaid(path, string(value)); err != nil {
@@ -951,32 +960,23 @@ func validatePhase3Documents(root, evidencePath string, census phase3Census) err
 			return fmt.Errorf("phase3 claim names uncatalogued test %s", match[1])
 		}
 	}
-	for _, required := range []string{"TestMissionMethodSemanticDriftMutations1000", "TestMissionMethodFinalizationProcessRaces100", "TestMissionMethodCrashBoundaryCensus", "TestMissionMethodProjectionAndGovernanceIndependence100", "TestMissionMethodNormalizationAndPureQueries100", "TestMissionMethodRealBeadsTwoItemQualification"} {
+	for _, required := range []string{
+		"TestMissionMethodCrashBoundaryCensus",
+		"TestMissionMethodFinalizationProcessRaces100",
+		"TestMissionMethodNormalizationAndPureQueries100",
+		"TestMissionMethodProjectionAndGovernanceIndependence100",
+		"TestMissionMethodRealBeadsTwoItemQualification",
+		"TestMissionMethodSemanticDriftMutations1000",
+	} {
 		if !strings.Contains(results, "`"+required+"`") {
 			return fmt.Errorf("phase3 result claim omitted proof %s", required)
 		}
 	}
-	makefileBytes, err := os.ReadFile(filepath.Join(root, "Makefile"))
-	if err != nil {
-		return err
-	}
-	targets := phase3MakeTargets(string(makefileBytes))
+	targets := phase3MakeTargets(h.Makefile)
+	var err error
 	for _, value := range contents {
-		if err = validatePhase3DocumentedCommands(root, value, targets); err != nil {
+		if err = validatePhase3DocumentedCommands(root, value, targets, h.Paths); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-func validatePhase3Links(path, contents string) error {
-	for _, match := range phase3LinkPattern.FindAllStringSubmatch(contents, -1) {
-		target := strings.SplitN(match[1], "#", 2)[0]
-		if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
-			continue
-		}
-		if _, err := os.Stat(filepath.Clean(filepath.Join(filepath.Dir(path), target))); err != nil {
-			return fmt.Errorf("phase3 broken link %s in %s", match[1], filepath.Base(path))
 		}
 	}
 	return nil
@@ -1062,7 +1062,7 @@ func validatePhase3MermaidBody(declaration string, lines []string) error {
 	return fmt.Errorf("unsupported Mermaid body")
 }
 
-func validatePhase3DocumentedCommands(root, contents string, targets map[string]bool) error {
+func validatePhase3DocumentedCommands(root, contents string, targets map[string]bool, historicalPaths map[string]bool) error {
 	blocks, err := phase3ExecutableBlocks(contents)
 	if err != nil {
 		return err
@@ -1075,7 +1075,7 @@ func validatePhase3DocumentedCommands(root, contents string, targets map[string]
 		for _, command := range phase3ShellCommands(block) {
 			name := command[0]
 			if name == "$beads_bin" || name == `"$beads_bin"` {
-				if err := validatePhase3CommandShape(root, command); err != nil {
+				if err := validatePhase3CommandShape(root, command, historicalPaths); err != nil {
 					return err
 				}
 				continue
@@ -1084,8 +1084,7 @@ func validatePhase3DocumentedCommands(root, contents string, targets map[string]
 				if filepath.Clean(name) != name || filepath.IsAbs(name) {
 					return fmt.Errorf("phase3 documentation names unsafe command %s", name)
 				}
-				info, statErr := os.Stat(filepath.Join(root, name))
-				if statErr != nil || !info.Mode().IsRegular() {
+				if !phase3HistoricalPathExists(historicalPaths, name) {
 					return fmt.Errorf("phase3 documentation names nonexistent command %s", name)
 				}
 				if err := validatePhase3ScriptShape(command); err != nil {
@@ -1096,7 +1095,7 @@ func validatePhase3DocumentedCommands(root, contents string, targets map[string]
 			if !allowed[name] {
 				return fmt.Errorf("phase3 documentation names unapproved command %s", name)
 			}
-			if err := validatePhase3CommandShape(root, command); err != nil {
+			if err := validatePhase3CommandShape(root, command, historicalPaths); err != nil {
 				return err
 			}
 			if name == "make" {
@@ -1105,7 +1104,7 @@ func validatePhase3DocumentedCommands(root, contents string, targets map[string]
 				}
 			}
 			if name == "go" && len(command) >= 3 && (command[1] == "run" || command[1] == "install") && strings.HasPrefix(command[2], "./") {
-				if _, err := os.Stat(filepath.Join(root, strings.TrimPrefix(command[2], "./"))); err != nil {
+				if !phase3HistoricalPathExists(historicalPaths, strings.TrimPrefix(command[2], "./")) {
 					return fmt.Errorf("phase3 documentation names nonexistent Go command %s", command[2])
 				}
 			}
@@ -1114,7 +1113,7 @@ func validatePhase3DocumentedCommands(root, contents string, targets map[string]
 	return nil
 }
 
-func validatePhase3CommandShape(root string, command []string) error {
+func validatePhase3CommandShape(root string, command []string, historicalPaths map[string]bool) error {
 	if len(command) == 0 {
 		return fmt.Errorf("phase3 documentation contains empty command")
 	}
@@ -1127,13 +1126,13 @@ func validatePhase3CommandShape(root string, command []string) error {
 	}
 	switch core[0] {
 	case "cd":
-		if len(core) != 2 || !phase3DocumentedDirectory(root, core[1]) {
+		if len(core) != 2 || !phase3DocumentedDirectory(core[1], historicalPaths) {
 			return unsupported()
 		}
 		return nil
 	case "git":
 		if len(core) >= 2 && core[1] == "-C" {
-			if len(core) != 4 || !phase3DocumentedDirectory(root, core[2]) || core[3] != "init" {
+			if len(core) != 4 || !phase3DocumentedDirectory(core[2], historicalPaths) || core[3] != "init" {
 				return unsupported()
 			}
 			return nil
@@ -1259,7 +1258,7 @@ func phase3SafeShellPath(value string) bool {
 	return value != "" && !filepath.IsAbs(value) && filepath.Clean(value) == value && !strings.HasPrefix(value, "..") && !strings.ContainsAny(value, "\x00\n")
 }
 
-func phase3DocumentedDirectory(root, value string) bool {
+func phase3DocumentedDirectory(value string, historicalPaths map[string]bool) bool {
 	value = phase3ShellValue(value)
 	if phase3ShellVariable(value) {
 		return true
@@ -1270,8 +1269,7 @@ func phase3DocumentedDirectory(root, value string) bool {
 	if value == "" || filepath.IsAbs(value) || filepath.Clean(value) != value || strings.HasPrefix(value, "..") {
 		return false
 	}
-	info, err := os.Stat(filepath.Join(root, value))
-	return err == nil && info.IsDir()
+	return historicalPaths[value]
 }
 
 func phase3ShellVariable(value string) bool {
@@ -1527,4 +1525,73 @@ func ValidatePhase3PublicationCheckout(root, payloadCommit, attestationCommit st
 		}
 	}
 	return ValidatePhase3Publication(root)
+}
+
+// phase3HistoricalDocuments separates published-era syntax from living README
+// commands. Callers pass explicit bytes so mutated fixtures remain observable.
+type phase3HistoricalDocuments struct {
+	README, Makefile string
+	Paths            map[string]bool
+}
+
+func loadPhase3HistoricalDocuments(root string) (phase3HistoricalDocuments, error) {
+	h := phase3HistoricalDocuments{Paths: map[string]bool{}}
+	read := func(args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		c := exec.CommandContext(ctx, "git", args...)
+		c.Dir = root
+		raw, err := c.Output()
+		if err != nil {
+			return nil, fmt.Errorf("historical documentation prerequisite 94e7c854 unavailable: %w", err)
+		}
+		return raw, nil
+	}
+	const baseline = "94e7c8542d7e543558391ab6fffda7a28e6e3759"
+	raw, err := read("show", baseline+":README.md")
+	if err != nil {
+		return h, err
+	}
+	h.README = string(raw)
+	raw, err = read("show", baseline+":Makefile")
+	if err != nil {
+		return h, err
+	}
+	h.Makefile = string(raw)
+	raw, err = read("ls-tree", "-r", "--name-only", baseline)
+	if err != nil {
+		return h, err
+	}
+	for _, name := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		h.Paths[name] = false
+		for dir := filepath.Dir(name); dir != "."; dir = filepath.Dir(dir) {
+			h.Paths[dir] = true
+		}
+	}
+	return h, nil
+}
+func validatePhase3HistoricalLinks(root, path, contents string, h phase3HistoricalDocuments) error {
+	for _, m := range phase3LinkPattern.FindAllStringSubmatch(contents, -1) {
+		target := strings.SplitN(m[1], "#", 2)[0]
+		if target == "" || strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
+			continue
+		}
+		rel, err := filepath.Rel(root, filepath.Clean(filepath.Join(filepath.Dir(path), target)))
+		if err != nil || !phase3HistoricalPathExists(h.Paths, filepath.ToSlash(rel)) {
+			return fmt.Errorf("phase3 broken historical link %s in %s", m[1], filepath.Base(path))
+		}
+		// Published evidence still resolves to its preserved files. Only retired
+		// delivery paths use the historical tree as their existence authority.
+		if strings.HasPrefix(filepath.ToSlash(rel), "docs/phase2-evidence/") || strings.HasPrefix(filepath.ToSlash(rel), "docs/phase3-evidence/") {
+			if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+				return fmt.Errorf("phase3 missing preserved publication link %s: %w", m[1], err)
+			}
+		}
+	}
+	return nil
+}
+
+func phase3HistoricalPathExists(paths map[string]bool, path string) bool {
+	_, ok := paths[path]
+	return ok
 }

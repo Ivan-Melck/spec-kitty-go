@@ -1,0 +1,26 @@
+{
+  "provider": "hubnot",
+  "source_commit": "baf350d12accd01d4d7e7221cf859c81b2c9622b",
+  "approved_application_source": "2356a295f77808363e60030895e53013d857b833",
+  "toolchain": "go1.26.7",
+  "goos": "linux",
+  "goarch": "amd64",
+  "goamd64": "v1",
+  "cgo_enabled": false,
+  "build_recipe": "go1.26.7-linux-amd64-cgo0-trimpath-buildvcsfalse-s-w-v1",
+  "binary_sha256": "077058c8be07cfcd28994210ab483f739fb194b6db417f70b455d6c3a3524cf3",
+  "reviewed_target": "1cfbd30071ed287179ca248b0676086b3bbf8ea9",
+  "pull_request": "https://github.com/LynnColeArt/hubnot/pull/3",
+  "schema": "go-kitty.hubnot-qualified-provider/1",
+  "identity_schema": "hn.identity/1",
+  "issue_schema": "hn.issue/1",
+  "event_protocol": "hn/0",
+  "build_flags": [
+    "-trimpath",
+    "-buildvcs=false",
+    "-mod=readonly",
+    "-ldflags=-s -w"
+  ],
+  "reproducible_across_paths": true,
+  "public_identity_read_only": true
+}

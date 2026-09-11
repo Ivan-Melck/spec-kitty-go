@@ -42,6 +42,9 @@ jobs:
       - name: Prepare isolated mutable paths
         run: mkdir -p "$ARTIFACT_DIR" "$BUILD_DIR" "$GOCACHE" "$GOTMPDIR" "$TMPDIR"
 
+      - name: Verify ordinary-user namespace prerequisite
+        run: bash scripts/ci/prepare-userns.sh
+
       - name: Record offline qualification boundary
         run: printf '%s\n' '{"hosted_credentials":"not_required","hosted_services":"not_required","runner":"github-hosted-linux"}' > "$ARTIFACT_DIR/runner-boundary.json"
 
@@ -57,7 +60,7 @@ jobs:
           started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           started_seconds=$(date +%s)
           set +e
-          make full-campaign ARTIFACT_DIR="$ARTIFACT_DIR"
+          /usr/bin/python3 -I scripts/ci/with-userns.py -- make full-campaign ARTIFACT_DIR="$ARTIFACT_DIR"
           status=$?
           set -e
           finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)

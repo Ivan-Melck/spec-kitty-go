@@ -2,21 +2,27 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	"github.com/spec-kitty/go-kitty3/internal/helpercmd"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/tracker/hubnot"
 )
 
 func TestNativeAndCompatibilityBinariesHaveOneClosedSurface(t *testing.T) {
@@ -386,4 +392,429 @@ func directoryFingerprint(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return strings.Join(values, "\n")
+}
+
+// TestCompiledTrackerPublicLifecycle exercises the product binary against only
+// public hn commands in an isolated repository, with no mission installation.
+func TestCompiledTrackerPublicLifecycle(t *testing.T) {
+	hn := os.Getenv("GO_KITTY_TEST_HUBNOT_BINARY")
+	if hn == "" {
+		t.Skip("set GO_KITTY_TEST_HUBNOT_BINARY to the admitted executable")
+	}
+	binary := buildBinary(t, repositoryRoot(t), "./cmd/spec-kitty")
+	workspace := t.TempDir()
+	public := func(program string, args ...string) []byte {
+		t.Helper()
+		c := exec.Command(program, args...)
+		c.Dir = workspace
+		c.Env = []string{"PATH=" + os.Getenv("PATH"), "LANG=C.UTF-8", "HOME=" + workspace}
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("public setup %v: %v %s", args, err, out)
+		}
+		return out
+	}
+	public("git", "init", "-q")
+	public("git", "-c", "user.name=Consumer fixture", "-c", "user.email=consumer@test.invalid", "commit", "--allow-empty", "-q", "-m", "fixture")
+	public(hn, "init", "--name", "Consumer fixture")
+	var identity struct {
+		Data struct {
+			Actor string `json:"actor"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(public(hn, "identity", "show", "--json"), &identity); err != nil {
+		t.Fatal(err)
+	}
+	config := hubnot.BindingConfig{Schema: "go-kitty.hubnot-binding/1", Provider: "hubnot", ProjectID: "project", WorkspacePath: workspace, ExecutablePath: hn, ExpectedActor: identity.Data.Actor, Identity: hubnot.QualifiedProviderIdentity()}
+	binding := filepath.Join(t.TempDir(), "binding.json")
+	encoded, _ := json.Marshal(config)
+	writeFixture(t, binding, encoded)
+	control := filepath.Join(t.TempDir(), "must-not-exist")
+	type resultEnvelope struct {
+		Schema  string          `json:"schema"`
+		Action  string          `json:"action"`
+		Outcome string          `json:"outcome"`
+		Result  json.RawMessage `json:"result"`
+	}
+	run := func(action string, data any, want int) map[string]any {
+		t.Helper()
+		args := []string{"--control-root", control, "tracker", action, "--binding", binding}
+		var input []byte
+		if data != nil {
+			input, _ = json.Marshal(map[string]any{"schema": "go-kitty.tracker-request/1", "action": action, "data": data})
+			args = append(args, "--input", "-")
+		}
+		c := exec.Command(binary, args...)
+		c.Env = []string{"PATH=" + os.Getenv("PATH")}
+		c.Stdin = bytes.NewReader(input)
+		var stderr bytes.Buffer
+		c.Stderr = &stderr
+		out, err := c.Output()
+		code := 0
+		if err != nil {
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) {
+				t.Fatal(err)
+			}
+			code = exit.ExitCode()
+		}
+		if code != want {
+			t.Fatalf("%s code=%d want=%d stderr=%s output=%s", action, code, want, stderr.Bytes(), out)
+		}
+		var env resultEnvelope
+		if err = json.Unmarshal(out, &env); err != nil || env.Schema != "go-kitty.tracker-result/1" || env.Action != action {
+			t.Fatalf("invalid envelope %s %v", out, err)
+		}
+		if _, err = os.Stat(control); !os.IsNotExist(err) {
+			t.Fatal("tracker touched mission control root")
+		}
+		var result map[string]any
+		if len(env.Result) > 0 {
+			d := json.NewDecoder(bytes.NewReader(env.Result))
+			d.UseNumber()
+			if err = d.Decode(&result); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return result
+	}
+	object := func(v any) map[string]any {
+		t.Helper()
+		m, ok := v.(map[string]any)
+		if !ok {
+			t.Fatalf("object missing: %T %v", v, v)
+		}
+		return m
+	}
+	refs := func() []byte { return public("git", "for-each-ref", "--format=%(refname) %(objectname)") }
+	requireProof := func(v any, want string) {
+		t.Helper()
+		p := object(v)
+		raw, err := base64.StdEncoding.DecodeString(p["canonical_fields_base64"].(string))
+		sum := sha256.Sum256(raw)
+		if err != nil || p["kind"] != want || p["digest"] != fmt.Sprintf("%x", sum) || p["provider_token"] == "" {
+			t.Fatalf("proof incomplete: %v %v", p, err)
+		}
+	}
+	before := refs()
+	inspection := run("inspect", nil, 0)
+	if object(inspection["capabilities"])["catalog_update"] != "unguarded" {
+		t.Fatalf("capability overclaim: %v", inspection)
+	}
+	if !bytes.Equal(before, refs()) {
+		t.Fatal("inspect wrote")
+	}
+	// Signal cancellation must terminate a command holding an incomplete real
+	// stdin pipe; both reads and cleanup finish without provider dispatch.
+	for _, signal := range []os.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		c := exec.Command(binary, "--control-root", control, "tracker", "create", "--binding", binding, "--input", "-")
+		pipe, err := c.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output, diagnostics bytes.Buffer
+		c.Stdout = &output
+		c.Stderr = &diagnostics
+		if err = c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pipe.Write([]byte(`{"schema":"go-kitty.tracker-request/1"`)); err != nil {
+			_ = c.Process.Kill()
+			_ = c.Wait()
+			t.Fatal(err)
+		}
+		// The in-process pipe test deterministically witnesses entry into Read;
+		// this compiled witness additionally checks installed signal handling.
+		time.Sleep(100 * time.Millisecond)
+		if err = c.Process.Signal(signal); err != nil {
+			_ = c.Process.Kill()
+			_ = c.Wait()
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- c.Wait() }()
+		select {
+		case err = <-done:
+		case <-time.After(3 * time.Second):
+			_ = c.Process.Kill()
+			<-done
+			_ = pipe.Close()
+			t.Fatalf("%s left blocked input alive", signal)
+		}
+		_ = pipe.Close()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 130 || !bytes.Contains(output.Bytes(), []byte(`"outcome":"canceled"`)) || !bytes.Equal(before, refs()) {
+			t.Fatalf("%s cancellation lost: %v %s %s", signal, err, output.Bytes(), diagnostics.Bytes())
+		}
+		if _, err = os.Stat(control); !os.IsNotExist(err) {
+			t.Fatal("canceled tracker touched control root")
+		}
+	}
+	// Named FIFOs are not file inputs: refuse before open/read can block.
+	fifo := filepath.Join(t.TempDir(), "request-fifo")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"tracker", "inspect", "--binding", fifo}, {"tracker", "create", "--binding", binding, "--input", fifo}} {
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		c := exec.CommandContext(ctx, binary, args...)
+		output, err := c.Output()
+		cancel()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 || !bytes.Contains(output, []byte(`"outcome":"invalid"`)) || !bytes.Equal(before, refs()) {
+			t.Fatalf("named FIFO was not bounded: %v %s", err, output)
+		}
+	}
+	simple := map[string]any{"work_id": "simple", "operation_id": "create-simple", "title": "Simple", "provider_metadata_json": `{"number":9007199254740993}`}
+	created := run("create", simple, 0)
+	record := object(created["record"])
+	ref := record["external_ref"]
+	requireProof(record["proof"], "original-operation/1")
+	before = refs()
+	replayed := run("create", simple, 0)
+	if replayed["replayed"] != true || !bytes.Equal(before, refs()) {
+		t.Fatal("create replay wrote")
+	}
+	current := run("read", map[string]any{"external_ref": ref}, 0)
+	requireProof(current["proof"], "known-work-observation/1")
+	update := map[string]any{"external_ref": ref, "operation_id": "update-simple", "title": "Updated", "description": "New body", "design_context": "Context", "criteria": []any{}, "expected_observation": object(current["proof"])["revision"], "required_guard": "unguarded"}
+	changed := run("update", update, 0)
+	if object(changed["record"])["title"] != "Updated" {
+		t.Fatal("update lost")
+	}
+	current = run("read", map[string]any{"external_ref": ref}, 0)
+	assignment := map[string]any{"external_ref": ref, "operation_id": "assign-simple", "expected_observation": object(current["proof"])["revision"], "assignee": "claimed-person", "required_guarantee": "unguarded"}
+	assigned := run("assign", assignment, 0)
+	requireProof(object(assigned["observation"])["proof"], "original-operation/1")
+	observedAssignment := run("assign", map[string]any{"external_ref": ref, "mode": "observe"}, 0)
+	if object(observedAssignment["observation"])["operation_marker"] == "" {
+		t.Fatal("assignment attribution missing")
+	}
+	for i := 0; i < 3; i++ {
+		current = run("read", map[string]any{"external_ref": ref}, 0)
+		body := fmt.Sprintf("Exact body %d\n雪", i) + strings.Repeat("x", 2048)
+		comment := run("comment", map[string]any{"external_ref": ref, "operation_id": fmt.Sprintf("comment-%d", i), "expected_observation": object(current["proof"])["revision"], "author": "Accountable author", "body": body}, 0)
+		entry := object(comment["entry"])
+		if entry["signing_actor"] != identity.Data.Actor || entry["author"] != "Accountable author" || entry["body"] != body {
+			t.Fatal("author/signer loss")
+		}
+		requireProof(entry["proof"], "original-operation/1")
+	}
+	discussion := run("discussion", map[string]any{"external_ref": ref}, 0)
+	requireProof(discussion["common_proof"], "discussion-observation/1")
+	requireProof(discussion["current_work_observation"], "known-work-observation/1")
+	entries := discussion["entries"].([]any)
+	if len(entries) != 3 {
+		t.Fatal("discussion lost entries")
+	}
+	for _, entry := range entries {
+		e := object(entry)
+		if e["proof"] != nil || object(e["proof_ref"])["digest"] != object(discussion["common_proof"])["digest"] {
+			t.Fatal("shared proof not resolved")
+		}
+	}
+	// Hold real stdout backpressure after the first byte of a large current
+	// observation. Cancellation must finish without writing a second envelope.
+	for _, signal := range []os.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		outputReader, outputWriter, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := outputWriter.SyscallConn()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var capacityErr syscall.Errno
+		if err = raw.Control(func(fd uintptr) {
+			_, _, capacityErr = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETPIPE_SZ, 4096)
+		}); err != nil || capacityErr != 0 {
+			t.Fatalf("pipe capacity: %v %v", err, capacityErr)
+		}
+		request, _ := json.Marshal(map[string]any{"schema": "go-kitty.tracker-request/1", "action": "read", "data": map[string]any{"external_ref": ref}})
+		c := exec.Command(binary, "--control-root", control, "tracker", "read", "--binding", binding, "--input", "-")
+		c.Stdin = bytes.NewReader(request)
+		c.Stdout = outputWriter
+		var diagnostics bytes.Buffer
+		c.Stderr = &diagnostics
+		beforeOutput := refs()
+		if err = c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		outputWriter.Close()
+		_ = outputReader.SetReadDeadline(time.Now().Add(3 * time.Second))
+		first := make([]byte, 1)
+		if _, err = outputReader.Read(first); err != nil {
+			_ = c.Process.Kill()
+			_ = c.Wait()
+			outputReader.Close()
+			t.Fatalf("output did not begin: %v %s", err, diagnostics.Bytes())
+		}
+		if err = c.Process.Signal(signal); err != nil {
+			_ = c.Process.Kill()
+			_ = c.Wait()
+			outputReader.Close()
+			t.Fatal(err)
+		}
+		done := make(chan error, 1)
+		go func() { done <- c.Wait() }()
+		select {
+		case err = <-done:
+		case <-time.After(3 * time.Second):
+			_ = c.Process.Kill()
+			<-done
+			outputReader.Close()
+			t.Fatalf("%s left stdout backpressure alive", signal)
+		}
+		rest, readErr := io.ReadAll(outputReader)
+		outputReader.Close()
+		var exit *exec.ExitError
+		partial := append(first, rest...)
+		if !errors.As(err, &exit) || exit.ExitCode() != 130 || readErr != nil || json.Valid(partial) || !bytes.Equal(beforeOutput, refs()) {
+			t.Fatalf("stdout cancellation mismatch: %v bytes=%d read=%v", err, len(partial), readErr)
+		}
+		if _, err = os.Stat(control); !os.IsNotExist(err) {
+			t.Fatal("output cancellation touched control root")
+		}
+	}
+	define := func(work string) map[string]any {
+		return map[string]any{"work_id": work, "operation_id": "define-" + work, "title": "Rich " + work, "description": "Full description", "design_context": "Context", "criteria": []any{map[string]any{"id": "z", "text": "Second lexical", "outcome": "Observable", "verifier": "test", "required": true}, map[string]any{"id": "a", "text": "First lexical", "outcome": "Observable", "verifier": "review", "required": false}}, "write_scopes": []any{map[string]any{"path": "internal/sample", "domain": "sample", "access": "write_exclusive"}}, "provenance": []any{map[string]any{"id": "FR001", "kind": "required_outcome"}}, "provider_metadata_json": `{"number":9007199254740993,"huge":1e400,"text":"雪"}`}
+	}
+	supplier := run("define", define("supplier"), 0)
+	target := run("define", define("target"), 0)
+	_ = supplier
+	targetRef := object(target["observation"])["external_ref"]
+	rich := run("definition", map[string]any{"external_ref": targetRef}, 0)
+	definition := object(rich["definition"])
+	if object(definition["criteria"].([]any)[0])["id"] != "z" || !strings.Contains(definition["provider_metadata_json"].(string), "9007199254740993") {
+		t.Fatal("definition accessor fidelity lost")
+	}
+	relation := map[string]any{"operation_id": "link", "blocked_work_id": "target", "blocking_work_id": "supplier"}
+	linked := run("link", relation, 0)
+	edge := object(linked["dependency"])["external_edge_id"]
+	if edge == "" {
+		t.Fatal("edge identity missing")
+	}
+	deps := run("dependencies", map[string]any{"external_ref": targetRef}, 0)
+	if deps["proof_scope"] != "portable_relations_only" || len(deps["items"].([]any)) != 1 {
+		t.Fatal("dependency loss")
+	}
+	ready := run("ready", map[string]any{}, 0)
+	if ready["authority"] != "diagnostic_only" {
+		t.Fatal("ready overclaim")
+	}
+	relation["operation_id"] = "unlink"
+	unlinked := run("unlink", relation, 0)
+	if object(unlinked["dependency"])["external_edge_id"] != edge {
+		t.Fatal("unstable edge identity")
+	}
+	// Complete inventory includes the two rich definitions; the simple catalog
+	// record remains readable through its own port, without invented rich fields.
+	before = refs()
+	inventory := run("inventory", nil, 0)
+	requireProof(inventory["common_proof"], "complete-current-inventory/1")
+	if len(inventory["items"].([]any)) != 2 || !bytes.Equal(before, refs()) {
+		t.Fatal("complete inventory lost values or wrote")
+	}
+	before = refs()
+	bad := map[string]any{"external_ref": ref, "mode": "observe", "operation_id": "forbidden"}
+	run("assign", bad, 2)
+	if !bytes.Equal(before, refs()) {
+		t.Fatal("invalid observe wrote")
+	}
+	current = run("read", map[string]any{"external_ref": ref}, 0)
+	update["operation_id"] = "guarded"
+	update["expected_observation"] = object(current["proof"])["revision"]
+	update["required_guard"] = "guarded"
+	run("update", update, 3)
+	if !bytes.Equal(before, refs()) {
+		t.Fatal("guard refusal wrote")
+	}
+	// Reject raw malformed Unicode/duplicates before any provider mutation.
+	for _, input := range []string{
+		`{"schema":"go-kitty.tracker-request/1","action":"create","data":{"work_id":"bad","operation_id":"bad","title":"\ud800"}}`,
+		`{"schema":"go-kitty.tracker-request/1","action":"create","data":{"work_id":"bad","operation_id":"bad","title":"` + string([]byte{0xff}) + `"}}`,
+		`{"schema":"go-kitty.tracker-request/1","action":"create","data":{"work_id":"bad","operation_id":"bad","title":"T","provider_metadata_json":"{\"x\":1,\"x\":2}"}}`,
+	} {
+		c := exec.Command(binary, "tracker", "create", "--binding", binding, "--input", "-")
+		c.Stdin = strings.NewReader(input)
+		out, err := c.Output()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 || !bytes.Contains(out, []byte(`"outcome":"invalid"`)) || !bytes.Equal(before, refs()) {
+			t.Fatalf("malformed mutation was not refused: %v %s", err, out)
+		}
+	}
+	config.ReadOnly = true
+	encoded, _ = json.Marshal(config)
+	writeFixture(t, binding, encoded)
+	run("inspect", nil, 0)
+	simple["work_id"] = "readonly"
+	simple["operation_id"] = "readonly"
+	run("create", simple, 3)
+	if !bytes.Equal(before, refs()) {
+		t.Fatal("read-only request wrote")
+	}
+	config.ReadOnly = false
+	encoded, _ = json.Marshal(config)
+	writeFixture(t, binding, encoded)
+	helpOutput, err := exec.Command(binary, "tracker", "--help").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	helpText := string(helpOutput)
+	start := strings.Index(helpText, "  spec-kitty --output json tracker create --binding binding.json --input - > created.json")
+	if start < 0 {
+		t.Fatal("runnable example missing")
+	}
+	end := strings.Index(helpText[start:], "\n\nResults use")
+	if end < 0 {
+		t.Fatal("example boundary missing")
+	}
+	example := strings.ReplaceAll(helpText[start:start+end], "binding.json", binding)
+	shell := exec.Command("bash", "-e", "-o", "pipefail", "-c", example)
+	shell.Dir = workspace
+	shell.Env = append(os.Environ(), "PATH="+filepath.Dir(binary)+":"+os.Getenv("PATH"))
+	exampleOutput, err := shell.CombinedOutput()
+	if err != nil {
+		t.Fatalf("help example did not run: %v %s", err, exampleOutput)
+	}
+	if !bytes.Contains(exampleOutput, []byte(`"work_id":"example"`)) || !bytes.Contains(exampleOutput, []byte(`"kind":"known-work-observation/1"`)) {
+		t.Fatalf("example did not read its returned reference: %s", exampleOutput)
+	}
+	// A native client can create a second signed opening with the same portable
+	// mapping. The diagnostic ready port must preserve proof absence explicitly.
+	var shown struct {
+		Data struct {
+			State json.RawMessage `json:"state"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(public(hn, "issue", "show", object(targetRef)["external_id"].(string), "--json"), &shown); err != nil {
+		t.Fatal(err)
+	}
+	stateFile := filepath.Join(t.TempDir(), "duplicate-state.json")
+	writeFixture(t, stateFile, shown.Data.State)
+	public(hn, "issue", "open", "--json", "--actor", identity.Data.Actor, "--operation", "native-duplicate-mapping", "--input", stateFile)
+	before = refs()
+	unavailableReady := run("ready", map[string]any{}, 0)
+	if unavailableReady["availability"] != "unavailable" || unavailableReady["proof"] != nil || len(unavailableReady["diagnostics"].([]any)) == 0 || !bytes.Equal(before, refs()) {
+		t.Fatalf("unavailable graph proof fabricated: %v", unavailableReady)
+	}
+	config.Identity.SourceCommit = strings.Repeat("0", 40)
+	encoded, _ = json.Marshal(config)
+	writeFixture(t, binding, encoded)
+	run("inspect", nil, 3)
+	config.Identity = hubnot.QualifiedProviderIdentity()
+	config.ExecutablePath = filepath.Join(workspace, "missing-hn")
+	encoded, _ = json.Marshal(config)
+	writeFixture(t, binding, encoded)
+	run("inspect", nil, 2)
+	if !bytes.Equal(before, refs()) {
+		t.Fatal("binding refusal wrote")
+	}
+	for _, mode := range []string{"json", "human"} {
+		c := exec.Command(binary, "--output="+mode, "tracker", "--help")
+		help, err := c.CombinedOutput()
+		if err != nil || !strings.Contains(string(help), "provider_metadata_json") || !strings.Contains(string(help), "original-operation") {
+			t.Fatalf("help incomplete %v %s", err, help)
+		}
+	}
 }

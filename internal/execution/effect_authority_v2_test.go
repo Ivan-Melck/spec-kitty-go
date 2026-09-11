@@ -1191,14 +1191,14 @@ func TestExternalObservationConstructorFlowsThroughExecuteDispatchAndRealFakeTra
 	}
 }
 
-func TestAssignmentEffectDispatcherPreservesBeadsSafeCompensationRefusalEvidenceV2(t *testing.T) {
+func TestAssignmentEffectDispatcherPreservesTrackerSafeCompensationRefusalEvidenceV2(t *testing.T) {
 	request, _, _ := effectRequestFixtureV2(t)
 	appliedEffect := effectObservationFixtureV2(request.Intent.Target, 2, request.Intent.IntendedValue, string(request.Intent.OperationID), "confirmed")
 	appliedAssignment := assignmentObservationFixtureV2(t, request.Intent.Target, 2, request.Intent.IntendedValue, string(request.Intent.OperationID))
 	probe := &assignmentProjectionProbeV2{observation: appliedAssignment, mutation: tracker.AssignmentMutation{Observation: appliedAssignment, Guarantee: tracker.AssignmentUnguarded, Noop: true}, mutationErr: &tracker.Error{Kind: tracker.ErrorSafeCompensationUnsupported, Message: "provider lacks atomic restore"}}
 	dispatcher, _ := NewAssignmentEffectDispatcherV2(probe)
 	digest, _ := journalv2.ParseDigest("effect_test", strings.Repeat("a", 64))
-	permission := effectDispatchPermissionV2{effectID: request.Intent.EffectID, operationID: request.Intent.OperationID, action: EffectAllowCompensationV2, marker: string(request.Intent.OperationID), expected: *appliedEffect, publicationID: testPublicationIDV2(t, "beads-refusal"), planDigest: digest, providerRevision: 17, guarantee: tracker.AssignmentAtomicClaim, intendedValue: request.Intent.IntendedValue, restoreValue: request.Intent.ExpectedValue}
+	permission := effectDispatchPermissionV2{effectID: request.Intent.EffectID, operationID: request.Intent.OperationID, action: EffectAllowCompensationV2, marker: string(request.Intent.OperationID), expected: *appliedEffect, publicationID: testPublicationIDV2(t, "tracker-refusal"), planDigest: digest, providerRevision: 17, guarantee: tracker.AssignmentAtomicClaim, intendedValue: request.Intent.IntendedValue, restoreValue: request.Intent.ExpectedValue}
 	evidence, err := dispatchAuthorizedEffectV2(t.Context(), permission, dispatcher)
 	if !IsKind(err, KindDecisionRequired) || probe.compensateCalls != 1 || evidence.Observation().ProviderRevision != 2 || evidence.Observation().Value != request.Intent.IntendedValue || evidence.Observation().OperationMarker != string(request.Intent.OperationID) {
 		t.Fatalf("evidence=%+v calls=%d err=%v", evidence.Observation(), probe.compensateCalls, err)
