@@ -1,6 +1,6 @@
 # Production Runtime Program
 
-Status: **active implementation program — M1 adopted; M2 release-ready, adoption pending**
+Status: **active implementation program — M1 and exact M2 tuple adopted; M3/M4 remaining entry gates pending**
 
 Program ID: `production-runtime`
 
