@@ -1,0 +1,17 @@
+{
+  "coordination_branch": "kitty/mission-stack-neutral-acceptance-runtime-01M4VFQB",
+  "created_at": "2026-10-13T20:37:06.700715+00:00",
+  "flattened": false,
+  "friendly_name": "Stack-Neutral Acceptance Runtime",
+  "mid8": "01M4VFQB",
+  "mission_id": "01M4VFQBZWYDKMZP34EF6ZB4NQ",
+  "mission_number": null,
+  "mission_slug": "stack-neutral-acceptance-runtime-01M4VFQB",
+  "mission_type": "software-dev",
+  "pr_bound": true,
+  "purpose_context": "Implement admitted program M4 after its exact adopted M2 predecessor and ratified acceptance evidence contract. Preserve the approved FR-001–FR-011 and SC-001–SC-006 scope, accountable candidate-bound waivers and durable revocation, honest typed provider outcomes, content-based evidence reuse, and crash/replay reconciliation. M3 and public API M5 remain separately gated; creating this scaffold grants no implementation, acceptance or release verdict.",
+  "purpose_tldr": "Judge stack-neutral claims through explicitly bound, provenance-rich providers.",
+  "slug": "stack-neutral-acceptance-runtime-01M4VFQB",
+  "target_branch": "parity/latest-upstream-main",
+  "topology": "coord"
+}
