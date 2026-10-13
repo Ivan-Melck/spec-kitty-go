@@ -1,0 +1,7 @@
+{"event": "started", "invocation_id": "01M4TTQM2ZGRV9EGE4DNYGYXKC", "profile_id": "architect-alphonso", "action": "audit", "request_text": "drive this as far as possible. Only stop if there are major roadblocks.", "actor": "operator", "mode_of_work": "task_execution", "governance_context_hash": "96a16e9c5d36d041", "governance_context_available": true, "started_at": "2026-10-13T14:30:16.801124+00:00", "model_id": "claude-opus-4-6"}
+{"event": "completed", "invocation_id": "01M4TTQM2ZGRV9EGE4DNYGYXKC", "completed_at": "2026-10-13T15:32:26.388322+00:00", "outcome": "failed", "closed_by": "agent"}
+{"event": "artifact_link", "invocation_id": "01M4TTQM2ZGRV9EGE4DNYGYXKC", "at": "2026-10-13T15:32:26.388722+00:00", "kind": "artifact", "ref": "docs/parity/COMPLETION_AUDIT.md"}
+{"event": "artifact_link", "invocation_id": "01M4TTQM2ZGRV9EGE4DNYGYXKC", "at": "2026-10-13T15:32:26.388932+00:00", "kind": "artifact", "ref": "docs/parity/ADMISSION_READINESS.md"}
+{"event": "artifact_link", "invocation_id": "01M4TTQM2ZGRV9EGE4DNYGYXKC", "at": "2026-10-13T15:32:26.389129+00:00", "kind": "artifact", "ref": "docs/parity/QUALIFICATION_FINDINGS.md"}
+{"event": "artifact_link", "invocation_id": "01M4TTQM2ZGRV9EGE4DNYGYXKC", "at": "2026-10-13T15:32:26.389318+00:00", "kind": "artifact", "ref": "docs/parity/SIDECAR_STARTUP_FINDING.md"}
+{"event": "artifact_link", "invocation_id": "01M4TTQM2ZGRV9EGE4DNYGYXKC", "at": "2026-10-13T15:32:26.389518+00:00", "kind": "artifact", "ref": "docs/parity/UPSTREAM_RECONCILIATION_4E7C538.md"}
