@@ -1,0 +1,3 @@
+{"event": "started", "invocation_id": "01M4V2X8F1SM6WRVSKV660FAD5", "profile_id": "architect-alphonso", "action": "audit", "request_text": "continue", "actor": "operator", "mode_of_work": "task_execution", "governance_context_hash": "96a16e9c5d36d041", "governance_context_available": true, "started_at": "2026-10-13T16:53:10.161127+00:00", "model_id": "claude-opus-4-6"}
+{"event": "completed", "invocation_id": "01M4V2X8F1SM6WRVSKV660FAD5", "completed_at": "2026-10-13T17:24:43.852183+00:00", "outcome": "done", "closed_by": "agent", "evidence_ref": "docs/parity/PROGRESS_SNAPSHOT_BOUNDARY.md"}
+{"event": "artifact_link", "invocation_id": "01M4V2X8F1SM6WRVSKV660FAD5", "at": "2026-10-13T17:24:43.852818+00:00", "kind": "artifact", "ref": "docs/parity/QUALIFICATION_FINDINGS.md"}
