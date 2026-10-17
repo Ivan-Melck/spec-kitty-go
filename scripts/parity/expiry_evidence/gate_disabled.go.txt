@@ -1,6 +1,0 @@
-//go:build !spk_expiry_evidence
-
-package engine
-
-// Control build: no environment inspection, socket, timer or writer hold.
-func spkExpiryEvidenceHold() {}
