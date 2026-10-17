@@ -86,14 +86,14 @@ func TestEqual(t *testing.T) {
 
 func TestReprString(t *testing.T) {
 	cases := map[string]string{
-		"abc":   `'abc'`,
-		"it's":  `"it's"`,
-		`a'b"c`: `'a\'b"c'`,
-		"a\nb":  `'a\nb'`,
-		"\x01":  `'\x01'`,
+		"abc":    `'abc'`,
+		"it's":   `"it's"`,
+		`a'b"c`:  `'a\'b"c'`,
+		"a\nb":   `'a\nb'`,
+		"\x01":   `'\x01'`,
 		"\u00a0": `'\xa0'`,
 		"\u200b": `'\u200b'`,
-		"é":     `'é'`,
+		"é":      `'é'`,
 	}
 	for in, want := range cases {
 		if got := ReprString(in); got != want {
