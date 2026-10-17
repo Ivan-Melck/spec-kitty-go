@@ -1,0 +1,84 @@
+strs:
+- plain
+- '2026-10-17T12:00:00Z'
+- 'Re-pin x (#6240, #6238)'
+- 'a: b'
+- 'a #b'
+- -x
+- '- x'
+- 'true'
+- yes
+- no
+- on
+- 'null'
+- '~'
+- '123'
+- '1.5'
+- '0x1F'
+- '1e3'
+- ''
+- ' lead'
+- 'trail '
+- it's
+- '@at'
+- '%pct'
+- '`bt'
+- 'x:'
+- key:value
+- WP01
+- FR-001
+- Phase 1
+- '*star'
+- '&amp'
+- '!bang'
+- '|pipe'
+- '>gt'
+- "'q"
+- '"dq'
+- '[a]'
+- '{a}'
+- a,b
+- a[b]
+- ?q
+- :c
+- "multi\nline"
+- "multi\nline\n"
+- "tab\tx"
+- café ✓
+- '0123'
+- '08'
+- '1_000'
+- '.5'
+- '+1'
+- '-1'
+- y
+- n
+- Y
+- NO
+- 'a b '
+- '#x'
+- 'x # y'
+- x#y
+- '='
+- '<<'
+- src/
+- '**/*.py'
+- a%
+- 1.0.0
+- '2026-10-17'
+- 12:30
+- 1:2
+- on-off
+nested:
+  a: []
+  b: {}
+  c:
+  - at: '2026-10-17T12:00:00Z'
+    actor: system
+    action: x
+  d:
+  - - a
+n: 3
+f: 1.0
+b: true
+z:
