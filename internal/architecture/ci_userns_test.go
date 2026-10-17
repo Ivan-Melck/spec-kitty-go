@@ -63,7 +63,7 @@ exec(compile(code, 'prepare-userns.sh', 'exec'), ns)
 for outcome in ('pass','unknown-denial','missing-attachments','overlapping-attachments','bad-topology','bounded-probe'):
     with tempfile.TemporaryDirectory() as temp:
         artifact = pathlib.Path(temp) / 'evidence'; artifact.mkdir()
-        env = {'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','GITHUB_RUN_ID':'12','GITHUB_RUN_ATTEMPT':'1','GITHUB_JOB':'quality','RUNNER_TEMP':temp,'ARTIFACT_DIR':str(artifact),'GITHUB_ENV':str(pathlib.Path(temp)/'env')}
+        env = {'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','GITHUB_RUN_ID':'12','GITHUB_RUN_ATTEMPT':'1','GITHUB_JOB':'quality','RUNNER_TEMP':temp,'ARTIFACT_DIR':str(artifact),'GITHUB_ENV':str(pathlib.Path(temp)/'env'),'GO_KITTY_USERNS_SOURCE':sys.argv[1]}
         pathlib.Path(env['GITHUB_ENV']).touch()
         calls = []
         def capture(argv):
@@ -142,7 +142,7 @@ finally: signal.setitimer(signal.ITIMER_REAL,0)
 
 
 `
-	cmd := exec.Command("/usr/bin/python3", "-I", "-c", "import sys,os,json,pathlib\n"+harness)
+	cmd := exec.Command("/usr/bin/python3", "-I", "-c", "import sys,os,json,pathlib\n"+harness, "../../scripts/ci/prepare-userns.sh")
 	cmd.Stdin = strings.NewReader(source[start:end])
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fixture outcomes: %v\n%s", err, out)
@@ -190,7 +190,7 @@ context={k:{'text':v+'\n'} for k,v in {'.ns_name':'root','.ns_level':'0','.stack
 for outcome in ['success','alternate-kernel','different-pid','missing-denial','unrelated-denial','unsupported-context','collision','failed-retry','changed-controls']:
  with tempfile.TemporaryDirectory() as temp:
   art=pathlib.Path(temp)/'artifact';art.mkdir();envfile=pathlib.Path(temp)/'env';envfile.touch()
-  env={'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','GITHUB_RUN_ID':'12','GITHUB_RUN_ATTEMPT':'1','GITHUB_JOB':'quality','RUNNER_TEMP':temp,'ARTIFACT_DIR':str(art),'GITHUB_ENV':str(envfile)}
+  env={'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','GITHUB_RUN_ID':'12','GITHUB_RUN_ATTEMPT':'1','GITHUB_JOB':'quality','RUNNER_TEMP':temp,'ARTIFACT_DIR':str(art),'GITHUB_ENV':str(envfile),'GO_KITTY_USERNS_SOURCE':sys.argv[1]}
   calls=[];loaded=False
   def read(path):
    if outcome=='unsupported-context' and path.endswith('unprivileged_userns_clone'):return {'text':'0\n','truncated':False}
@@ -231,7 +231,7 @@ for outcome in ['success','alternate-kernel','different-pid','missing-denial','u
    assert any(ns['PROFILE_LOADER'] in a for a in calls)
   if outcome=='collision':assert not any(a[0]=='/usr/bin/aa-exec' for a in calls) and result['policy_changed'] is None
 `
-	cmd := exec.Command("/usr/bin/python3", "-I", "-c", code)
+	cmd := exec.Command("/usr/bin/python3", "-I", "-c", code, "../../scripts/ci/prepare-userns.sh")
 	cmd.Stdin = strings.NewReader(source)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("conditional profile fixtures: %v\n%s", err, out)

@@ -561,10 +561,9 @@ func startFaultLifecycle(t *testing.T) *sidecargapdb.Lifecycle {
 	if err := output.Close(); err != nil {
 		t.Fatal(err)
 	}
-	runtimeRoot, dataRoot := t.TempDir(), t.TempDir()
-	if err := os.Chmod(runtimeRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	// Keep socket topology short without escaping the admitted TMPDIR filesystem.
+	runtimeRoot := shortFaultRuntimeRoot(t)
+	dataRoot := t.TempDir()
 	if err := os.Chmod(dataRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -581,6 +580,27 @@ func startFaultLifecycle(t *testing.T) *sidecargapdb.Lifecycle {
 		}
 	})
 	return lifecycle
+}
+
+func shortFaultRuntimeRoot(t *testing.T) string {
+	t.Helper()
+	root, err := os.MkdirTemp("", "spk-ft-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return root
+}
+
+func TestFaultRuntimeFixtureUsesPrivateShortTMPDIRRoot(t *testing.T) {
+	root := shortFaultRuntimeRoot(t)
+	if filepath.Dir(root) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(root), "spk-ft-") {
+		t.Fatalf("fixture escaped TMPDIR or retained test-name socket topology: %s", root)
+	}
+	info, err := os.Stat(root)
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("fixture is not private: %v %v", info, err)
+	}
 }
 
 func faultAdmissionRecord(t *testing.T) string {

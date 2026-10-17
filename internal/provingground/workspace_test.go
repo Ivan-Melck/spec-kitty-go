@@ -611,7 +611,7 @@ func runRealGit(t *testing.T, directory string, args ...string) string {
 
 func privateProvingGroundRoot(t *testing.T) string {
 	t.Helper()
-	root, err := os.MkdirTemp("/tmp", "spk-proving-ground-")
+	root, err := os.MkdirTemp("", "spk-proving-ground-")
 	if err != nil {
 		t.Fatal(err)
 	}

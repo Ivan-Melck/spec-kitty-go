@@ -65,7 +65,18 @@ func (osInspectionSource) ReadDirectory(path string, expected fileIdentity, limi
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	return readInspectionDirectoryFile(file, expected, limit, (*os.File).Close)
+}
+
+// readInspectionDirectoryFile immediately consumes file. The production caller
+// supplies the fixed File.Close method; no closer is retained or selected later.
+func readInspectionDirectoryFile(file *os.File, expected fileIdentity, limit int, closeFile func(*os.File) error) (names []string, resultErr error) {
+	defer func() {
+		resultErr = withInspectionClose(resultErr, closeFile(file))
+		if resultErr != nil {
+			names = nil
+		}
+	}()
 	before, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -86,7 +97,7 @@ func (osInspectionSource) ReadDirectory(path string, expected fileIdentity, limi
 	if err != nil || !sameIdentity(afterIdentity, expected) {
 		return nil, errIdentityChanged
 	}
-	names := make([]string, len(entries))
+	names = make([]string, len(entries))
 	for index, entry := range entries {
 		names[index] = entry.Name()
 	}
@@ -99,7 +110,18 @@ func (osInspectionSource) ReadPrefix(path string, expected fileIdentity, maximum
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	return readInspectionPrefixFile(file, expected, maximum, (*os.File).Close)
+}
+
+// readInspectionPrefixFile has the same single-consumer contract as the directory
+// helper. Close failure invalidates even an otherwise complete or empty prefix.
+func readInspectionPrefixFile(file *os.File, expected fileIdentity, maximum int64, closeFile func(*os.File) error) (prefix []byte, resultErr error) {
+	defer func() {
+		resultErr = withInspectionClose(resultErr, closeFile(file))
+		if resultErr != nil {
+			prefix = nil
+		}
+	}()
 	before, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -131,6 +153,40 @@ func (osInspectionSource) ReadPrefix(path string, expected fileIdentity, maximum
 		return nil, errIdentityChanged
 	}
 	return value, nil
+}
+
+// inspectionCloseError preserves the original inspection diagnostic and visits
+// its cause first for errors.Is/As, while also retaining the actual Close cause.
+// Only withInspectionClose constructs this private pair, with both causes nonnil.
+// This internal error is sanitized into Findings, not published by Classify.
+// Added wrapper/retention costs are OWNED_UNQUALIFIED.
+type inspectionCloseError struct {
+	primary, closeErr error
+}
+
+func (e *inspectionCloseError) Error() string { return e.primary.Error() }
+func (e *inspectionCloseError) Unwrap() []error {
+	return []error{e.primary, e.closeErr}
+}
+
+func withInspectionClose(primary, closeErr error) error {
+	if closeErr == nil {
+		return primary
+	}
+	if primary == nil {
+		return closeErr
+	}
+	return &inspectionCloseError{primary: primary, closeErr: closeErr}
+}
+
+// primaryInspectionError is deliberately exact-type and one level only. The
+// classifier must not let a secondary Close permission error override an earlier
+// identity/read/stat finding. It does not alter the retained error's Is/As tree.
+func primaryInspectionError(err error) error {
+	if combined, ok := err.(*inspectionCloseError); ok {
+		return combined.primary
+	}
+	return err
 }
 
 func identityFromInfo(info fs.FileInfo) (fileIdentity, error) {
@@ -459,6 +515,7 @@ func (state *inspectionState) add(budgets Budgets, finding Finding) {
 }
 
 func (state *inspectionState) addSourceError(budgets Budgets, relative, operation string, err error) {
+	err = primaryInspectionError(err)
 	finding := Finding{Kind: FindingFilesystem, RelativePath: relative, DetailCode: operation + "_INSPECTION_FAILED"}
 	switch {
 	case errors.Is(err, os.ErrPermission):

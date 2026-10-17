@@ -385,9 +385,12 @@ func TestLifecycleCleanupPreservesForeignArtifacts(t *testing.T) {
 	if err := os.Remove(foreign); err != nil {
 		t.Fatal(err)
 	}
-	if err := lifecycle.cleanupRuntime(true); err != nil {
-		t.Fatal(err)
-	}
+	// Removing a test-owned foreign marker is NOT permission to retry product
+	// cleanup or replace its immutable FIRST refusal with a later nil.
+	if again := lifecycle.cleanupRuntime(true); again != err { t.Fatal("FIRST runtime cleanup replaced", again) }
+	if again := lifecycle.Stop(t.Context()); again != err { t.Fatal("Stop lost FIRST cleanup", again) }
+	if again := lifecycle.CleanupStale(); again != err { t.Fatal("CleanupStale repaired FIRST", again) }
+	if _, statErr := os.Lstat(provenance.RuntimeDirectory); statErr != nil { t.Fatal("later call retried removal", statErr) }
 }
 
 func TestLifecycleCleanupRefusesRenamedRuntimeSymlinkReplacement(t *testing.T) {
@@ -758,7 +761,7 @@ func privateRoot(t *testing.T) string {
 
 func privateShortRoot(t *testing.T) string {
 	t.Helper()
-	root, err := os.MkdirTemp("/tmp", "spk-m1-")
+	root, err := os.MkdirTemp("", "spk-m1-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,6 +21,8 @@ const (
 	MaxProgressItems      = 10_000
 	MaxProgressPages      = 128
 	MaxProgressDiagnosis  = 128
+	// Query snapshots join many valid durable states; they are not event payloads.
+	MaxProgressSnapshotBytes = 16 * 1024 * 1024
 )
 
 type ProgressErrorKind string
@@ -271,10 +273,13 @@ func (s *ProgressService) Mission(projectID journalv2.ProjectID, missionID journ
 	if err != nil {
 		return MissionProgress{}, err
 	}
-	progress := MissionProgress{SchemaVersion: ProgressSchemaVersion, DatabaseID: base.DatabaseID, ProjectionRevision: base.Revision, ProjectionSHA256: projectionDigest, RuntimeEpochID: base.RuntimeEpochID, ProjectID: projectID, MissionID: missionID, Items: cloneProgressItems(items)}
+	progress := MissionProgress{SchemaVersion: ProgressSchemaVersion, DatabaseID: base.DatabaseID, ProjectionRevision: base.Revision, ProjectionSHA256: projectionDigest, RuntimeEpochID: base.RuntimeEpochID, ProjectID: projectID, MissionID: missionID}
 	counts := make(map[string]int)
+	budget := progressSnapshotBudget{}
 	for _, item := range items {
-		classifyProgressItem(&progress, item, counts)
+		if err := classifyProgressItem(&progress, item, counts, &budget); err != nil {
+			return MissionProgress{}, err
+		}
 	}
 	for state, count := range counts {
 		progress.WorkCounts = append(progress.WorkCounts, StateCount{State: state, Count: count})
@@ -294,16 +299,11 @@ func (s *ProgressService) Mission(projectID journalv2.ProjectID, missionID journ
 			return progress.Actions[i].Action+"\x00"+progress.Actions[i].Scope < progress.Actions[j].Action+"\x00"+progress.Actions[j].Scope
 		})
 	}
-	canonical, err := json.Marshal(progress)
+	digest, err := progressSnapshotDigest(progress)
 	if err != nil {
-		return MissionProgress{}, &ProgressError{Kind: ProgressIncomplete, Field: "encoding"}
+		return MissionProgress{}, err
 	}
-	sum, err := journalv2.CanonicalObject(canonical)
-	if err != nil {
-		return MissionProgress{}, &ProgressError{Kind: ProgressIncomplete, Field: "encoding"}
-	}
-	digest, _ := journalv2.ReducerStateDigestV2(sum)
-	progress.SnapshotSHA256 = digest.String()
+	progress.SnapshotSHA256 = digest
 	s.cacheMu.Lock()
 	// A revision uniquely identifies an immutable projection. Retain only the
 	// newest snapshot for this mission so a long-running host cannot accumulate
@@ -339,6 +339,7 @@ func actionAvailability(census mission.ActionCensus) []ActionAvailability {
 
 func (s *ProgressService) listAll(projectID journalv2.ProjectID, missionID journalv2.MissionID, revision uint64) ([]ProgressItem, string, error) {
 	items := make([]ProgressItem, 0, 64)
+	budget := progressSnapshotBudget{}
 	projectionDigest := ""
 	cursor := ""
 	for page := 0; page < MaxProgressPages; page++ {
@@ -361,7 +362,15 @@ func (s *ProgressService) listAll(projectID journalv2.ProjectID, missionID journ
 			} else if view.ProjectionDigest != projectionDigest {
 				return nil, "", &ProgressError{Kind: ProgressResyncRequired, Field: "projection_digest"}
 			}
-			items = append(items, progressItem(view))
+			// Bound retained state before cloning it. The final builder separately
+			// charges every classified occurrence of each item.
+			if len(view.CanonicalState) > MaxProgressSnapshotBytes {
+				return nil, "", progressSnapshotBudgetError()
+			}
+			item := progressItem(view)
+			if err := budget.append(item, &items); err != nil {
+				return nil, "", err
+			}
 		}
 		cursor = result.NextCursor
 		if cursor == "" {
@@ -380,9 +389,11 @@ func (s *ProgressService) listAll(projectID journalv2.ProjectID, missionID journ
 	return items, projectionDigest, nil
 }
 
+// progressItem borrows the query-owned state until budget admission; the
+// builder clones it only after the serialized contribution has been charged.
 func progressItem(view projection.AggregateViewV2) ProgressItem {
 	state := selectiveState(view.CanonicalState)
-	return ProgressItem{Family: string(view.Coordinate.Kind), AggregateID: string(view.Coordinate.ID), LogicalVersion: uint64(view.LogicalVersion), LastPublicationID: string(view.LastPublicationID), AuthorityState: state.authority, ObservedState: state.observed, CanonicalState: bytes.Clone(view.CanonicalState)}
+	return ProgressItem{Family: string(view.Coordinate.Kind), AggregateID: string(view.Coordinate.ID), LogicalVersion: uint64(view.LogicalVersion), LastPublicationID: string(view.LastPublicationID), AuthorityState: state.authority, ObservedState: state.observed, CanonicalState: view.CanonicalState}
 }
 
 type selectedState struct {
@@ -426,8 +437,10 @@ func selectiveState(raw []byte) selectedState {
 	return selectedState{authority: text("stage", "status", "lifecycle", "state"), observed: text("observed_state", "provider_state"), lifecycle: text("lifecycle"), workRevision: workRevision, kind: text("kind", "fact_kind"), generation: generation, runID: text("run_id"), leaseID: text("lease_id"), actorID: text("actor_id"), processID: text("process_id"), workID: text("work_id")}
 }
 
-func classifyProgressItem(progress *MissionProgress, item ProgressItem, counts map[string]int) {
+func classifyProgressItem(progress *MissionProgress, item ProgressItem, counts map[string]int, budget *progressSnapshotBudget) error {
 	selected := selectiveState(item.CanonicalState)
+	// One classification owns both membership and its exact byte charge.
+	targets := []*[]ProgressItem{&progress.Items}
 	switch item.Family {
 	case "mission":
 		if selected.lifecycle != "" {
@@ -439,10 +452,10 @@ func classifyProgressItem(progress *MissionProgress, item ProgressItem, counts m
 			progress.WorkRevisionID = journalv2.WorkRevisionID(selected.workRevision)
 		}
 		if selected.kind == "blocker" || strings.Contains(selected.kind, "blocker") {
-			progress.Blockers = append(progress.Blockers, cloneProgressItem(item))
+			targets = append(targets, &progress.Blockers)
 		}
 		if selected.kind == "decision" || strings.Contains(selected.kind, "decision") {
-			progress.Decisions = append(progress.Decisions, cloneProgressItem(item))
+			targets = append(targets, &progress.Decisions)
 		}
 	case "workgraph":
 		if selected.generation > progress.Generation {
@@ -462,22 +475,23 @@ func classifyProgressItem(progress *MissionProgress, item ProgressItem, counts m
 			progress.Running = append(progress.Running, RunningAuthority{selected.workID, selected.runID, selected.leaseID, selected.actorID, selected.processID})
 		}
 	case "external_effect":
-		progress.Effects = append(progress.Effects, cloneProgressItem(item))
+		targets = append(targets, &progress.Effects)
 		if strings.Contains(item.AuthorityState, "ambiguous") || strings.Contains(item.AuthorityState, "reconciliation") {
-			progress.PendingReconciliation = append(progress.PendingReconciliation, cloneProgressItem(item))
+			targets = append(targets, &progress.PendingReconciliation)
 		}
 	case "review_slot":
-		progress.Reviews = append(progress.Reviews, cloneProgressItem(item))
+		targets = append(targets, &progress.Reviews)
 	case "acceptance":
-		progress.Acceptance = append(progress.Acceptance, cloneProgressItem(item))
+		targets = append(targets, &progress.Acceptance)
 	case "integration_target", "integration_attempt":
-		progress.Integration = append(progress.Integration, cloneProgressItem(item))
+		targets = append(targets, &progress.Integration)
 	case "operation":
-		progress.Operations = append(progress.Operations, cloneProgressItem(item))
+		targets = append(targets, &progress.Operations)
 		if strings.Contains(item.AuthorityState, "ambiguous") || strings.Contains(item.AuthorityState, "reconciliation") {
-			progress.PendingReconciliation = append(progress.PendingReconciliation, cloneProgressItem(item))
+			targets = append(targets, &progress.PendingReconciliation)
 		}
 	}
+	return budget.append(item, targets...)
 }
 
 type ProgressWatch struct {

@@ -400,15 +400,11 @@ func deriveAuthority(runID controljournal.RunID, initial AuthoritySummaryV1, jou
 	if summary.RunID == "" {
 		summary.RunID = runID
 	}
-	length, err := journal.Len()
+	records, err := controljournal.SnapshotJournalV1(journal)
 	if err != nil {
 		return AuthoritySummaryV1{}, err
 	}
-	for index := 0; index < length; index++ {
-		record, atErr := journal.At(index)
-		if atErr != nil {
-			return AuthoritySummaryV1{}, atErr
-		}
+	for _, record := range records {
 		summary.RuntimeEpochID = record.Envelope.RuntimeEpochID
 		summary.DurableRevision = record.RecordRevision
 		if record.Envelope.LeaseID != "" {

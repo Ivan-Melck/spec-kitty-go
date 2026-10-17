@@ -12,6 +12,7 @@ import (
 	"time"
 
 	gapdbapi "github.com/spec-kitty/gapdb/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb/retainedkernel"
 )
 
 type publicClient interface {
@@ -134,6 +135,8 @@ func (w *publicWatch) Close() error {
 }
 
 type Adapter struct {
+	// Opaque constraint only: the genuine production owner is minted by Lifecycle.
+	lifetime   *retainedkernel.Lifetime
 	client     provider
 	endpointID string
 	timeout    time.Duration

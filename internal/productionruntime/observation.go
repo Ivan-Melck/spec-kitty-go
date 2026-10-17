@@ -21,6 +21,7 @@ type Observation struct {
 	owner    *productionOwner
 	status   HostStatus
 	progress *ProgressService
+	captured journalv2.StoreRevisionV2
 }
 
 type readOnlyObservationPort interface {
@@ -99,7 +100,7 @@ func Observe(ctx context.Context, config Config) (_ *Observation, resultErr erro
 	}()
 	provenance := lifecycle.Provenance()
 	databaseID := journalv2.DatabaseID(provenance.DatabaseID)
-	adapter, closer, err := storegapdb.Dial(provenance.ConnectedSocket, storegapdb.DefaultRequestTimeout)
+	adapter, closer, err := lifecycle.DialOwned(ctx, storegapdb.DefaultRequestTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +120,7 @@ func Observe(ctx context.Context, config Config) (_ *Observation, resultErr erro
 	if budgets == (journalrestore.BudgetsV2{}) {
 		budgets = productionRecoveryBudgetsV2()
 	}
-	status, progress, _, err := restoreReadOnlyObservation(ctx, adapter, binding, registry, reducers, budgets)
+	status, progress, restored, err := restoreReadOnlyObservation(ctx, adapter, binding, registry, reducers, budgets)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +133,7 @@ func Observe(ctx context.Context, config Config) (_ *Observation, resultErr erro
 		return nil, err
 	}
 	progress.actions = actions
-	return &Observation{owner: owner, status: status, progress: progress}, nil
+	return &Observation{owner: owner, status: status, progress: progress, captured: restored.StoreRevision()}, nil
 }
 
 func restoreReadOnlyObservation(ctx context.Context, port readOnlyObservationPort, binding AuthorityBindingV2, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2, budgets journalrestore.BudgetsV2) (HostStatus, *ProgressService, journalrestore.ResultV2, error) {
@@ -153,11 +154,36 @@ func restoreReadOnlyObservationWith(ctx context.Context, port readOnlyObservatio
 	if err != nil {
 		return HostStatus{}, nil, journalrestore.ResultV2{}, err
 	}
-	restored, err := restore(ctx, journalrestore.InputV2{Reader: recoveryReaderForModeV2(port, false), EventRegistry: registry, Reducers: reducers, HostAuthorityID: binding.HostAuthorityID, PriorRuntimeEpochID: current.RuntimeEpochID, RecoveryAttemptID: attemptID, Budgets: budgets})
+	digest, err := journalv2.ParseDigest("projection_prefix", current.ProjectionSHA256)
 	if err != nil {
 		return HostStatus{}, nil, journalrestore.ResultV2{}, err
 	}
-	if currentRevision != restored.StoreRevision().CurrentRevision() || current.RecoveredStoreRevision >= currentRevision || restored.Playback().CanonicalProjectionDigest().String() != current.ProjectionSHA256 {
+	prefix, err := journalrestore.NewProjectionPrefixV2(current.RecoveredStoreRevision, digest)
+	if err != nil {
+		return HostStatus{}, nil, journalrestore.ResultV2{}, err
+	}
+	restored, err := restore(ctx, journalrestore.InputV2{Reader: recoveryReaderForModeV2(port, false), EventRegistry: registry, Reducers: reducers, HostAuthorityID: binding.HostAuthorityID, PriorRuntimeEpochID: current.RuntimeEpochID, RecoveryAttemptID: attemptID, Budgets: budgets, ExpectedProjectionPrefix: prefix})
+	if err != nil {
+		return HostStatus{}, nil, journalrestore.ResultV2{}, err
+	}
+	captured := restored.StoreRevision()
+	if currentRevision > captured.CurrentRevision() || current.RecoveredStoreRevision >= currentRevision {
+		return HostStatus{}, nil, journalrestore.ResultV2{}, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "observation_coordinate"}
+	}
+	// runtime/current is the fixed epoch-admission coordinate, not a live
+	// progress cache. Restore proves its earlier digest AND the latest sealed
+	// projection; later publications cannot disable the admission-prefix proof.
+	if err := observeRuntimeEpochAdmission(ctx, port, current, currentRevision); err != nil {
+		return HostStatus{}, nil, journalrestore.ResultV2{}, err
+	}
+	// Restore seals a stable journal snapshot. Recheck the epoch and provider
+	// coordinate after reading owner metadata so a concurrent replacement or
+	// publication cannot make this snapshot look current under another epoch.
+	latest, latestRevision, err := readCurrentEpoch(ctx, port)
+	if err != nil || latest != current || latestRevision != currentRevision {
+		return HostStatus{}, nil, journalrestore.ResultV2{}, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "observation_coordinate"}
+	}
+	if err := port.VerifyRevisionV2(ctx, captured); err != nil {
 		return HostStatus{}, nil, journalrestore.ResultV2{}, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "observation_coordinate"}
 	}
 	authority, err := projection.NewAuthorityV2(binding.DatabaseID, registry, reducers)
@@ -171,7 +197,7 @@ func restoreReadOnlyObservationWith(ctx context.Context, port readOnlyObservatio
 	if err != nil {
 		return HostStatus{}, nil, journalrestore.ResultV2{}, err
 	}
-	status := HostStatus{SchemaVersion: 1, State: HostReady, DatabaseID: binding.DatabaseID, RuntimeEpochID: current.RuntimeEpochID, ProjectionRevision: currentRevision, ProjectionSHA256: restored.Playback().CanonicalProjectionDigest().String()}
+	status := HostStatus{SchemaVersion: 1, State: HostReady, DatabaseID: binding.DatabaseID, RuntimeEpochID: current.RuntimeEpochID, ProjectionRevision: captured.CurrentRevision(), ProjectionSHA256: restored.Playback().CanonicalProjectionDigest().String()}
 	return status, progress, restored, nil
 }
 

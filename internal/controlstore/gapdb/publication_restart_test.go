@@ -21,7 +21,7 @@ import (
 func TestProductionPublicationRecoveryAcrossOwnerRestartCuts(t *testing.T) {
 	for _, cut := range []string{"restart_before_reconciliation", "restart_after_reconciliation"} {
 		t.Run(cut, func(t *testing.T) {
-			root, err := os.MkdirTemp("/tmp", "spk-cut-")
+			root, err := os.MkdirTemp("", "spk-cut-")
 			if err != nil {
 				t.Fatal(err)
 			}

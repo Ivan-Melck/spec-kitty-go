@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -115,55 +116,136 @@ const emptySHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b785
 // Qualification cannot know which arbitrary paths a compiler, generator, or
 // Go embed directive may consume, so an extension allowlist is not sound.
 func observeGitSource(ctx context.Context, root string) (commit, tree, worktreeTree, statusDigest string, err error) {
-	commit, err = gitObject(ctx, root, "HEAD")
+	commit, err = gitObject(ctx, root, "HEAD^{commit}")
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("source commit: %w", err)
 	}
-	tree, err = gitObject(ctx, root, "HEAD^{tree}")
+	// Resolve the tree through the immutable commit, not a second HEAD read.
+	tree, err = gitObject(ctx, root, commit+"^{tree}")
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("source tree: %w", err)
 	}
-	worktreeTree, err = gitOutput(ctx, root, "write-tree")
+	var proof sourceIndexEquality
+	// Each pass independently proves index equality and a closed worktree
+	// census. There is no retry, private index, or HEAD-tree fallback.
+	for range 2 {
+		proof, err = proveSourceIndexEquality(ctx, root, tree)
+		if err != nil {
+			return "", "", "", "", err
+		}
+		if err := sourceClosedCensus(ctx, root); err != nil {
+			return "", "", "", "", err
+		}
+	}
+	finalCommit, err := gitObject(ctx, root, "HEAD^{commit}")
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("source index tree is unavailable: %w", err)
+		return "", "", "", "", fmt.Errorf("source commit recheck: %w", err)
 	}
-	if !hexSized(worktreeTree, 40) {
-		return "", "", "", "", fmt.Errorf("source index tree has invalid shape")
+	if finalCommit != commit {
+		return "", "", "", "", fmt.Errorf("source commit changed during observation")
 	}
-	status, err := gitOutput(ctx, root, "status", "--porcelain=v1", "--untracked-files=all")
+	return commit, tree, proof.tree, emptySHA256, nil
+}
+
+// sourceIndexEquality represents equality only, not an arbitrary index tree.
+// Unlike write-tree, cached diff-index reads the original index without asking
+// for index.lock or publishing cache-tree / object metadata.
+type sourceIndexEquality struct {
+	tree string
+}
+
+func proveSourceIndexEquality(ctx context.Context, root, tree string) (sourceIndexEquality, error) {
+	_, err := gitOutput(ctx, root, "diff-index", "--cached", "--quiet", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", tree, "--")
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("source status: %w", err)
+		return sourceIndexEquality{}, fmt.Errorf("source index differs from pinned tree or is unavailable: %w", err)
 	}
-	ignoredFiles, err := gitOutput(ctx, root, "ls-files", "--others", "--ignored", "--exclude-standard")
+	return sourceIndexEquality{tree: tree}, nil
+}
+
+func sourceClosedCensus(ctx context.Context, root string) error {
+	// Flags can conceal tracked bytes from status. Refuse them even when
+	// their current content happens to match HEAD; do not echo path names.
+	flags, err := gitOutput(ctx, root, "ls-files", "-v", "-z")
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("ignored worktree file census: %w", err)
+		return fmt.Errorf("source index flags: %w", err)
 	}
-	digest := sha256.Sum256([]byte(status))
-	statusDigest = hex.EncodeToString(digest[:])
-	if status != "" || ignoredFiles != "" || worktreeTree != tree || statusDigest != emptySHA256 {
-		return "", "", "", "", fmt.Errorf("working tree contains bytes outside pinned HEAD tree")
+	if flags != "" {
+		if !strings.HasSuffix(flags, "\x00") {
+			return fmt.Errorf("source index flag census is malformed")
+		}
+		for _, entry := range strings.Split(strings.TrimSuffix(flags, "\x00"), "\x00") {
+			if len(entry) < 3 || entry[1] != ' ' || entry[0] == 'S' || (entry[0] >= 'a' && entry[0] <= 'z') {
+				return fmt.Errorf("source index flags conceal worktree content or are malformed")
+			}
+		}
 	}
-	return commit, tree, worktreeTree, statusDigest, nil
+	status, err := gitOutput(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none")
+	if err != nil {
+		return fmt.Errorf("source status: %w", err)
+	}
+	ignored, err := gitOutput(ctx, root, "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+	if err != nil {
+		return fmt.Errorf("ignored worktree file census: %w", err)
+	}
+	if status != "" || ignored != "" {
+		return fmt.Errorf("working tree contains bytes outside pinned HEAD tree")
+	}
+	return nil
 }
 
 func gitObject(ctx context.Context, root, revision string) (string, error) {
-	value, err := gitOutput(ctx, root, "rev-parse", "--verify", revision)
+	value, err := gitOutput(ctx, root, "rev-parse", "--verify", "--end-of-options", revision)
 	if err != nil {
 		return "", err
 	}
+	value = strings.TrimSpace(value)
 	if !hexSized(value, 40) {
 		return "", fmt.Errorf("git object identity has invalid shape")
 	}
 	return value, nil
 }
 
+// sourceGitStderr bounds diagnostic storage while still draining the child.
+type sourceGitStderr struct {
+	data []byte
+}
+
+func (s *sourceGitStderr) Write(data []byte) (int, error) {
+	const limit = 4096
+	n := len(data)
+	if remaining := limit - len(s.data); remaining > 0 {
+		if len(data) > remaining {
+			data = data[:remaining]
+		}
+		s.data = append(s.data, data...)
+	}
+	return n, nil
+}
+
 func gitOutput(ctx context.Context, root string, arguments ...string) (string, error) {
 	command := exec.CommandContext(ctx, "git", append([]string{"-C", root}, arguments...)...)
+	// Inherited Git routing/configuration must not select a foreign index,
+	// worktree, object database, or replacement namespace. Disable optional
+	// metadata writes and fsmonitor helpers even if enabled by local config.
+	for _, value := range os.Environ() {
+		if !strings.HasPrefix(value, "GIT_") {
+			command.Env = append(command.Env, value)
+		}
+	}
+	// Source cleanliness includes executable modes even when repository or
+	// user configuration would otherwise conceal their drift.
+	command.Env = append(command.Env, "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_CONFIG_COUNT=3", "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
+		"GIT_CONFIG_KEY_1=core.untrackedCache", "GIT_CONFIG_VALUE_1=false",
+		"GIT_CONFIG_KEY_2=core.filemode", "GIT_CONFIG_VALUE_2=true")
+	var stderr sourceGitStderr
+	command.Stderr = &stderr
 	encoded, err := command.Output()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("git %s: %w: %s", arguments[0], err, strings.TrimSpace(string(stderr.data)))
 	}
-	return strings.TrimSpace(string(encoded)), nil
+	// Census callers need every byte; only object identities are trimmed.
+	return string(encoded), nil
 }
 
 func hexSized(value string, size int) bool {

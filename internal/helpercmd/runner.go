@@ -27,7 +27,7 @@ import (
 type observationSession interface {
 	Status() productionruntime.HostStatus
 	Mission(journalv2.ProjectID, journalv2.MissionID) (productionruntime.MissionProgress, error)
-	Operation(journalv2.ProjectID, journalv2.MissionID, string) (productionruntime.ProgressItem, error)
+	Operation(context.Context, journalv2.ProjectID, journalv2.MissionID, string) (productionruntime.ProgressItem, error)
 	Close(context.Context) error
 }
 
@@ -135,9 +135,22 @@ func (r *Runner) Run(ctx context.Context, args []string, stdin io.Reader, stdout
 		return render(stdout, stderr, options.command, options.output, failureEnvelope(options.command, startErr))
 	}
 	envelope, code := r.invoke(ctx, session, options, prepared)
+	if !queryOnly {
+		// Success and refusal can both follow durable publications (including
+		// external-effect intent). Report the observed post-command coordinate,
+		// never the snapshot captured before execution.
+		status := session.Status()
+		envelope.DatabaseID = status.DatabaseID
+		envelope.RuntimeEpochID = status.RuntimeEpochID
+		envelope.ProjectionRevision = status.ProjectionRevision
+	}
 	closeErr := session.Close(context.WithoutCancel(ctx))
 	if closeErr != nil && code == ExitSuccess {
-		envelope, code = failureEnvelope(options.command, closeErr), ExitUnavailable
+		// Owner cleanup failure does not undo the committed command. Keep its
+		// identity, result and wave outcomes available for safe reconciliation.
+		failure := failureEnvelope(envelope.Command, closeErr)
+		envelope.Outcome, envelope.Diagnostic = failure.Outcome, failure.Diagnostic
+		code = ExitUnavailable
 	}
 	return render(stdout, stderr, options.command, options.output, envelope, code)
 }
@@ -177,7 +190,7 @@ func (r *Runner) invoke(ctx context.Context, session observationSession, options
 		return base, ExitSuccess
 	case "operation":
 		if prepared.subcommand == "inspect" {
-			return invokeOperationInspect(session, base, prepared)
+			return invokeOperationInspect(ctx, session, base, prepared)
 		}
 		return invokeOperation(ctx, session.(hostSession), base, prepared)
 	case "drive":
@@ -187,8 +200,8 @@ func (r *Runner) invoke(ctx context.Context, session observationSession, options
 	}
 }
 
-func invokeOperationInspect(session observationSession, base Envelope, prepared preparedCommand) (Envelope, int) {
-	item, err := session.Operation(prepared.projectID, prepared.missionID, prepared.operationID)
+func invokeOperationInspect(ctx context.Context, session observationSession, base Envelope, prepared preparedCommand) (Envelope, int) {
+	item, err := session.Operation(ctx, prepared.projectID, prepared.missionID, prepared.operationID)
 	if err != nil {
 		return failureEnvelope("operation.inspect", err), exitFor(err)
 	}
@@ -301,14 +314,20 @@ func invokeDrive(ctx context.Context, session hostSession, base Envelope, prepar
 			}()
 		}
 		wait.Wait()
+		var waveErr error
 		for outputIndex, pendingIndex := range ready {
 			result.Steps = append(result.Steps, wave[outputIndex].step)
 			decoded := pending[pendingIndex]
 			touched[string(decoded.projectID)+"\x00"+string(decoded.missionID)] = decoded
-			if wave[outputIndex].err != nil {
-				base.Outcome, result.StopReason, base.Drive = OutcomeStopped, "operation_failed", &result
-				return base, exitFor(wave[outputIndex].err)
+			if waveErr == nil {
+				waveErr = wave[outputIndex].err
 			}
+		}
+		// Every member of the wave has already completed. A failed member must
+		// stop later waves, not hide a sibling's committed result from callers.
+		if waveErr != nil {
+			base.Outcome, result.StopReason, base.Drive = OutcomeStopped, "operation_failed", &result
+			return base, exitFor(waveErr)
 		}
 		remove := make(map[int]bool, len(ready))
 		for _, index := range ready {

@@ -28,7 +28,7 @@ func TestTwoItemRealGitGapDBCrown(t *testing.T) {
 	uninterrupted := runTwoItemRealGitGapDBCrown(t, false)
 	t.Run("restart-every-durable-boundary", func(t *testing.T) {
 		restarted := runTwoItemRealGitGapDBCrown(t, true)
-		if err := validateTerminalSemanticEquivalence(uninterrupted, restarted); err != nil {
+		if err := validateTerminalRestartEquivalence(uninterrupted, restarted); err != nil {
 			t.Fatalf("real-provider restart terminal semantics differ: %v\nuninterrupted=%+v\nrestarted=%+v", err, uninterrupted, restarted)
 		}
 	})

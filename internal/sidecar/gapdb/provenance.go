@@ -6,6 +6,7 @@ package gapdb
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
@@ -115,6 +117,7 @@ type ExecutedImageProvenance struct {
 // VerifiedExecutable holds the exact descriptor whose bytes were verified.
 // It is consumed by Lifecycle.Start and is never resolved through PATH.
 type VerifiedExecutable struct {
+	expiry          verifiedExpiryState
 	source          *os.File
 	execution       *os.File
 	provenance      ExecutableProvenance
@@ -122,6 +125,8 @@ type VerifiedExecutable struct {
 	sourceIdentity  fileIdentity
 	executeIdentity fileIdentity
 	verifyExecution func(*os.File, ExecutedImageProvenance) error
+	closeOnce sync.Once
+	closeErr error // immutable actual FIRST result, including report hook
 }
 
 type fileIdentity struct {
@@ -157,22 +162,47 @@ type admissionRecord struct {
 	QualificationState string `json:"qualification_state"`
 	ReleaseReady       bool   `json:"release_ready"`
 	Adopted            bool   `json:"adopted"`
+	// The exact historical admission contains signed program/harness metadata
+	// in addition to the tuple below. Name that archived shape explicitly so
+	// strict decoding remains closed without mistaking it for malformed JSON.
+	MissionSlug        string          `json:"mission_slug"`
+	RecordedAt         string          `json:"recorded_at"`
+	Architecture       json.RawMessage `json:"architecture"`
+	Harness            json.RawMessage `json:"harness"`
+	PriorGapDBEvidence json.RawMessage `json:"prior_gapdb_evidence"`
+	HumanAdoption      json.RawMessage `json:"human_adoption"`
+	AdmissionRationale string          `json:"admission_rationale"`
+	StopRule           string          `json:"stop_rule"`
 	GapDBTuple         struct {
-		SourceRevision string `json:"source_revision"`
-		SourceTree     string `json:"source_tree"`
-		ModuleVersion  string `json:"module_version"`
-		Sidecar        struct {
-			Command string `json:"command"`
-			SHA256  string `json:"sha256"`
-			Size    int64  `json:"size_bytes"`
+		SourceRevision  string          `json:"source_revision"`
+		SourceTree      string          `json:"source_tree"`
+		ModuleVersion   string          `json:"module_version"`
+		Repository      string          `json:"repository"`
+		ReleaseTag      *string         `json:"release_tag"`
+		ModuleSum       string          `json:"module_sum"`
+		GoModSum        string          `json:"go_mod_sum"`
+		LifecyclePolicy json.RawMessage `json:"lifecycle_policy"`
+		Sidecar         struct {
+			Command              string `json:"command"`
+			SHA256               string `json:"sha256"`
+			Size                 int64  `json:"size_bytes"`
+			ArtifactKind         string `json:"artifact_kind"`
+			BuildRecipe          string `json:"build_recipe"`
+			BuildRepetitions     uint64 `json:"build_repetitions"`
+			IdenticalRepetitions uint64 `json:"identical_repetitions"`
 		} `json:"sidecar"`
 		Protocol struct {
-			WireVersion    uint64 `json:"wire_version"`
-			StorageVersion uint64 `json:"storage_version"`
+			WireVersion            uint64 `json:"wire_version"`
+			StorageVersion         uint64 `json:"storage_version"`
+			WireReferenceSHA256    string `json:"wire_reference_sha256"`
+			StorageReferenceSHA256 string `json:"storage_reference_sha256"`
 		} `json:"protocol"`
 		Platform struct {
-			OS   string `json:"os"`
-			Arch string `json:"arch"`
+			OS                     string   `json:"os"`
+			Arch                   string   `json:"arch"`
+			OwnershipBoundary      string   `json:"ownership_boundary"`
+			FilesystemRequirements []string `json:"filesystem_requirements"`
+			ExcludedFilesystems    []string `json:"excluded_filesystems"`
 		} `json:"platform"`
 	} `json:"gapdb_tuple"`
 }
@@ -215,41 +245,104 @@ func VerifyExecutable(config VerifyConfig) (*VerifiedExecutable, error) {
 		return nil, failure(FailureAdmissionMismatch, "verify", "admission tuple differs", err)
 	}
 
-	fd, err := openNoSymlinks(config.ExecutablePath)
+	return verifyExecutableImage(config.ExecutablePath, admission.sidecarSHA256, admission.executableSize, ExecutableProvenance{
+		SourceRevision: record.GapDBTuple.SourceRevision, SourceTree: record.GapDBTuple.SourceTree,
+		ModuleVersion: record.GapDBTuple.ModuleVersion, AdmissionRecordSHA256: recordDigest,
+		ContractRevision: contractRevision,
+	}, nil)
+}
+
+// verifyExecutableImage is shared only by the ordinary verifier and the fixed
+// qualification verifier. Source facts never supply actual file coordinates.
+func verifyExecutableImage(path, expectedSHA string, expectedSize int64, sourceFacts ExecutableProvenance, cleanup *expiryCleanupReport) (_ *VerifiedExecutable, resultErr error) {
+	var cleanupErr error
+	defer func() { resultErr = withStartupCustody(resultErr, cleanupErr) }()
+	fd, err := openNoSymlinks(path)
 	if err != nil {
 		return nil, failure(FailureUnsafePath, "verify", "executable cannot be opened without following links", err)
 	}
 	file := os.NewFile(uintptr(fd), "admitted-gapdbd-source")
+	cleanup.sourceOpened()
 	verified := &VerifiedExecutable{source: file, verifyExecution: verifySealedExecution}
+	closeSource := func() {
+		err := file.Close()
+		cleanup.sourceClosed(err)
+		cleanupErr = joinStartupCustody(cleanupErr, err)
+	}
 	verified.sourceIdentity, err = identityOf(file)
 	if err != nil {
-		_ = file.Close()
+		closeSource()
 		return nil, failure(FailureIdentityUnprovable, "verify", "executable identity cannot be read", err)
 	}
-	if err := validateExecutableIdentity(verified.sourceIdentity, admission.executableSize); err != nil {
-		_ = file.Close()
+	if err := validateExecutableIdentity(verified.sourceIdentity, expectedSize); err != nil {
+		closeSource()
 		return nil, failure(FailureUnsafePath, "verify", "executable metadata is not admitted", err)
 	}
-	digest, err := digestFile(file, admission.executableSize)
+	digest, err := digestFile(file, expectedSize)
 	if err != nil {
-		_ = file.Close()
+		closeSource()
 		return nil, failure(FailureAdmissionMismatch, "verify", "executable cannot be hashed", err)
 	}
-	if digest != admission.sidecarSHA256 {
-		_ = file.Close()
+	if digest != expectedSHA {
+		closeSource()
 		return nil, failure(FailureAdmissionMismatch, "verify", "executable digest differs", nil)
 	}
 	verified.provenance = ExecutableProvenance{
-		ExecutablePath: bounded(config.ExecutablePath, maxEvidencePathBytes), SHA256: digest,
+		ExecutablePath: bounded(path, maxEvidencePathBytes), SHA256: digest,
 		Size: verified.sourceIdentity.size, Device: verified.sourceIdentity.device, Inode: verified.sourceIdentity.inode,
 		OwnerUID: verified.sourceIdentity.uid, OwnerGID: verified.sourceIdentity.gid, Mode: verified.sourceIdentity.mode,
-		SourceRevision: record.GapDBTuple.SourceRevision, SourceTree: record.GapDBTuple.SourceTree,
-		ModuleVersion: record.GapDBTuple.ModuleVersion, AdmissionRecordSHA256: recordDigest,
-		ContractRevision: contractRevision,
+		SourceRevision: sourceFacts.SourceRevision, SourceTree: sourceFacts.SourceTree,
+		ModuleVersion: sourceFacts.ModuleVersion, AdmissionRecordSHA256: sourceFacts.AdmissionRecordSHA256,
+		ContractRevision: sourceFacts.ContractRevision,
 	}
-	verified.execution, verified.executeIdentity, verified.executed, err = createSealedExecutionImage(file, digest, admission.executableSize)
+	// The original image-construction body lives here to capture the fixed
+	// cleanup report without adding a caller-selectable sealing implementation.
+	createSealedExecutionImage := func(source *os.File, expectedDigest string, expectedSize int64) (*os.File, fileIdentity, ExecutedImageProvenance, error) {
+		fd, err := unix.MemfdCreate("spec-kitty-gapdbd", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
+		if err != nil {
+			return nil, fileIdentity{}, ExecutedImageProvenance{}, err
+		}
+		image := os.NewFile(uintptr(fd), "sealed-gapdbd")
+		cleanup.imageOpened()
+		fail := func(err error) (*os.File, fileIdentity, ExecutedImageProvenance, error) {
+			closeErr := image.Close()
+			cleanup.imageClosed(closeErr)
+			cleanupErr = joinStartupCustody(cleanupErr, closeErr)
+			return nil, fileIdentity{}, ExecutedImageProvenance{}, err
+		}
+		if _, err := source.Seek(0, io.SeekStart); err != nil {
+			return fail(err)
+		}
+		written, err := io.Copy(image, io.LimitReader(source, expectedSize+1))
+		if err != nil || written != expectedSize {
+			return fail(errors.Join(err, errors.New("execution image size differs")))
+		}
+		if err := unix.Fchmod(fd, 0o500); err != nil {
+			return fail(err)
+		}
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_ADD_SEALS, requiredExecutionSeals); err != nil {
+			return fail(err)
+		}
+		seals, err := unix.FcntlInt(uintptr(fd), unix.F_GET_SEALS, 0)
+		if err != nil || seals&requiredExecutionSeals != requiredExecutionSeals {
+			return fail(errors.Join(err, errors.New("execution image seals are incomplete")))
+		}
+		identity, err := identityOf(image)
+		if err != nil {
+			return fail(err)
+		}
+		executed := ExecutedImageProvenance{
+			SHA256: expectedDigest, Size: identity.size, Device: identity.device,
+			Inode: identity.inode, Mode: identity.mode, Seals: seals,
+		}
+		if err := verifySealedExecution(image, executed); err != nil {
+			return fail(err)
+		}
+		return image, identity, executed, nil
+	}
+	verified.execution, verified.executeIdentity, verified.executed, err = createSealedExecutionImage(file, digest, expectedSize)
 	if err != nil {
-		_ = verified.Close()
+		closeSource()
 		return nil, failure(FailureIdentityUnprovable, "verify", "immutable execution image cannot be established", err)
 	}
 	return verified, nil
@@ -301,80 +394,46 @@ func (v *VerifiedExecutable) Close() error {
 	if v == nil {
 		return nil
 	}
-	var closeErr error
-	if v.execution != nil {
-		closeErr = errors.Join(closeErr, v.execution.Close())
-		v.execution = nil
-	}
-	if v.source != nil {
-		closeErr = errors.Join(closeErr, v.source.Close())
-		v.source = nil
-	}
-	return closeErr
+	v.closeOnce.Do(func() {
+		v.closeErr = v.closeExpiryUnconsumed()
+		if v.execution != nil {
+			err := v.execution.Close()
+			v.expiry.cleanupReport().imageClosed(err)
+			v.closeErr = joinStartupCustody(v.closeErr, err)
+			v.execution = nil
+		}
+		if v.source != nil {
+			err := v.source.Close()
+			v.expiry.cleanupReport().sourceClosed(err)
+			v.closeErr = joinStartupCustody(v.closeErr, err)
+			v.source = nil
+		}
+	})
+	return v.closeErr
 }
 
 func (v *VerifiedExecutable) command(arguments, environment []string) (*exec.Cmd, error) {
+	if err := v.checkCommandImage(); err != nil {
+		return nil, err
+	}
+	return v.fixedCommand(arguments, environment)
+}
+
+func (v *VerifiedExecutable) checkCommandImage() error {
 	if v == nil || v.execution == nil || v.verifyExecution == nil {
-		return nil, failure(FailureIdentityUnprovable, "exec", "verified descriptor is absent", nil)
+		return failure(FailureIdentityUnprovable, "exec", "verified descriptor is absent", nil)
 	}
 	current, err := identityOf(v.execution)
 	if err != nil || !sameExecutableIdentity(current, v.executeIdentity) {
-		return nil, failure(FailureIdentityUnprovable, "exec", "verified descriptor identity changed", err)
+		return failure(FailureIdentityUnprovable, "exec", "verified descriptor identity changed", err)
 	}
 	if err := v.verifyExecution(v.execution, v.executed); err != nil {
-		return nil, failure(FailureIdentityUnprovable, "exec", "sealed execution image changed", err)
+		return failure(FailureIdentityUnprovable, "exec", "sealed execution image changed", err)
 	}
-	// ExtraFiles maps the held file to child fd 3. The kernel resolves this
-	// descriptor path during exec, binding executed bytes to the verified file
-	// even if the configured pathname is concurrently renamed or replaced.
-	command := exec.Command("/proc/self/fd/3", arguments...)
-	command.ExtraFiles = []*os.File{v.execution}
-	command.Env = append([]string(nil), environment...)
-	return command, nil
+	return nil
 }
 
 const requiredExecutionSeals = unix.F_SEAL_WRITE | unix.F_SEAL_GROW | unix.F_SEAL_SHRINK | unix.F_SEAL_SEAL
-
-func createSealedExecutionImage(source *os.File, expectedDigest string, expectedSize int64) (*os.File, fileIdentity, ExecutedImageProvenance, error) {
-	fd, err := unix.MemfdCreate("spec-kitty-gapdbd", unix.MFD_CLOEXEC|unix.MFD_ALLOW_SEALING)
-	if err != nil {
-		return nil, fileIdentity{}, ExecutedImageProvenance{}, err
-	}
-	image := os.NewFile(uintptr(fd), "sealed-gapdbd")
-	fail := func(err error) (*os.File, fileIdentity, ExecutedImageProvenance, error) {
-		_ = image.Close()
-		return nil, fileIdentity{}, ExecutedImageProvenance{}, err
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return fail(err)
-	}
-	written, err := io.Copy(image, io.LimitReader(source, expectedSize+1))
-	if err != nil || written != expectedSize {
-		return fail(errors.Join(err, errors.New("execution image size differs")))
-	}
-	if err := unix.Fchmod(fd, 0o500); err != nil {
-		return fail(err)
-	}
-	if _, err := unix.FcntlInt(uintptr(fd), unix.F_ADD_SEALS, requiredExecutionSeals); err != nil {
-		return fail(err)
-	}
-	seals, err := unix.FcntlInt(uintptr(fd), unix.F_GET_SEALS, 0)
-	if err != nil || seals&requiredExecutionSeals != requiredExecutionSeals {
-		return fail(errors.Join(err, errors.New("execution image seals are incomplete")))
-	}
-	identity, err := identityOf(image)
-	if err != nil {
-		return fail(err)
-	}
-	executed := ExecutedImageProvenance{
-		SHA256: expectedDigest, Size: identity.size, Device: identity.device,
-		Inode: identity.inode, Mode: identity.mode, Seals: seals,
-	}
-	if err := verifySealedExecution(image, executed); err != nil {
-		return fail(err)
-	}
-	return image, identity, executed, nil
-}
 
 func verifySealedExecution(image *os.File, expected ExecutedImageProvenance) error {
 	identity, err := identityOf(image)
@@ -510,14 +569,20 @@ func digestFile(file *os.File, maximum int64) (string, error) {
 
 func readExactNoFollow(path string, maximum int64) ([]byte, string, error) {
 	fd, err := openNoSymlinks(path)
-	if err != nil {
-		return nil, "", err
-	}
-	file := os.NewFile(uintptr(fd), "verified-record")
-	defer file.Close()
+	if err != nil { return nil, "", err }
+	return readExactRecordFile(os.NewFile(uintptr(fd), "verified-record"), maximum, (*os.File).Close)
+}
+// Fixed literal production closer; component controls close an owned File once
+// and inject a returned error, or use an already closed File object. No raw FD
+// reclose, stored selector, path/admission widening or successful failed identity.
+func readExactRecordFile(file *os.File, maximum int64, closeFile func(*os.File) error) (encoded []byte, digestResult string, resultErr error) {
+	defer func() {
+		resultErr = withStartupCustody(resultErr, closeFile(file))
+		if resultErr != nil { encoded, digestResult = nil, "" }
+	}()
 	encoded, err := io.ReadAll(io.LimitReader(file, maximum+1))
 	if err != nil || int64(len(encoded)) > maximum {
-		return nil, "", errors.New("record exceeds bound or cannot be read")
+		return nil, "", withStartupCustody(errors.New("record exceeds bound or cannot be read"), err)
 	}
 	digest := sha256.Sum256(encoded)
 	return encoded, hex.EncodeToString(digest[:]), nil

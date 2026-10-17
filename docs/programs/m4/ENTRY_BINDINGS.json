@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "status": "verified_input_bindings_not_admission",
+  "mission_id": "M4",
+  "approval_record": "docs/programs/decisions/2026-10-13-parity-qualification-entry-approval.json",
+  "candidate_spec_sha256": "7fd5c5c3cbf505cddbdb1af3265ce90643d5304740f644cda4fddd52c8b49141",
+  "predecessor_source_commit": "416138f490ad6d908fc445c12b91440ca66ef18c",
+  "predecessor_source_tree": "2b68ee733305465d5acdfe8680f053b91d867a8d",
+  "predecessor_adoption_path": "docs/programs/evidence/m2-adoption.json",
+  "predecessor_adoption_sha256": "abfae7993dc4437cb76ca16fbcb6e18a10ba61eda7513446bc5fb1c1af911fc0",
+  "accepted_manifest_sha256": "8d7731992a35b0ace4cdcd816651df302d4459c8af91d1a2c31cf5d3aeb285a0",
+  "accepted_review_sha256": "a35f944548bd766887344192f59c36fd6002519d88588e07e3cdc48989510e50",
+  "accepted_producer_sha256": "250bad6ef3115b154794db61407736133ec0b1f5a5fc61117ec1267e77057fc2",
+  "accepted_release_sha256": "098fa8d3fae6f33e227ce290530fc172f820c961ffd326adb820a26aa44e2414",
+  "identity_contract_freeze": {
+    "source_commit": "416138f490ad6d908fc445c12b91440ca66ef18c",
+    "source_tree": "2b68ee733305465d5acdfe8680f053b91d867a8d",
+    "files": {
+      "internal/ids/ids.go": "f5cecbf727fc68b7794a51e81a30b958f91b5133f53fb1ac5bf87e11edbb254e",
+      "internal/ids/governance_context.go": "f5cb4ddf03be5c9c25af2a84de9ef634a58bd523f771216f1acd187bcfa5d312",
+      "internal/workgraph/revision.go": "1dcd5778b96554f134c7276379112ff6336b1034e4bf8c9005128450541013d0",
+      "internal/workgraph/authority_v2.go": "cc047556b6c65ca99dd82fbbb41c6988248a990dfdc6bbac837bb7fce98eb8ab",
+      "internal/governancecontext/model.go": "9fdac51188b894589878cd4f936f70ae3d3954fc9939d99225fc27260923de61",
+      "internal/handoff/model.go": "620b9c9ce25bad901c08fa952ec1e31ab085cbec811d4af9fd9bf52113feafd8",
+      "internal/handoff/authority_v2.go": "c8d7add8678f7a726e206afaeb2b41dd432843ee0c68c879e7a69107e469b9fc",
+      "internal/review/model.go": "e724a12f5c73c3aa3a635fb18c65be297080fc6729b4290d99f83c838e82db86",
+      "internal/review/authority_v2.go": "d4003a6af318de953ef31407c0c1dc7eaf1bdc6e20bed9854127ab79be06f768",
+      "internal/execution/authority_v2.go": "38f11b72131ca4ef353cc074362322d30f9abd7a44558866a80b86e2cef69bb5"
+    },
+    "current_bytes_identical_at_verification": true,
+    "semantics": [
+      "candidate is an exact lowercase Git commit, not a mutable branch or tag",
+      "WorkRevision is finalized immutable content with canonical criteria and actor identity",
+      "review binds the exact candidate, handoff, WorkRevision, criteria, evidence and independent reviewer ActorID",
+      "governance is an immutable run-owned context with pinned policy, doctrine, profile and mission-type revisions",
+      "review exceptions are explicit candidate/policy/scope-bound authority facts; no implicit self-approval"
+    ]
+  },
+  "ratified_acceptance_freeze": {
+    "source_commit": "0cd93038dbc051a0717d071927e8e432f526c10f",
+    "source_tree": "a4a747fb268ec93a6c7324ce1be22d11668e6a01",
+    "files": {
+      "docs/STACK_NEUTRAL_ACCEPTANCE.md": "2540e05fa3083b9fce898f6c7cce4317dbadb7c3005890056e8ec903e9f096ab",
+      "kitty-specs/production-runtime-architecture-01M16GVA/contracts/acceptance-evidence.schema.json": "180c00f653a7f40a26847534bf9ca34bfbf6dac7852f0df4374d51b04a88598b"
+    },
+    "current_bytes_identical_at_verification": true
+  },
+  "verification_boundary": "Original immutable adoption/review/release/manifest/producer identities and frozen input contract bytes verified locally. No adoption transfer to dirty parity source, new acceptance result, actual M4 WorkRevision instance, provider execution, release verdict or mission activation is asserted. Record independent entry review and attributable admission before program status advances."
+}

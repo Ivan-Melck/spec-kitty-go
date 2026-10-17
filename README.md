@@ -45,6 +45,8 @@ what happens next:
 5. [Historical dispositions](https://github.com/spec-kitty/spec-kitty-redesign/blob/main/docs/HISTORICAL_ARCHITECTURE_DISPOSITIONS.md),
    [API 1.3 compatibility](docs/ORCHESTRATOR_API_1_3_PROJECTION.md), and the
    [Python behavior inventory](docs/PYTHON_BEHAVIOR_INVENTORY.md) for provenance.
+   The [newest-main parity inventory](docs/parity/LATEST_MAIN.md) pins current
+   upstream behavior separately; it records gaps, not a completed parity claim.
 6. [Build and run the current repository](#build-and-run-the-current-repository)
    and [Evidence](#evidence) for reproducible present-tense claims.
 7. [What happens next](#what-happens-next) for the adopted M2 input and remaining M3/M4 gates.

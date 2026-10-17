@@ -300,7 +300,7 @@ func privateRoot(t *testing.T) string {
 
 func shortRoot(t *testing.T) string {
 	t.Helper()
-	root, err := os.MkdirTemp("/tmp", "spk-f-")
+	root, err := os.MkdirTemp("", "spk-f-")
 	if err != nil {
 		t.Fatal(err)
 	}

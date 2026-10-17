@@ -96,6 +96,7 @@ type HostStatus struct {
 // Host is the only normal owner of the local authority composition. It never
 // returns its sidecar, durable adapter, projection mutator, or repositories.
 type Host struct {
+	expiry       hostExpiryState
 	mu           sync.Mutex
 	commandMu    sync.RWMutex
 	refreshMu    sync.Mutex
@@ -110,8 +111,10 @@ type Host struct {
 	capabilities runtimeCapabilities
 	refresh      func(context.Context) error
 	monitorStop  context.CancelFunc
+	monitorDone  <-chan struct{} // actual monitor's final completion publication
 	ownerKey     string
 	closeOnce    sync.Once
+	retained     *retainedHostComposition // set only by successful production start
 }
 
 var liveOwners = struct {
@@ -327,10 +330,17 @@ func (h *Host) startMonitor(parent context.Context, interval time.Duration) {
 		probeTimeout = time.Second
 	}
 	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
 	h.mu.Lock()
-	h.monitorStop = cancel
+	if h.monitorDone != nil || h.state == HostClosing || h.state == HostClosed {
+		h.mu.Unlock()
+		cancel()
+		return
+	}
+	h.monitorStop, h.monitorDone = cancel, done
 	h.mu.Unlock()
 	go func() {
+		defer close(done) // after probe/unlock and ticker Stop; no work after publication
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		consecutiveFailures := 0
@@ -340,6 +350,10 @@ func (h *Host) startMonitor(parent context.Context, interval time.Duration) {
 				return
 			case <-ticker.C:
 				h.commandMu.Lock()
+				if ctx.Err() != nil {
+					h.commandMu.Unlock()
+					return
+				}
 				// Waiting for an admitted command to leave the provider boundary is
 				// not part of the owner probe. Starting the deadline before this
 				// lock would turn a slow but healthy command into an already-expired
@@ -370,15 +384,29 @@ func (h *Host) Progress() *ProgressService {
 	return h.progress
 }
 
-// Close shuts admission before waiting for in-flight commands. Durable data is
-// never deleted. Context cancellation may end the drain wait, but cleanup is
-// still attempted once.
+// New wait refusals retain the actual caller context error without changing
+// the public Error vocabulary or exposing context/provider prose.
+// Channel/wrapper storage and joining work remain OWNED_UNQUALIFIED.
+type hostShutdownWaitError struct { primary *Error; cause error }
+func (e *hostShutdownWaitError) Error() string { return e.primary.Error() }
+func (e *hostShutdownWaitError) Unwrap() []error { return []error{e.primary, e.cause} }
+func hostShutdownWaitRefusal(field string, cause error) error {
+	return &hostShutdownWaitError{primary: &Error{Kind: ErrorShutdown, State: HostClosing, Field: field}, cause: cause}
+}
+
+// Close shuts admission, drains admitted commands, and joins the actual monitor
+// before owner teardown. Cancellation may end either wait, but never authorizes
+// teardown of unjoined work. Such an attempt remains incomplete/HostClosing;
+// the process-owner reservation is retained, and a repeat nil is not completion.
+// Durable data is never deleted. No new deadline or cleanup budget is created.
 func (h *Host) Close(ctx context.Context) error {
 	if h == nil {
 		return nil
 	}
+	h.revokeExpiryHost() // before locks, drain, or the idempotent cleanup gate
 	var result error
 	h.closeOnce.Do(func() {
+		defer func() { h.expiryClosed(result) }() // record FIRST, including unjoined work
 		h.mu.Lock()
 		if h.state != HostClosed && h.state != HostClosing {
 			h.state = HostClosing
@@ -394,7 +422,29 @@ func (h *Host) Close(ctx context.Context) error {
 			}
 			h.mu.Lock()
 		}
+		drained, monitorDone := h.inflight == 0, h.monitorDone
 		h.mu.Unlock()
+		if !drained {
+			result = hostShutdownWaitRefusal("command_drain", ctx.Err())
+			return
+		}
+		if monitorDone != nil {
+			select {
+			case <-monitorDone:
+			default:
+				select {
+				case <-monitorDone:
+				case <-ctx.Done():
+					// Prefer an actual completion receive if both are ready.
+					select {
+					case <-monitorDone:
+					default:
+						result = hostShutdownWaitRefusal("monitor_join", ctx.Err())
+						return
+					}
+				}
+			}
+		}
 		if err := h.owner.Close(ctx); err != nil {
 			result = &Error{Kind: ErrorShutdown, State: HostClosing, Field: "owner_cleanup"}
 		}

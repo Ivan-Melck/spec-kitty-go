@@ -79,6 +79,24 @@ type InputV2 struct {
 	PriorRuntimeEpochID journal.RuntimeEpochID
 	RecoveryAttemptID   string
 	Budgets             BudgetsV2
+	// ExpectedProjectionPrefix requires proof of an earlier product projection
+	// as well as the current snapshot. It never admits authority or writes state.
+	ExpectedProjectionPrefix ProjectionPrefixV2
+}
+
+// ProjectionPrefixV2 is an immutable expectation, not caller-provided evidence.
+// Restore derives its digest from validated checkpoint and journal facts.
+// The zero value adds no prefix requirement to existing restore callers.
+type ProjectionPrefixV2 struct {
+	throughRevision uint64
+	digest          journal.Digest
+}
+
+func NewProjectionPrefixV2(throughRevision uint64, digest journal.Digest) (ProjectionPrefixV2, error) {
+	if digest.IsZero() {
+		return ProjectionPrefixV2{}, &Error{Kind: ErrorAuthorityClosed, Field: "projection_prefix_digest"}
+	}
+	return ProjectionPrefixV2{throughRevision: throughRevision, digest: digest}, nil
 }
 
 type ErrorKind string
@@ -125,7 +143,19 @@ func (a AdmissionRequestV2) ReducerRegistryDigest() journal.Digest       { retur
 func (a AdmissionRequestV2) CanonicalCodecVersion() uint32               { return a.codecVersion }
 func (a AdmissionRequestV2) RecoveryAttemptID() string                   { return a.attemptID }
 
+// OperationMembershipV2 is immutable query attribution derived only from a
+// validated operation binding. It does not change the host-scoped aggregate or
+// grant command authority.
+type OperationMembershipV2 struct {
+	operationID journal.OperationID
+	scope       journal.Scope
+}
+
+func (m OperationMembershipV2) OperationID() journal.OperationID { return m.operationID }
+func (m OperationMembershipV2) Scope() journal.Scope             { return m.scope }
+
 type ResultV2 struct {
+	memberships     []OperationMembershipV2
 	playback        playback.ResultV2
 	attempt         journal.StoreRevisionV2
 	rollingPrefix   journal.Digest
@@ -133,6 +163,10 @@ type ResultV2 struct {
 	priorEpochID    journal.RuntimeEpochID
 	attemptID       string
 	seal            journal.Digest
+}
+
+func (r ResultV2) OperationMembership() []OperationMembershipV2 {
+	return append([]OperationMembershipV2(nil), r.memberships...)
 }
 
 func (r ResultV2) Playback() playback.ResultV2            { return r.playback }
@@ -224,7 +258,10 @@ func restoreAttempt(parent context.Context, input InputV2, budgets BudgetsV2) (R
 		return ResultV2{}, err
 	}
 	compatibility := checkpoint.CompatibilityV2{EventRegistryDigest: eventDescriptor.Digest(), ReducerRegistryDigest: reducerDescriptor.Digest(), CanonicalCodecVersion: journal.CanonicalCodecVersionV2}
-	selection, err := selectCheckpoint(ctx, reader, attempt, compatibility, budgets, evidence)
+	if !input.ExpectedProjectionPrefix.digest.IsZero() && input.ExpectedProjectionPrefix.throughRevision > attempt.CurrentRevision() {
+		return ResultV2{}, corrupt("projection_prefix_revision")
+	}
+	selection, err := selectCheckpoint(ctx, reader, attempt, compatibility, budgets, evidence, input.ExpectedProjectionPrefix)
 	if err != nil {
 		return ResultV2{}, err
 	}
@@ -336,14 +373,37 @@ func restoreAttempt(parent context.Context, input InputV2, budgets BudgetsV2) (R
 		return ResultV2{}, err
 	}
 	evidence.records = append(evidence.records, witnessRecords...)
-	played, err := playback.RunV2(playback.InputV2{Base: base, Events: ordered, EventRegistry: input.EventRegistry, Reducers: input.Reducers,
+	playbackInput := playback.InputV2{Base: base, Events: ordered, EventRegistry: input.EventRegistry, Reducers: input.Reducers,
 		ExpectedEventRegistryDigest: eventDescriptor.Digest(), ExpectedReducerRegistryDigest: reducerDescriptor.Digest(), MaximumAggregates: playback.MaxPlaybackAggregates,
-		MaximumEvents: budgets.MaximumSuffixEvents, MaximumBytes: min(budgets.MaximumValueBytes, playback.MaxPlaybackBytes), MaximumWorkers: min(budgets.MaximumWorkers, playback.MaxPlaybackWorkers)})
+		MaximumEvents: budgets.MaximumSuffixEvents, MaximumBytes: min(budgets.MaximumValueBytes, playback.MaxPlaybackBytes), MaximumWorkers: min(budgets.MaximumWorkers, playback.MaxPlaybackWorkers)}
+	played, err := playback.RunV2(playbackInput)
 	if err != nil {
 		return ResultV2{}, err
 	}
 	if err := validateTerminal(played, aggregates, operations, finalOperations); err != nil {
 		return ResultV2{}, err
+	}
+	if expected := input.ExpectedProjectionPrefix; !expected.digest.IsZero() {
+		prefixDigest := played.CanonicalProjectionDigest()
+		if expected.throughRevision < attempt.CurrentRevision() {
+			// The selected checkpoint is no newer than the required prefix.
+			// Membership validation above proves whole publication groups before
+			// filtering by commit revision; no partial batch can become evidence.
+			playbackInput.Events = make([]playback.MaterializedEventV2, 0, len(ordered))
+			for _, event := range ordered {
+				if event.RecordRevision() <= expected.throughRevision {
+					playbackInput.Events = append(playbackInput.Events, event)
+				}
+			}
+			prefixPlayback, err := playback.RunV2(playbackInput)
+			if err != nil {
+				return ResultV2{}, err
+			}
+			prefixDigest = prefixPlayback.CanonicalProjectionDigest()
+		}
+		if prefixDigest != expected.digest {
+			return ResultV2{}, corrupt("projection_prefix_digest")
+		}
 	}
 	if len(material) == 0 && !selection.IsOrigin() && nextPrefix != prefix {
 		return ResultV2{}, corrupt("rolling_prefix")
@@ -366,7 +426,13 @@ func restoreAttempt(parent context.Context, input InputV2, budgets BudgetsV2) (R
 	if err := reader.VerifyRevisionV2(ctx, attempt); err != nil {
 		return ResultV2{}, err
 	}
-	result := ResultV2{played, attempt, nextPrefix, input.HostAuthorityID, input.PriorRuntimeEpochID, input.RecoveryAttemptID, journal.Digest{}}
+	memberships := make([]OperationMembershipV2, 0, len(operations))
+	for id, operation := range operations {
+		memberships = append(memberships, OperationMembershipV2{operationID: id, scope: operation.binding.Scope()})
+	}
+	sort.Slice(memberships, func(i, j int) bool { return memberships[i].operationID < memberships[j].operationID })
+	result := ResultV2{memberships: memberships, playback: played, attempt: attempt, rollingPrefix: nextPrefix,
+		hostAuthorityID: input.HostAuthorityID, priorEpochID: input.PriorRuntimeEpochID, attemptID: input.RecoveryAttemptID}
 	result.seal = sealResult(result)
 	return result, nil
 }
@@ -452,7 +518,7 @@ func semanticAddressBytes(address journal.RecordAddressV2) int {
 
 const budgetsImpossibleAddressBytes = 1 << 30
 
-func selectCheckpoint(ctx context.Context, reader ReaderV2, attempt journal.StoreRevisionV2, compatibility checkpoint.CompatibilityV2, budgets BudgetsV2, evidence *scanEvidence) (checkpoint.SelectionV2, error) {
+func selectCheckpoint(ctx context.Context, reader ReaderV2, attempt journal.StoreRevisionV2, compatibility checkpoint.CompatibilityV2, budgets BudgetsV2, evidence *scanEvidence, expectedPrefix ProjectionPrefixV2) (checkpoint.SelectionV2, error) {
 	records, pages, err := scanAll(ctx, reader, attempt, journal.CheckpointSlotScanTargetV2(), budgets)
 	if err != nil {
 		return checkpoint.SelectionV2{}, err
@@ -506,6 +572,11 @@ func selectCheckpoint(ctx context.Context, reader ReaderV2, attempt journal.Stor
 			invalidEvidence = true
 			continue
 		}
+		if !expectedPrefix.digest.IsZero() && c.ThroughRecordRevision() > expectedPrefix.throughRevision {
+			// A newer checkpoint cannot prove the historical admission prefix.
+			// Use an older candidate or bounded origin replay, never guess it.
+			continue
+		}
 		candidates = append(candidates, checkpoint.CandidateV2{
 			SlotRecord:       slotRecord,
 			CheckpointRecord: checkpointRecord,
@@ -514,6 +585,9 @@ func selectCheckpoint(ctx context.Context, reader ReaderV2, attempt journal.Stor
 		evidence.records = append(evidence.records, checkpointRecord, witness)
 	}
 	if len(candidates) == 0 {
+		if !expectedPrefix.digest.IsZero() && !invalidEvidence {
+			return checkpoint.OriginV2(), nil
+		}
 		return checkpoint.SelectionV2{}, corrupt("checkpoint_candidates")
 	}
 	selection, err := checkpoint.SelectV2(candidates, compatibility, attempt)
@@ -1219,6 +1293,16 @@ func sealResult(r ResultV2) journal.Digest {
 	d := r.playback.CanonicalProjectionDigest()
 	_, _ = hash.Write(d[:])
 	_, _ = hash.Write(r.rollingPrefix[:])
+	binary.BigEndian.PutUint64(revision[:], uint64(len(r.memberships)))
+	_, _ = hash.Write(revision[:])
+	for _, membership := range r.memberships {
+		scope := membership.scope
+		for _, value := range []string{string(membership.operationID), string(scope.Kind), string(scope.ProjectID), string(scope.MissionID), string(scope.RepositoryID), string(scope.WorkRevisionID), string(scope.WorkID)} {
+			binary.BigEndian.PutUint64(revision[:], uint64(len(value)))
+			_, _ = hash.Write(revision[:])
+			_, _ = hash.Write([]byte(value))
+		}
+	}
 	var result journal.Digest
 	copy(result[:], hash.Sum(nil))
 	return result

@@ -1,0 +1,122 @@
+{
+  "schema": "independent-host-source-design-review/v1",
+  "review_id": "20261017-7e19",
+  "report": "/home/user/Documents/code/spec-kitty-redesign/docs/parity/INDEPENDENT_HOST_B_D_SOURCE_REVIEW_20261017_7e19.md",
+  "mode": "source-and-hash-only",
+  "executed": [],
+  "writes": ["new markdown review", "new JSON review"],
+  "whole_area_acceptance": false,
+  "all19": "OPEN",
+  "fourareas": "OPEN",
+  "human_execution_authorization_acknowledged": true,
+  "activation_approved": false,
+  "contract_root": "/home/user/.cache/spec-kitty-parity-resume-followup/host-expiry-design-v3-xzvq4v1w",
+  "contract_sha256": {
+    "DESIGN.md": "d01eeba22027cd28d75530b3d4937f5c028fab746d93b7e8cc32c8a8ff6bcfe1",
+    "TEST-MATRIX.md": "d118907cf60c1fbae314445aab55097b3a85728d98a2e6a0e37a1d42d3057e0f"
+  },
+  "authorization_sha256": "e2a380f294bc576d2318ef03b6bb0409da1634354b61682148d284123b335760",
+  "proposals": {
+    "B": {
+      "root": "/home/user/.cache/spec-kitty-source-proposals/host-fixed-sites-candidate-20261016-a81f-v2-postconsume",
+      "verdict": "BLOCKED",
+      "blockers": ["F1"],
+      "source_cases": 36,
+      "executions": 0,
+      "boundary": "Nine separately compiled statement overlays; final checkHeld ENTRY198 only for coordinates235-237; not helper-interior arrival.",
+      "minimal_repairs": ["Obtain/review final dependencies; rebase only drifted pins/frames with byte reconstruction; bind complete overlay/build identity before activation."],
+      "sha256": {
+        "sites.json": "94a0aa6d34407c23f434d45821c6c9caaa834829f765df199098a140e3d8303c",
+        "barrier.go.txt": "c27b679ecb3cb7c85c196d00febb3d891c474b9867caa9380ac539161ac510b3",
+        "expiry_qualification_fixed_sites_native_test.go.txt": "3856f62fc6935612c149e93fa070f646c836e6c869bd2c198d499772e122c934",
+        "emit_overlays.py": "449ae9612877d67272afd69c0bfe9f57f5a5f7d6ff2f5910943542501f3cb282",
+        "verification-helper.go.txt": "6f550fd02559976225bf1d2534c4d6b8f9b7fdec345054498609d2666c270a6e"
+      }
+    },
+    "D": {
+      "root": "/home/user/.cache/spec-kitty-source-proposals/host-same-lifetime-fault-code-20261017-lf259",
+      "verdict": "REVISE",
+      "blockers": ["F1", "F2"],
+      "source_cases": 4,
+      "executions": 0,
+      "boundary": "Same canonical session/lifetime; phase4 matches begin3 increment and pre-Consume phase. Only BeforeConsume proposes259. Actual Revoke(void) then FIRST Close(error), no raw FD closure.",
+      "minimal_repairs": ["Resolve F2 in a new candidate version, retaining FIRST failures; then resolve F1 and review the complete composition."],
+      "sha256": {
+        "sites.json": "273580a541559f18396cc25402d98e95de101e855ef368baaa038489401ab661",
+        "capture.go.txt": "b5539d6149251d123719004791952b3e9cb8a4a38e5c9cf1bc722a42c9b4bbd8",
+        "controlstore-shim.go.txt": "6059a3e03be7bfb354ec0a92225d01ccdeadf39cce5b354c954d9a4636e206b0",
+        "kernel-shim.go.txt": "473159cbc97001c034035a76bdd321125467c95bd2b2e31c3e5c1da31921efbc",
+        "expiry_same_lifetime_fault_native_test.go.txt": "aaeb6e45130ceed463c812e002765c48b223d985671bba9cfcfe1559f946dfa6",
+        "emit_source.py": "2b6c420d3feae409c00f5b662f47426e252826c87ac471e3d42dc6ec3941ddfb",
+        "verification.go.txt": "bdf58f6a249d527b2e7cfecdf299039ae6484524194d3c2bc3bac50bdca53869"
+      }
+    }
+  },
+  "findings": {
+    "F1": {
+      "kind": "missing-final-source",
+      "locations": ["B/late-source-pins.template.json", "D/late-source-pins.template.json"],
+      "observation": "Final lifecycle/transport source_file, repository_sha256 and sha256 are null; emitters correctly require separate final input before output.",
+      "repair": "Review final complete deltas, then freeze authored-base/repository/compiled identities separately. Hash equality alone is not semantic approval. Never substitute frozen baseline execution."
+    },
+    "F2": {
+      "kind": "audit-arithmetic-proof-gap",
+      "locations": ["D/capture.go.txt: NoteHashStart/NoteWireWriteAttempt/NoteCheck/NoteLive/NoteKernelClose", "D/expiry_same_lifetime_fault_native_test.go.txt: BeforeWork counters +1"],
+      "observation": "Diagnostic uint64 increments and expected deltas wrap. No all-producer bound is supplied for global recorder-active auditing; budget reservation alone is not such proof.",
+      "repair": "Supply that source bound or checked increments/deltas with sticky overflow failure asserted by the fixture. Preserve actual work meanings and original budgets.",
+      "not_claimed": "Observed overflow, an executed false pass, or altered production budget arithmetic."
+    }
+  },
+  "seam_permission": {
+    "basis": "TEST-MATRIX: Required concrete scenario cross-product, final paragraph; DESIGN sections1,8",
+    "permissible_scope": "Candidate-only internal fixed test instrumentation; no target/provider/callback/lifetime arguments or ordinary installation.",
+    "context_methods": "Read genuine Err/Done/Deadline without fabrication; no new context wrapper supplied by B/D.",
+    "Active": "Single fixed-fault activation, not provider/target selection.",
+    "no_E": "Do not apply these maps: untagged sources gain calls to E-only shims. Use unaltered sources for ordinary/platform-negative regressions.",
+    "module_API": "No installed product/module method or dependency replacement authorized."
+  },
+  "evidence_placement": {
+    "level": "instrumented-host-candidate",
+    "eligible_negative_clauses_after_review_and_execution": ["B context/revocation entry cutoffs at its nine actual sites", "B235-237 final checkHeld ENTRY only", "D same-lifetime terminal refusal", "D259 after-terminal/before-Consume same-session Revoke+Close only"],
+    "not_covered": ["deeper checkHeld/metadata arrival", "publication204 cancellation frontier", "physical Host.Close/Stop/process/endpoint revocation", "stale-generation actions", "R/A and durable-expiry positives", "whole nineteen-family acceptance"],
+    "unaltered_required": "Original six genuine-Host positive fixtures, plus reconciler coverage and ordinary compatibility. No 36/4-case Native cross-product invented.",
+    "physical_negative_rule": "Actual physical actions remain required; reviewed synchronization may time them but cannot stand in for them.",
+    "citations": ["DESIGN sections1,6,8,9,10", "TEST-MATRIX: Context and revocation cutoffs", "TEST-MATRIX: Required concrete scenario cross-product", "TEST-MATRIX: Ordinary/tagged source and cost regression checks"]
+  },
+  "repository_source_sha256": {
+    "internal/productionruntime/expiry_qualification_observation.go": "8d9ae57f6f0687aebe1eabe0c75d999e2fa513e4d58789010773537427f4e0c1",
+    "internal/productionruntime/expiry_qualification_rundown.go": "134f19cf62e9cfa2a884c66ef485b75ca695d0f8d4ac10f960926ccef49a94bd",
+    "internal/productionruntime/retained_private_records.go": "e29bc68b019d666e1cb8bf38043e02ce9e81e03b3e7c047aaee06a4a2c47d47e",
+    "internal/productionruntime/expiry_qualification_outer_native_test.go": "4ab2323a5903700bb89091277aa4084a9295f2b551575817eef68f252b4c3f98",
+    "internal/controlstore/gapdb/retained_observation.go": "7921645ba48b65e7aa884ebed8d4e0c3af5ba9dcf4ceba5b41951e647e387366",
+    "internal/controlstore/gapdb/retained_expiry_qualification.go": "7d7e72f56ffda01a3f758b747e97ee81a1a2cac1ad9243124e17275036a3c4c1",
+    "internal/controlstore/gapdb/retainedkernel/lifetime.go": "69395b56089d7749029a4b853ef8a818c8ec98a4a6b845d5b1cf7efc24dac61e",
+    "internal/controlstore/gapdb/retainedkernel/expiry_qualification.go": "0612dc6870f9a9f924bb92a001f83620a1f5e19cf5cb44755ff22963c0bc4642",
+    "internal/sidecar/gapdb/expiry_qualification_launch.go": "ac1c630c6a964c7b6cf6abd7f0a5f29872b31aefbd336d88befca8ef43b99bad",
+    "internal/sidecar/gapdb/lifecycle.go": "2c1eed66d0508a479b28069a150715e9d0659502aaa0209c0940dd239b675dad",
+    "internal/controlstore/gapdb/retained_transport.go": "6b03ed6e92abea559bffdc18124d2ca0d246d7d6e5a47404bd296612561102aa"
+  },
+  "remaining_mandatory_families": {
+    "Exact closed input": "OPEN: every independent strict-decoder/artifact relationship control",
+    "Ordinary exclusion": "OPEN: unaltered ordinary/E-unmarked vectors and negative platforms",
+    "Held source/exec": "OPEN: actual held/sealed image custody and substitutions",
+    "Fixed child descriptors": "OPEN: original child FD3/FD4 and attribution controls",
+    "Gate": "OPEN: complete H/R/A/protocol/cancellation controls",
+    "Cleanup": "OPEN: every stage and actual FIRST resource outcome/residual",
+    "Fresh root": "OPEN: fresh/exclusive root and all substitutions",
+    "Binding": "OPEN: exact private comparable variant and bounded canonical bytes",
+    "Recovery dispatch": "OPEN: all masked edges, failures and ordinary mapping",
+    "Real ACK/final-map": "OPEN: actual overwrites/claims/witnesses and refusals",
+    "Private chains": "OPEN: real visited chains and every schema/budget refusal",
+    "Public mismatch": "OPEN: genuine held zero/sanitized public refusal",
+    "Private S1 closure": "OPEN: authenticated S1/S2/terminal/Consume conjunction and independent invalid coordinates",
+    "Context and revocation cutoffs": "OPEN: B/D proposed coverage only; physical and other post-Consume checks remain",
+    "Frozen composition": "OPEN: actual identity/projection/root/lease changes",
+    "Actual expiry": "OPEN: genuine TTL/H/negative/A/durable advance/refreshed match/cleanup",
+    "Same-run restart": "OPEN: genuine clean/unclean successors and stale handles",
+    "Unsupported transfer": "OPEN: side-effect-free refusals and EOF-only liveness",
+    "Evidence/reporting": "OPEN: full Hsrc/overlay/input/build/binary/FIRST results and independent result acceptance"
+  },
+  "next_actions": ["Resolve F1/F2 in new versions", "Review complete composed sources and byte/frame bindings", "Freeze cwd/profile/maps/Hsrc/binary identity", "Run authorized verification and fresh evidence stages separately", "Independent whole-area result review before any closure"],
+  "uncertainties": ["No final composed-source approval", "Dormant donor test bodies not exhaustively reviewed", "No empirical compiler-frame, race, deadline or lock behavior established", "No source pin is a compiled-binary attestation"]
+}

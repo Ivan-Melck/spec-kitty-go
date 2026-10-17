@@ -181,8 +181,8 @@ func (s productionObservation) Status() productionruntime.HostStatus { return s.
 func (s productionObservation) Mission(project journalv2.ProjectID, missionID journalv2.MissionID) (productionruntime.MissionProgress, error) {
 	return s.observation.Progress().Mission(project, missionID)
 }
-func (s productionObservation) Operation(project journalv2.ProjectID, missionID journalv2.MissionID, operation string) (productionruntime.ProgressItem, error) {
-	return s.observation.Progress().Get(project, missionID, productionruntime.ProgressOperations, operation)
+func (s productionObservation) Operation(ctx context.Context, project journalv2.ProjectID, missionID journalv2.MissionID, operation string) (productionruntime.ProgressItem, error) {
+	return s.observation.InspectOperation(ctx, project, missionID, operation)
 }
 func (s productionObservation) Close(ctx context.Context) error { return s.observation.Close(ctx) }
 
@@ -190,8 +190,8 @@ func (s productionSession) Status() productionruntime.HostStatus { return s.host
 func (s productionSession) Mission(project journalv2.ProjectID, missionID journalv2.MissionID) (productionruntime.MissionProgress, error) {
 	return s.host.Progress().Mission(project, missionID)
 }
-func (s productionSession) Operation(project journalv2.ProjectID, missionID journalv2.MissionID, operation string) (productionruntime.ProgressItem, error) {
-	return s.host.Progress().Get(project, missionID, productionruntime.ProgressOperations, operation)
+func (s productionSession) Operation(ctx context.Context, project journalv2.ProjectID, missionID journalv2.MissionID, operation string) (productionruntime.ProgressItem, error) {
+	return s.host.InspectOperation(ctx, project, missionID, operation)
 }
 func (s productionSession) Execute(ctx context.Context, operation decodedOperation) (TypedResult, error) {
 	capabilities := s.capabilities

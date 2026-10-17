@@ -301,15 +301,10 @@ func readBoundedJSON(reader io.Reader, target any) error {
 	if int64(len(data)) > MaxRequestBytes {
 		return errors.New("request exceeds the bounded input size")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("request contains trailing JSON")
-	}
-	return nil
+	// Share the tracker adapter's exact-field and raw-wire validation. Go's
+	// decoder otherwise accepts duplicate/case-folded keys and repairs invalid
+	// Unicode before the canonical request digest can commit their identity.
+	return strictProviderJSON(data, target)
 }
 
 func decodeOperation(request OperationRequest) (decodedOperation, error) {

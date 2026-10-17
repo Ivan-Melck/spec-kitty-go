@@ -16,12 +16,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	gapdbapi "github.com/spec-kitty/gapdb/gapdb"
 	journalcheckpoint "github.com/spec-kitty/go-kitty3/internal/controljournal/checkpoint"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb/retainedkernel"
 	"golang.org/x/sys/unix"
 )
 
@@ -236,6 +238,7 @@ type OwnershipDiagnostic struct {
 
 // Lifecycle owns exactly one process, private runtime directory, and endpoint.
 type Lifecycle struct {
+	expiry          lifecycleExpiryState
 	mu              sync.Mutex
 	config          LifecycleConfig
 	command         *exec.Cmd
@@ -251,11 +254,31 @@ type Lifecycle struct {
 	stopped         bool
 	processes       processAPI
 	productRestores map[string]ProductRestoreProofV1
+	retained        atomic.Pointer[retainedkernel.Lifetime]
+	ownedRevoked    atomic.Bool
+	ownedEndpoint   string
+	ownedBootstrap  gapdbapi.StatusResult
+	startupAbort startupAbortOutcome // published by shared custody Once, immutable thereafter
+	pidfdCloseAttempted bool // mu; FIRST attempt is not a success certificate
+	pidfdCloseErr error // mu; immutable FIRST close outcome
+	teardownCustody atomic.Pointer[teardownCustodyClaim]
+	teardownCustodyErr error // entire first teardown, published before claim.done
+	shutdownWait actualWaitObservation // sole FIRST owner records actual state/error
+	shutdownWaitChecked bool // includes missing owner, distinct from actual attempt
+	attached bool // ordinary external monitor, never child reap authority
+	attachExitObserved bool
+	attachExitErr error
+	runtimeCleanupOnce sync.Once
+	runtimeCleanupErr error // includes directory then parent close results
+	pendingCustody startupPendingCustody // startup owner; copied into FIRST abort
+	childWaitOnce sync.Once
+	childWait *startupChildWait // actual Cmd.Wait publication, not poll completion
+	startupPublished atomic.Pointer[startupCustodyPublication] // immutable startup-only snapshots for lock-refusal collection
 }
 
 // Start verifies and descriptor-executes the exact admitted sidecar, then
 // admits its composite Status/Health/DescribeConfig provenance.
-func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
+func Start(ctx context.Context, config LifecycleConfig) (result *Lifecycle, resultErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -268,11 +291,30 @@ func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer verified.Close()
-	if err := validatePrivateRoot(config.RuntimeRoot); err != nil {
+	defer func() {
+		closeErr := verified.Close()
+		if closeErr != nil && result != nil {
+			closeErr = withStartupCustody(closeErr, result.Stop(ctx))
+			result = nil
+		}
+		resultErr = withStartupCustody(resultErr, closeErr)
+	}()
+	return startVerified(ctx, config, verified)
+}
+
+// startVerified shares the entire post-verification launch with the fixed tagged
+// root. Conditional hooks are inert for ordinary verified executables.
+func startVerified(ctx context.Context, config LifecycleConfig, verified *VerifiedExecutable) (_ *Lifecycle, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			verified.bindExpiryFailedCleanup(ctx)
+			verified.expiryStartFailed()
+		}
+	}()
+	if err := validatePrivateRootWithReport(config.RuntimeRoot, verified.expiry.cleanupReport()); err != nil {
 		return nil, failure(FailureUnsafePath, "start", "runtime root is not private", err)
 	}
-	if err := preparePrivateDirectory(config.DataDirectory); err != nil {
+	if err := preparePrivateDirectoryWithReport(config.DataDirectory, verified.expiry.cleanupReport()); err != nil {
 		return nil, failure(FailureUnsafePath, "start", "data directory is not private", err)
 	}
 	runtimeDirectory, err := os.MkdirTemp(config.RuntimeRoot, "s-")
@@ -280,24 +322,23 @@ func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
 		return nil, failure(FailureStart, "start", "private runtime directory cannot be created", err)
 	}
 	if err := os.Chmod(runtimeDirectory, 0o700); err != nil {
-		_ = os.Remove(runtimeDirectory)
-		return nil, failure(FailureStart, "start", "private runtime mode cannot be set", err)
+		return nil, withStartupCustody(failure(FailureStart, "start", "private runtime mode cannot be set", err), preservedCreatedRuntime(runtimeDirectory, fileIdentity{}))
 	}
 	runtimeFile, err := os.Open(runtimeDirectory)
 	if err != nil {
-		_ = os.Remove(runtimeDirectory)
-		return nil, failure(FailureStart, "start", "runtime identity cannot be opened", err)
+		return nil, withStartupCustody(failure(FailureStart, "start", "runtime identity cannot be opened", err), preservedCreatedRuntime(runtimeDirectory, fileIdentity{}))
 	}
+	verified.expiry.cleanupReport().localOpened()
 	runtimeID, err := identityOf(runtimeFile)
-	_ = runtimeFile.Close()
-	if err != nil {
-		_ = os.Remove(runtimeDirectory)
-		return nil, failure(FailureStart, "start", "runtime identity cannot be read", err)
-	}
+	runtimeCloseErr := verified.expiry.cleanupReport().closeLocalFile(runtimeFile)
 	socket := filepath.Join(runtimeDirectory, "gapdb.sock")
-	if len(socket) > maxSocketPathBytes {
-		_ = os.Remove(runtimeDirectory)
-		return nil, failure(FailureInvalidConfiguration, "start", "configured socket exceeds Unix bound", nil)
+	if primary := runtimeIdentityResult(socket, err, runtimeCloseErr); primary != nil {
+		if err != nil || runtimeCloseErr != nil {
+			return nil, withStartupCustody(primary, preservedCreatedRuntime(runtimeDirectory, runtimeID))
+		}
+		// Pure socket-bound refusal still owns a known directory. Use exact
+		// attribution/empty-content checks, never a blind pathname Remove.
+		return nil, withStartupCustody(primary, cleanupCreatedRuntime(ctx, config, runtimeDirectory, runtimeID, verified.expiry.cleanupReport()))
 	}
 
 	lifecycle := &Lifecycle{
@@ -306,6 +347,7 @@ func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
 		stderr:    &boundedBuffer{maximum: maxDiagnosticBytes},
 		processes: config.processes,
 	}
+	lifecycle.initExpiry(verified)
 	// Record the creation identity before any fallible process operation so
 	// attribution-safe rollback can find this exact directory without parsing
 	// command arguments or scanning unrelated roots.
@@ -317,58 +359,47 @@ func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
 	}
 	command, err := verified.command(arguments, []string{"LANG=C", "TZ=UTC"})
 	if err != nil {
-		_ = lifecycle.cleanupRuntime(false)
-		return nil, err
+		cleanup, cancel := lifecycle.startupCleanupContext(ctx)
+		defer cancel()
+		verified.expiryStartFailed()
+		return nil, withStartupCustody(err, lifecycle.cleanupRuntimeBefore(cleanup, false))
 	}
 	command.Stdout, command.Stderr = lifecycle.stdout, lifecycle.stderr
 	startedBefore := time.Now().UTC()
 	if err := command.Start(); err != nil {
-		_ = lifecycle.cleanupRuntime(false)
-		return nil, failure(FailureStart, "exec", "descriptor-bound process did not start", err)
+		verified.expiryCommandStarted()
+		cleanup, cancel := lifecycle.startupCleanupContext(ctx)
+		defer cancel()
+		verified.expiryStartFailed()
+		return nil, withStartupCustody(failure(FailureStart, "exec", "descriptor-bound process did not start", err), lifecycle.cleanupRuntimeBefore(cleanup, false))
 	}
+	verified.expiryCommandStarted()
 	startedAfter := time.Now().UTC()
 	lifecycle.command = command
+	lifecycle.startChildWait(command) // one actual Wait owner, including pre-attribution failures
 	if config.commandStarted != nil {
 		config.commandStarted(command.Process)
 	}
 
-	// Command.Start returns only after the child has completed exec; the parent
-	// descriptor can now close without weakening the already-executed image.
-	_ = verified.Close()
-	process, pidfd, err := observeStartedProcess(config.processes, command.Process.Pid, verified.executed)
-	if err != nil {
-		if abortErr := terminateUnobservedChild(command); abortErr != nil {
-			return nil, errors.Join(err, abortErr, lifecycle.cleanupRuntime(false))
-		}
-		return nil, errors.Join(err, lifecycle.cleanupRuntime(false))
+	// The kernel has consumed the descriptor, but Cmd.Start's exec-error-pipe
+	// handshake need not wait for /proc/PID/exe to expose the new mm. A freshly
+	// created endpoint is a post-exec ordering trigger, not ownership evidence.
+	// Establish the exact image and pidfd once after that trigger, before any
+	// protocol observation. Never retry an image mismatch or trust the socket.
+	if closeErr := verified.Close(); closeErr != nil {
+		return nil, withStartupCustody(closeErr, lifecycle.abortStartBefore(ctx, lifecycle.originalNonEscalatingCleanupCutoff(ctx)))
 	}
-	processImage, err := config.processes.executableIdentity(command.Process.Pid)
-	if err != nil || !sameProcessImage(processImage, process) {
-		if pidfd >= 0 {
-			_ = config.processes.closeFD(pidfd)
-		}
-		if abortErr := terminateUnobservedChild(command); abortErr != nil {
-			return nil, errors.Join(failure(FailureIdentityUnprovable, "process", "running executable metadata is unavailable", err), abortErr, lifecycle.cleanupRuntime(false))
-		}
-		return nil, errors.Join(failure(FailureIdentityUnprovable, "process", "running executable metadata is unavailable", err), lifecycle.cleanupRuntime(false))
-	}
-	lifecycle.process, lifecycle.pidfd = process, pidfd
-	lifecycle.processImage = processImage
-	lifecycle.exit = make(chan error, 1)
-	go func() { lifecycle.exit <- command.Wait() }()
 
-	deadline := time.Now().Add(config.StartTimeout)
-	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
-		deadline = contextDeadline
-	}
-	observation, socketID, err := lifecycle.waitForComposite(ctx, socket, startedBefore, startedAfter, deadline)
+	// ORIGINAL readiness startpoint: after private setup, launch and descriptor
+	// consumption. Cleanup has a separate original envelope, not this deadline.
+	deadline := intersectCleanupDeadline(ctx, time.Now().Add(config.StartTimeout))
+	observation, socketID, err := lifecycle.waitForComposite(ctx, socket, startedBefore, startedAfter, deadline, verified.executed)
 	if err != nil {
-		if abortErr := lifecycle.abortStart(); abortErr != nil {
-			return nil, errors.Join(err, abortErr)
-		}
-		return nil, err
+		return nil, withStartupCustody(err, lifecycle.abortStartBefore(ctx, lifecycle.originalNonEscalatingCleanupCutoff(ctx)))
 	}
+	process := lifecycle.process
 	lifecycle.socketID = socketID
+	lifecycle.ownedEndpoint, lifecycle.ownedBootstrap = socket, observation.Status
 	lifecycle.provenance = SidecarProvenance{
 		SchemaVersion: 1, SupervisorRunID: config.SupervisorRunID,
 		AdmissionRecordSHA256: verified.provenance.AdmissionRecordSHA256,
@@ -392,12 +423,18 @@ func Start(ctx context.Context, config LifecycleConfig) (*Lifecycle, error) {
 		},
 		AdmittedAt: time.Now().UTC(),
 	}
+	if err := lifecycle.expiryStarted(verified); err != nil {
+		return nil, withStartupCustody(err, lifecycle.abortStartBefore(ctx, lifecycle.originalNonEscalatingCleanupCutoff(ctx)))
+	}
 	return lifecycle, nil
 }
 
 // Attach re-establishes supervision of a recorded, exact live sidecar after a
 // supervisor crash. It never starts, replaces, or signals an ambiguous owner.
-func Attach(ctx context.Context, config LifecycleConfig, recorded SidecarProvenance) (*Lifecycle, error) {
+func Attach(ctx context.Context, config LifecycleConfig, recorded SidecarProvenance) (result *Lifecycle, resultErr error) {
+	if !expiryAttachAllowed(recorded) {
+		return nil, failure(FailureAdmissionMismatch, "attach", "expiry qualification cannot be attached", nil)
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -409,7 +446,8 @@ func Attach(ctx context.Context, config LifecycleConfig, recorded SidecarProvena
 		return nil, err
 	}
 	verifiedProvenance := verified.Provenance()
-	_ = verified.Close()
+	verifiedCloseErr := verified.Close()
+	defer func() { resultErr = withStartupCustody(resultErr, verifiedCloseErr) }()
 	if recorded.SchemaVersion != 1 || recorded.Executable != verifiedProvenance ||
 		recorded.AdmissionRecordSHA256 != verifiedProvenance.AdmissionRecordSHA256 ||
 		recorded.DataDirectory != config.DataDirectory || recorded.ProductPolicySHA256 != config.ProductPolicySHA256 ||
@@ -444,31 +482,31 @@ func Attach(ctx context.Context, config LifecycleConfig, recorded SidecarProvena
 		recorded.ExecutedImage.Size != recorded.Process.Size || recorded.ExecutedImage.SHA256 != recorded.Process.SHA256 {
 		return nil, failure(FailureAdmissionMismatch, "attach", "recorded execution image does not match process", nil)
 	}
+	if verifiedCloseErr != nil { return nil, nil } // defer refuses close-only before pidfd/RPC
 	pidfd, err := acquireRecordedProcess(config.processes, recorded.Process)
 	if err != nil {
 		return nil, err
 	}
 	observation, err := observeAttachedComposite(ctx, config, recorded)
 	if err != nil {
-		if pidfd >= 0 {
-			_ = config.processes.closeFD(pidfd)
-		}
-		return nil, err
+		var closeErr error
+		if pidfd >= 0 { closeErr = config.processes.closeFD(pidfd) }
+		return nil, withStartupCustody(err, closeErr)
 	}
 	lifecycle := &Lifecycle{
-		config: config, pidfd: pidfd, process: recorded.Process,
+		config: config, pidfd: pidfd, process: recorded.Process, attached: true,
 		runtimeID: runtimeID, socketID: socketID,
 		stdout: &boundedBuffer{maximum: maxDiagnosticBytes}, stderr: &boundedBuffer{maximum: maxDiagnosticBytes},
 		processes: config.processes,
 	}
 	lifecycle.processImage, err = config.processes.executableIdentity(recorded.Process.PID)
 	if err != nil || !sameProcessImage(lifecycle.processImage, recorded.Process) {
-		if pidfd >= 0 {
-			_ = config.processes.closeFD(pidfd)
-		}
-		return nil, failure(FailureOwnership, "attach", "recorded executable metadata differs", err)
+		var closeErr error
+		if pidfd >= 0 { closeErr = config.processes.closeFD(pidfd) }
+		return nil, withStartupCustody(failure(FailureOwnership, "attach", "recorded executable metadata differs", err), closeErr)
 	}
 	lifecycle.exit = monitorRecordedProcess(config.processes, pidfd, recorded.Process)
+	lifecycle.ownedEndpoint, lifecycle.ownedBootstrap = recorded.ConfiguredSocket, observation.Status
 	lifecycle.provenance = recorded
 	lifecycle.provenance.SupervisorRunID = config.SupervisorRunID
 	lifecycle.provenance.Observation = observation
@@ -492,10 +530,9 @@ func acquireRecordedProcess(processes processAPI, expected ProcessIdentity) (int
 		pidfd = -1
 	}
 	if err := validateProcessIdentityWith(processes, expected); err != nil {
-		if pidfd >= 0 {
-			_ = processes.closeFD(pidfd)
-		}
-		return -1, err
+		var closeErr error
+		if pidfd >= 0 { closeErr = processes.closeFD(pidfd) }
+		return -1, withStartupCustody(err, closeErr)
 	}
 	return pidfd, nil
 }
@@ -552,6 +589,9 @@ func (l *Lifecycle) Provenance() SidecarProvenance {
 
 // Evidence projects the admitted lifecycle into the exact frozen schema.
 func (l *Lifecycle) Evidence() (ProvenanceEvidenceV1, error) {
+	if !l.legacyEvidenceAllowed() {
+		return ProvenanceEvidenceV1{}, failure(FailureAdmissionMismatch, "evidence", "expiry qualification has no legacy admission evidence", nil)
+	}
 	provenance := l.Provenance()
 	if !provenance.Readiness.Admitted || provenance.DatabaseID == "" || provenance.Process.PID <= 0 {
 		return ProvenanceEvidenceV1{}, failure(FailureReadiness, "evidence", "lifecycle has not been admitted", nil)
@@ -595,6 +635,15 @@ func (l *Lifecycle) Evidence() (ProvenanceEvidenceV1, error) {
 // ProductRestoreBindingV1 returns the copy-only database/owner identity that a
 // read-only RestoreV1 must bind. It does not itself promote product readiness.
 func (l *Lifecycle) ProductRestoreBindingV1() (journalcheckpoint.RestoreBindingV1, error) {
+	work, err := l.beginExpiryWork()
+	if err != nil {
+		return journalcheckpoint.RestoreBindingV1{}, err
+	}
+	defer l.finishExpiryWork(work)
+	return l.productRestoreBindingV1WithWork(work)
+}
+
+func (l *Lifecycle) productRestoreBindingV1WithWork(work *expiryLifecycleToken) (journalcheckpoint.RestoreBindingV1, error) {
 	if l == nil {
 		return journalcheckpoint.RestoreBindingV1{}, failure(FailureReadiness, "restore_binding", "lifecycle is absent", nil)
 	}
@@ -605,7 +654,7 @@ func (l *Lifecycle) ProductRestoreBindingV1() (journalcheckpoint.RestoreBindingV
 	}
 	provenance := l.provenance
 	l.mu.Unlock()
-	supervisor, err := currentExecutableIdentity()
+	supervisor, err := currentExecutableIdentityWithReport(work.cleanupReport())
 	if err != nil {
 		return journalcheckpoint.RestoreBindingV1{}, err
 	}
@@ -623,7 +672,12 @@ func (l *Lifecycle) MarkProductRecovered(admission journalcheckpoint.RestoreAdmi
 	if err != nil {
 		return ProductRestoreProofV1{}, failure(FailureReadiness, "admit_product", "restore admission capability is absent", err)
 	}
-	binding, err := l.ProductRestoreBindingV1()
+	work, err := l.beginExpiryWork()
+	if err != nil {
+		return ProductRestoreProofV1{}, err
+	}
+	defer l.finishExpiryWork(work)
+	binding, err := l.productRestoreBindingV1WithWork(work)
 	if err != nil {
 		return ProductRestoreProofV1{}, err
 	}
@@ -647,7 +701,7 @@ func (l *Lifecycle) MarkProductRecovered(admission journalcheckpoint.RestoreAdmi
 	return proof, nil
 }
 
-func (l *Lifecycle) waitForComposite(ctx context.Context, socket string, startedBefore, startedAfter, deadline time.Time) (CompositeObservation, fileIdentity, error) {
+func (l *Lifecycle) waitForComposite(ctx context.Context, socket string, startedBefore, startedAfter, deadline time.Time, expected ExecutedImageProvenance) (CompositeObservation, fileIdentity, error) {
 	var last error
 	for time.Now().Before(deadline) {
 		if err := ctx.Err(); err != nil {
@@ -658,6 +712,11 @@ func (l *Lifecycle) waitForComposite(ctx context.Context, socket string, started
 			last = identityErr
 			time.Sleep(10 * time.Millisecond)
 			continue
+		}
+		if l.process.PID == 0 {
+			if err := l.establishStartedProcess(expected); err != nil {
+				return CompositeObservation{}, fileIdentity{}, err
+			}
 		}
 		observation, err := l.observeComposite(ctx, socket, socketID, startedBefore, startedAfter)
 		if err == nil {
@@ -675,8 +734,32 @@ func (l *Lifecycle) waitForComposite(ctx context.Context, socket string, started
 	return CompositeObservation{}, fileIdentity{}, failure(FailureReadiness, "probe", "configured endpoint did not become attributable", last)
 }
 
+// establishStartedProcess is one ownership transition. The earlier sole actual
+// Wait owner remains owned even when attribution fails; pending close custody
+// reaches the shared FIRST abort. No partially attributed process is published.
+func (l *Lifecycle) establishStartedProcess(expected ExecutedImageProvenance) error {
+	// Only the sequential startup owner writes pendingCustody. Publish its
+	// frozen rollback outcome even when attribution returns an error.
+	defer func() { l.publishStartupPendingCustody(l.pendingCustody) }()
+	process, pidfd, err := observeStartedProcessWithCustody(l.processes, l.command.Process.Pid, expected, l.expiryCleanupReport(), &l.pendingCustody)
+	if err != nil {
+		return err
+	}
+	image, err := l.processes.executableIdentity(l.command.Process.Pid)
+	if err != nil || !sameProcessImage(image, process) {
+		if pidfd >= 0 {
+			closeErr := l.processes.closeFD(pidfd)
+			l.expiryCleanupReport().supervisorClosed(closeErr)
+			l.pendingCustody.record(closeErr)
+		}
+		return withStartupCustody(failure(FailureIdentityUnprovable, "process", "running executable metadata is unavailable", err), l.pendingCustody.supervisorCloseErr)
+	}
+	l.process, l.pidfd, l.processImage = process, pidfd, image
+	return nil
+}
+
 func (l *Lifecycle) observeComposite(ctx context.Context, socket string, socketID fileIdentity, startedBefore, startedAfter time.Time) (CompositeObservation, error) {
-	statusBefore, health, config, statusAfter, databases, err := observeAllSurfaces(ctx, l.config, socket, socketID, l.process)
+	statusBefore, health, config, statusAfter, databases, err := observeAllSurfacesWithReport(ctx, l.config, socket, socketID, l.process, l.expiryCleanupReport())
 	if err != nil {
 		return CompositeObservation{}, err
 	}
@@ -690,6 +773,10 @@ func (l *Lifecycle) observeComposite(ctx context.Context, socket string, socketI
 }
 
 func observeAllSurfaces(ctx context.Context, config LifecycleConfig, socket string, socketID fileIdentity, process ProcessIdentity) (gapdbapi.StatusResult, gapdbapi.HealthResult, gapdbapi.ConfigResult, gapdbapi.StatusResult, []string, error) {
+	return observeAllSurfacesWithReport(ctx, config, socket, socketID, process, nil)
+}
+
+func observeAllSurfacesWithReport(ctx context.Context, config LifecycleConfig, socket string, socketID fileIdentity, process ProcessIdentity, report *expiryCleanupReport) (gapdbapi.StatusResult, gapdbapi.HealthResult, gapdbapi.ConfigResult, gapdbapi.StatusResult, []string, error) {
 	var before, after gapdbapi.StatusResult
 	var health gapdbapi.HealthResult
 	var described gapdbapi.ConfigResult
@@ -701,7 +788,7 @@ func observeAllSurfaces(ctx context.Context, config LifecycleConfig, socket stri
 	}
 	databases := make([]string, 0, len(values))
 	for _, value := range values {
-		database, err := observeStrictUnary(ctx, config.processes, socket, socketID, process, value.operation, value.destination, config.StartTimeout)
+		database, err := observeStrictUnaryWithReport(ctx, config.processes, socket, socketID, process, value.operation, value.destination, config.StartTimeout, report)
 		if err != nil {
 			return before, health, described, after, nil, err
 		}
@@ -714,6 +801,14 @@ func observeAllSurfaces(ctx context.Context, config LifecycleConfig, socket stri
 }
 
 func observeStrictUnary(ctx context.Context, processes processAPI, socket string, socketID fileIdentity, process ProcessIdentity, operation string, destination any, timeout time.Duration) (string, error) {
+	return observeStrictUnaryWithReport(ctx, processes, socket, socketID, process, operation, destination, timeout, nil)
+}
+
+func observeStrictUnaryWithReport(ctx context.Context, processes processAPI, socket string, socketID fileIdentity, process ProcessIdentity, operation string, destination any, timeout time.Duration, report *expiryCleanupReport) (database string, resultErr error) {
+	return observeStrictUnaryWithClose(ctx, processes, socket, socketID, process, operation, destination, timeout, report, (*expiryCleanupReport).closeLocalConnection)
+}
+// Call-only fixed-close seam, never a factory/provider/configuration selector.
+func observeStrictUnaryWithClose(ctx context.Context, processes processAPI, socket string, socketID fileIdentity, process ProcessIdentity, operation string, destination any, timeout time.Duration, report *expiryCleanupReport, closeCall func(*expiryCleanupReport, net.Conn) error) (database string, resultErr error) {
 	if err := verifySocketPathIdentity(socket, socketID); err != nil {
 		return "", failure(FailureOwnership, operation, "configured socket identity changed", err)
 	}
@@ -721,8 +816,33 @@ func observeStrictUnary(ctx context.Context, processes processAPI, socket string
 	if err != nil {
 		return "", failure(FailureProtocol, operation, "configured endpoint cannot be connected", err)
 	}
-	defer connection.Close()
-	_ = connection.SetDeadline(time.Now().Add(min(timeout, time.Second)))
+	report.localOpened()
+	var closeOnce sync.Once
+	var closeErr error
+	closeConnection := func() {
+		closeOnce.Do(func() { closeErr = closeCall(report, connection) })
+	}
+	defer func() {
+		closeConnection() // joins any running cancellation callback; never closes twice
+		resultErr = withStartupCustody(resultErr, startupCleanupError("strict connection first close failed", closeErr))
+		if resultErr != nil { database = "" }
+	}()
+	deadline := time.Now().Add(min(timeout, time.Second))
+	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
+		deadline = callerDeadline
+	}
+	if err := connection.SetDeadline(deadline); err != nil {
+		return "", failure(FailureProtocol, operation, "strict connection deadline cannot be set", err)
+	}
+	stopCancel := context.AfterFunc(ctx, closeConnection)
+	defer stopCancel()
+	if err := ctx.Err(); err != nil {
+		return "", failure(FailureProtocol, operation, "strict observation context ended", err)
+	}
+	unixConnection, ok := connection.(*net.UnixConn)
+	if !ok {
+		return "", failure(FailureProtocol, operation, "strict connection is not Unix", nil)
+	}
 	peer, err := peerProcessOfConnection(connection)
 	if err != nil || peer != process.PID {
 		return "", failure(FailureOwnership, operation, "response connection peer differs", err)
@@ -744,9 +864,18 @@ func observeStrictUnary(ctx context.Context, processes processAPI, socket string
 	if err := writeWireFrame(connection, request); err != nil {
 		return "", failure(FailureProtocol, operation, "strict request cannot be published", err)
 	}
+	if err := unixConnection.CloseWrite(); err != nil {
+		return "", failure(FailureProtocol, operation, "strict request stream cannot be ended", err)
+	}
 	encoded, err := readWireFrame(connection, storegapdb.MaxWireFrameBytes)
 	if err != nil {
-		return "", failure(FailureProtocol, operation, "strict response frame is incomplete", err)
+		return "", failure(FailureProtocol, operation, "strict response frame is incomplete", strictUnaryReadCause(ctx, err))
+	}
+	if err := strictRequireUnaryEOF(connection); err != nil {
+		return "", failure(FailureProtocol, operation, "strict response stream did not end after one frame", strictUnaryReadCause(ctx, err))
+	}
+	if err := ctx.Err(); err != nil {
+		return "", failure(FailureProtocol, operation, "strict observation context ended", err)
 	}
 	if err := validateNoDuplicateJSON(encoded); err != nil {
 		return "", failure(FailureProtocol, operation, "strict response contains duplicate JSON", err)
@@ -771,7 +900,44 @@ func observeStrictUnary(ctx context.Context, processes processAPI, socket string
 	if err := verifySocketPathIdentity(socket, socketID); err != nil {
 		return "", failure(FailureOwnership, operation, "response endpoint path changed", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return "", failure(FailureProtocol, operation, "strict observation context ended", err)
+	}
 	return response.DatabaseID, nil
+}
+
+// Preserve the actual interrupted read as primary. The cancellation callback can
+// close the connection before the socket deadline reports a timeout; retain the
+// independently observed context cause too, without inventing a timeout or EOF.
+// Only the private Cause concrete type changes; primary text/identity/Is/As remain.
+// Added wrapper storage/work is OWNED_UNQUALIFIED.
+type strictUnaryContextReadError struct { primary, context error }
+func (e *strictUnaryContextReadError) Error() string { return e.primary.Error() }
+func (e *strictUnaryContextReadError) Unwrap() []error { return []error{e.primary, e.context} }
+func strictUnaryReadCause(ctx context.Context, err error) error {
+	if errors.Is(err, net.ErrClosed) {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return &strictUnaryContextReadError{primary: err, context: contextErr}
+		}
+	}
+	return err
+}
+
+// EOF ends only this response stream, not the peer process or its lifetime.
+// A bounded blocking read shares the RPC deadline; silence is never admission.
+func strictRequireUnaryEOF(reader io.Reader) error {
+	var extra [1]byte
+	n, err := reader.Read(extra[:])
+	if n != 0 {
+		return errors.Join(errors.New("extra byte after strict unary response"), err)
+	}
+	if err == io.EOF {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return io.ErrNoProgress
 }
 
 func peerPathOfConnection(connection net.Conn) (string, error) {
@@ -912,6 +1078,10 @@ func validateProviderLimits(reported, safe gapdbapi.Limits) error {
 }
 
 func normalizeLifecycleConfig(config *LifecycleConfig) error {
+	return normalizeLifecycleConfigWithReport(config, nil)
+}
+
+func normalizeLifecycleConfigWithReport(config *LifecycleConfig, report *expiryCleanupReport) error {
 	for _, field := range []struct{ name, value string }{
 		{"executable", config.ExecutablePath}, {"admission", config.AdmissionRecordPath},
 		{"runtime_root", config.RuntimeRoot}, {"data_directory", config.DataDirectory},
@@ -937,11 +1107,32 @@ func normalizeLifecycleConfig(config *LifecycleConfig) error {
 	}
 	if config.filesystem == nil {
 		config.filesystem = statFilesystem
+		if report != nil {
+			config.filesystem = func(path string) (filesystemIdentity, error) {
+				return statFilesystemWithReport(path, report)
+			}
+		}
 	}
 	if config.processes.startTicks == nil {
 		config.processes = systemProcessAPI
+		if report != nil {
+			config.processes.startTicks = func(pid int) (uint64, error) {
+				return processStartTicksWithReport(pid, report)
+			}
+			config.processes.executable = func(pid int) (fileIdentity, string, error) {
+				return processExecutableWithReport(pid, report)
+			}
+			config.processes.executableIdentity = func(pid int) (fileIdentity, error) {
+				return processExecutableIdentityWithReport(pid, report)
+			}
+		}
 	} else if config.processes.executableIdentity == nil {
 		config.processes.executableIdentity = systemProcessAPI.executableIdentity
+		if report != nil {
+			config.processes.executableIdentity = func(pid int) (fileIdentity, error) {
+				return processExecutableIdentityWithReport(pid, report)
+			}
+		}
 	}
 	if err := validateStorageTopology(*config); err != nil {
 		return failure(FailureUnsafePath, "configure", "runtime and data topology is not admitted", err)
@@ -980,11 +1171,19 @@ func isLowerSHA256(value string) bool {
 }
 
 func statFilesystem(path string) (filesystemIdentity, error) {
+	return statFilesystemWithReport(path, nil)
+}
+
+func statFilesystemWithReport(path string, report *expiryCleanupReport) (result filesystemIdentity, resultErr error) {
 	fd, err := openDirectoryNoFollow(path)
 	if err != nil {
 		return filesystemIdentity{}, err
 	}
-	defer unix.Close(fd)
+	report.localOpened()
+	defer func() {
+		resultErr = withStartupCustody(resultErr, report.closeLocalFD(fd))
+		if resultErr != nil { result = filesystemIdentity{} }
+	}()
 	var value unix.Statfs_t
 	if err := unix.Fstatfs(fd, &value); err != nil {
 		return filesystemIdentity{}, err
@@ -1047,6 +1246,10 @@ func rejectGitAncestor(path string) error {
 }
 
 func validatePrivateRoot(path string) error {
+	return validatePrivateRootWithReport(path, nil)
+}
+
+func validatePrivateRootWithReport(path string, report *expiryCleanupReport) (resultErr error) {
 	if err := validatePathChain(path, false); err != nil {
 		return err
 	}
@@ -1055,8 +1258,9 @@ func validatePrivateRoot(path string) error {
 		return errors.New("root must be an owner-only no-follow directory")
 	}
 	file := os.NewFile(uintptr(fd), "private-root")
+	report.localOpened()
+	defer func() { resultErr = withStartupCustody(resultErr, report.closeLocalFile(file)) }()
 	identity, identityErr := identityOf(file)
-	_ = file.Close()
 	if identityErr != nil || identity.mode&uint32(syscall.S_IFMT) != uint32(syscall.S_IFDIR) || identity.mode&0o777 != 0o700 {
 		return errors.New("root must be an owner-only directory")
 	}
@@ -1064,8 +1268,12 @@ func validatePrivateRoot(path string) error {
 }
 
 func preparePrivateDirectory(path string) error {
+	return preparePrivateDirectoryWithReport(path, nil)
+}
+
+func preparePrivateDirectoryWithReport(path string, report *expiryCleanupReport) error {
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		if err := validatePrivateRoot(filepath.Dir(path)); err != nil {
+		if err := validatePrivateRootWithReport(filepath.Dir(path), report); err != nil {
 			return err
 		}
 		if err := os.Mkdir(path, 0o700); err != nil {
@@ -1074,10 +1282,18 @@ func preparePrivateDirectory(path string) error {
 	} else if err != nil {
 		return err
 	}
-	return validatePrivateRoot(path)
+	return validatePrivateRootWithReport(path, report)
 }
 
 func observeStartedProcess(processes processAPI, pid int, executable ExecutedImageProvenance) (ProcessIdentity, int, error) {
+	return observeStartedProcessWithReport(processes, pid, executable, nil)
+}
+
+func observeStartedProcessWithReport(processes processAPI, pid int, executable ExecutedImageProvenance, report *expiryCleanupReport) (ProcessIdentity, int, error) {
+	return observeStartedProcessWithCustody(processes, pid, executable, report, nil)
+}
+
+func observeStartedProcessWithCustody(processes processAPI, pid int, executable ExecutedImageProvenance, report *expiryCleanupReport, pending *startupPendingCustody) (ProcessIdentity, int, error) {
 	start, err := processes.startTicks(pid)
 	if err != nil {
 		return ProcessIdentity{}, -1, failure(FailureIdentityUnprovable, "process", "process start identity unavailable", err)
@@ -1093,37 +1309,53 @@ func observeStartedProcess(processes processAPI, pid int, executable ExecutedIma
 		}
 		pidfd = -1
 	}
+	if pidfd >= 0 {
+		report.supervisorOpened()
+	}
 	secondStart, startErr := processes.startTicks(pid)
 	secondIdentity, secondDigest, executableErr := processes.executable(pid)
 	if startErr != nil || executableErr != nil || secondStart != start ||
 		secondIdentity.device != identity.device || secondIdentity.inode != identity.inode ||
 		secondIdentity.size != identity.size || secondDigest != digest {
+		var closeErr error
 		if pidfd >= 0 {
-			_ = processes.closeFD(pidfd)
+			closeErr = processes.closeFD(pidfd)
+			report.supervisorClosed(closeErr)
+			pending.record(closeErr)
 		}
-		return ProcessIdentity{}, -1, failure(FailureIdentityUnprovable, "process", "process identity changed around pidfd acquisition", errors.Join(startErr, executableErr))
+		primary := failure(FailureIdentityUnprovable, "process", "process identity changed around pidfd acquisition", errors.Join(startErr, executableErr))
+		return ProcessIdentity{}, -1, withStartupCustody(primary, startupCleanupError("attribution rollback supervisor close failed", closeErr))
 	}
 	return ProcessIdentity{PID: pid, StartTicks: start, Device: identity.device, Inode: identity.inode, Size: identity.size, SHA256: digest}, pidfd, nil
 }
 
-func terminateUnobservedChild(command *exec.Cmd) error {
-	if command == nil || command.Process == nil {
-		return errors.New("started child handle is absent")
-	}
-	killErr := command.Process.Kill()
-	waitErr := command.Wait()
-	if errors.Is(killErr, os.ErrProcessDone) {
-		killErr = nil
-	}
-	var exit *exec.ExitError
-	if errors.As(waitErr, &exit) {
-		waitErr = nil
-	}
-	return errors.Join(killErr, waitErr)
+func processStartTicks(pid int) (uint64, error) {
+	return processStartTicksWithReport(pid, nil)
 }
 
-func processStartTicks(pid int) (uint64, error) {
-	encoded, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+func processStartTicksWithReport(pid int, report *expiryCleanupReport) (uint64, error) {
+	file, err := os.Open(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, err
+	}
+	return processStartTicksFileWithReport(file, report)
+}
+
+// Consumes the actual owned File, not a descriptor number. No closer is stored
+// or selected by configuration; production supplies only this literal method.
+func processStartTicksFileWithReport(file *os.File, report *expiryCleanupReport) (uint64, error) {
+	return processStartTicksFileWithClose(file, report, (*expiryCleanupReport).closeLocalFile)
+}
+
+// Immediate call-only component seam. io.ReadAll replaces ReadFile's stat-sized
+// buffering; allocation/read behavior is a new OWNED_UNQUALIFIED cost.
+func processStartTicksFileWithClose(file *os.File, report *expiryCleanupReport, closeCall func(*expiryCleanupReport, *os.File) error) (ticks uint64, resultErr error) {
+	report.localOpened()
+	defer func() {
+		resultErr = withStartupCustody(resultErr, closeCall(report, file))
+		if resultErr != nil { ticks = 0 }
+	}()
+	encoded, err := io.ReadAll(file)
 	if err != nil {
 		return 0, err
 	}
@@ -1143,12 +1375,25 @@ func processStartTicks(pid int) (uint64, error) {
 }
 
 func processExecutable(pid int) (fileIdentity, string, error) {
+	return processExecutableWithReport(pid, nil)
+}
+
+func processExecutableWithReport(pid int, report *expiryCleanupReport) (result fileIdentity, digestResult string, resultErr error) {
 	fd, err := unix.Open(fmt.Sprintf("/proc/%d/exe", pid), unix.O_RDONLY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fileIdentity{}, "", err
 	}
 	file := os.NewFile(uintptr(fd), "process-executable")
-	defer file.Close()
+	return processExecutableFileWithReport(file, report)
+}
+// Consumes an owned file; tests may supply a closed File object, never reclose
+// a descriptor integer. Production supplies only its actual /proc open result.
+func processExecutableFileWithReport(file *os.File, report *expiryCleanupReport) (result fileIdentity, digestResult string, resultErr error) {
+	report.localOpened()
+	defer func() {
+		resultErr = withStartupCustody(resultErr, report.closeLocalFile(file))
+		if resultErr != nil { result, digestResult = fileIdentity{}, "" }
+	}()
 	identity, err := identityOf(file)
 	if err != nil {
 		return fileIdentity{}, "", err
@@ -1161,12 +1406,20 @@ func processExecutable(pid int) (fileIdentity, string, error) {
 }
 
 func processExecutableIdentity(pid int) (fileIdentity, error) {
+	return processExecutableIdentityWithReport(pid, nil)
+}
+
+func processExecutableIdentityWithReport(pid int, report *expiryCleanupReport) (result fileIdentity, resultErr error) {
 	fd, err := unix.Open(fmt.Sprintf("/proc/%d/exe", pid), unix.O_RDONLY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fileIdentity{}, err
 	}
 	file := os.NewFile(uintptr(fd), "process-executable-identity")
-	defer file.Close()
+	report.localOpened()
+	defer func() {
+		resultErr = withStartupCustody(resultErr, report.closeLocalFile(file))
+		if resultErr != nil { result = fileIdentity{} }
+	}()
 	identity, err := identityOf(file)
 	if err != nil {
 		return fileIdentity{}, err
@@ -1182,12 +1435,15 @@ func sameProcessImage(identity fileIdentity, expected ProcessIdentity) bool {
 		identity.size == expected.Size
 }
 
-func peerProcess(socket string, timeout time.Duration) (int, error) {
+func peerProcess(socket string, timeout time.Duration) (pid int, resultErr error) {
 	connection, err := net.DialTimeout("unix", socket, min(timeout, time.Second))
 	if err != nil {
 		return 0, err
 	}
-	defer connection.Close()
+	defer func() {
+		resultErr = withStartupCustody(resultErr, connection.Close())
+		if resultErr != nil { pid = 0 }
+	}()
 	return peerProcessOfConnection(connection)
 }
 
@@ -1216,6 +1472,11 @@ func peerProcessOfConnection(connection net.Conn) (int, error) {
 // InspectOwnership revalidates every live identity coordinate and never turns
 // a stale artifact into authority.
 func (l *Lifecycle) InspectOwnership() OwnershipDiagnostic {
+	work, err := l.beginExpiryWork()
+	if err != nil {
+		return OwnershipDiagnostic{State: OwnershipIndeterminate, Recovery: operatorRecovery()}
+	}
+	defer l.finishExpiryWork(work)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	diagnostic := OwnershipDiagnostic{Daemon: l.process, SocketPath: l.provenance.ConfiguredSocket}
@@ -1281,6 +1542,9 @@ func (l *Lifecycle) RestartOwned(ctx context.Context, mode RestartMode, supervis
 	if l == nil {
 		return nil, failure(FailureOwnership, "restart", "lifecycle is absent", nil)
 	}
+	if !l.ordinaryRestartAllowed() {
+		return nil, failure(FailureAdmissionMismatch, "restart", "expiry qualification requires its private generation transition", nil)
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1315,68 +1579,57 @@ func (l *Lifecycle) RestartOwned(ctx context.Context, mode RestartMode, supervis
 	if fresh.DatabaseID != predecessor.DatabaseID || fresh.DataDirectory != predecessor.DataDirectory ||
 		fresh.RuntimeDirectory == predecessor.RuntimeDirectory || fresh.ConfiguredSocket == predecessor.ConfiguredSocket ||
 		fresh.Process == predecessor.Process || fresh.SupervisorRunID == predecessor.SupervisorRunID {
-		_ = next.Stop(context.Background())
-		return nil, failure(FailureOwnership, "restart", "replacement did not preserve data with a fresh owner lifetime", nil)
+		closeErr := next.Stop(context.Background())
+		return nil, withStartupCustody(failure(FailureOwnership, "restart", "replacement did not preserve data with a fresh owner lifetime", nil), closeErr)
 	}
 	return next, nil
 }
 
-func (l *Lifecycle) stopOwnedUnclean(ctx context.Context) error {
-	l.mu.Lock()
+func (l *Lifecycle) stopOwnedUnclean(ctx context.Context) (resultErr error) {
+	result, won := l.firstCustodyBefore(ctx, l.originalNonEscalatingCleanupCutoff(ctx), true, l.stopOwnedUncleanFirst)
+	if !won { return withStartupCustody(failure(FailureOwnership, "restart_unclean", "predecessor lifecycle is already stopped", nil), result) }
+	return result
+}
+
+func (l *Lifecycle) stopOwnedUncleanFirst(ctx context.Context) (resultErr error) {
+	defer func() { resultErr = l.shutdownTailCustody(ctx, resultErr) }()
+	if err := l.lockCleanup(ctx); err != nil { return err }
 	if l.stopped {
 		l.mu.Unlock()
-		return failure(FailureOwnership, "restart_unclean", "predecessor lifecycle is already stopped", nil)
+		return withStartupCustody(failure(FailureOwnership, "restart_unclean", "predecessor lifecycle is already stopped", nil), l.finishExitedShutdown(ctx, "restart_unclean"))
 	}
-	if diagnostic := l.inspectOwnershipLocked(); diagnostic.State != OwnershipOwnedLive {
+	state := l.inspectOwnershipLocked().State
+	if state != OwnershipOwnedLive && state != OwnershipOwnedExited && state != OwnershipStaleArtifact {
 		l.mu.Unlock()
 		return failure(FailureOwnership, "restart_unclean", "process ownership is not provable", nil)
 	}
-	if err := l.signalLocked(unix.SIGKILL); err != nil {
-		l.mu.Unlock()
-		return failure(FailureOwnership, "restart_unclean", "owned process could not be terminated", err)
+	if state == OwnershipOwnedLive {
+		if err := l.signalLocked(unix.SIGKILL); err != nil {
+			l.mu.Unlock()
+			return failure(FailureOwnership, "restart_unclean", "owned process could not be terminated", err)
+		}
 	}
-	exit := l.exit
-	timeout := l.config.StopTimeout
 	l.mu.Unlock()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return failure(FailureStart, "restart_unclean", "restart context ended", ctx.Err())
-	case <-timer.C:
-		return failure(FailureStart, "restart_unclean", "owned process did not exit", nil)
-	case <-exit:
-	}
-	l.mu.Lock()
-	state := l.inspectOwnershipLocked().State
-	if state != OwnershipOwnedExited && state != OwnershipStaleArtifact {
-		l.mu.Unlock()
-		return failure(FailureOwnership, "restart_unclean", "ownership changed during termination", nil)
-	}
-	l.stopped = true
-	l.closePidfd()
-	l.mu.Unlock()
-	return l.cleanupRuntime(true)
+	// Includes already-exited entry; a poll/exit notification is never reap.
+	return l.finishExitedShutdown(ctx, "restart_unclean")
 }
 
 // Stop is idempotent and signals only the revalidated exact process.
-func (l *Lifecycle) Stop(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	l.mu.Lock()
-	if l.stopped {
+func (l *Lifecycle) Stop(ctx context.Context) (resultErr error) {
+	result, _ := l.firstCustodyBefore(ctx, l.originalCleanupCutoff(ctx), true, l.stopFirst)
+	return result
+}
+
+func (l *Lifecycle) stopFirst(ctx context.Context) (resultErr error) {
+	defer func() { resultErr = l.shutdownTailCustody(ctx, resultErr) }()
+	if err := l.lockCleanup(ctx); err != nil { return err }
+	if l.stopped { l.mu.Unlock(); return l.finishExitedShutdown(ctx, "stop") }
+	state := l.inspectOwnershipLocked().State
+	if state == OwnershipOwnedExited || state == OwnershipStaleArtifact {
 		l.mu.Unlock()
-		return nil
+		return l.finishExitedShutdown(ctx, "stop")
 	}
-	diagnostic := l.inspectOwnershipLocked()
-	if diagnostic.State == OwnershipOwnedExited || diagnostic.State == OwnershipStaleArtifact {
-		l.stopped = true
-		l.closePidfd()
-		l.mu.Unlock()
-		return l.cleanupRuntime(true)
-	}
-	if diagnostic.State != OwnershipOwnedLive {
+	if state != OwnershipOwnedLive {
 		l.mu.Unlock()
 		return failure(FailureOwnership, "stop", "process ownership is not provable", nil)
 	}
@@ -1384,38 +1637,51 @@ func (l *Lifecycle) Stop(ctx context.Context) error {
 		l.mu.Unlock()
 		return failure(FailureOwnership, "stop", "owned process could not be signalled", err)
 	}
-	exit := l.exit
 	timeout := l.config.StopTimeout
+	if timeout <= 0 { timeout = defaultStopTimeout }
 	l.mu.Unlock()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return failure(FailureStart, "stop", "stop context ended", ctx.Err())
-	case <-timer.C:
-		l.mu.Lock()
-		if l.inspectOwnershipLocked().State != OwnershipOwnedLive {
+	term, cancel := context.WithDeadline(ctx, intersectCleanupDeadline(ctx, time.Now().Add(timeout)))
+	waitErr := l.observeShutdownCompletion(term)
+	termExpired := term.Err() != nil
+	cancel()
+	completionObserved := l.shutdownWait.observed || (l.attached && l.attachExitObserved)
+	if waitErr != nil && termExpired && ctx.Err() == nil && !completionObserved {
+		if err := l.lockCleanup(ctx); err != nil { return withStartupCustody(waitErr, err) }
+		state := l.inspectOwnershipLocked().State
+		if state == OwnershipOwnedLive {
+			if err := l.signalLocked(unix.SIGKILL); err != nil {
+				l.mu.Unlock()
+				return failure(FailureOwnership, "stop", "owned process could not be terminated", err)
+			}
+		} else if state != OwnershipOwnedExited && state != OwnershipStaleArtifact {
 			l.mu.Unlock()
 			return failure(FailureOwnership, "stop", "ownership changed during shutdown", nil)
 		}
-		if err := l.signalLocked(unix.SIGKILL); err != nil {
-			l.mu.Unlock()
-			return failure(FailureOwnership, "stop", "owned process could not be terminated", err)
-		}
 		l.mu.Unlock()
-		select {
-		case <-exit:
-		case <-time.After(time.Second):
-			return failure(FailureStart, "stop", "owned process did not exit", nil)
-		}
-	case <-exit:
+		// Original escalation cap intersects the SAME applicable cleanup cutoff.
+		escalation, done := context.WithDeadline(ctx, intersectCleanupDeadline(ctx, time.Now().Add(time.Second)))
+		waitErr = l.observeShutdownCompletion(escalation)
+		done()
 	}
-	l.mu.Lock()
+	return l.finishShutdownAfterObservation(ctx, "stop", waitErr)
+}
+func (l *Lifecycle) finishExitedShutdown(ctx context.Context, operation string) error {
+	return l.finishShutdownAfterObservation(ctx, operation, l.observeShutdownCompletion(ctx))
+}
+func (l *Lifecycle) finishShutdownAfterObservation(ctx context.Context, operation string, waitErr error) error {
+	if err := l.lockCleanup(ctx); err != nil { return withStartupCustody(waitErr, err) }
+	state := l.inspectOwnershipLocked().State
+	var identityErr error
+	if state != OwnershipOwnedExited && state != OwnershipStaleArtifact {
+		identityErr = failure(FailureOwnership, operation, "ownership changed or exit unproven; runtime preserved", nil)
+	}
 	l.stopped = true
-	l.closePidfd()
+	closeErr := l.closePidfd() // safe owned descriptor release even after Wait error
 	l.mu.Unlock()
-	return l.cleanupRuntime(true)
+	custody := withStartupCustody(waitErr, withStartupCustody(identityErr, closeErr))
+	if custody != nil { return custody } // no unknown artifact deletion
+	if err := ctx.Err(); err != nil { return startupCleanupError("cleanup cutoff elapsed; runtime preserved", err) }
+	return l.cleanupRuntimeBefore(ctx, true)
 }
 
 func (l *Lifecycle) inspectOwnershipLocked() OwnershipDiagnostic {
@@ -1472,16 +1738,26 @@ func (l *Lifecycle) exitedArtifactStateLocked() OwnershipState {
 // CleanupStale reconciles a previously owned, now-exited lifecycle. It refuses
 // live, foreign, and indeterminate owners and removes only unchanged artifacts.
 func (l *Lifecycle) CleanupStale() error {
-	l.mu.Lock()
+	ctx := context.Background()
+	result, won := l.firstCustodyBefore(ctx, l.originalNonEscalatingCleanupCutoff(ctx), true, l.cleanupStaleBefore)
+	if !won { return l.expiryStaleCustodyResult(result) }
+	return result
+}
+
+func (l *Lifecycle) cleanupStaleFirst() error {
+	ctx, cancel := context.WithDeadline(context.Background(), l.originalNonEscalatingCleanupCutoff(context.Background()))
+	defer cancel()
+	return l.cleanupStaleBefore(ctx)
+}
+func (l *Lifecycle) cleanupStaleBefore(ctx context.Context) (resultErr error) {
+	defer func() { resultErr = l.shutdownTailCustody(ctx, resultErr) }()
+	if err := l.lockCleanup(ctx); err != nil { return err }
 	state := l.inspectOwnershipLocked().State
+	l.mu.Unlock()
 	if state != OwnershipStaleArtifact && state != OwnershipOwnedExited {
-		l.mu.Unlock()
 		return failure(FailureCleanup, "cleanup_stale", "lifecycle is not a proven exited owner", nil)
 	}
-	l.stopped = true
-	l.closePidfd()
-	l.mu.Unlock()
-	return l.cleanupRuntime(true)
+	return l.finishExitedShutdown(ctx, "cleanup_stale")
 }
 
 func (l *Lifecycle) signalLocked(signal unix.Signal) error {
@@ -1492,11 +1768,19 @@ func (l *Lifecycle) signalLocked(signal unix.Signal) error {
 	return errors.New("pidfd signaling is unavailable; process is left untouched")
 }
 
-func (l *Lifecycle) closePidfd() {
-	if l.pidfd >= 0 {
-		_ = l.hostProcesses().closeFD(l.pidfd)
-		l.pidfd = -1
+func (l *Lifecycle) closePidfd() error {
+	if l.pidfdCloseAttempted {
+		return l.pidfdCloseErr
 	}
+	if l.pidfd >= 0 {
+		l.pidfdCloseAttempted = true
+		fd := l.pidfd
+		l.pidfd = -1 // never retry a descriptor number after FIRST failure
+		err := l.hostProcesses().closeFD(fd)
+		l.expiryCleanupReport().supervisorClosed(err)
+		l.pidfdCloseErr = startupCleanupError("first supervisor pidfd close failed", err)
+	}
+	return l.pidfdCloseErr
 }
 
 func (l *Lifecycle) hostProcesses() processAPI {
@@ -1514,26 +1798,39 @@ func (l *Lifecycle) hostProcesses() processAPI {
 }
 
 func (l *Lifecycle) abortStart() error {
-	l.mu.Lock()
-	if l.command != nil && l.inspectOwnershipLocked().State == OwnershipOwnedLive {
-		_ = l.signalLocked(unix.SIGKILL)
-	}
-	exit := l.exit
-	l.mu.Unlock()
-	if exit != nil {
-		select {
-		case <-exit:
-		case <-time.After(time.Second):
-		}
-	}
-	l.mu.Lock()
-	l.stopped = true
-	l.closePidfd()
-	l.mu.Unlock()
-	return l.cleanupRuntime(false)
+	ctx := context.Background()
+	return l.abortStartBefore(ctx, l.originalNonEscalatingCleanupCutoff(ctx))
 }
 
-func (l *Lifecycle) cleanupRuntime(requireSocketIdentity bool) error {
+func (l *Lifecycle) abortStartBefore(ctx context.Context, deadline time.Time) error {
+	return l.abortStartBeforeWithKill(ctx, deadline, (*os.Process).Kill)
+}
+
+// Private call-only component seam. No child handle or callback is installed
+// through configuration; production supplies only the literal method above.
+func (l *Lifecycle) abortStartBeforeWithKill(ctx context.Context, deadline time.Time, killChild func(*os.Process) error) error {
+	result, _ := l.firstCustodyBefore(ctx, deadline, false, func(cleanup context.Context) error {
+		l.startupAbort = l.abortStartFirst(cleanup, deadline, killChild)
+		return l.startupAbort.result
+	})
+	return result
+}
+
+func (l *Lifecycle) cleanupRuntimeFirst(requireSocketIdentity bool) (resultErr error) {
+	return l.cleanupRuntimeWithCloses(requireSocketIdentity, (*expiryCleanupReport).closeLocalFD, (*expiryCleanupReport).closeLocalFile)
+}
+func (l *Lifecycle) cleanupRuntimeBefore(ctx context.Context, required bool) error {
+	return l.cleanupRuntimeWithCall(required, func(required bool) error {
+		return l.cleanupRuntimeWithClosesBefore(ctx, required, (*expiryCleanupReport).closeLocalFD, (*expiryCleanupReport).closeLocalFile)
+	})
+}
+
+// Call-only close seams; production passes fixed report methods, never a field.
+func (l *Lifecycle) cleanupRuntimeWithCloses(requireSocketIdentity bool, closeFD func(*expiryCleanupReport, int) error, closeFile func(*expiryCleanupReport, *os.File) error) (resultErr error) {
+	return l.cleanupRuntimeWithClosesBefore(context.Background(), requireSocketIdentity, closeFD, closeFile)
+}
+func (l *Lifecycle) cleanupRuntimeWithClosesBefore(ctx context.Context, requireSocketIdentity bool, closeFD func(*expiryCleanupReport, int) error, closeFile func(*expiryCleanupReport, *os.File) error) (resultErr error) {
+	if err := ctx.Err(); err != nil { return startupCleanupError("runtime cleanup cutoff elapsed; artifacts preserved", err) }
 	runtimePath := l.provenance.RuntimeDirectory
 	if runtimePath == "" {
 		return nil
@@ -1542,7 +1839,10 @@ func (l *Lifecycle) cleanupRuntime(requireSocketIdentity bool) error {
 	if err != nil {
 		return failure(FailureCleanup, "cleanup", "runtime parent cannot be opened without following links", err)
 	}
-	defer unix.Close(parentFD)
+	l.expiryCleanupReport().localOpened()
+	defer func() {
+		resultErr = withStartupCustody(resultErr, startupCleanupError("runtime parent first close failed", closeFD(l.expiryCleanupReport(), parentFD)))
+	}()
 	name := filepath.Base(runtimePath)
 	if err := verifyDirectoryEntry(parentFD, name, l.runtimeID); err != nil {
 		if errors.Is(err, unix.ENOENT) {
@@ -1555,7 +1855,10 @@ func (l *Lifecycle) cleanupRuntime(requireSocketIdentity bool) error {
 		return failure(FailureCleanup, "cleanup", "runtime directory cannot be opened without following links", err)
 	}
 	runtimeFile := os.NewFile(uintptr(runtimeFD), "owned-runtime")
-	defer runtimeFile.Close()
+	l.expiryCleanupReport().localOpened()
+	defer func() {
+		resultErr = withStartupCustody(resultErr, startupCleanupError("runtime directory first close failed", closeFile(l.expiryCleanupReport(), runtimeFile)))
+	}()
 	identity, identityErr := identityOf(runtimeFile)
 	if identityErr != nil || identity.device != l.runtimeID.device || identity.inode != l.runtimeID.inode {
 		return failure(FailureCleanup, "cleanup", "opened runtime directory is no longer attributable", identityErr)
@@ -1570,9 +1873,10 @@ func (l *Lifecycle) cleanupRuntime(requireSocketIdentity bool) error {
 		if !requireSocketIdentity && l.socketID.inode == 0 {
 			return failure(FailureCleanup, "cleanup", "unattributed socket is preserved for inspection", nil)
 		}
-		if requireSocketIdentity && (current.device != l.socketID.device || current.inode != l.socketID.inode) {
+		if current.device != l.socketID.device || current.inode != l.socketID.inode {
 			return failure(FailureCleanup, "cleanup", "socket is no longer attributable", nil)
 		}
+		if err := ctx.Err(); err != nil { return startupCleanupError("socket cleanup cutoff elapsed; artifacts preserved", err) }
 		if err := unix.Unlinkat(runtimeFD, "gapdb.sock", 0); err != nil {
 			return failure(FailureCleanup, "cleanup", "owned socket cannot be removed", err)
 		}
@@ -1589,6 +1893,7 @@ func (l *Lifecycle) cleanupRuntime(requireSocketIdentity bool) error {
 	if err := verifyDirectoryEntry(parentFD, name, l.runtimeID); err != nil {
 		return failure(FailureCleanup, "cleanup", "runtime entry changed before removal", err)
 	}
+	if err := ctx.Err(); err != nil { return startupCleanupError("directory cleanup cutoff elapsed; artifacts preserved", err) }
 	if err := unix.Unlinkat(parentFD, name, unix.AT_REMOVEDIR); err != nil {
 		return failure(FailureCleanup, "cleanup", "owned runtime directory cannot be removed", err)
 	}

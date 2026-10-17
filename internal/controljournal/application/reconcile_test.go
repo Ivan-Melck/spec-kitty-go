@@ -662,7 +662,7 @@ func admittedApplicationBinary(t *testing.T) string {
 
 func privateApplicationRoot(t *testing.T) string {
 	t.Helper()
-	root, err := os.MkdirTemp("/tmp", "spk-app-")
+	root, err := os.MkdirTemp("", "spk-app-")
 	if err != nil {
 		t.Fatal(err)
 	}

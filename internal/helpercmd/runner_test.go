@@ -68,6 +68,7 @@ type sessionSpy struct {
 	status    productionruntime.HostStatus
 	progress  productionruntime.MissionProgress
 	queryErr  error
+	closeErr  error
 	missionFn func(journalv2.ProjectID, journalv2.MissionID) (productionruntime.MissionProgress, error)
 	executeFn func(decodedOperation) (TypedResult, error)
 	queries   int
@@ -87,7 +88,7 @@ func (s *sessionSpy) Mission(project journalv2.ProjectID, missionID journalv2.Mi
 	}
 	return progress, err
 }
-func (s *sessionSpy) Operation(_ journalv2.ProjectID, _ journalv2.MissionID, operation string) (productionruntime.ProgressItem, error) {
+func (s *sessionSpy) Operation(_ context.Context, _ journalv2.ProjectID, _ journalv2.MissionID, operation string) (productionruntime.ProgressItem, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.queries++
@@ -110,7 +111,7 @@ func (s *sessionSpy) Close(context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closes++
-	return nil
+	return s.closeErr
 }
 
 func TestQueriesUseOneHostAndNeverInvokeMutation(t *testing.T) {

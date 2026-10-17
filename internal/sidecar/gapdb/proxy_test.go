@@ -1,6 +1,7 @@
 package gapdb
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -10,11 +11,13 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	gapdbapi "github.com/spec-kitty/gapdb/gapdb"
+	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
 )
 
 const testProxySourceCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -79,6 +82,107 @@ func TestResponseDropConsumesCompleteAcceptedResponseThenDrops(t *testing.T) {
 	}
 	if requests.Load() != 2 {
 		t.Fatalf("ordinary request census=%d", requests.Load())
+	}
+}
+
+func TestResponseDropSupportsSeveralUnaryExchangesBeforeSelectedCut(t *testing.T) {
+	daemon, requests := startWireDaemon(t, func(request wireRequest) []byte {
+		if request.RequestID == "selected" {
+			return acceptedResponse(t, request, 1, 1)
+		}
+		return ordinaryResponse(t, request)
+	})
+	root := privateShortRoot(t)
+	proxy, err := StartResponseDropProxy(ProxyConfig{ProductSocket: filepath.Join(root, "p.sock"), DaemonSocket: daemon, ExpectedDaemon: currentProcessIdentity(t), ExpectedDatabaseID: "database", SelectedRequestID: "selected", SourceCommit: testProxySourceCommit, ReadTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	connection := dialUnix(t, proxy.config.ProductSocket)
+	defer connection.Close()
+	for _, id := range []string{"preflight-operation", "preflight-head"} {
+		if err := writeWireFrame(connection, atomicBatchRequest(t, id)); err != nil {
+			t.Fatal(err)
+		}
+		response, err := readWireFrame(connection, storegapdb.MaxWireFrameBytes)
+		if err != nil {
+			t.Fatalf("ordinary exchange %s closed reusable product connection: %v", id, err)
+		}
+		if !bytes.Equal(response, ordinaryResponse(t, wireRequest{RequestID: id, Operation: "atomic_batch"})) {
+			t.Fatalf("ordinary response changed for %s", id)
+		}
+		if _, ok := proxy.Cut(); ok {
+			t.Fatal("preflight traffic minted selected cut")
+		}
+	}
+	if err := writeWireFrame(connection, atomicBatchRequest(t, "selected")); err != nil {
+		t.Fatal(err)
+	}
+	var firstByte [1]byte
+	if count, err := connection.Read(firstByte[:]); count != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("selected response leaked bytes or did not close: bytes=%d err=%v", count, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	cut, err := proxy.WaitForCut(ctx)
+	if err != nil || cut.RequestID != "selected" || cut.Revision != 1 || requests.Load() != 3 {
+		t.Fatalf("selected exchange proof: cut=%+v requests=%d err=%v", cut, requests.Load(), err)
+	}
+	if failures := proxy.Errors(); len(failures) != 0 {
+		t.Fatalf("serial unary relay errors: %v", failures)
+	}
+	// Selection is global and one-shot, not reset by a new connection.
+	next := dialUnix(t, proxy.config.ProductSocket)
+	defer next.Close()
+	if err := writeWireFrame(next, atomicBatchRequest(t, "selected")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readWireFrame(next, storegapdb.MaxWireFrameBytes); err != nil {
+		t.Fatalf("later matching request was dropped again: %v", err)
+	}
+	if requests.Load() != 4 {
+		t.Fatalf("proxy replayed/dropped request count=%d", requests.Load())
+	}
+}
+
+func TestResponseDropCloseInterruptsBlockedDaemonWithoutWaitingForReadTimeout(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	daemon, requests := startWireDaemon(t, func(request wireRequest) []byte {
+		close(entered)
+		<-release
+		return acceptedResponse(t, request, 1, 1)
+	})
+	root := privateShortRoot(t)
+	proxy, err := StartResponseDropProxy(ProxyConfig{ProductSocket: filepath.Join(root, "p.sock"), DaemonSocket: daemon, ExpectedDaemon: currentProcessIdentity(t), ExpectedDatabaseID: "database", SelectedRequestID: "selected", SourceCommit: testProxySourceCommit, ReadTimeout: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection := dialUnix(t, proxy.config.ProductSocket)
+	defer connection.Close()
+	if err := writeWireFrame(connection, atomicBatchRequest(t, "selected")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("request never reached daemon")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- proxy.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close left daemon relay blocked until its read timeout")
+	}
+	if _, ok := proxy.Cut(); ok {
+		t.Fatal("shutdown minted an unconsumed response cut")
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("shutdown replayed selected request: %d", requests.Load())
 	}
 }
 
@@ -217,6 +321,9 @@ func TestResponseDropLookalikeDaemonIdentityIsRefused(t *testing.T) {
 
 func TestResponseDropShutdownNeverDuplicatesMutatingRequest(t *testing.T) {
 	blocked := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseBlocked := func() { releaseOnce.Do(func() { close(blocked) }) }
+	defer releaseBlocked()
 	daemon, requests := startWireDaemon(t, func(request wireRequest) []byte {
 		<-blocked
 		return acceptedResponse(t, request, 1, 1)
@@ -236,7 +343,7 @@ func TestResponseDropShutdownNeverDuplicatesMutatingRequest(t *testing.T) {
 	}
 	closeDone := make(chan error, 1)
 	go func() { closeDone <- proxy.Close() }()
-	close(blocked)
+	releaseBlocked()
 	select {
 	case err := <-closeDone:
 		if err != nil {
@@ -385,7 +492,14 @@ func startWireDaemon(t *testing.T, response func(wireRequest) []byte) (string, *
 	var requests atomic.Int32
 	socket := startRawWireDaemon(t, func(connection net.Conn, request wireRequest) {
 		requests.Add(1)
-		_ = writeWireFrame(connection, response(request))
+		unixConnection, ok := connection.(*net.UnixConn)
+		if !ok { t.Error("fixture connection is not an actual UnixConn"); return }
+		var source strictFixtureSourceOutcome
+		defer func() { source.report(t) }()
+		payload := response(request)
+		source.writeAttempted = true
+		source.writeErr = writeWireFrame(unixConnection, payload)
+		if source.writeErr == nil { source.shutdownAttempted = true; source.shutdownErr = unixConnection.CloseWrite() }
 	})
 	return socket, &requests
 }
@@ -399,17 +513,28 @@ func startRawWireDaemon(t *testing.T, respond func(net.Conn, wireRequest)) strin
 		t.Fatal(err)
 	}
 	if err := os.Chmod(socket, 0o600); err != nil {
+		if first := listener.Close(); first != nil { t.Errorf("FIRST fixture listener close after chmod failure: %v", first) }
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = listener.Close() })
+	var workers sync.WaitGroup
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		if first := listener.Close(); first != nil { t.Errorf("FIRST fixture listener close failed: %v", first) }
+		<-done
+		workers.Wait() // source FIRST outcomes cannot outlive the fixture
+	})
 	go func() {
+		defer close(done)
 		for {
 			connection, err := listener.Accept()
 			if err != nil {
 				return
 			}
+			workers.Add(1)
 			go func() {
-				defer connection.Close()
+				defer workers.Done()
+				defer func() { source := strictFixtureSourceOutcome{closeAttempted: true, closeErr: connection.Close()}; source.report(t) }()
+				if err := connection.SetReadDeadline(time.Now().Add(time.Second)); err != nil { t.Error("fixture server read deadline", err); return }
 				encoded, err := readWireFrame(connection, 1<<20)
 				if err != nil {
 					return

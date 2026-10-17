@@ -1,6 +1,6 @@
 # Production Runtime Program
 
-Status: **active implementation program — M1 and exact M2 tuple adopted; M3/M4 remaining entry gates pending**
+Status: **active implementation program — M1 and exact M2 tuple adopted; M4 admitted, M3 external entry bindings pending**
 
 Program ID: `production-runtime`
 
@@ -31,8 +31,11 @@ independent review, recursive release verification, mission acceptance,
 integration, and post-merge mission review. Its exact release tuple is now
 adopted by the separate attributable [M2 decision](programs/evidence/m2-adoption.json).
 The frozen release receipt intentionally retains its pre-adoption
-`adopted=false` outcome. M3/M4 may resolve their remaining entry criteria and
-proceed; M5–M7 remain gated on their own predecessors. This decision does not
+`adopted=false` outcome. M4 is admitted by the separate
+[verified entry decision](programs/decisions/2026-10-13-m4-admission.json), following
+explicit candidate-scope approval and independent entry review. M3's exact
+Hubnot executable is recovered, but conformance/policy/signer entry bindings
+remain pending. M5–M7 remain gated on their own predecessors. This decision does not
 transfer M2 proof to API 2.0, neutral acceptance, real-agent composition, or MCP.
 
 The program is intentionally not a mega-mission:
@@ -353,7 +356,11 @@ Hubnot composition.
 
 ### M4 — Stack-Neutral Acceptance Runtime
 
-**Status:** proposed; parallel group `after-M2`.
+**Status:** admitted; parallel group `after-M2`.
+[Entry decision](programs/decisions/2026-10-13-m4-admission.json),
+[frozen inputs](programs/m4/ENTRY_BINDINGS.json) and
+[independent entry review](programs/m4/ENTRY_REVIEW.md).
+Admission is not activation, implementation completion or exit acceptance.
 
 **Outcome:** Judge stack-neutral claims using explicitly bound,
 provenance-rich evidence providers.
@@ -686,7 +693,7 @@ jq -e '([.missions[].id] | length) == ([.missions[].id] | unique | length)' "$PR
 jq -e 'all(.missions[]; (.dependencies | length) <= 3)' "$PROGRAM"
 jq -e '([.missions[].id] as $ids | all(.missions[]; .dependencies as $deps | all($deps[]; . as $dep | ($ids | index($dep)) != null)))' "$PROGRAM"
 jq -e '.critical_path == ["M1", "M2", "M3", "M5", "M6"]' "$PROGRAM"
-jq -e '([.missions[] | {key:.id,value:.status}] | from_entries) == {M1:"complete",M2:"complete",M3:"proposed",M4:"proposed",M5:"proposed",M6:"proposed",M7:"proposed"}' "$PROGRAM"
+jq -e '([.missions[] | {key:.id,value:.status}] | from_entries) == {M1:"complete",M2:"complete",M3:"proposed",M4:"admitted",M5:"proposed",M6:"proposed",M7:"proposed"}' "$PROGRAM"
 jq -e '. as $root | .critical_path as $path | all(range(0; ($path | length) - 1); . as $index | $path[$index] as $from | $path[$index + 1] as $to | any($root.missions[]; .id == $to and (.dependencies | index($from) != null)))' "$PROGRAM"
 jq -e '([.missions[] | {key:.id,value:.dependencies}] | from_entries) == {M1:[],M2:["M1"],M3:["M2"],M4:["M2"],M5:["M2","M3","M4"],M6:["M5"],M7:["M5"]}' "$PROGRAM"
 
@@ -704,7 +711,7 @@ diff -u \
 Expected topological constraints are `M1 < M2`, `M2 < M3`, `M2 < M4`,
 `M2 < M5`, `M3 < M5`, `M4 < M5`, `M5 < M6`, and `M5 < M7`.
 `tsort` must exit zero. The current manifest must contain seven missions,
-with M1/M2 complete and M3–M7 proposed pending their own admission records,
+with M1/M2 complete, M4 admitted, and M3/M5–M7 proposed pending their own admission records,
 one falsification target per mission, no hidden dependency, parallel groups
 `after-M2` and `after-M5`, and no package-scaffolding exit criterion.
 
@@ -718,8 +725,9 @@ tree, RunID, manifest, producer/review/release digests, and frozen evidence chai
 Do not admit a successor from source presence, a green local test, a tracker
 state, or this roadmap.
 
-M3 and M4 may now be created in the `after-M2` parallel group, subject to their
-remaining entry criteria and the immutable dependency-admission law above.
+M4 may now be initialized through the canonical governed workflow in the
+`after-M2` parallel group under its recorded admission. M3 remains proposed
+until its external entry bindings satisfy the immutable dependency-admission law.
 Each consumes the M2 successor contract rather than database keys or qualifier
 internals. If M2 fails, preserve the attempt and repair a new candidate; do not
 admit a successor by weakening the census or substituting the short CI tier.

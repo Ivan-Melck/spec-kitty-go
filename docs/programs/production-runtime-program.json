@@ -109,7 +109,7 @@
       "parallel_group": "after-M2",
       "risk": "Convenient provider behavior could leak language or tool semantics back into the kernel.",
       "rollback": "Disable unqualified provider bindings while retaining durable evidence as non-admissible history.",
-      "status": "proposed"
+      "status": "admitted"
     },
     {
       "id": "M5",

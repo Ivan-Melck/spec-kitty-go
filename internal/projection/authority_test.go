@@ -548,7 +548,7 @@ func publishProjectionFixtureV2(t *testing.T, coordinator *journalv2.Publication
 	return ack
 }
 
-func projectionPlanFixtureV2(t *testing.T, suffix, family, aggregate string) journalv2.SealedCommitPlanV2 {
+func projectionPlanFixtureV2(t *testing.T, suffix, family, aggregate string, bindingScopes ...journalv2.Scope) journalv2.SealedCommitPlanV2 {
 	t.Helper()
 	operationID := journalv2.OperationID("operation-" + suffix)
 	opEventID := journalv2.EventID("event-" + suffix + "-operation")
@@ -561,8 +561,15 @@ func projectionPlanFixtureV2(t *testing.T, suffix, family, aggregate string) jou
 		t.Fatal(err)
 	}
 	scope := journalv2.Scope{Kind: journalv2.ScopeHost}
+	bindingScope := scope
+	if len(bindingScopes) > 1 {
+		t.Fatal("fixture requires at most one immutable binding scope")
+	}
+	if len(bindingScopes) == 1 {
+		bindingScope = bindingScopes[0]
+	}
 	intentDigest := projectionDigestFixtureV2("intent-" + suffix)
-	binding, err := journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{OperationID: operationID, CommandKind: "fixture.command", CommandSchemaVersion: 1, CanonicalIntentDigest: intentDigest, Scope: scope, ActorID: "actor-1", ProcessID: "process-1", DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", OriginatingRuntimeEpochID: "epoch-1", ObservedCreatedAt: "2026-09-05T00:00:00Z"})
+	binding, err := journalv2.NewOperationBindingV2(journalv2.OperationBindingInput{OperationID: operationID, CommandKind: "fixture.command", CommandSchemaVersion: 1, CanonicalIntentDigest: intentDigest, Scope: bindingScope, ActorID: "actor-1", ProcessID: "process-1", DoctrineRevision: "doctrine-1", ProfileRevision: "profile-1", PolicyRevision: "policy-1", OriginatingRuntimeEpochID: "epoch-1", ObservedCreatedAt: "2026-09-05T00:00:00Z"})
 	if err != nil {
 		t.Fatal(err)
 	}

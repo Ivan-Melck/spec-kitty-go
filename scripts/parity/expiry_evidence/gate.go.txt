@@ -1,0 +1,78 @@
+//go:build spk_expiry_evidence
+
+package engine
+
+import (
+	"io"
+	"net"
+	"os"
+	"sync"
+	"syscall"
+	"time"
+)
+
+// This file is copied ONLY into an isolated qualification source tree. It is
+// never installed in the product module cache or an admitted source checkout.
+// The daemon owns exactly one database. Its first nonempty due-expiry batch may
+// pause before execute(), outside state.mu and all admin/controller locks.
+var spkExpiryEvidenceOnce sync.Once
+
+// Acquire before main/server.Open, never after FD3 could become the database
+// lock/listener. Only duplicates are closed here; an unrelated original FD is
+// never closed, even on invalid configuration. The fixed inherited descriptor
+// itself remains reserved until process exit (at most one extra descriptor).
+var spkExpiryEvidenceControl = spkOpenExpiryEvidenceControl()
+
+func spkOpenExpiryEvidenceControl() net.Conn {
+	if os.Getenv("SPEC_KITTY_EXPIRY_GATE_FD") != "3" {
+		return nil
+	}
+	return spkDuplicateExpiryEvidenceControl(3)
+}
+
+func spkDuplicateExpiryEvidenceControl(fd int) net.Conn {
+	duplicate, err := syscall.Dup(fd)
+	if err != nil {
+		return nil
+	}
+	syscall.CloseOnExec(duplicate)
+	file := os.NewFile(uintptr(duplicate), "expiry-evidence-control-copy")
+	conn, err := net.FileConn(file)
+	_ = file.Close()
+	if err != nil {
+		return nil
+	}
+	if _, ok := conn.(*net.UnixConn); !ok {
+		_ = conn.Close()
+		return nil
+	}
+	return conn
+}
+
+func spkExpiryEvidenceHold() {
+	spkExpiryEvidenceOnce.Do(func() {
+		// One inherited socketpair endpoint; no pathname, network listener,
+		// selector, arbitrary command, or remotely accessible control surface.
+		if spkExpiryEvidenceControl != nil {
+			spkRunExpiryEvidenceGate(spkExpiryEvidenceControl, 15*time.Second)
+		}
+	})
+}
+
+func spkRunExpiryEvidenceGate(conn net.Conn, limit time.Duration) {
+	defer conn.Close()
+	// The timeout and every error RELEASE the writer. This is qualification
+	// control, not authority. A witness requires H, live stable reads, and A;
+	// timeout/EOF/malformed traffic must never be credited as that witness.
+	if err := conn.SetDeadline(time.Now().Add(limit)); err != nil {
+		return
+	}
+	if n, err := conn.Write([]byte{'H'}); n != 1 || err != nil {
+		return
+	}
+	var command [1]byte
+	if _, err := io.ReadFull(conn, command[:]); err != nil || command[0] != 'R' {
+		return
+	}
+	_, _ = conn.Write([]byte{'A'})
+}

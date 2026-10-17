@@ -139,7 +139,7 @@ func TestProvenanceVerifyThenSwapExecutesHeldDescriptor(t *testing.T) {
 		t.Fatal(err)
 	}
 	database := filepath.Join(t.TempDir(), "database")
-	socket := filepath.Join(t.TempDir(), "gapdb.sock")
+	socket := filepath.Join(privateShortRoot(t), "gapdb.sock")
 	command, err := verified.command([]string{"-db", database, "-socket", socket, "-json=true"}, []string{"LANG=C", "TZ=UTC"})
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +181,7 @@ func TestProvenanceInPlaceSourceMutationCannotChangeSealedExecution(t *testing.T
 		t.Fatal(err)
 	}
 	defer verified.Close()
-	socket := filepath.Join(t.TempDir(), "gapdb.sock")
+	socket := filepath.Join(privateShortRoot(t), "gapdb.sock")
 	command, err := verified.command([]string{"-db", filepath.Join(t.TempDir(), "database"), "-socket", socket, "-json=true"}, []string{"LANG=C", "TZ=UTC"})
 	if err != nil {
 		t.Fatal(err)

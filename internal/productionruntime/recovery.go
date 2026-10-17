@@ -119,6 +119,7 @@ const (
 )
 
 type AuthorityBindingV2 struct {
+	qualification      authorityQualificationBinding
 	SchemaVersion      uint32                    `json:"schema_version"`
 	HostAuthorityID    journalv2.HostAuthorityID `json:"host_authority_id"`
 	DatabaseID         journalv2.DatabaseID      `json:"database_id"`
@@ -130,6 +131,9 @@ type AuthorityBindingV2 struct {
 }
 
 func (b AuthorityBindingV2) canonical() ([]byte, error) {
+	if encoded, handled, err := qualificationCanonical(b); handled {
+		return encoded, err
+	}
 	if b.SchemaVersion != 2 || b.HostAuthorityID == "" || b.DatabaseID == "" || !hexDigest(b.AdmittedTupleSHA) || !hexDigest(b.SidecarSHA) || b.WireProtocol == 0 || b.StorageProtocol == 0 || b.CreatedOperationID == "" {
 		return nil, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "authority_binding"}
 	}
@@ -214,6 +218,36 @@ func readCurrentEpoch(ctx context.Context, port authorityReader) (runtimeCurrent
 	return current, record.Revision, nil
 }
 
+func runtimeEpochRecordKey(epoch journalv2.RuntimeEpochID) string {
+	return "spk/v2/runtime/epochs/" + string(epoch)
+}
+
+func runtimeEpochRecordBytes(current runtimeCurrentV2) ([]byte, error) {
+	record := struct {
+		SchemaVersion uint32           `json:"schema_version"`
+		Current       runtimeCurrentV2 `json:"current"`
+	}{2, current}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return nil, err
+	}
+	return journalv2.CanonicalObject(raw)
+}
+
+// observeRuntimeEpochAdmission verifies the immutable copy committed in the
+// same owner batch as runtime/current. It is read-only and cannot admit epochs.
+func observeRuntimeEpochAdmission(ctx context.Context, port authorityReader, current runtimeCurrentV2, currentRevision uint64) error {
+	expected, err := runtimeEpochRecordBytes(current)
+	if err != nil {
+		return err
+	}
+	record, err := port.Get(ctx, runtimeEpochRecordKey(current.RuntimeEpochID))
+	if err != nil || record.Revision != currentRevision || !bytes.Equal(record.Value, expected) {
+		return &Error{Kind: ErrorStartup, State: HostRecovering, Field: "runtime_epoch_admission"}
+	}
+	return nil
+}
+
 func admitFreshEpoch(ctx context.Context, port authorityPort, binding AuthorityBindingV2, prior runtimeCurrentV2, priorRevision uint64, recovered journalrestore.ResultV2, attemptID string) (journalv2.RuntimeEpochID, error) {
 	request, err := recovered.FreshEpochAdmissionRequestV2()
 	if err != nil || request.DatabaseID() != binding.DatabaseID || request.HostAuthorityID() != binding.HostAuthorityID || request.RecoveryAttemptID() != attemptID {
@@ -237,12 +271,10 @@ func admitFreshEpoch(ctx context.Context, port authorityPort, binding AuthorityB
 	if err != nil {
 		return "", err
 	}
-	epochRecord := struct {
-		SchemaVersion uint32           `json:"schema_version"`
-		Current       runtimeCurrentV2 `json:"current"`
-	}{2, current}
-	epochRaw, _ := json.Marshal(epochRecord)
-	epochBytes, _ := journalv2.CanonicalObject(epochRaw)
+	epochBytes, err := runtimeEpochRecordBytes(current)
+	if err != nil {
+		return "", err
+	}
 	operationBytes, _ := journalv2.CanonicalObject([]byte(fmt.Sprintf(`{"operation_id":%q,"runtime_epoch_id":%q,"schema_version":2,"status":"resolved"}`, operationID, epoch)))
 	eventBytes, _ := journalv2.CanonicalObject([]byte(fmt.Sprintf(`{"event_type":"runtime_host.epoch_admitted","operation_id":%q,"runtime_epoch_id":%q,"schema_version":2}`, operationID, epoch)))
 	headBytes, _ := journalv2.CanonicalObject([]byte(fmt.Sprintf(`{"runtime_epoch_id":%q,"schema_version":2,"status":"ready"}`, epoch)))
@@ -259,7 +291,7 @@ func admitFreshEpoch(ctx context.Context, port authorityPort, binding AuthorityB
 		Operation:      storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: "spk/runtime-admission/v2/operations/" + operationID, Condition: storegapdb.Condition{Kind: storegapdb.ConditionAbsent}, Value: operationBytes},
 		Event:          storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: "spk/runtime-admission/v2/events/" + string(epoch), Condition: storegapdb.Condition{Kind: storegapdb.ConditionAbsent}, Value: eventBytes},
 		AggregateHead:  storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: "spk/runtime-admission/v2/head", Condition: headCondition, Value: headBytes},
-		EpochRecord:    storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: "spk/v2/runtime/epochs/" + string(epoch), Condition: storegapdb.Condition{Kind: storegapdb.ConditionAbsent}, Value: epochBytes},
+		EpochRecord:    storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: runtimeEpochRecordKey(epoch), Condition: storegapdb.Condition{Kind: storegapdb.ConditionAbsent}, Value: epochBytes},
 		CurrentBinding: storegapdb.Mutation{Kind: storegapdb.MutationPut, Key: runtimeCurrentKey, Condition: currentCondition, Value: currentBytes},
 	}
 	result, err := port.AdmitRuntimeEpoch(ctx, batch)

@@ -1,0 +1,94 @@
+{
+  "type": "object",
+  "required": [
+    "adopted",
+    "created_operation_id",
+    "database_id",
+    "executable_sha256",
+    "host_authority_id",
+    "input_record_sha256",
+    "kind",
+    "modified_source_inventory_sha256",
+    "production_admission",
+    "recovery_contract",
+    "release_ready",
+    "schema_version",
+    "storage_protocol",
+    "technical_tuple_sha256",
+    "wire_protocol"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "const": "expiry-host-qualification-authority-binding"
+    },
+    "host_authority_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "description": "Trusted owner/bootstrap token, exact existing ASCII identity alphabet; not selected by readback."
+    },
+    "database_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "description": "Trusted owner/bootstrap token, exact existing ASCII identity alphabet; not selected by readback."
+    },
+    "created_operation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+      "description": "Trusted owner/bootstrap token, exact existing ASCII identity alphabet; not selected by readback."
+    },
+    "input_record_sha256": {
+      "type": "string",
+      "const": "53fa2099c5798c6ac7d05ca782deba422412605fc9a9a9696271823652138b57"
+    },
+    "technical_tuple_sha256": {
+      "type": "string",
+      "const": "9d65f8bd363b4f416688a2038714e531e4bfe7a7a81976decb0c8eaae0f834e7"
+    },
+    "modified_source_inventory_sha256": {
+      "type": "string",
+      "const": "1f80dde08a349ccc16e3ffef825cabfe8a8c7c2db50444ee15c9598c68ecffbf"
+    },
+    "executable_sha256": {
+      "type": "string",
+      "const": "83d5db39db928f62c9725253c53fdb8d1264f1b6e317c94db33aa11944f5905b"
+    },
+    "wire_protocol": {
+      "type": "integer",
+      "const": 1
+    },
+    "storage_protocol": {
+      "type": "integer",
+      "const": 1
+    },
+    "recovery_contract": {
+      "type": "string",
+      "const": "reader-v2-only/no-optional-accelerators"
+    },
+    "production_admission": {
+      "type": "boolean",
+      "const": false
+    },
+    "adopted": {
+      "type": "boolean",
+      "const": false
+    },
+    "release_ready": {
+      "type": "boolean",
+      "const": false
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "V3 DESIGN ONLY isolated expiry Host authority binding"
+}

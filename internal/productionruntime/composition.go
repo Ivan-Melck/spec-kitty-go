@@ -55,10 +55,12 @@ type Config struct {
 }
 
 type productionOwner struct {
+	expiry    ownerExpiryState
 	lifecycle *sidecargapdb.Lifecycle
 	adapter   *storegapdb.Adapter
 	closer    io.Closer
 	database  journalv2.DatabaseID
+	binding   AuthorityBindingV2 // trusted Config/bootstrap scalar, never readback-selected
 	closeOnce bool
 }
 
@@ -124,7 +126,9 @@ func (o *productionOwner) Close(ctx context.Context) error {
 	if o.lifecycle != nil {
 		failures = append(failures, o.lifecycle.Stop(ctx))
 	}
-	return errors.Join(failures...)
+	result := errors.Join(failures...)
+	o.noteExpiryOwnerClose(result)
+	return result
 }
 
 // Start is the production composition root. It returns only the Host and its
@@ -145,19 +149,8 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if config.ControlRoot == "" || config.HostAuthorityID == "" || config.AuthorityBindingOperationID == "" || config.M1AdoptionRecordPath == "" ||
-		!filepath.IsAbs(config.ControlRoot) || filepath.Clean(config.ControlRoot) != config.ControlRoot || config.Sidecar.DataDirectory != config.ControlRoot {
-		return nil, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "config"}
-	}
-	classifier, err := controlroot.NewClassifier(controlroot.DefaultBudgets(), controlroot.TrustPolicy{OwnerUID: uint32(os.Geteuid()), OwnerGID: uint32(os.Getegid()), AllowGroupWritable: true})
+	decision, err := preflightHostRoot(ctx, config)
 	if err != nil {
-		return nil, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "root_classifier"}
-	}
-	decision, err := classifier.Decide(ctx, config.ControlRoot)
-	if err != nil {
-		return nil, err
-	}
-	if _, err = sidecargapdb.VerifyAdoptionRecord(config.M1AdoptionRecordPath); err != nil {
 		return nil, err
 	}
 	var extensionAdmission sidecargapdb.ExecutableAdmission
@@ -170,11 +163,8 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 		return nil, err
 	}
 	config.Sidecar.Admission = extensionAdmission
-	if config.CapabilityReadiness == nil || config.DecompositionProvider == nil || config.CandidateVerifier == nil || config.IntegrationGit == nil {
-		return nil, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "capability_dependencies"}
-	}
-	if config.CheckpointEvery < 0 || config.CheckpointEvery > journalv2.MaxAcknowledgementsBetweenSeals {
-		return nil, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "checkpoint_every"}
+	if err := validateHostDependencies(config); err != nil {
+		return nil, err
 	}
 	lifecycle, err := sidecargapdb.Start(ctx, config.Sidecar)
 	if err != nil {
@@ -188,7 +178,7 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 	}()
 	provenance := lifecycle.Provenance()
 	databaseID := journalv2.DatabaseID(provenance.DatabaseID)
-	adapter, closer, err := storegapdb.Dial(provenance.ConnectedSocket, storegapdb.DefaultRequestTimeout)
+	adapter, closer, err := lifecycle.DialOwned(ctx, storegapdb.DefaultRequestTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +188,67 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 	if err := ensureAuthorityBinding(ctx, adapter, binding, decision.Action == controlroot.Initialize); err != nil {
 		return nil, err
 	}
+	owner.binding = binding // retain ONLY after successful binding verification
+	return completeHostStartup(ctx, config, owner, recoveryReader)
+}
+
+// preflightHostRoot stops before extension admission selection. Callers normalize
+// ctx first; neither admission nor recovery-reader selection occurs here.
+func preflightHostRoot(ctx context.Context, config Config) (controlroot.Decision, error) {
+	if config.ControlRoot == "" || config.HostAuthorityID == "" || config.AuthorityBindingOperationID == "" || config.M1AdoptionRecordPath == "" ||
+		!filepath.IsAbs(config.ControlRoot) || filepath.Clean(config.ControlRoot) != config.ControlRoot || config.Sidecar.DataDirectory != config.ControlRoot {
+		return controlroot.Decision{}, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "config"}
+	}
+	classifier, err := controlroot.NewClassifier(controlroot.DefaultBudgets(), controlroot.TrustPolicy{OwnerUID: uint32(os.Geteuid()), OwnerGID: uint32(os.Getegid()), AllowGroupWritable: true})
+	if err != nil {
+		return controlroot.Decision{}, &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "root_classifier"}
+	}
+	decision, err := classifier.Decide(ctx, config.ControlRoot)
+	if err != nil {
+		return controlroot.Decision{}, err
+	}
+	if _, err = sidecargapdb.VerifyAdoptionRecord(config.M1AdoptionRecordPath); err != nil {
+		return controlroot.Decision{}, err
+	}
+	return decision, nil
+}
+
+func validateHostDependencies(config Config) error {
+	if config.CapabilityReadiness == nil || config.DecompositionProvider == nil || config.CandidateVerifier == nil || config.IntegrationGit == nil {
+		return &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "capability_dependencies"}
+	}
+	if config.CheckpointEvery < 0 || config.CheckpointEvery > journalv2.MaxAcknowledgementsBetweenSeals {
+		return &Error{Kind: ErrorInvalidConfiguration, State: HostRecovering, Field: "checkpoint_every"}
+	}
+	return nil
+}
+
+// reconciliationRestoreFailure retains the actual failures without exposing
+// their diagnostics through the bounded public startup error. The primary
+// runtime classification is first in the standard errors.Is/errors.As traversal.
+// journalv2.IsKind does not traverse this multi-error unwrap.
+type reconciliationRestoreFailure struct {
+	primary              Error
+	restoreErr, closeErr error
+}
+
+func (e *reconciliationRestoreFailure) Error() string { return e.primary.Error() }
+func (e *reconciliationRestoreFailure) Unwrap() []error {
+	children := []error{&e.primary}
+	if e.restoreErr != nil {
+		children = append(children, e.restoreErr)
+	}
+	if e.closeErr != nil {
+		children = append(children, e.closeErr)
+	}
+	return children
+}
+
+// completeHostStartup is the entire ordinary post-binding suffix. The reader is
+// captured unchanged by every restore, including reconciliation and live refresh.
+// Failure cleanup remains the root's responsibility, in its original order.
+func completeHostStartup(ctx context.Context, config Config, owner *productionOwner, recoveryReader journalrestore.ReaderV2) (_ *Host, resultErr error) {
+	adapter, lifecycle, databaseID, binding := owner.adapter, owner.lifecycle, owner.database, owner.binding
 	prior, priorRevision, err := readCurrentEpoch(ctx, adapter)
 	if err != nil || prior.DatabaseID != "" && (prior.DatabaseID != databaseID || prior.HostAuthorityID != config.HostAuthorityID) {
 		return nil, &Error{Kind: ErrorStartup, State: HostRecovering, Field: "runtime_current_binding"}
@@ -280,8 +331,11 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 		reconciled, restoreErr := journalrestore.RestoreV2(ctx, journalrestore.InputV2{Reader: recoveryReader, EventRegistry: registry, Reducers: reducers, HostAuthorityID: config.HostAuthorityID, PriorRuntimeEpochID: epoch, RecoveryAttemptID: reconcileAttemptID, Budgets: budgets})
 		if restoreErr != nil {
 			host.degrade("reconciliation_restore")
-			_ = host.Close(context.Background())
-			return nil, &Error{Kind: ErrorStartup, State: HostDegraded, Field: "reconciliation_restore"}
+			closeErr := host.Close(context.Background())
+			return nil, &reconciliationRestoreFailure{
+				primary:    Error{Kind: ErrorStartup, State: HostDegraded, Field: "reconciliation_restore"},
+				restoreErr: restoreErr, closeErr: closeErr,
+			}
 		}
 		if err = authority.RestoreCurrentEpoch(epoch, reconciled); err != nil {
 			_ = host.Close(context.Background())
@@ -319,6 +373,9 @@ func start(ctx context.Context, config Config, qualificationCandidate bool) (_ *
 		_ = host.Close(context.Background())
 		return nil, err
 	}
+	// Only this genuine lifecycle-minted original composition can issue Host
+	// retained proofs. newHost and owned adapter constructors cannot freeze it.
+	host.retained = &retainedHostComposition{host: host, owner: owner, lifecycle: lifecycle, adapter: adapter, projection: authority, database: databaseID, epoch: epoch, binding: binding}
 	host.startMonitor(context.Background(), config.MonitorInterval)
 	return host, nil
 }

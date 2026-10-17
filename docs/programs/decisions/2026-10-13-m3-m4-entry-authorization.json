@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "program_id": "production-runtime",
+  "decision_type": "entry_work_authorization",
+  "recorded_at": "2026-10-13T15:39:40Z",
+  "invocation_id": "01M4TYMY41Y8X90VJW11XWB3MC",
+  "actor": {
+    "kind": "interactive_requester",
+    "identity_basis": "current conversation; no independently verified GitHub or cryptographic identity asserted"
+  },
+  "approval": {
+    "kind": "conversation-local-reference",
+    "request_verbatim": "can you fix 1 and 3 i agree with you on 1",
+    "accepted_proposal": "Confirm the conditional M3 delegation and authorize preparing M3/M4 specifications and recorded admission decisions; independent review/acceptance and frozen M2 evidence remain mandatory."
+  },
+  "authorized": {
+    "confirm_conditional_m3_delegation": true,
+    "prepare_m3_m4_candidate_specifications": true,
+    "drive_recorded_m3_m4_admission_process": true,
+    "recover_exact_m2_qualification_artifact_or_recipe": true
+  },
+  "not_authorized_by_this_record": [
+    "waiving program admission prerequisites or independent review/acceptance",
+    "declaring M3/M4 admitted or complete merely from this approval",
+    "transferring adopted M2 evidence to the modified parity branch",
+    "rewriting historical receipts, authority laws or admitted artifact hashes",
+    "creating infrastructure, credentials, VMs, DNS or external services",
+    "a separately tracked qualification-proxy contract correction"
+  ],
+  "program_binding": {
+    "manifest_path": "docs/programs/production-runtime-program.json",
+    "manifest_sha256": "064236867ef11a34106d1cf0f569085f90877e167f58d36d9d920ce6d9fe403e",
+    "mission_states_unchanged": {"M3": "proposed", "M4": "proposed"}
+  },
+  "predecessor_binding": {
+    "mission_id": "M2",
+    "adoption_path": "docs/programs/evidence/m2-adoption.json",
+    "adoption_sha256": "abfae7993dc4437cb76ca16fbcb6e18a10ba61eda7513446bc5fb1c1af911fc0",
+    "source_commit": "416138f490ad6d908fc445c12b91440ca66ef18c",
+    "source_tree": "2b68ee733305465d5acdfe8680f053b91d867a8d",
+    "accepted_manifest_sha256": "8d7731992a35b0ace4cdcd816651df302d4459c8af91d1a2c31cf5d3aeb285a0",
+    "review_receipt_sha256": "a35f944548bd766887344192f59c36fd6002519d88588e07e3cdc48989510e50"
+  },
+  "effect": "Confirms delegation and entry-work authorization only. Candidate specifications, immutable entry evidence verification and attributable admission records must precede successor activation. Existing M2 adoption and all program gates remain unchanged."
+}

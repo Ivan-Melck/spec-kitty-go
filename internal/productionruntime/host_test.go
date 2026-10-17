@@ -887,7 +887,7 @@ func TestProductionHostRealSidecarRestartRebuildsMemoryAndRotatesEpoch(t *testin
 	}
 	binary, _ = filepath.Abs(binary)
 	repository, _ := filepath.Abs(filepath.Join("..", ".."))
-	root, err := os.MkdirTemp("/tmp", "spk-h-")
+	root, err := os.MkdirTemp("", "spk-h-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "program_id": "production-runtime",
+  "decision_type": "parity_contract_candidate_and_conditional_entry_approval",
+  "recorded_at": "2026-10-13T18:12:49.123777+00:00",
+  "invocation_id": "01M4V7BWB53R4CK18V28SFDD8A",
+  "actor": {
+    "kind": "interactive_requester",
+    "identity_basis": "explicit numbered approval in current conversation; no independently verified GitHub identity or cryptographic signer asserted"
+  },
+  "approval": {
+    "kind": "conversation-local-reference",
+    "request_verbatim": "1:yes 2:go ahead 3: approved",
+    "numbered_proposals": {
+      "1": "Restart equivalence: allow different recovery histories when terminal business outcomes match, while independently verifying every operation and recovery receipt. No history hidden.",
+      "2": "Clean qualification candidate: authorize a separate branch and commits containing only reviewed parity changes, preserving unrelated work. Generate fresh evidence; leave historical receipts untouched.",
+      "3": "M3/M4 entry: approve the prepared candidate scopes and authorize admission after all required bindings are verified and recorded. Not release acceptance or permission to skip gates."
+    }
+  },
+  "approved_artifacts": {
+    "docs/parity/RESTART_EQUIVALENCE_PROPOSAL.md": {
+      "sha256": "2f9a5fddfd20f90c3e34f529e8ee83725ee46b71430af986c3ef7513196d7e54"
+    },
+    "docs/programs/m3/CANDIDATE_SPEC.md": {
+      "sha256": "957e200fa134fa6428e9fa9a77c5a04f3a0694bc2fe9af0ff73b46be3982d141"
+    },
+    "docs/programs/m4/CANDIDATE_SPEC.md": {
+      "sha256": "7fd5c5c3cbf505cddbdb1af3265ce90643d5304740f644cda4fddd52c8b49141"
+    },
+    "docs/programs/production-runtime-program.json": {
+      "sha256": "064236867ef11a34106d1cf0f569085f90877e167f58d36d9d920ce6d9fe403e"
+    },
+    "docs/programs/evidence/m2-adoption.json": {
+      "sha256": "abfae7993dc4437cb76ca16fbcb6e18a10ba61eda7513446bc5fb1c1af911fc0"
+    },
+    "docs/programs/decisions/2026-10-13-m3-m4-entry-authorization.json": {
+      "sha256": "a13bf639611c1f9a6446de81060f4c73ecbdcf2aff8b94f5e20e40a4de173f98"
+    }
+  },
+  "source_binding": {
+    "development_head": "f2c0418d68b59ade50a17769fcbcfe420537c12e",
+    "official_reference_commit": "d0c6ca61d87f1d92512bb45386351aae3be1eba5",
+    "official_reference_tree": "d7192f896d5837de5ca526f1fab91dbfe56d9fe6"
+  },
+  "not_authorized": [
+    "hiding or excluding legitimate recovery history",
+    "rewriting adopted predecessor receipts or retargeting frozen source/artifact hashes",
+    "waiving independent review, admission, qualification or acceptance gates",
+    "automatic M5 admission or release/parity-complete verdict",
+    "committing unrelated user changes",
+    "asserting a cryptographic or GitHub signer identity for the requester"
+  ],
+  "effect": "Alternative 2 of restart-equivalence proposal approved for implementation with negative controls and independent review; reviewed-only clean qualification branch/commits authorized; M3/M4 candidate scopes approved and admission conditionally authorized only after all exact entry bindings are verified and admission recorded. No mission state changed by this authorization record."
+}

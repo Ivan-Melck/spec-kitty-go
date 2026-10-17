@@ -2,7 +2,6 @@ package productionruntime
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +10,7 @@ import (
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
 	journalrestore "github.com/spec-kitty/go-kitty3/internal/controljournal/v2/restore"
 	storegapdb "github.com/spec-kitty/go-kitty3/internal/controlstore/gapdb"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	sidecargapdb "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 )
 
@@ -23,7 +23,8 @@ func (p memoryObservationPort) Get(ctx context.Context, key string) (storegapdb.
 	return p.port.Get(ctx, key)
 }
 
-func TestReadOnlyObservationRealSidecarKeepsCurrentCoordinate(t *testing.T) {
+func realObservationConfig(t *testing.T) Config {
+	t.Helper()
 	binary := os.Getenv("SPEC_KITTY_WP13_GAPDBD")
 	if binary == "" {
 		t.Skip("set SPEC_KITTY_WP13_GAPDBD to the exact assertion-extension sidecar")
@@ -32,7 +33,7 @@ func TestReadOnlyObservationRealSidecarKeepsCurrentCoordinate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := os.MkdirTemp("/tmp", "spk-observe-")
+	root, err := os.MkdirTemp("", "spk-observe-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func TestReadOnlyObservationRealSidecarKeepsCurrentCoordinate(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := filepath.Join(root, "authority")
-	config := Config{
+	return Config{
 		ControlRoot: data, HostAuthorityID: "host-observe-real", AuthorityBindingOperationID: "operation-bind-observe-real",
 		M1AdoptionRecordPath:                 filepath.Join(repository, "docs", "programs", "evidence", "m1-adoption.json"),
 		AssertionExtensionAdoptionRecordPath: filepath.Join(repository, "docs", "programs", "evidence", "m1-assertion-extension-adoption.json"),
@@ -56,11 +57,65 @@ func TestReadOnlyObservationRealSidecarKeepsCurrentCoordinate(t *testing.T) {
 		MonitorInterval: 250 * time.Millisecond, CapabilityReadiness: absentReadinessSource{},
 		DecompositionProvider: refusingDecompositionProvider{}, CandidateVerifier: refusingCandidateVerifier{}, IntegrationGit: refusingIntegrationGit{},
 	}
+}
+
+func TestReadOnlyObservationRealSidecarKeepsCurrentCoordinate(t *testing.T) {
+	assertRealObservationAfterPublications(t, 0, 0)
+}
+
+func TestReadOnlyObservationRealSidecarAfterPublications(t *testing.T) {
+	t.Run("one_publication", func(t *testing.T) { assertRealObservationAfterPublications(t, 1, 0) })
+	t.Run("multiple_publications", func(t *testing.T) { assertRealObservationAfterPublications(t, 2, 0) })
+	t.Run("checkpoint_publications", func(t *testing.T) { assertRealObservationAfterPublications(t, 2, 1) })
+}
+
+func assertRealObservationAfterPublications(t *testing.T, count, checkpointEvery int) {
+	t.Helper()
+	config := realObservationConfig(t)
+	config.CheckpointEvery = checkpointEvery
 	host, err := Start(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = host.Close(t.Context()) })
+	initial := host.Status()
+	for index := 0; index < count; index++ {
+		missionID := journalv2.MissionID("mission-observe-left")
+		operationID := journalv2.OperationID("operation-observe-left")
+		if index != 0 {
+			missionID, operationID = "mission-observe-right", "operation-observe-right"
+		}
+		digest, err := journalv2.ReducerStateDigestV2([]byte(`{"definition":"observation-regression"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, err := mission.NewReadinessAuthorityStateV2(mission.ReadinessAuthorityStateInputV2{
+			ProjectID: "project-observe", MissionID: missionID, DefinitionRevision: "definition-observe", DefinitionDigest: digest,
+			Version: 1, Lifecycle: mission.MissionOpen, LastOperationID: operationID, ObservedAt: "2026-09-05T12:00:00Z",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := host.ExecuteReadiness(t.Context(), host.RuntimeEpochID(), mission.ReadinessAuthorityCommandV2{
+			SchemaVersion: mission.ReadinessAuthorityStateSchemaV2, OperationID: operationID, ProjectID: "project-observe", MissionID: missionID,
+			ActorID: "actor-observe", ProcessID: "process-observe", OriginatingRuntimeEpochID: host.RuntimeEpochID(),
+			DoctrineRevision: "doctrine-observe", ProfileRevision: "profile-observe", PolicyRevision: "policy-observe",
+			ObservedAt: "2026-09-05T12:00:00Z", EventType: mission.ReadinessEventCreatedV2, Updated: state,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	want := host.Status()
+	assertObservedMissionOperations(t, host.Progress(), count)
+	if count != 0 {
+		item, err := host.InspectOperation(t.Context(), "project-observe", "mission-observe-left", "operation-observe-left")
+		if err != nil || item.Family != "operation" || item.AggregateID != "operation-observe-left" {
+			t.Fatalf("live host could not inspect its bound operation: item=%+v err=%v", item, err)
+		}
+	}
+	if count != 0 && (want.ProjectionRevision <= initial.ProjectionRevision || want.ProjectionSHA256 == initial.ProjectionSHA256) {
+		t.Fatal("fixture did not publish a new product projection")
+	}
 	if err := host.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -69,10 +124,31 @@ func TestReadOnlyObservationRealSidecarKeepsCurrentCoordinate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read-only observation: %T %v", err, err)
 	}
-	defer observed.Close(t.Context())
+	t.Cleanup(func() { _ = observed.Close(t.Context()) })
 	got := observed.Status()
+	assertObservedMissionOperations(t, observed.Progress(), count)
 	if got.DatabaseID != want.DatabaseID || got.RuntimeEpochID != want.RuntimeEpochID || got.ProjectionRevision != want.ProjectionRevision || got.ProjectionSHA256 != want.ProjectionSHA256 {
 		t.Fatalf("observation changed coordinate: want=%+v got=%+v", want, got)
+	}
+	if count != 0 {
+		progress, err := observed.Progress().Mission("project-observe", "mission-observe-left")
+		if err != nil || !progress.Complete || progress.Lifecycle != "open" || progress.ProjectionRevision != want.ProjectionRevision {
+			t.Fatalf("durable mission publication was not observable: progress=%+v err=%v", progress, err)
+		}
+	}
+}
+
+func assertObservedMissionOperations(t *testing.T, service *ProgressService, count int) {
+	t.Helper()
+	for index := 0; index < count; index++ {
+		missionID, operationID := journalv2.MissionID("mission-observe-left"), "operation-observe-left"
+		if index != 0 {
+			missionID, operationID = "mission-observe-right", "operation-observe-right"
+		}
+		progress, err := service.Mission("project-observe", missionID)
+		if err != nil || len(progress.Operations) != 1 || progress.Operations[0].AggregateID != operationID {
+			t.Fatalf("mission operations omitted or crossed immutable membership: mission=%s operations=%+v err=%v", missionID, progress.Operations, err)
+		}
 	}
 }
 
@@ -90,24 +166,10 @@ func (p memoryObservationPort) ScanV2(ctx context.Context, request journalv2.Sca
 }
 
 func TestReadOnlyObservationDoesNotAdvanceProviderRevisionOrEpoch(t *testing.T) {
-	port := newMemoryAuthorityPort()
-	binding := AuthorityBindingV2{SchemaVersion: 2, HostAuthorityID: "host-binding", DatabaseID: "database-binding", AdmittedTupleSHA: storegapdb.AdmittedTupleSHA256, SidecarSHA: storegapdb.AdmittedSidecarSHA256, WireProtocol: storegapdb.AdmittedWireVersion, StorageProtocol: storegapdb.AdmittedStorageVersion, CreatedOperationID: "operation-bind"}
-	if err := ensureAuthorityBinding(t.Context(), port, binding, true); err != nil {
-		t.Fatal(err)
-	}
-	registry := journalv2.DefaultEventRegistryV2()
-	reducers := fixtureReducers(t, registry)
-	epoch := journalv2.RuntimeEpochID("epoch-observation")
-	recovered, err := journalrestore.RestoreV2(t.Context(), journalrestore.InputV2{Reader: emptyRecoveryReader{port}, EventRegistry: registry, Reducers: reducers, HostAuthorityID: binding.HostAuthorityID, PriorRuntimeEpochID: epoch, RecoveryAttemptID: "restore-observation-fixture", Budgets: journalrestore.DefaultBudgetsV2()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	current := runtimeCurrentV2{SchemaVersion: 2, RuntimeEpochID: epoch, HostAuthorityID: binding.HostAuthorityID, DatabaseID: binding.DatabaseID, RecoveredStoreRevision: 0, ProjectionSHA256: recovered.Playback().CanonicalProjectionDigest().String(), CreatedOperationID: "runtime-observation", RecoveryAttemptID: "restore-observation-fixture", Status: "ready"}
-	encoded, _ := json.Marshal(current)
-	canonical, _ := journalv2.CanonicalObject(encoded)
-	port.records[runtimeCurrentKey] = storegapdb.Record{Key: runtimeCurrentKey, Value: canonical, Revision: port.revision}
+	fixture := newObservationFixture(t)
+	port, epoch := fixture.port, fixture.epoch
 	before := port.revision
-	status, progress, _, err := restoreReadOnlyObservationWith(t.Context(), memoryObservationPort{port: port}, binding, registry, reducers, journalrestore.DefaultBudgetsV2(), func(context.Context, journalrestore.InputV2) (journalrestore.ResultV2, error) { return recovered, nil })
+	status, progress, _, err := restoreReadOnlyObservation(t.Context(), memoryObservationPort{port: port}, fixture.binding, fixture.registry, fixture.reducers, journalrestore.DefaultBudgetsV2())
 	if err != nil {
 		t.Fatal(err)
 	}

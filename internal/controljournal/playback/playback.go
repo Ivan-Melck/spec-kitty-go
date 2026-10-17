@@ -34,31 +34,22 @@ type ResultV1 struct {
 }
 
 func RunV1(input InputV1) (ResultV1, error) {
-	length, err := input.Journal.Len()
+	records, err := controljournal.SnapshotJournalV1WithinBounds(input.Journal, maxPlaybackEvents, maxPlaybackBytes)
 	if err != nil {
+		if refusal, ok := err.(controljournal.ValidationError); ok && refusal.Kind == controljournal.RefusalBudgetExceeded {
+			switch refusal.Field {
+			case "journal_snapshot_events":
+				return ResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "playback_events"}
+			case "journal_snapshot_bytes":
+				return ResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "playback_bytes"}
+			}
+		}
 		return ResultV1{}, err
 	}
-	encodedBytes := 0
-	var count int
+	count := len(records)
 	var terminal controljournal.StoredEventV1
-	for index := 0; index < length; index++ {
-		record, atErr := input.Journal.At(index)
-		if atErr != nil {
-			return ResultV1{}, atErr
-		}
-		if count == maxPlaybackEvents {
-			return ResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "playback_events"}
-		}
-		encoded, encodeErr := controljournal.EncodeEventEnvelopeV1(record.Envelope)
-		if encodeErr != nil {
-			return ResultV1{}, encodeErr
-		}
-		if len(encoded) > maxPlaybackBytes-encodedBytes {
-			return ResultV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "playback_bytes"}
-		}
-		encodedBytes += len(encoded)
-		terminal = record
-		count++
+	if count > 0 {
+		terminal = records[count-1]
 	}
 	projection, err := reducer.ApplyV1(input.Reducers, reducer.EmptyProjectionV1(), input.Journal)
 	if err != nil {

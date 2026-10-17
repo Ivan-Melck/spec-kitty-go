@@ -1,0 +1,98 @@
+//go:build spk_expiry_evidence
+
+package engine
+
+import (
+	"io"
+	"net"
+	"os"
+	"syscall"
+	"testing"
+	"time"
+)
+
+func TestSPKExpiryEvidenceGateFD(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "must-not-close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if conn := spkDuplicateExpiryEvidenceControl(int(file.Fd())); conn != nil {
+		conn.Close()
+		t.Fatal("regular file accepted as gate")
+	}
+	if _, err := file.Write([]byte("ownership descriptor intact")); err != nil {
+		t.Fatal("invalid gate closed borrowed original", err)
+	}
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(fds[0])
+	defer syscall.Close(fds[1])
+	conn := spkDuplicateExpiryEvidenceControl(fds[0])
+	if conn == nil {
+		t.Fatal("inherited Unix endpoint refused")
+	}
+	_ = conn.Close()
+	var stat syscall.Stat_t
+	if err := syscall.Fstat(fds[0], &stat); err != nil {
+		t.Fatal("gate closed original inherited descriptor", err)
+	}
+	t.Setenv("SPEC_KITTY_EXPIRY_GATE_FD", "invalid")
+	if spkOpenExpiryEvidenceControl() != nil {
+		t.Fatal("invalid environment armed gate")
+	}
+	if spkDuplicateExpiryEvidenceControl(-1) != nil {
+		t.Fatal("invalid descriptor armed gate")
+	}
+}
+
+func TestSPKExpiryEvidenceGate(t *testing.T) {
+	for _, mode := range []string{"release", "EOF", "malformed", "timeout", "unread_ack"} {
+		t.Run(mode, func(t *testing.T) {
+			writer, control := net.Pipe()
+			defer control.Close()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				spkRunExpiryEvidenceGate(writer, 500*time.Millisecond)
+			}()
+			if err := control.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			var marker [1]byte
+			if _, err := io.ReadFull(control, marker[:]); err != nil || marker[0] != 'H' {
+				t.Fatalf("missing acquired marker: %q %v", marker, err)
+			}
+			select {
+			case <-done:
+				t.Fatal("writer not held after acquisition")
+			default:
+			}
+			switch mode {
+			case "release", "unread_ack":
+				if _, err := control.Write([]byte{'R'}); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "release" {
+					if _, err := io.ReadFull(control, marker[:]); err != nil || marker[0] != 'A' {
+						t.Fatalf("release not acknowledged: %q %v", marker, err)
+					}
+				}
+			case "EOF":
+				_ = control.Close()
+			case "malformed":
+				if _, err := control.Write([]byte{'X'}); err != nil {
+					t.Fatal(err)
+				}
+			case "timeout":
+			}
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("gate failed to release")
+			}
+		})
+	}
+}

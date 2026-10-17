@@ -1,0 +1,8 @@
+{
+  "event": "completed",
+  "invocation_id": "01M4TKGYZVEDAT5W1N9AR3FZZ7",
+  "completed_at": "2026-10-13T12:48:11.741984+00:00",
+  "outcome": "done",
+  "closed_by": "agent",
+  "evidence_ref": "docs/parity/LATEST_MAIN.md"
+}

@@ -127,7 +127,7 @@ func TestRealGapDBMutationInitializesAndQueriesRemainPureAcrossRestart(t *testin
 	}
 	repository := repositoryRoot(t)
 	binary := buildBinary(t, repository, "./cmd/spec-kitty")
-	parent, err := os.MkdirTemp("/tmp", "spk-wp15-")
+	parent, err := os.MkdirTemp("", "spk-wp15-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestRealGapDBLostAcknowledgementRestartResumeAndConflict(t *testing.T) {
 	}
 	repository := repositoryRoot(t)
 	binary := buildBinary(t, repository, "./cmd/spec-kitty")
-	parent, err := os.MkdirTemp("/tmp", "spk-wp15-resume-")
+	parent, err := os.MkdirTemp("", "spk-wp15-resume-")
 	if err != nil {
 		t.Fatal(err)
 	}

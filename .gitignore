@@ -32,3 +32,5 @@
 .kittify/workspaces/
 kitty-ops/ops-index.jsonl
 bin/
+# Development-only upstream inventory tooling
+scripts/parity/__pycache__/

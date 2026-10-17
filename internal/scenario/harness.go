@@ -17,6 +17,7 @@ import (
 	"time"
 
 	journalv2 "github.com/spec-kitty/go-kitty3/internal/controljournal/v2"
+	"github.com/spec-kitty/go-kitty3/internal/execution"
 	"github.com/spec-kitty/go-kitty3/internal/handoff"
 	"github.com/spec-kitty/go-kitty3/internal/ids"
 	"github.com/spec-kitty/go-kitty3/internal/integration"
@@ -25,6 +26,70 @@ import (
 	sidecar "github.com/spec-kitty/go-kitty3/internal/sidecar/gapdb"
 	"github.com/spec-kitty/go-kitty3/internal/workspace"
 )
+
+// This collector observes ACKs, not plans or predicted command families. The
+// source ledger is filled only after the real typed command/startup succeeds.
+// No reads occur inside the observer or the closed startup barrier.
+type scenarioPublicationCollector struct {
+	mu       sync.Mutex
+	next     journalv2.PublicationBoundaryObserverV2
+	acks     []journalv2.AcknowledgedPublicationV2
+	initial  map[journalv2.OperationID]journalv2.AcknowledgedPublicationV2
+	accepted map[journalv2.PublicationID]string
+	recovery map[journalv2.OperationID]scenarioRecoveryCommand
+}
+
+type scenarioRecoveryCommand struct {
+	ExecutionRequest                *execution.ExecutionAuthorityRequestV2
+	WorkspaceRequest                *execution.WorkspaceEpochRebindRequestV2
+	Before, After                   execution.ExecutionSlotStateV2
+	BeforeWorkspace, AfterWorkspace *workspace.StateV2
+	WorkspaceRecordRevision         uint64
+}
+
+func (c *scenarioPublicationCollector) ObservePublicationBoundary(ctx context.Context, s journalv2.PublicationBoundarySnapshotV2) {
+	if s.Stage == journalv2.PublicationAckCreatedBeforeProjectionV2 && s.Ack != nil {
+		c.mu.Lock()
+		ack := *s.Ack
+		c.acks = append(c.acks, ack)
+		if ack.Plan().BindingCreate() != nil {
+			// Never replace the actual initial binding with a continuation.
+			if _, exists := c.initial[ack.Plan().OperationState().OperationID()]; !exists {
+				c.initial[ack.Plan().OperationState().OperationID()] = ack
+			}
+		}
+		c.mu.Unlock()
+	}
+	if c.next != nil {
+		c.next.ObservePublicationBoundary(ctx, s)
+	}
+}
+func (c *scenarioPublicationCollector) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.acks)
+}
+func (c *scenarioPublicationCollector) accept(id journalv2.OperationID, source string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, ack := range c.acks {
+		if ack.Plan().OperationState().OperationID() == id {
+			c.accepted[ack.PublicationID()] = source
+		}
+	}
+}
+func (c *scenarioPublicationCollector) acceptStartup(from int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, ack := range c.acks[from:] {
+		c.accepted[ack.PublicationID()] = "admitted-startup-success"
+	}
+}
+func (c *scenarioPublicationCollector) recordRecovery(id journalv2.OperationID, command scenarioRecoveryCommand) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.recovery[id] = command
+}
 
 const productionScenarioSchemaVersion uint32 = 1
 
@@ -99,6 +164,7 @@ type portableHarness struct {
 	crownClockOffset    time.Duration
 	observationRevision uint64
 	preserveRoot        bool
+	publications        *scenarioPublicationCollector
 }
 
 // absentCapabilityReadiness is an explicit, source-bound absence observer for
@@ -143,7 +209,7 @@ func newPortableHarness(t *testing.T, config ProductionConfig) *portableHarness 
 	if config.Seed == "" {
 		config.Seed = t.Name()
 	}
-	root, err := os.MkdirTemp("/tmp", "spk-scenario-")
+	root, err := os.MkdirTemp("", "spk-scenario-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +229,8 @@ func newPortableHarness(t *testing.T, config ProductionConfig) *portableHarness 
 		t: t, config: config, root: root, runtime: runtimeRoot,
 		data: filepath.Join(root, "authority"), git: git,
 	}
+	h.publications = &scenarioPublicationCollector{next: config.PublicationBoundaryObserver, initial: make(map[journalv2.OperationID]journalv2.AcknowledgedPublicationV2), accepted: make(map[journalv2.PublicationID]string), recovery: make(map[journalv2.OperationID]scenarioRecoveryCommand)}
+	h.config.PublicationBoundaryObserver = h.publications
 	h.start()
 	t.Cleanup(func() {
 		h.close()
@@ -206,6 +274,12 @@ func (h *portableHarness) start() {
 		MonitorInterval:             25 * time.Millisecond,
 		PublicationBoundaryObserver: h.config.PublicationBoundaryObserver,
 	}
+	if reconciler, ok := h.config.Reconciler.(interface {
+		setPublicationCollector(*scenarioPublicationCollector)
+	}); ok {
+		reconciler.setPublicationCollector(h.publications)
+	}
+	startupACKs := h.publications.count()
 	started := time.Now()
 	host, err := productionruntime.StartQualificationCandidate(h.t.Context(), config)
 	if err != nil {
@@ -217,11 +291,15 @@ func (h *portableHarness) start() {
 		h.t.Fatalf("incomplete typed readiness: %+v", status)
 	}
 	h.host = host
+	h.publications.acceptStartup(startupACKs)
 	h.observeMutation([]string{"runtime_host", "operation"}, fmt.Sprintf("runtime-host-start-%d", h.starts), started, err)
 	h.epochs = append(h.epochs, status.RuntimeEpochID)
 }
 
 func (h *portableHarness) observeMutation(families []string, operation string, started time.Time, err error) {
+	if err == nil && h != nil && h.publications != nil {
+		h.publications.accept(journalv2.OperationID(operation), "typed-command-success")
+	}
 	if h != nil && h.config.MutationObserver != nil {
 		after := uint64(0)
 		if h.host != nil {

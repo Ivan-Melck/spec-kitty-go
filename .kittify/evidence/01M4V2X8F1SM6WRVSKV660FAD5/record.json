@@ -1,0 +1,8 @@
+{
+  "event": "completed",
+  "invocation_id": "01M4V2X8F1SM6WRVSKV660FAD5",
+  "completed_at": "2026-10-13T17:24:43.852183+00:00",
+  "outcome": "done",
+  "closed_by": "agent",
+  "evidence_ref": "docs/parity/PROGRESS_SNAPSHOT_BOUNDARY.md"
+}

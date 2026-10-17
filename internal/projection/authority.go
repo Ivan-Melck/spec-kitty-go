@@ -109,28 +109,29 @@ func (s *SnapshotV2) CanonicalBytes() []byte {
 }
 
 type AuthorityV2 struct {
-	databaseID    journalv2.DatabaseID
-	registry      journalv2.EventRegistryV2
-	reducers      journalv2.ReducerSetV2
-	eventDigest   journalv2.Digest
-	reducerDigest journalv2.Digest
-	current       atomic.Pointer[SnapshotV2]
-	mu            sync.RWMutex
-	revision      uint64
-	durable       uint64
-	epoch         journalv2.RuntimeEpochID
-	liveToken     journalv2.Digest
-	states        map[string]playback.StateV2
-	views         map[string]AggregateViewV2
-	byFamily      map[string]map[string]struct{}
-	byProject     map[string]map[string]struct{}
-	byMission     map[string]map[string]struct{}
-	byWork        map[string]map[string]struct{}
-	pending       map[uint64]journalv2.AcknowledgedPublicationV2
-	notified      uint64
-	advanced      chan struct{}
-	watches       map[uint64]*watchStateV2
-	nextWatch     uint64
+	databaseID      journalv2.DatabaseID
+	registry        journalv2.EventRegistryV2
+	reducers        journalv2.ReducerSetV2
+	eventDigest     journalv2.Digest
+	reducerDigest   journalv2.Digest
+	current         atomic.Pointer[SnapshotV2]
+	mu              sync.RWMutex
+	revision        uint64
+	durable         uint64
+	epoch           journalv2.RuntimeEpochID
+	liveToken       journalv2.Digest
+	states          map[string]playback.StateV2
+	views           map[string]AggregateViewV2
+	operationScopes map[journalv2.OperationID]journalv2.Scope
+	byFamily        map[string]map[string]struct{}
+	byProject       map[string]map[string]struct{}
+	byMission       map[string]map[string]struct{}
+	byWork          map[string]map[string]struct{}
+	pending         map[uint64]journalv2.AcknowledgedPublicationV2
+	notified        uint64
+	advanced        chan struct{}
+	watches         map[uint64]*watchStateV2
+	nextWatch       uint64
 }
 
 func NewAuthorityV2(databaseID journalv2.DatabaseID, registry journalv2.EventRegistryV2, reducers journalv2.ReducerSetV2) (*AuthorityV2, error) {
@@ -150,6 +151,7 @@ func NewAuthorityV2(databaseID journalv2.DatabaseID, registry journalv2.EventReg
 	if err != nil {
 		return nil, err
 	}
+	a.operationScopes = make(map[journalv2.OperationID]journalv2.Scope)
 	a.current.Store(genesis)
 	return a, nil
 }
@@ -333,10 +335,22 @@ func (a *AuthorityV2) applyAcknowledgedLockedV2(ack journalv2.AcknowledgedPublic
 			return &ErrorV2{ErrorProjectionCorruptV2, "head_projection_digest"}
 		}
 	}
+	operationID := plan.OperationState().OperationID()
+	operationScope, known := a.operationScopes[operationID]
+	if binding := plan.BindingCreate(); binding != nil {
+		if binding.OperationID() != operationID || known && operationScope != binding.Scope() {
+			return &ErrorV2{ErrorIncompleteRevisionV2, "operation_membership"}
+		}
+		operationScope, known = binding.Scope(), true
+	}
+	if !known {
+		return &ErrorV2{ErrorIncompleteRevisionV2, "operation_membership"}
+	}
 	nextToken, err := journalv2.AdvanceProjectionPrefixV2(a.liveToken, ack.ProviderRevision(), ack.PublicationID(), ack.PlanDigest(), ack.RecordSetDigest())
 	if err != nil {
 		return err
 	}
+	a.operationScopes[operationID] = operationScope
 	for key, state := range resultByCoordinate {
 		a.states[key] = state
 		view := viewFromStateV2(a.databaseID, ack.ProviderRevision(), epoch, journalv2.Digest{}, state)
@@ -399,6 +413,10 @@ func (a *AuthorityV2) restore(epoch journalv2.RuntimeEpochID, recovered restore.
 		epoch == "" || !epochRelationValid {
 		return &ErrorV2{ErrorProjectionCorruptV2, "restore"}
 	}
+	operationScopes := make(map[journalv2.OperationID]journalv2.Scope)
+	for _, membership := range recovered.OperationMembership() {
+		operationScopes[membership.OperationID()] = membership.Scope()
+	}
 	next, err := buildSnapshotV2(a.databaseID, revision.CurrentRevision(), revision.DurableThroughRevision(), epoch, result.States(), result.CanonicalProjectionDigest())
 	if err != nil {
 		return err
@@ -414,7 +432,7 @@ func (a *AuthorityV2) restore(epoch journalv2.RuntimeEpochID, recovered restore.
 			liveStates := liveStatesV2(a.states)
 			liveDigest, digestErr := a.canonicalProjectionDigestV2(liveStates)
 			live, buildErr := buildSnapshotV2(a.databaseID, a.revision, a.durable, a.epoch, liveStates, liveDigest)
-			if digestErr != nil || buildErr != nil || next.projectionDigest != live.projectionDigest {
+			if digestErr != nil || buildErr != nil || next.projectionDigest != live.projectionDigest || !sameOperationScopesV2(operationScopes, a.operationScopes) {
 				return &ErrorV2{ErrorProjectionCorruptV2, "restore_same_revision_mismatch"}
 			}
 			a.current.Store(live)
@@ -427,6 +445,7 @@ func (a *AuthorityV2) restore(epoch journalv2.RuntimeEpochID, recovered restore.
 	a.liveToken = recovered.RollingPrefixDigest()
 	a.states = make(map[string]playback.StateV2, len(next.states))
 	a.views = make(map[string]AggregateViewV2, len(next.views))
+	a.operationScopes = operationScopes
 	a.byFamily = make(map[string]map[string]struct{})
 	a.byProject = make(map[string]map[string]struct{})
 	a.byMission = make(map[string]map[string]struct{})
@@ -459,9 +478,29 @@ func (a *AuthorityV2) canonicalProjectionDigestV2(states []playback.StateV2) (jo
 
 func (a *AuthorityV2) indexViewLockedV2(key string, view AggregateViewV2) {
 	addProjectionIndexV2(a.byFamily, string(view.Coordinate.Kind), key)
-	addProjectionIndexV2(a.byProject, string(view.Coordinate.Scope.ProjectID), key)
-	addProjectionIndexV2(a.byMission, string(view.Coordinate.Scope.MissionID), key)
-	addProjectionIndexV2(a.byWork, string(view.Coordinate.Scope.WorkID), key)
+	scope := membershipScopeV2(view, a.operationScopes)
+	addProjectionIndexV2(a.byProject, string(scope.ProjectID), key)
+	addProjectionIndexV2(a.byMission, string(scope.MissionID), key)
+	addProjectionIndexV2(a.byWork, string(scope.WorkID), key)
+}
+
+func sameOperationScopesV2(left, right map[journalv2.OperationID]journalv2.Scope) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for id, scope := range left {
+		if other, found := right[id]; !found || other != scope {
+			return false
+		}
+	}
+	return true
+}
+
+func membershipScopeV2(view AggregateViewV2, scopes map[journalv2.OperationID]journalv2.Scope) journalv2.Scope {
+	if view.Coordinate.Kind == "operation" {
+		return scopes[journalv2.OperationID(view.Coordinate.ID)]
+	}
+	return view.Coordinate.Scope
 }
 
 func addProjectionIndexV2(index map[string]map[string]struct{}, value, key string) {

@@ -435,7 +435,7 @@ func runExecutableProof(t *testing.T, root string, proof executableProof, repeti
 	command.Env = append(command.Env, "SPEC_KITTY_M2_DEFINITION_ID="+t.Name())
 	switch proof.Test {
 	case "TestV2AssertionCandidateSidecarQualification":
-		dataRoot, err := os.MkdirTemp("/tmp", "spk-wp14-cut-")
+		dataRoot, err := os.MkdirTemp("", "spk-wp14-cut-")
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -44,3 +44,18 @@ STATUS.log is append-only. Never rewrite or delete prior entries.
   and the program's recorded law.
 
 Everything else is yours to decide. When in doubt: decide, log it, keep building.
+
+## 2026-10-13 — confirmation and current scope
+
+The requester confirmed the conditional delegation and authorized M3/M4
+specification and recorded-admission preparation in the current conversation:
+"can you fix 1 and 3 i agree with you on 1". The original pending statement above
+is historical; the new [entry-work authorization](../decisions/2026-10-13-m3-m4-entry-authorization.json)
+records the exact proposal accepted, session attribution, immutable predecessor
+binding and unchanged safety rails.
+
+This confirmation removes the pending-delegation blocker. It does **not** itself
+admit or activate either mission, approve unverified external evidence, authorize
+qualification-proxy contract changes, or waive independent review/acceptance.
+The canonical program's §4.1 entry law remains mandatory. No independently
+verified GitHub/cryptographic identity is asserted by this local reference.

@@ -2110,19 +2110,15 @@ func (p *composedObservationPort) ObserveM1(ctx context.Context) (m1.Observation
 			return m1.Observation{}, err
 		}
 	}
-	journalLength, err := journal.Len()
+	records, err := controljournal.SnapshotJournalV1(journal)
 	if err != nil {
 		return m1.Observation{}, err
 	}
 	events := make(map[controljournal.EventID]struct {
 		revision uint64
 		event    controljournal.EventEnvelopeV1
-	}, journalLength)
-	for index := 0; index < journalLength; index++ {
-		record, recordErr := journal.At(index)
-		if recordErr != nil {
-			return m1.Observation{}, recordErr
-		}
+	}, len(records))
+	for _, record := range records {
 		events[record.Envelope.EventID] = struct {
 			revision uint64
 			event    controljournal.EventEnvelopeV1

@@ -1,4 +1,5 @@
 """Ordinary-user dispatch following a successful hosted namespace prerequisite."""
+import importlib.util
 import json
 import os
 import pathlib
@@ -50,11 +51,20 @@ def main():
         root = pathlib.Path(os.environ['ARTIFACT_DIR']) / 'userns-prerequisite'
         # This ordinary evidence write cannot administer policy. Exclusive output
         # also prevents a second dispatch from silently replacing the first.
+        # Compile the canonical source directly: neither read nor write an
+        # adjacent import cache outside the source candidate's binding.
+        spec = importlib.util.spec_from_file_location('userns_label', pathlib.Path(__file__).with_name('userns_label.py'))
+        labels = importlib.util.module_from_spec(spec)
+        exec(compile(spec.loader.get_source('userns_label'), spec.origin, 'exec'), labels.__dict__)
+        observation = labels.label_evidence()
+        # A selected profile can never turn an unavailable label into admission,
+        # including a change between command selection and evidence publication.
+        if os.environ['GO_KITTY_USERNS_MODE'] == 'selected' and observation['label'] != os.environ['GO_KITTY_USERNS_PROFILE'] + ' (unconfined)\n':
+            raise ValueError('selected ordinary label changed before dispatch')
         with (root / 'command-selection.json').open('x') as f:
-            with open('/proc/self/attr/current') as label:
-                json.dump({'uid': os.getuid(), 'gid': os.getgid(), 'label': label.read(512),
-                           'argv': argv, 'cwd': os.getcwd(), 'mode': os.environ['GO_KITTY_USERNS_MODE'],
-                           'profile': os.environ.get('GO_KITTY_USERNS_PROFILE', '')}, f)
+            json.dump({'uid': os.getuid(), 'gid': os.getgid(), **observation,
+                       'argv': argv, 'cwd': os.getcwd(), 'mode': os.environ['GO_KITTY_USERNS_MODE'],
+                       'profile': os.environ.get('GO_KITTY_USERNS_PROFILE', '')}, f)
             f.write('\n')
     os.execvpe(argv[0], argv, os.environ)
 

@@ -1,0 +1,8 @@
+{
+  "event": "completed",
+  "invocation_id": "01M4V00NH1S6C2MB37MMK7XXEN",
+  "completed_at": "2026-10-13T16:39:43.903402+00:00",
+  "outcome": "done",
+  "closed_by": "agent",
+  "evidence_ref": "docs/parity/USERNS_PORTABILITY.md"
+}

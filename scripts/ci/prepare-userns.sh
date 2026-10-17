@@ -1,7 +1,7 @@
 #!/bin/bash
 # Hosted ordinary-user prerequisite; only a fixed named profile may be added conditionally.
 set -eu
-exec /usr/bin/python3 -I - <<'PY'
+GO_KITTY_USERNS_SOURCE="$0" exec /usr/bin/python3 -I - <<'PY'
 import hashlib
 import json
 import os
@@ -323,8 +323,9 @@ def main():
         save('launcher.json', {'path': str(launcher), 'uid': info.st_uid, 'mode': oct(stat.S_IMODE(info.st_mode)),
             'sha256': hashlib.sha256(launcher.read_bytes()).hexdigest(), 'version': capture([str(launcher), '--version'])})
         parent = {name: os.readlink('/proc/self/ns/' + name) for name in ['net', 'pid', 'user']}
-        child = "import os,json; print(json.dumps({'pid':os.getpid(),'uid':os.getuid(),'gid':os.getgid(),'label':open('/proc/self/attr/current').read(),'namespaces':{n:os.readlink('/proc/self/ns/'+n) for n in ['net','pid','user']},'uid_map':open('/proc/self/uid_map').read(),'gid_map':open('/proc/self/gid_map').read(),'setgroups':open('/proc/self/setgroups').read(),'interfaces':open('/proc/net/dev').read()}))"
-        probe = capture([str(launcher), *FLAGS, '/usr/bin/python3', '-I', '-c', child])
+        label_helper = pathlib.Path(env['GO_KITTY_USERNS_SOURCE']).resolve(strict=True).with_name('userns_label.py')
+        child = "import importlib.util,os,json,sys; spec=importlib.util.spec_from_file_location('userns_label',sys.argv[1]); labels=importlib.util.module_from_spec(spec); exec(compile(spec.loader.get_source('userns_label'),spec.origin,'exec'),labels.__dict__); print(json.dumps({'pid':os.getpid(),'uid':os.getuid(),'gid':os.getgid(),**labels.label_evidence(),'namespaces':{n:os.readlink('/proc/self/ns/'+n) for n in ['net','pid','user']},'uid_map':open('/proc/self/uid_map').read(),'gid_map':open('/proc/self/gid_map').read(),'setgroups':open('/proc/self/setgroups').read(),'interfaces':open('/proc/net/dev').read()}))"
+        probe = capture([str(launcher), *FLAGS, '/usr/bin/python3', '-I', '-c', child, str(label_helper)])
         probe['parent_namespaces'] = parent
         save('probe.json', probe)
         # Read only relevant recent kernel denials; lack of audit access is evidence.
@@ -360,7 +361,7 @@ def main():
             result['policy_changed']=True
             result['policy_outcome']='added-for-ephemeral-job'
             selected="import os,json,sys; print(json.dumps({'selected_uid':os.getuid(),'selected_gid':os.getgid(),'selected_label':open('/proc/self/attr/current').read()}),flush=True); os.execv(sys.argv[1],sys.argv[1:])"
-            probe=capture(['/usr/bin/aa-exec','-i','-p',profile,'--','/usr/bin/python3','-I','-c',selected,str(launcher),*FLAGS,'/usr/bin/python3','-I','-c',child])
+            probe=capture(['/usr/bin/aa-exec','-i','-p',profile,'--','/usr/bin/python3','-I','-c',selected,str(launcher),*FLAGS,'/usr/bin/python3','-I','-c',child,str(label_helper)])
             save('selected-probe.json',probe)
             if probe['exit']!=0 or probe['bounded_stop']: raise ValueError('selected ordinary-user namespace probe failed')
             lines=probe['stdout'].splitlines()

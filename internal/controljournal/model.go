@@ -597,6 +597,52 @@ func ValidateJournalV1(registry EventRegistryV1, events []StoredEventV1) (Valida
 	return journal, nil
 }
 
+// SnapshotJournalV1 verifies the complete seal once, then returns an ordered,
+// defensive copy of the stored facts. The DTO slice is not reducer authority;
+// callers must still pass the validated journal to capability-consuming APIs.
+func SnapshotJournalV1(journal ValidatedJournalV1) ([]StoredEventV1, error) {
+	if !journal.isValid() {
+		return nil, InvalidValidatedJournalError{}
+	}
+	records := make([]StoredEventV1, len(journal.records))
+	for index, record := range journal.records {
+		record.Envelope = record.Envelope.clone()
+		records[index] = record
+	}
+	return records, nil
+}
+
+// SnapshotJournalV1WithinBounds verifies the whole seal before checking positive
+// bounds and the encoded prefix. No stored facts are copied until every record
+// fits. The result is defensive DTO data, not a new validated capability.
+func SnapshotJournalV1WithinBounds(journal ValidatedJournalV1, maxEvents, maxBytes int) ([]StoredEventV1, error) {
+	if !journal.isValid() {
+		return nil, InvalidValidatedJournalError{}
+	}
+	if maxEvents <= 0 {
+		return nil, ValidationError{Kind: RefusalInvalidValue, Field: "journal_snapshot_events"}
+	}
+	if maxBytes <= 0 {
+		return nil, ValidationError{Kind: RefusalInvalidValue, Field: "journal_snapshot_bytes"}
+	}
+	encodedBytes := 0
+	for index, record := range journal.records {
+		if index == maxEvents {
+			return nil, ValidationError{Kind: RefusalBudgetExceeded, Field: "journal_snapshot_events"}
+		}
+		encoded, err := EncodeEventEnvelopeV1(record.Envelope)
+		if err != nil {
+			return nil, err
+		}
+		if len(encoded) > maxBytes-encodedBytes {
+			return nil, ValidationError{Kind: RefusalBudgetExceeded, Field: "journal_snapshot_bytes"}
+		}
+		encodedBytes += len(encoded)
+	}
+	// Intentionally reverify the seal at the existing defensive-copy seam.
+	return SnapshotJournalV1(journal)
+}
+
 func (journal ValidatedJournalV1) Len() (int, error) {
 	if !journal.isValid() {
 		return 0, InvalidValidatedJournalError{}

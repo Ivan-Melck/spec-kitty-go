@@ -266,7 +266,8 @@ func verifySnapshotAgainstPrefix(reduced reducer.ProjectionV1, aggregates []Aggr
 }
 
 func analyzeCheckpointPrefix(journal controljournal.ValidatedJournalV1, forming controljournal.OperationID, runID controljournal.RunID) (checkpointPrefixAnalysisV1, error) {
-	length, err := journal.Len()
+	records, err := controljournal.SnapshotJournalV1(journal)
+	length := len(records)
 	if err != nil {
 		return checkpointPrefixAnalysisV1{}, err
 	}
@@ -278,11 +279,7 @@ func analyzeCheckpointPrefix(journal controljournal.ValidatedJournalV1, forming 
 		authority: AuthoritySummaryV1{RunID: runID},
 	}
 	digest := [32]byte{}
-	for index := 0; index < length; index++ {
-		record, atErr := journal.At(index)
-		if atErr != nil {
-			return checkpointPrefixAnalysisV1{}, atErr
-		}
+	for index, record := range records {
 		if forming != "" && record.Envelope.OperationID == forming {
 			return checkpointPrefixAnalysisV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "current_batch_checkpoint"}
 		}
@@ -442,7 +439,8 @@ func journalWatermark(journal controljournal.ValidatedJournalV1, forming control
 }
 
 func extendWatermark(prior WatermarkV1, journal controljournal.ValidatedJournalV1, forming controljournal.OperationID) (WatermarkV1, error) {
-	length, err := journal.Len()
+	records, err := controljournal.SnapshotJournalV1(journal)
+	length := len(records)
 	if err != nil {
 		return WatermarkV1{}, err
 	}
@@ -458,11 +456,7 @@ func extendWatermark(prior WatermarkV1, journal controljournal.ValidatedJournalV
 	if prior.EventCount > ^uint64(0)-uint64(length) {
 		return WatermarkV1{}, controljournal.ValidationError{Kind: controljournal.RefusalBudgetExceeded, Field: "event_prefix"}
 	}
-	for index := 0; index < length; index++ {
-		record, atErr := journal.At(index)
-		if atErr != nil {
-			return WatermarkV1{}, atErr
-		}
+	for _, record := range records {
 		if forming != "" && record.Envelope.OperationID == forming {
 			return WatermarkV1{}, controljournal.ValidationError{Kind: controljournal.RefusalInvalidTransition, Field: "current_batch_checkpoint"}
 		}

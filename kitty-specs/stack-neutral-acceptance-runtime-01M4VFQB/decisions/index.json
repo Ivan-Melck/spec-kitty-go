@@ -1,0 +1,29 @@
+{
+  "entries": [
+    {
+      "created_at": "2026-10-13T20:40:49.634694Z",
+      "decision_id": "01M4VFY5Q2K2CEZEKW7XEM6SSK",
+      "final_answer": null,
+      "input_key": "confirmed_m4_scope",
+      "mission_id": "01M4VFQBZWYDKMZP34EF6ZB4NQ",
+      "mission_slug": "stack-neutral-acceptance-runtime-01M4VFQB",
+      "opened_by": "cli",
+      "options": [
+        "Use the already-approved frozen M4 scope",
+        "Revise scope before authoring"
+      ],
+      "origin_flow": "specify",
+      "other_answer": false,
+      "question": "Confirm the unchanged Stack-Neutral Acceptance Runtime scope from the approved M4 candidate: eleven functional requirements, six success criteria, exact adopted M2 predecessor and ratified evidence contract, with independent implementation/review/acceptance gates.",
+      "rationale": "Redundant bootstrap confirmation: the requester already explicitly approved the frozen M4 scope in the preserved numbered approval (SHA-256 6be21e9bc174e6dbe302049676f17cad4cd971cf0fe236c808626cb8f44db32a), and entry admission has its separate reviewed decision. No new interview question was asked or answered. Preserve the cancellation; do not mint a new human answer, signer identity or approval.",
+      "resolved_at": "2026-10-13T20:41:59.245692Z",
+      "resolved_by": null,
+      "slot_key": "specify.intent.confirmed-m4-scope",
+      "status": "canceled",
+      "step_id": null,
+      "summary_json": null
+    }
+  ],
+  "mission_id": "01M4VFQBZWYDKMZP34EF6ZB4NQ",
+  "version": 1
+}

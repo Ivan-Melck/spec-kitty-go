@@ -254,6 +254,7 @@ func DefaultPolicy(modulePath string) (Policy, error) {
 				Name: TierComposition, Production: true,
 				Packages: []PackagePattern{
 					pkg("internal/controljournal/application"), pkg("internal/helpercmd"), pkg("internal/provingground"), pkg("cmd/spk-phase1-helper"),
+					pkg("cmd/expiry-host-functional"), // fixed E-only diagnostic composition, no ordinary dispatch
 					PackagePrefix(modulePath + "/internal/productionruntime"),
 					PackagePrefix(modulePath + "/cmd/spec-kitty"),
 				},

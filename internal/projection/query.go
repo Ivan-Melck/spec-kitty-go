@@ -93,7 +93,7 @@ func (a *AuthorityV2) List(query ListQueryV2) (ListResultV2, error) {
 	for key := range keys {
 		view := a.views[key]
 		view = a.attributedViewLockedV2(view, snapshot.projectionDigest)
-		if matchesListV2(view, query) {
+		if matchesListV2(view, query, a.operationScopes) {
 			matching = append(matching, view)
 		}
 	}
@@ -119,7 +119,7 @@ func (a *AuthorityV2) List(query ListQueryV2) (ListResultV2, error) {
 		items = append(items, cloneViewV2(view))
 		next = key
 	}
-	if len(items) < query.Limit || !hasMatchAfterV2(matching, query, next) {
+	if len(items) < query.Limit || !hasMatchAfterV2(matching, query, next, a.operationScopes) {
 		next = ""
 	}
 	result := ListResultV2{a.databaseID, a.revision, a.epoch, items, ""}
@@ -246,17 +246,17 @@ func listFilterDigestV2(query ListQueryV2) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
-func matchesListV2(view AggregateViewV2, query ListQueryV2) bool {
-	scope := view.Coordinate.Scope
+func matchesListV2(view AggregateViewV2, query ListQueryV2, operations map[journalv2.OperationID]journalv2.Scope) bool {
+	scope := membershipScopeV2(view, operations)
 	return (query.Family == "" || string(view.Coordinate.Kind) == query.Family) && (query.ProjectID == "" || scope.ProjectID == query.ProjectID) && (query.MissionID == "" || scope.MissionID == query.MissionID) && (query.WorkID == "" || scope.WorkID == query.WorkID)
 }
-func hasMatchAfterV2(views []AggregateViewV2, query ListQueryV2, after string) bool {
+func hasMatchAfterV2(views []AggregateViewV2, query ListQueryV2, after string, operations map[journalv2.OperationID]journalv2.Scope) bool {
 	if after == "" {
 		return false
 	}
 	for _, view := range views {
 		key, _ := journalv2.CanonicalAggregateCoordinate(view.Coordinate)
-		if string(key) > after && matchesListV2(view, query) {
+		if string(key) > after && matchesListV2(view, query, operations) {
 			return true
 		}
 	}

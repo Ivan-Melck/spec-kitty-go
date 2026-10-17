@@ -169,12 +169,14 @@ func executeConcurrentFirstIntegration(t *testing.T, h *portableHarness, request
 			if err != nil || replayed.Stage != integration.IntegrationAttemptCompletedV2 {
 				t.Fatalf("same-operation retry did not reach terminal replay: state=%+v err=%v", replayed, err)
 			}
+			h.publications.accept(request.OperationID, "typed-command-success")
 			completed = append(completed, replayed)
 			continue
 		}
 		if result.state.Stage != integration.IntegrationAttemptCompletedV2 || result.state.OperationID != request.OperationID {
 			t.Fatalf("concurrent integration returned incomplete authority: %+v", result.state)
 		}
+		h.publications.accept(request.OperationID, "typed-command-success")
 		completed = append(completed, result.state)
 	}
 	after := h.git.terminalEvidence()
@@ -325,11 +327,13 @@ func exerciseLeaseScopedReplacement(t *testing.T, h *portableHarness, active exe
 	if err != nil {
 		t.Fatal(err)
 	}
+	quarantineStarted := time.Now()
 	expired, err := h.host.ExecuteWorkspace(t.Context(), h.host.RuntimeEpochID(), execution.WorkspaceAuthorityRequestV2{
 		Kind: execution.WorkspaceQuarantineV2, OperationID: "operation-crown-quarantine-work-a",
 		OperationEventID: "event-operation-crown-quarantine-work-a", ExecutionEventID: "event-execution-crown-quarantine-work-a",
 		Governance: prior.execution.Governance, Contribution: quarantine, ObservedAt: expiredAt,
 	})
+	h.observeMutation([]string{"workspace", "execution_slot", "operation"}, "operation-crown-quarantine-work-a", quarantineStarted, err)
 	if err != nil {
 		t.Fatalf("expire and quarantine crown workspace: %v", err)
 	}
@@ -359,6 +363,7 @@ func exerciseLeaseScopedReplacement(t *testing.T, h *portableHarness, active exe
 	if restartEveryBoundary {
 		restartAfterDurableBoundary(t, h, active.ProjectID.String(), active.MissionID.String(), "crown-workspace-quarantined", true)
 	}
+	replacementStarted := time.Now()
 	replaced, err := h.host.ExecuteWork(t.Context(), h.host.RuntimeEpochID(), execution.ExecutionAuthorityRequestV2{
 		Kind: execution.ExecutionReplaceV2, OperationID: "operation-crown-replace-work-a",
 		ProjectID: expired.Execution.ProjectID, MissionID: expired.Execution.MissionID, WorkRevisionID: expired.Execution.WorkRevisionID, WorkID: expired.Execution.WorkID,
@@ -367,6 +372,7 @@ func exerciseLeaseScopedReplacement(t *testing.T, h *portableHarness, active exe
 		RuntimeEpochID: h.host.RuntimeEpochID(), Governance: governance,
 		OperationEventID: "event-operation-crown-replace-work-a", SlotEventID: "event-slot-crown-replace-work-a",
 	})
+	h.observeMutation([]string{"execution_slot", "operation"}, "operation-crown-replace-work-a", replacementStarted, err)
 	if err != nil {
 		t.Fatalf("replace expired crown execution: %v", err)
 	}
@@ -689,14 +695,15 @@ func rebindUnboundExecutionToCurrent(t *testing.T, h *portableHarness, state exe
 	}
 	operationID := journalv2.OperationID("operation-rebind-" + boundary)
 	started := time.Now()
-	result, err := h.host.ExecuteWork(t.Context(), h.host.RuntimeEpochID(), execution.ExecutionAuthorityRequestV2{
+	request := execution.ExecutionAuthorityRequestV2{
 		Kind: execution.ExecutionRebindV2, OperationID: operationID,
 		ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID,
 		RunID: state.RunID, ActorID: state.ActorID, ProcessID: state.ProcessID, LeaseID: state.LeaseID,
 		Generation: state.Generation, Fence: state.Fence, ObservedAt: observedAt, Deadline: deadline,
 		RuntimeEpochID: h.host.RuntimeEpochID(), Governance: governance,
 		OperationEventID: journalv2.EventID("event-operation-rebind-" + boundary), SlotEventID: journalv2.EventID("event-slot-rebind-" + boundary),
-	})
+	}
+	result, err := h.host.ExecuteWork(t.Context(), h.host.RuntimeEpochID(), request)
 	h.observeMutation([]string{"execution_slot", "operation"}, string(operationID), started, err)
 	if err != nil {
 		t.Fatalf("rebind execution after %s: %v", boundary, err)
@@ -704,6 +711,7 @@ func rebindUnboundExecutionToCurrent(t *testing.T, h *portableHarness, state exe
 	if result.State.RuntimeEpochID != h.host.RuntimeEpochID() || result.State.LeaseID != state.LeaseID || result.State.Generation != state.Generation || result.State.Fence != state.Fence || result.State.WorkspaceID != "" {
 		t.Fatalf("execution rebind after %s changed authority: before=%+v after=%+v", boundary, state, result.State)
 	}
+	h.publications.recordRecovery(operationID, scenarioRecoveryCommand{ExecutionRequest: &request, Before: state, After: result.State})
 	assertUniversalInvariants(t, h, state.ProjectID.String(), state.MissionID.String(), "rebound-"+boundary)
 	return result.State
 }
@@ -729,13 +737,14 @@ func rebindBoundWorkspaceToCurrent(t *testing.T, h *portableHarness, state execu
 	}
 	operationID := journalv2.OperationID("operation-workspace-rebind-" + boundary)
 	started := time.Now()
-	result, err := h.host.RebindWorkspaceRuntimeEpoch(t.Context(), h.host.RuntimeEpochID(), execution.WorkspaceEpochRebindRequestV2{
+	request := execution.WorkspaceEpochRebindRequestV2{
 		ProjectID: state.ProjectID, MissionID: state.MissionID, WorkRevisionID: state.WorkRevisionID, WorkID: state.WorkID,
 		ActorID: state.ActorID, ProcessID: state.ProcessID, OriginatingRuntimeEpochID: h.host.RuntimeEpochID(),
 		OperationID:      operationID,
 		OperationEventID: journalv2.EventID("event-operation-workspace-rebind-" + boundary), ExecutionEventID: journalv2.EventID("event-execution-workspace-rebind-" + boundary),
 		WorkspaceEventID: journalv2.EventID("event-workspace-rebind-" + boundary), Governance: state.Governance, ObservedAt: observedAt,
-	})
+	}
+	result, err := h.host.RebindWorkspaceRuntimeEpoch(t.Context(), h.host.RuntimeEpochID(), request)
 	h.observeMutation([]string{"execution_slot", "workspace", "operation"}, string(operationID), started, err)
 	if err != nil {
 		t.Fatalf("rebind workspace after %s: %v", boundary, err)
@@ -743,6 +752,7 @@ func rebindBoundWorkspaceToCurrent(t *testing.T, h *portableHarness, state execu
 	if result.Execution.RuntimeEpochID != h.host.RuntimeEpochID() || result.Workspace.Binding.RuntimeEpochID != h.host.RuntimeEpochID() || result.Execution.LeaseID != state.LeaseID || result.Execution.Generation != state.Generation || result.Execution.Fence != state.Fence || result.Workspace.Binding.WorkspaceID != workspaceState.Binding.WorkspaceID {
 		t.Fatalf("workspace rebind after %s changed authority: before_execution=%+v after=%+v", boundary, state, result)
 	}
+	h.publications.recordRecovery(operationID, scenarioRecoveryCommand{WorkspaceRequest: &request, Before: state, After: result.Execution, BeforeWorkspace: &workspaceState, AfterWorkspace: &result.Workspace, WorkspaceRecordRevision: recordRevision})
 	assertUniversalInvariants(t, h, state.ProjectID.String(), state.MissionID.String(), "rebound-"+boundary)
 	return result.Execution, result.Workspace, result.RecordRevision
 }

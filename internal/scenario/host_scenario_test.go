@@ -45,7 +45,7 @@ func TestTwoItemMissionRestartAfterEachDurableBoundary(t *testing.T) {
 	})
 	t.Run("restart-every-boundary", func(t *testing.T) {
 		restarted := runTwoItemMissionScenario(t, true)
-		if err := validateTerminalSemanticEquivalence(uninterrupted, restarted); err != nil {
+		if err := validateTerminalRestartEquivalence(uninterrupted, restarted); err != nil {
 			t.Fatalf("restart-every-boundary terminal semantics differ: %v\nuninterrupted=%+v\nrestarted=%+v", err, uninterrupted, restarted)
 		}
 	})
@@ -151,7 +151,6 @@ func continueTwoItemMissionScenario(t *testing.T, h *portableHarness, missionRes
 	if terminal.Lifecycle != "completed" || len(terminal.Running) != 0 || len(terminal.Reviews) != 2 || len(terminal.Acceptance) != 2 || len(terminal.Integration) != 2 {
 		t.Fatalf("incomplete terminal mission: lifecycle=%s revision=%s generation=%d total=%d running=%d reviews=%d acceptance=%d integration=%d projection=%d", terminal.Lifecycle, terminal.WorkRevisionID, terminal.Generation, terminal.TotalWork, len(terminal.Running), len(terminal.Reviews), len(terminal.Acceptance), len(terminal.Integration), terminal.ProjectionRevision)
 	}
-	semantic := semanticTerminalProgress(t, terminal, trackerEvidence, h.git.terminalEvidence(), operationEvidence)
 	terminalDigest := semanticProgressDigest(t, h, projectID, missionID)
 	assertUniversalInvariants(t, h, projectID, missionID, "two-items-terminal")
 	if !restartEveryBoundary {
@@ -163,7 +162,12 @@ func continueTwoItemMissionScenario(t *testing.T, h *portableHarness, missionRes
 		t.Fatalf("two-item restart changed terminal authority: before=%s after=%s", terminalDigest, got)
 	}
 	assertUniversalInvariants(t, h, projectID, missionID, "two-items-terminal-restored")
-	return semantic
+	// The final admission may publish receipts too: freeze only after it.
+	final, err := h.host.Progress().Mission(journalv2.ProjectID(projectID), journalv2.MissionID(missionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return provenTerminalProgress(t, h, final, trackerEvidence, h.git.terminalEvidence(), operationEvidence)
 }
 
 type terminalTrackerEvidence struct {
@@ -351,10 +355,15 @@ type scenarioEffectRecovery struct {
 // bypassing it: a durable applied observation is adopted into the fresh epoch,
 // attributed, and resolved while the ordinary command barrier remains closed.
 type scenarioEffectReconciler struct {
-	mu      sync.Mutex
-	pending *scenarioEffectRecovery
-	result  execution.EffectAuthorityResultV2
-	err     error
+	mu           sync.Mutex
+	pending      *scenarioEffectRecovery
+	result       execution.EffectAuthorityResultV2
+	err          error
+	publications *scenarioPublicationCollector
+}
+
+func (r *scenarioEffectReconciler) setPublicationCollector(c *scenarioPublicationCollector) {
+	r.publications = c
 }
 
 func (r *scenarioEffectReconciler) arm(recovery scenarioEffectRecovery) {
@@ -383,18 +392,20 @@ func (r *scenarioEffectReconciler) Reconcile(ctx context.Context, commands *prod
 		r.err = err
 		return err
 	}
-	rebound, err := commands.ExecuteWork(ctx, execution.ExecutionAuthorityRequestV2{
+	rebindRequest := execution.ExecutionAuthorityRequestV2{
 		Kind: execution.ExecutionRebindV2, OperationID: journalv2.OperationID("operation-rebind-effect-observation-" + recovery.workID.String()),
 		ProjectID: recovery.execution.ProjectID, MissionID: recovery.execution.MissionID, WorkRevisionID: recovery.execution.WorkRevisionID, WorkID: recovery.execution.WorkID,
 		RunID: recovery.execution.RunID, ActorID: recovery.execution.ActorID, ProcessID: recovery.execution.ProcessID, LeaseID: recovery.execution.LeaseID,
 		Generation: recovery.execution.Generation, Fence: recovery.execution.Fence, ObservedAt: recovery.observedAt, Deadline: deadline,
 		RuntimeEpochID: commands.RuntimeEpochID(), Governance: recovery.governance,
 		OperationEventID: journalv2.EventID("event-operation-rebind-effect-observation-" + recovery.workID.String()), SlotEventID: journalv2.EventID("event-slot-rebind-effect-observation-" + recovery.workID.String()),
-	})
+	}
+	rebound, err := commands.ExecuteWork(ctx, rebindRequest)
 	if err != nil {
 		r.err = err
 		return err
 	}
+	r.publications.recordRecovery(rebindRequest.OperationID, scenarioRecoveryCommand{ExecutionRequest: &rebindRequest, Before: recovery.execution, After: rebound.State})
 	request := execution.EffectAuthorityRequestV2{
 		Action: execution.EffectAdoptRecoveryV2, Intent: recovery.intent, RuntimeEpochID: commands.RuntimeEpochID(), ExecutionSlot: rebound.State,
 		ObservedAt: recovery.observedAt.Add(time.Second), OperationEventID: journalv2.EventID("event-effect-startup-adopt-operation-" + recovery.workID.String()), EffectEventID: journalv2.EventID("event-effect-startup-adopt-" + recovery.workID.String()),
@@ -590,6 +601,7 @@ type terminalSemanticProgress struct {
 	Repository     repositoryTerminalEvidence
 	SemanticSHA256 string
 	Operations     []terminalOperationEvidence
+	History        *terminalPublicationHistory `json:"-"`
 }
 
 type terminalOperationEvidence struct {

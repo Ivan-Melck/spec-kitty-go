@@ -206,12 +206,16 @@ func validateProcessIdentityWith(processes processAPI, expected ProcessIdentity)
 }
 
 func currentExecutableIdentity() (ProcessIdentity, error) {
+	return currentExecutableIdentityWithReport(nil)
+}
+
+func currentExecutableIdentityWithReport(report *expiryCleanupReport) (ProcessIdentity, error) {
 	pid := os.Getpid()
 	start, err := processStartTicks(pid)
 	if err != nil {
 		return ProcessIdentity{}, failure(FailureIdentityUnprovable, "proxy_identity", "proxy process start is unavailable", err)
 	}
-	identity, digest, err := processExecutable(pid)
+	identity, digest, err := processExecutableWithReport(pid, report)
 	if err != nil {
 		return ProcessIdentity{}, failure(FailureIdentityUnprovable, "proxy_identity", "proxy executable is unavailable", err)
 	}
@@ -269,6 +273,15 @@ func (p *ResponseDropProxy) handle(product *net.UnixConn) {
 		delete(p.connections, product)
 		p.mu.Unlock()
 	}()
+	for p.relayUnaryExchange(product) {
+		// A new complete frame is a new exchange, never a replay of the prior one.
+	}
+}
+
+// relayUnaryExchange keeps product connection reuse separate from the one-shot
+// selected cut. Each request is independently bounded, attributed and sent once.
+// A false return closes the product connection on cut, refusal or EOF.
+func (p *ResponseDropProxy) relayUnaryExchange(product *net.UnixConn) (forwarded bool) {
 	_ = product.SetDeadline(time.Now().Add(p.config.ReadTimeout))
 	requestBytes, err := readWireFrame(product, storegapdb.MaxWireFrameBytes)
 	if err != nil {
@@ -300,6 +313,20 @@ func (p *ResponseDropProxy) handle(product *net.UnixConn) {
 		return
 	}
 	defer daemon.Close()
+	// Register the relay before observation/publication so Close interrupts its
+	// read as well as the product read. If shutdown won the race, send nothing.
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return
+	}
+	p.connections[daemon] = struct{}{}
+	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		delete(p.connections, daemon)
+		p.mu.Unlock()
+	}()
 	if err := validateConnectedDaemon(daemon, p.config.ExpectedDaemon); err != nil {
 		p.recordError(err)
 		return
@@ -339,7 +366,9 @@ func (p *ResponseDropProxy) handle(product *net.UnixConn) {
 	}
 	if err := writeWireFrame(product, responseBytes); err != nil {
 		p.recordError(failure(FailureProtocol, "proxy_forward", "ordinary response forwarding failed", err))
+		return
 	}
+	return true
 }
 
 type wireRequest struct {

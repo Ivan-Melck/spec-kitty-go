@@ -28,7 +28,7 @@ func TestEveryDeclaredNativeOperationCrossesRealHostDomainValidation(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	parent, err := os.MkdirTemp("/tmp", "spk-wp15-real-host-")
+	parent, err := os.MkdirTemp("", "spk-wp15-real-host-")
 	if err != nil {
 		t.Fatal(err)
 	}

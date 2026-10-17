@@ -80,6 +80,11 @@ func (l *Lifecycle) BindOwnerStartupEpochV1(epoch controljournal.RuntimeEpochID)
 	if l == nil {
 		return OwnerStartupProofV1{}, failure(FailureOwnership, "bind_owner_epoch", "lifecycle authority is absent", nil)
 	}
+	work, err := l.beginExpiryWork()
+	if err != nil {
+		return OwnerStartupProofV1{}, err
+	}
+	defer l.finishExpiryWork(work)
 	l.mu.Lock()
 	if l.stopped || !l.provenance.Readiness.Admitted || !l.provenance.Readiness.ProductRecovered ||
 		!l.provenance.Readiness.ReadyForProductRecovery || l.provenance.SchemaVersion != 1 {
@@ -89,7 +94,7 @@ func (l *Lifecycle) BindOwnerStartupEpochV1(epoch controljournal.RuntimeEpochID)
 	provenance := l.provenance
 	l.mu.Unlock()
 
-	supervisor, err := currentExecutableIdentity()
+	supervisor, err := currentExecutableIdentityWithReport(work.cleanupReport())
 	if err != nil {
 		return OwnerStartupProofV1{}, err
 	}
