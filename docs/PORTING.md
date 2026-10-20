@@ -28,17 +28,18 @@ equality of hashes that depend on Python source files.
 
 ## Reference material (local, not committed)
 
-Scratch root `SCRATCH=/tmp/claude-1000/-home-user-Documents-code-spec-kitty-redesign/664548cd-9b83-4356-9286-3ed140fe95e0/scratchpad`
+Reference root `REF=$HOME/.cache/spec-kitty-parity`. Recreate the upstream
+checkout and oracle with `scripts/setup-reference.sh ../spec-kitty`.
 
 | What | Where |
 |---|---|
-| Upstream source (read-only) | `$SCRATCH/upstream` (`src/specify_cli`, `src/charter`, `src/runtime`, `src/kernel`, `packs/built-in`) |
-| **Oracle** (real wheel install) | `$SCRATCH/oracle-spec-kitty` — use this one; `$SCRATCH/venv` is an editable install that behaves differently (local template mode) |
-| External status reducer package | `$SCRATCH/formats/wheelvenv/lib/python3.13/site-packages/spec_kitty_events` |
-| Full command tree (276 paths) | `$SCRATCH/inventory/cli-tree.md`, `cli-tree.json`, raw help in `inventory/help/*.txt` |
-| Template invocations / priority | `$SCRATCH/inventory/template-invocations.md`, `priority.md` |
-| On-disk formats (very detailed) | `$SCRATCH/inventory/formats.md` |
-| End-to-end oracle trace | `$SCRATCH/trace/TRACE.md`, snapshots in `$SCRATCH/trace/snapshots/` |
+| Upstream source (read-only) | `$REF/upstream` (`src/specify_cli`, `src/charter`, `src/runtime`, `src/kernel`, `packs/built-in`) |
+| **Oracle** (real wheel install) | `$REF/oracle-bin/spec-kitty`. Never use an editable install: it runs init in local template mode and writes extra files |
+| External status reducer package | `$REF/oracle-venv/lib/python3.13/site-packages/spec_kitty_events` |
+| Full command tree (276 paths) | `$REF/inventory/cli-tree.md`, `cli-tree.json`, raw help in `inventory/help/*.txt` |
+| Template invocations / priority | `$REF/inventory/template-invocations.md`, `priority.md` |
+| On-disk formats (very detailed) | `$REF/inventory/formats.md` |
+| End-to-end workflow | Summary in `$REF/reports/a6a7fcad1f30f0414.md`; the exact command sequence is in `$REF/trace/old-trace-commands.sh` (the recorded TRACE.md was lost; re-run steps against the oracle when you need exact output) |
 
 Always run the oracle with an isolated `HOME` (it writes global files on every
 invocation) and `SPEC_KITTY_NO_UPGRADE_CHECK=1`.
@@ -94,7 +95,7 @@ Domain and command packages live under `internal/<area>/...`.
   `SPEC_KITTY_ORACLE` points at the oracle:
 
   ```sh
-  SPEC_KITTY_ORACLE=$SCRATCH/oracle-spec-kitty go test ./...
+  SPEC_KITTY_ORACLE=$REF/oracle-bin/spec-kitty go test ./...
   ```
 
   `Pair.Compare` diffs exit code + normalized stdout; `Pair.CompareTree`
