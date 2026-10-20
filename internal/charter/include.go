@@ -27,7 +27,7 @@ var includeFields = map[dct.Kind][]fieldSpec{
 	dct.Styleguide:   {{"title", "Title"}, {"scope", "Scope"}, {"principles", "Principles"}},
 	dct.Toolguide:    {{"title", "Title"}, {"tool", "Tool"}, {"summary", "Summary"}},
 	dct.Paradigm:     {{"name", "Name"}, {"summary", "Summary"}},
-	dct.Procedure:    {{"name", "Name"}, {"purpose", "Purpose"}, {"steps", "Steps"}},
+	dct.Procedure:    {{"name", "Name"}, {"purpose", "Purpose"}, {"entry_condition", "Entry condition"}, {"exit_condition", "Exit condition"}, {"steps", "Steps"}},
 	dct.AgentProfile: {{"name", "Name"}, {"purpose", "Purpose"}, {"roles", "Roles"}},
 }
 
@@ -80,7 +80,7 @@ func renderArtifactInclude(k dct.Kind, a *dct.Artifact) string {
 		}
 	}
 	lines = append(lines, "    Full artifact:")
-	for _, l := range strings.Split(jsonx.Dumps(a.Data, jsonx.Options{Indent: 2, SortKeys: true}), "\n") {
+	for _, l := range strings.Split(jsonx.Dumps(withModelDefaults(k, a.Data), jsonx.SortedPretty), "\n") {
 		lines = append(lines, "      "+l)
 	}
 	return strings.Join(lines, "\n")
@@ -210,4 +210,58 @@ func profileActivated(root, id string) bool {
 		return true
 	}
 	return act.Activated(dct.AgentProfile).Has(id)
+}
+
+// withModelDefaults adds the list defaults the upstream pydantic models
+// materialise when dumping (best effort for the common kinds).
+func withModelDefaults(k dct.Kind, data *jsonx.Object) *jsonx.Object {
+	d := data.Clone()
+	setDefault := func(o *jsonx.Object, key string) {
+		if !o.Has(key) {
+			o.Set(key, []any{})
+		}
+	}
+	switch k {
+	case dct.Directive:
+		setDefault(d, "references")
+		setDefault(d, "explicit_allowances")
+	case dct.Paradigm, dct.Toolguide, dct.Styleguide:
+		setDefault(d, "references")
+	case dct.Procedure:
+		setDefault(d, "applies_to_languages")
+		setDefault(d, "references")
+		setDefault(d, "anti_patterns")
+	case dct.Tactic:
+		setDefault(d, "applies_to_languages")
+		setDefault(d, "references")
+		setDefault(d, "failure_modes")
+		for _, st := range d.GetList("steps") {
+			if o, ok := st.(*jsonx.Object); ok {
+				setDefault(o, "examples")
+				setDefault(o, "references")
+			}
+		}
+	case dct.AgentProfile:
+		for _, key := range []string{"capabilities", "mode-defaults", "applies_to_languages", "directive-references", "tactic-references", "toolguide-references", "styleguide-references"} {
+			setDefault(d, key)
+		}
+		for _, kv := range [][2]any{{"description", ""}, {"schema-version", "1.0"}, {"routing-priority", 50}, {"max-concurrent-tasks", 5}, {"initialization-declaration", ""}, {"sentinel", false}} {
+			if !d.Has(kv[0].(string)) {
+				d.Set(kv[0].(string), kv[1])
+			}
+		}
+		if sp := d.GetObject("specialization"); sp != nil {
+			for _, key := range []string{"secondary-awareness", "avoidance-boundary", "success-definition"} {
+				if !sp.Has(key) {
+					sp.Set(key, "")
+				}
+			}
+		}
+		if c := d.GetObject("collaboration"); c != nil {
+			for _, key := range []string{"handoff-to", "handoff-from", "works-with", "output-artifacts", "operating-procedures", "canonical-verbs"} {
+				setDefault(c, key)
+			}
+		}
+	}
+	return d
 }

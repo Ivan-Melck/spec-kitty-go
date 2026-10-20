@@ -34,9 +34,9 @@ func LoadBundle(root string) *jsonx.Object {
 // GovernanceCharterConfig).
 type Selection struct {
 	Paradigms, Directives, Tactics, Styleguides, Toolguides, Procedures []string
-	AvailableTools                                                     []string
-	TemplateSet                                                        string
-	AuthorityPaths, GovernanceReferences                               []any
+	AvailableTools                                                      []string
+	TemplateSet                                                         string
+	AuthorityPaths, GovernanceReferences                                []any
 }
 
 func strList(v any) []string {

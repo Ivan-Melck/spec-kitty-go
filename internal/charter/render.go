@@ -15,10 +15,10 @@ const noneLabel = "(none)"
 
 // CompactInput feeds RenderCompact.
 type CompactInput struct {
-	Action                                                            string
+	Action                                                           string
 	Directives, Tactics, Styleguides, Toolguides, Procedures, Assets []string
-	Profile                                                           *dct.Profile
-	SuppressResolver                                                  bool
+	Profile                                                          *dct.Profile
+	SuppressResolver                                                 bool
 }
 
 // SectionAnchors extracts ATX heading texts (ordered, deduplicated).

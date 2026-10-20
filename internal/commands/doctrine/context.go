@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
@@ -74,7 +75,7 @@ func runCharterContext(ctx *cli.Context) error {
 			jsonOut(ctx.Stdout, jsonx.NewObject("result", "success", "success", true, "include", sel, "context", text, "text", text), jsonx.Pretty)
 			return nil
 		}
-		cprintRaw(ctx.Stdout, text)
+		cprintRaw(ctx.Stdout, strings.TrimSuffix(text, "\n"))
 		return nil
 	}
 	if !ctx.IsSet("action") {
