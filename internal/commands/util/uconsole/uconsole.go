@@ -8,7 +8,6 @@ import (
 	"io"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 )
@@ -62,37 +61,6 @@ func Wrap(s string, width int) string {
 		out = append(out, wrapLine(line, width)...)
 	}
 	return strings.Join(out, "\n")
-}
-
-func wrapLine(line string, width int) []string {
-	if utf8.RuneCountInString(line) <= width {
-		return []string{line}
-	}
-	// Preserve leading indentation on the first line only (rich behaviour).
-	words := strings.Split(line, " ")
-	var lines []string
-	cur := ""
-	curLen := 0
-	for i, w := range words {
-		wl := utf8.RuneCountInString(w)
-		switch {
-		case i == 0:
-			cur, curLen = w, wl
-		case curLen+1+wl <= width:
-			cur += " " + w
-			curLen += 1 + wl
-		default:
-			lines = append(lines, strings.TrimRight(cur, " "))
-			cur, curLen = w, wl
-		}
-		for curLen > width {
-			r := []rune(cur)
-			lines = append(lines, string(r[:width]))
-			cur = string(r[width:])
-			curLen = len(r) - width
-		}
-	}
-	return append(lines, cur)
 }
 
 // Print writes markup-stripped, wrapped text plus a newline (console.print).
