@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "mission_slug": "calc-ops-01M54Y16",
+  "mission_id": "01M54Y16550EHN17T75926T0NP",
+  "mission_branch": "kitty/mission-calc-ops-01M54Y16",
+  "target_branch": "feat/calc-ops",
+  "lanes": [
+    {
+      "lane_id": "lane-a",
+      "wp_ids": [
+        "WP01"
+      ],
+      "write_scope": [
+        "src/calc.py",
+        "tests/test_subtract.py"
+      ],
+      "predicted_surfaces": [],
+      "depends_on_lanes": [],
+      "parallel_group": 0
+    },
+    {
+      "lane_id": "lane-b",
+      "wp_ids": [
+        "WP02"
+      ],
+      "write_scope": [
+        "src/calc_multiply.py",
+        "tests/test_multiply.py"
+      ],
+      "predicted_surfaces": [],
+      "depends_on_lanes": [
+        "lane-a"
+      ],
+      "parallel_group": 1
+    }
+  ],
+  "computed_at": "2026-10-17T12:40:20.852324+00:00",
+  "computed_from": "dependency_graph+ownership",
+  "planning_artifact_wps": [],
+  "planning_commit_sha": "e679ed7564e7d0b20650ae6f28def94c5d593db9"
+}
