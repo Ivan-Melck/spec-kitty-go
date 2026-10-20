@@ -67,16 +67,19 @@ func (p *Pair) CompareTree(rel string, contents bool, ignore ...string) {
 	p.T.Helper()
 	gr, or := filepath.Join(p.Go.Dir, rel), filepath.Join(p.Oracle.Dir, rel)
 	gf, of := filter(Files(gr), ignore), filter(Files(or), ignore)
-	if strings.Join(gf, "\n") != strings.Join(of, "\n") {
-		p.T.Errorf("tree %s differs (oracle vs go):\n%s", rel, Diff(strings.Join(of, "\n"), strings.Join(gf, "\n")))
+	// File names may embed run-specific ids (mission mid8s): compare them
+	// normalized.
+	gn, on := NormalizeValues(strings.Join(gf, "\n")), NormalizeValues(strings.Join(of, "\n"))
+	if gn != on {
+		p.T.Errorf("tree %s differs (oracle vs go):\n%s", rel, Diff(on, gn))
 		return
 	}
 	if !contents {
 		return
 	}
-	for _, f := range gf {
+	for i, f := range gf {
 		gb, _ := os.ReadFile(filepath.Join(gr, f))
-		ob, _ := os.ReadFile(filepath.Join(or, f))
+		ob, _ := os.ReadFile(filepath.Join(or, of[i]))
 		gn, on := p.Go.Normalize(string(gb)), p.Oracle.Normalize(string(ob))
 		if gn != on {
 			p.T.Errorf("file %s differs:\n%s", filepath.Join(rel, f), Diff(on, gn))
