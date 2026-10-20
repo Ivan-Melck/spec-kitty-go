@@ -372,18 +372,20 @@ func FormatFloat(f float64) string {
 	if f == math.Trunc(f) && math.Abs(f) < 1e16 {
 		return strconv.FormatFloat(f, 'f', 1, 64)
 	}
-	s := strconv.FormatFloat(f, 'g', -1, 64)
-	if strings.Contains(s, "e") {
-		// Python uses e+XX / e-XX with at least two exponent digits.
-		mant, exp, _ := strings.Cut(s, "e")
-		sign := exp[0]
-		digits := exp[1:]
-		if len(digits) < 2 {
-			digits = "0" + digits
-		}
-		return mant + "e" + string(sign) + digits
+	// Python repr: shortest round-trip digits, fixed notation when the
+	// decimal exponent is in [-4, 16), scientific otherwise.
+	e := strconv.FormatFloat(f, 'e', -1, 64)
+	mant, exp, _ := strings.Cut(e, "e")
+	x, _ := strconv.Atoi(exp)
+	if x >= -4 && x < 16 {
+		return strconv.FormatFloat(f, 'f', -1, 64)
 	}
-	return s
+	sign := exp[0]
+	digits := strings.TrimLeft(exp[1:], "0")
+	if len(digits) < 2 {
+		digits = strings.Repeat("0", 2-len(digits)) + digits
+	}
+	return mant + "e" + string(sign) + digits
 }
 
 // QuoteString renders a JSON string the way Python does.
