@@ -169,9 +169,13 @@ func LoadRepository(k Kind, dirs LayerDirs) *Repository {
 			}
 			data := o
 			if base, ok := builtIn[id]; ok {
-				data = base.Data.Clone()
-				for _, kv := range o.Pairs() {
-					data.Set(kv.Key, kv.Value)
+				if k == AgentProfile {
+					data = deepMerge(base.Data, o)
+				} else {
+					data = base.Data.Clone()
+					for _, kv := range o.Pairs() {
+						data.Set(kv.Key, kv.Value)
+					}
 				}
 			}
 			if !languageMatch(data, dirs.Languages) {
@@ -275,4 +279,20 @@ func BuiltInRel(p string) string {
 		return ""
 	}
 	return path.Clean(filepath.ToSlash(rel))
+}
+
+// deepMerge recursively merges override into a clone of base (mappings
+// merge key-wise, everything else replaces).
+func deepMerge(base, override *jsonx.Object) *jsonx.Object {
+	out := base.Clone()
+	for _, kv := range override.Pairs() {
+		if bo, ok := out.GetObject(kv.Key), true; ok && bo != nil {
+			if oo, ok := kv.Value.(*jsonx.Object); ok {
+				out.Set(kv.Key, deepMerge(bo, oo))
+				continue
+			}
+		}
+		out.Set(kv.Key, kv.Value)
+	}
+	return out
 }
