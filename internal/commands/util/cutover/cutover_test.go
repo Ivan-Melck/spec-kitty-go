@@ -41,7 +41,7 @@ func corpus(s *testkit.Sandbox) {
 	mission(s, "j-nometa", "", claim("01", "WP01", shell), nil)
 	mission(s, "k-annotation", "\ufeff"+`{"mission_id": "M"}`, `{"kind": "inner_state_changed", "event_id": "01KZ0000000000000000000099", "wp_id": "WP01", "at": "2026-01-01T00:00:00+00:00", "mission_slug": "k", "actor": "t", "delta": {"agent": "x"}}`+"\n", map[string]string{"tasks": "not a dir"})
 	mission(s, "l-stamped", `{"mission_id": "M", "status_phase": 2}`, claim("01", "WP01", shell), map[string]string{"tasks/WP01-x.md": "---\nwork_package_id: WP01\n---\n"})
-	s.WriteFile("changed.txt",strings.Join([]string{
+	s.WriteFile("changed.txt", strings.Join([]string{
 		"README.md", "kitty-specs/a-noid/meta.json", "kitty-specs/b-noruntime/spec.md", "kitty-specs/c-exempt/x",
 		"kitty-specs/d-accepted/x", "  kitty-specs/e-phase-bad/x  ", "kitty-specs/f-dupkeys/x", "kitty-specs/g-legacy/x",
 		"kitty-specs/h-malformed-terminal/x", "kitty-specs/i-numbered/x", "kitty-specs/j-nometa/x", "kitty-specs/k-annotation/x", "kitty-specs/l-stamped/x",
