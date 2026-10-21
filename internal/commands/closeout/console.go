@@ -5,6 +5,8 @@ import (
 	"io"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // tracker is cli.StepTracker (rendered as a rich Tree).
@@ -107,9 +109,14 @@ func simpleTable(w io.Writer, title string, headers []string, rows [][]string, r
 		total += wd + 2
 	}
 	if title != "" {
-		ex := total - runeLen(title)
-		l := ex / 2
-		fmt.Fprintln(w, strings.Repeat(" ", l)+title+strings.Repeat(" ", ex-l))
+		for _, tl := range rich.WrapWords(title, total) {
+			ex := total - runeLen(tl)
+			if ex < 0 {
+				ex = 0
+			}
+			l := ex / 2
+			fmt.Fprintln(w, strings.Repeat(" ", l)+tl+strings.Repeat(" ", ex-l))
+		}
 	}
 	fmt.Fprintln(w, border("┏", "┳", "┓", "━"))
 	var hc []string
@@ -126,4 +133,38 @@ func simpleTable(w io.Writer, title string, headers []string, rows [][]string, r
 		fmt.Fprintln(w, "│"+strings.Join(rc, "│")+"│")
 	}
 	fmt.Fprintln(w, border("└", "┴", "┘", "─"))
+}
+
+// fitPanel renders rich.Panel(expand=False): ROUNDED box sized to its
+// content (or title), title centered in the top border.
+func fitPanel(w io.Writer, content, title string) {
+	lines := strings.Split(rich.Strip(content), "\n")
+	inner := 0
+	for _, l := range lines {
+		if n := runeLen(l); n > inner {
+			inner = n
+		}
+	}
+	width := inner + 4
+	if title != "" && runeLen(title)+6 > width {
+		width = runeLen(title) + 6
+	}
+	if max := rich.Width(); width > max {
+		width = max
+	}
+	inner = width - 4
+	top := strings.Repeat("─", width-2)
+	if title != "" {
+		t := " " + title + " "
+		ex := width - 2 - runeLen(t)
+		l := ex / 2
+		top = strings.Repeat("─", l) + t + strings.Repeat("─", ex-l)
+	}
+	fmt.Fprintln(w, "╭"+top+"╮")
+	for _, l := range lines {
+		for _, wl := range rich.WrapWords(l, inner) {
+			fmt.Fprintln(w, "│ "+wl+strings.Repeat(" ", inner-runeLen(wl))+" │")
+		}
+	}
+	fmt.Fprintln(w, "╰"+strings.Repeat("─", width-2)+"╯")
 }

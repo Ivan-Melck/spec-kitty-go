@@ -363,6 +363,10 @@ type Record struct {
 	Helped, NotHelpful, Gaps []Finding
 	Evidence                 []evidence
 	PolicySource             *jsonx.Object
+	// ProvenanceKind / Command / Human select the provenance block
+	// (runtime_post_completion by default).
+	ProvenanceKind, Command string
+	Human                   bool
 }
 
 // Generate is generate_retrospective for mission directory slug.
@@ -671,8 +675,7 @@ func (r *Record) ToObject() *jsonx.Object {
 	}
 	return jsonx.NewObject("schema_version", 1, "mission_id", r.MissionID, "mission_slug", r.Slug, "mission_number", r.MissionNumber,
 		"friendly_name", r.FriendlyName, "mission_type", r.Type, "target_branch", r.TargetBranch, "created_at", r.CreatedAt,
-		"created_by", jsonx.NewObject("kind", "runtime", "id", "spec-kitty-generator", "display", "Spec Kitty Generator"),
-		"provenance", jsonx.NewObject("kind", "runtime_post_completion", "invoked_at", r.CreatedAt, "policy_resolved_from", r.PolicySource.Clone()),
+		"created_by", r.createdBy(), "provenance", r.provenance(),
 		"policy_source", r.PolicySource.Clone(), "findings_status", r.FindingsStatus,
 		"helped", findingsYAML(r.Helped), "not_helpful", findingsYAML(r.NotHelpful), "gaps", findingsYAML(r.Gaps),
 		"proposals", []any{}, "evidence_refs", ev, "generator_version", GeneratorVersion, "provenance_history", []any{})
@@ -680,3 +683,22 @@ func (r *Record) ToObject() *jsonx.Object {
 
 // Now is the capture timestamp source.
 func Now() string { return clock.NowUTCISO() }
+
+func (r *Record) createdBy() *jsonx.Object {
+	if r.Human {
+		return jsonx.NewObject("kind", "human", "id", "cli", "display", "spec-kitty retrospect")
+	}
+	return jsonx.NewObject("kind", "runtime", "id", "spec-kitty-generator", "display", "Spec Kitty Generator")
+}
+
+func (r *Record) provenance() *jsonx.Object {
+	kind := r.ProvenanceKind
+	if kind == "" {
+		kind = "runtime_post_completion"
+	}
+	o := jsonx.NewObject("kind", kind, "invoked_at", r.CreatedAt, "policy_resolved_from", r.PolicySource.Clone())
+	if r.Command != "" {
+		o.Set("command", r.Command)
+	}
+	return o
+}
