@@ -3,9 +3,11 @@ package agentcore
 import (
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -30,7 +32,7 @@ func richPrint(w io.Writer, text string) {
 // words longer than width are folded.
 func RichWrap(line string, width int) []string {
 	if utf8.RuneCountInString(line) <= width || width <= 0 {
-		return []string{strings.TrimRight(line, " ")}
+		return []string{line}
 	}
 	// split into words keeping trailing whitespace with each word
 	var words []string
@@ -79,6 +81,23 @@ func RichWrap(line string, width int) []string {
 
 // printJSON writes v as compact json.dumps(v) + newline.
 func printJSON(w io.Writer, v any) { fmt.Fprintln(w, jsonx.Dumps(v, Compact)) }
+
+// emitJSON is mission_parsing._emit_json: json.dumps(payload) with
+// spec_kitty_version appended when absent.
+func emitJSON(w io.Writer, payload *jsonx.Object) {
+	if !payload.Has("spec_kitty_version") {
+		payload = payload.Clone()
+		payload.Set("spec_kitty_version", app.Version)
+	}
+	printJSON(w, payload)
+}
+
+// consolePrint renders rich text with markup tags stripped and soft wrapping.
+func consolePrint(w io.Writer, text string) { richPrint(w, stripMarkup(text)) }
+
+var markupRe = regexp.MustCompile(`\[[a-z#/@][^\[]*?\]`)
+
+func stripMarkup(s string) string { return markupRe.ReplaceAllString(s, "") }
 
 // printJSONPretty writes json.dumps(v, indent=2) + newline.
 func printJSONPretty(w io.Writer, v any) { fmt.Fprintln(w, jsonx.Dumps(v, jsonx.Pretty)) }

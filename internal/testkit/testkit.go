@@ -251,14 +251,16 @@ func Files(root string) []string {
 }
 
 var (
-	reULID  = regexp.MustCompile(`\b[0-9A-HJKMNP-TV-Z]{26}\b`)
-	reMid8  = regexp.MustCompile(`-[0-9A-HJKMNP-TV-Z]{8}\b`)
-	reTS    = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?`)
-	reSHA   = regexp.MustCompile(`\b[0-9a-f]{40}\b|\b[0-9a-f]{64}\b`)
-	reShort = regexp.MustCompile(`\b[0-9a-f]{7,12}\b`)
-	reUUID  = regexp.MustCompile(`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
-	reDur   = regexp.MustCompile(`\b\d+\.\d+s\b`)
-	rePid   = regexp.MustCompile(`"(shell_pid|pid)": \d+`)
+	reULID = regexp.MustCompile(`\b[0-9A-HJKMNP-TV-Z]{26}\b`)
+	reMid8 = regexp.MustCompile(`-[0-9A-HJKMNP-TV-Z]{8}\b`)
+	// reBareMid8 matches a standalone mid8 (ULIDs minted this century start "0").
+	reBareMid8 = regexp.MustCompile(`\b0[0-9A-HJKMNP-TV-Z]{7}\b`)
+	reTS       = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?`)
+	reSHA      = regexp.MustCompile(`\b[0-9a-f]{40}\b|\b[0-9a-f]{64}\b`)
+	reShort    = regexp.MustCompile(`\b[0-9a-f]{7,12}\b`)
+	reUUID     = regexp.MustCompile(`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+	reDur      = regexp.MustCompile(`\b\d+\.\d+s\b`)
+	rePid      = regexp.MustCompile(`"(shell_pid|pid)": \d+`)
 )
 
 // Normalize masks volatile values in s. Sandbox paths become <BASE>/<HOME>/<PROJ>.
@@ -274,6 +276,14 @@ func NormalizeValues(text string) string {
 	text = reUUID.ReplaceAllString(text, "<UUID>")
 	text = reULID.ReplaceAllString(text, "<ULID>")
 	text = reMid8.ReplaceAllString(text, "-<MID8>")
+	// bare mid8 values ("mid8": "01M5DA9K", "(mid8 01M5DA9K)"): ULID-prefixed
+	// 8-char tokens that contain a letter.
+	text = reBareMid8.ReplaceAllStringFunc(text, func(m string) string {
+		if strings.IndexFunc(m, func(r rune) bool { return r >= 'A' && r <= 'Z' }) >= 0 {
+			return "<MID8>"
+		}
+		return m
+	})
 	text = reTS.ReplaceAllString(text, "<TS>")
 	text = reSHA.ReplaceAllString(text, "<SHA>")
 	text = reShort.ReplaceAllStringFunc(text, func(m string) string {

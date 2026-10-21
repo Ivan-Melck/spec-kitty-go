@@ -292,3 +292,36 @@ func partition(rows []*jsonx.Object, lineNos []int, missionID string) (*Stream, 
 
 // ParseRows partitions already-decoded rows.
 func ParseRows(rows []*jsonx.Object) (*Stream, error) { return partition(rows, nil, "") }
+
+// DiaryError is spec_kitty_events.diary.DiaryError.
+type DiaryError struct{ Msg string }
+
+func (e *DiaryError) Error() string { return e.Msg }
+
+// ParseDiary partitions raw rows with the shared diary package's rules
+// (parse_diary): the decoder used by status materialization.
+func ParseDiary(rows []*jsonx.Object) (*Stream, error) {
+	st := &Stream{}
+	for _, o := range rows {
+		if k, ok := o.Get("kind"); ok && k != nil {
+			if k == AnnotationKind {
+				a, err := DiaryAnnotationFromObject(o)
+				if err != nil {
+					return nil, &DiaryError{Msg: "Invalid annotation row: " + err.Error()}
+				}
+				st.Annotations = append(st.Annotations, a)
+				continue
+			}
+			return nil, &DiaryError{Msg: "Unknown event kind " + reprAny(k)}
+		}
+		if IsNonLaneRow(o) {
+			continue
+		}
+		e, err := EventFromObject(o)
+		if err != nil {
+			return nil, &DiaryError{Msg: "Invalid lane-transition row: " + err.Error()}
+		}
+		st.Transitions = append(st.Transitions, e)
+	}
+	return st, nil
+}
