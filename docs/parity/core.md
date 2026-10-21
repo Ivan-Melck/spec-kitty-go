@@ -18,11 +18,11 @@ package unit tests run without the oracle.
 |---|---|---|---|
 | `agent mission create` | done | `TestDiffMissionCreate`, `TestDiffMissionCreateDuplicate` | — |
 | `agent mission branch-context` | done | `TestDiffBranchContext` | — |
-| `agent tasks status` (human + `--json`) | done | `TestDiffTasksReadAndAnnotate`, `TestDiffMoveTask*`, `TestDiffStatusEmit` | `--owned-checkout` refused ("not supported by this build") |
+| `agent tasks status` (human + `--json`) | done | `TestDiffTasksReadAndAnnotate`, `TestDiffMoveTask*`, `TestDiffStatusEmit`, `TestDiffTasksStatusStaleness` | `--owned-checkout` refused ("not supported by this build"); claim liveness uses a Linux `/proc` probe |
 | `agent tasks list-tasks` | done | `TestDiffTasksReadAndAnnotate` | — |
 | `agent tasks mark-status` | done | `TestDiffTasksReadAndAnnotate`, move-task tests | `--owned-checkout` refused |
 | `agent tasks add-history` | done | `TestDiffTasksReadAndAnnotate` | — |
-| `agent tasks move-task` | done (see deviations) | `TestDiffMoveTaskCoord`, `TestDiffMoveTaskLanes`, `TestDiffMoveTaskWorktree` (TRACE 5.1–5.12, F2–F4, 9.4–9.6), `TestDiffCoreUsageErrors` | see below |
+| `agent tasks move-task` | done (see deviations) | `TestDiffMoveTaskCoord`, `TestDiffMoveTaskLanes`, `TestDiffMoveTaskWorktree` (TRACE 5.1–5.12, F2–F4, 9.4–9.6), `TestDiffMoveTaskArbiter`, `TestDiffMoveTaskSelfReviewFallback`, `TestDiffMoveTaskProfile`, `TestDiffCoreUsageErrors` | see below |
 | `agent tasks list-dependents` | done | `TestDiffTasksExtras` | — |
 | `agent tasks validate-workflow` | done | `TestDiffTasksExtras` | — |
 | `agent tasks check-terminability` | done | `TestDiffTasksExtras` | — |
@@ -54,7 +54,15 @@ warning), the pre-review gate metadata (`--skip-pre-review-gate`, env skip,
 `no_coverage`, undeclared `skipped`), the claim/reviewer resolved-binding
 annotations, the runtime-state annotation (agent / shell_pid / assignee /
 note / tracker refs / rollback reset + claim release), review-lock release,
-derived views, approval-stamp warning and the dependency alert.
+derived views, the approval warnings (unstamped approval and the #5721
+forced-approval "not a review approval" line, shared with `status emit`)
+and the dependency alert. Also: arbiter overrides (`--force` planned ->
+approved/done over a rejection: `[category] explanation` ReviewOverride
+annotation, rejection `review_ref` reused on the forward event, no
+approval artifact), the OLD-timing `--skip-review-artifact-check`
+override persist, the FR-002 verdict revert (an emitted-transition failure
+deletes and commits away the just-written review-cycle artifact), and the
+`ReviewerSelfApproval` lifecycle event of `--self-review-fallback`.
 
 Not implemented (returns an error or is skipped):
 * `--owned-checkout` (refused), `--invocation-id` (refused: Op records are
@@ -64,15 +72,22 @@ Not implemented (returns an error or is skipped):
 * A *declared* pre-review regression gate (`review.test_command` /
   `pre_review_test_scope`): the scoped pytest run is not executed; the
   transition records the undeclared `skipped` verdict.
-* Arbiter overrides (`--force` from planned to approved/done over a
-  rejection) and `--skip-review-artifact-check` override evidence persistence
-  are not recorded (the guard messages are).
-* Issue-matrix approval blocker (`issue-matrix.md` referenced issues) is not
-  evaluated.
-* `--self-review-fallback` validation is implemented; the reviewer
-  self-approval annotation it emits is not.
-* Forced-approval "not a review approval" warning (#5721) is not printed;
-  the unstamped-approval warning is.
+* Issue-matrix approval blocker (spec/plan/tasks `#NNNN` references vs
+  `issue-matrix.{json,md}` verdicts) is not evaluated: it needs the
+  issue-matrix reader/validator and scaffold, which belong with
+  `finalize-tasks` (wave 3).
+
+### tasks status
+
+Rows carry the event-sourced verdict flags (`_stale_verdict` /
+`stale_review_artifact`, `_damaged_verdict`) for approved/done WPs, the
+in_review stall label (`review.stall_threshold_minutes`, default 30) and the
+in_progress staleness object (lane-worktree commit heartbeat since the merge
+base with the default branch, `--stale-threshold`, live-claim suppression via
+`shell_pid` + creation-time baseline read from the primary-dir snapshot like
+upstream, `not_applicable` for repo-root workspaces, fallback when lanes.json
+is missing). Human output renders the arbiter override history, stale/stall
+markers, the "stale WP(s) detected" hint and the 👤 human-in-charge marker.
 
 ## Exported API (for wave 3)
 
@@ -109,6 +124,10 @@ Status model (`internal/status`):
   `DeriveFromLane`, `NewAnnotation`.
 * Actors: `SelfAssertingActor`, `ResolvedBinding.ToDelta`, `ActorKey`,
   `LatestImplementer`, `IsLatestImplementer`, `ParseAgentBoundary`.
+* Claim liveness: `CreationTimeBaseline(pid)` (psutil `create_time()`
+  string), `IsProcessAlive`, `IsClaimingProcessAlive(pid, baseline)`.
+* Lifecycle (`internal/lifecycle`): `Persist`, `EmitMissionCreated`,
+  `EmitArtifactPhase`, `EmitReviewerSelfApproval`.
 * Derived views: `RefreshDerivedViews(featureDir, repoRoot)` writes
   `.kittify/derived/<slug>/{status,board-summary,progress,lifecycle}.json`
   (ledger posture + git-operation gate), `BoardSummary`, `ProgressObject`,
@@ -166,4 +185,7 @@ durability `Outcome`), `Pointer`, `NextCycleNumber`, synthetic refs.
   `name` (typer renders `{task_id}` in usage but names `task_id` in the
   error) and drop the `...` suffix for such variadic args.
 * `agentcore.RichWrap` (area A's console helper) now keeps in-width trailing
-  whitespace like rich's `rstrip_end`.
+  whitespace like rich's `rstrip_end`; `cellWidth` widens a narrow
+  emoji-capable character followed by VS16 (rich 15 `narrow_to_wide`).
+* Test helper: `comparePairSteps` logs every step's output when
+  `KITTY_TEST_TRACE=1`.
