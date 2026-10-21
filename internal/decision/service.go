@@ -51,6 +51,16 @@ func NewError(code, msg string, details ...any) *Error {
 type Context struct {
 	Root string // main repository root
 	Slug string // canonical mission dir name (or the raw handle)
+	// EntrySlug, when set, is the mission_slug recorded on new entries and
+	// their events (the interview flows pass the un-suffixed slug through).
+	EntrySlug string
+}
+
+func (c *Context) entrySlug() string {
+	if c.EntrySlug != "" {
+		return c.EntrySlug
+	}
+	return c.Slug
 }
 
 // LedgerDir is the PRIMARY mission dir holding decisions/.
@@ -148,7 +158,7 @@ func (c *Context) Open(r OpenRequest) (*OpenResponse, error) {
 	}
 	actor := r.Actor
 	e := &Entry{DecisionID: ulid.New(), OriginFlow: r.Flow, StepID: r.StepID, SlotKey: r.SlotKey, InputKey: r.InputKey, Question: r.Question,
-		Options: r.Options, Status: StatusOpen, CreatedAt: now(), OpenedBy: &actor, MissionID: mid, MissionSlug: c.Slug}
+		Options: r.Options, Status: StatusOpen, CreatedAt: now(), OpenedBy: &actor, MissionID: mid, MissionSlug: c.entrySlug()}
 	idx.Entries = append(idx.Entries, e)
 	if idx.MissionID == "" || e.MissionID != "" {
 		idx.MissionID = e.MissionID
