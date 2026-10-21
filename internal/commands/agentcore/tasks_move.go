@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -122,6 +123,8 @@ type moveState struct {
 	doneMergeMsg       string
 	effectiveReviewer  string
 	effectiveApproval  string
+	isArbiter          bool
+	arbReviewRef       *string
 
 	// decision / execution
 	noteText          string
@@ -833,7 +836,8 @@ type refusal struct {
 	warning []string
 }
 
-func (st *moveState) guards() *refusal {
+// precedingGuards are the guards ahead of the rejected-verdict arm.
+func (st *moveState) precedingGuards() *refusal {
 	if e := selfReviewOptionError(st); e != "" {
 		return &refusal{err: e}
 	}
@@ -860,7 +864,17 @@ func (st *moveState) guards() *refusal {
 	if r := st.guardOwnership(); r != nil {
 		return r
 	}
-	if r := st.guardDoneExit(); r != nil {
+	return st.guardDoneExit()
+}
+
+// authorizeReviewOverride is _authorize_review_override.
+func (st *moveState) authorizeReviewOverride() bool {
+	return (st.target == string(status.Approved) || st.target == string(status.Done)) && st.reviewArtifactName != "" &&
+		st.reviewVerdict == "rejected" && st.skipArtifact && strings.TrimSpace(st.note) != ""
+}
+
+func (st *moveState) guards() *refusal {
+	if r := st.precedingGuards(); r != nil {
 		return r
 	}
 	if st.target == string(status.Approved) || st.target == string(status.Done) {
@@ -1024,6 +1038,7 @@ func (st *moveState) gatherLateFacts() {
 			st.effectiveApproval = review.SyntheticAutoApprovalRef(st.taskID, clock.Now().UTC().Format("20060102"))
 		}
 	}
+	st.isArbiter = st.arbiterOverride()
 }
 
 func (st *moveState) branchMergedIntoTarget(ws *lanes.Workspace) (bool, string) {
@@ -1064,15 +1079,147 @@ func (st *moveState) printRefusal(r *refusal) error {
 }
 
 func (st *moveState) runDecision() error {
+	if st.precedingGuards() == nil && st.authorizeReviewOverride() && st.verdictArtifact != "" {
+		actor := st.agent
+		if actor == "" {
+			actor = "operator"
+		}
+		if err := st.persistReviewOverride(actor, strings.TrimSpace(st.note)); err != nil {
+			return err
+		}
+	}
 	r := st.guards()
 	if r == nil {
 		st.gatherLateFacts()
 		r = st.guards()
+		// The issue-matrix guard (last in the sequence) is not evaluated, so
+		// "guards preceding issue-matrix clear" is r == nil.
+		if r == nil && st.isArbiter {
+			if err := st.runArbiterOverride(); err != nil {
+				return err
+			}
+		}
 	}
 	if r != nil {
 		return st.printRefusal(r)
 	}
 	st.decide()
+	return nil
+}
+
+// persistReviewOverride is _persist_review_artifact_override: an
+// uncommitted InnerStateChanged `review` delta on the status read surface.
+func (st *moveState) persistReviewOverride(actor, reason string) error {
+	stamp := clock.Now().UTC().Format("2006-01-02T15:04:05Z")
+	a, err := status.NewAnnotation(st.taskID, status.Delta{Review: &status.ReviewOverride{At: stamp, Actor: actor, WPID: st.taskID, Reason: reason}}, status.StrActor(actor), stamp)
+	if err != nil {
+		return err
+	}
+	dir := st.m.ReadDir()
+	if err := status.AppendEvents(dir, a); err != nil {
+		return err
+	}
+	status.Materialize(dir)
+	return nil
+}
+
+var arbiterNoteRe = regexp.MustCompile(`(?s)^\s*\[([a-z_]+)\]\s*(.*)`)
+
+var arbiterDefaults = map[string]string{
+	"pre_existing_failure": "Failure is pre-existing on the base branch and unrelated to this WP.",
+	"wrong_context":        "Reviewer is discussing the wrong feature or WP.",
+	"cross_scope":          "Finding is outside this WP's defined scope.",
+	"infra_environmental":  "Failure is environmental or infrastructure-related, not a code defect.",
+	"custom":               "",
+}
+
+// parseArbiterNote is review.arbiter.parse_category_from_note.
+func parseArbiterNote(note string) (string, string) {
+	if note == "" {
+		return "custom", "Override without explanation"
+	}
+	if m := arbiterNoteRe.FindStringSubmatch(note); m != nil {
+		cat, expl := strings.TrimSpace(m[1]), strings.TrimSpace(m[2])
+		if _, ok := arbiterDefaults[cat]; !ok {
+			cat, expl = "custom", strings.TrimSpace(note)
+		}
+		if expl == "" {
+			expl = arbiterDefaults[cat]
+			if expl == "" {
+				expl = "Override: " + cat
+			}
+		}
+		return cat, expl
+	}
+	return "custom", strings.TrimSpace(note)
+}
+
+// arbiterOverride is review.arbiter.is_arbiter_override_history: a forced
+// planned -> approved/done move whose latest WP event is a review rejection.
+func (st *moveState) arbiterOverride() bool {
+	t := status.ResolveLaneAlias(st.target)
+	if !st.force || st.oldLane != string(status.Planned) || (t != string(status.Approved) && t != string(status.Done)) {
+		return false
+	}
+	stream, err := status.ReadStream(st.featureDir, "")
+	if err != nil {
+		return false
+	}
+	var last *status.Event
+	for _, e := range stream.Transitions {
+		if e.WPID == st.taskID {
+			last = e
+		}
+	}
+	return last != nil && last.To == status.Planned && (last.From == status.ForReview || last.From == status.InReview) && last.ReviewRef != nil
+}
+
+// latestCycleNumber is ReviewCycleArtifact.latest_cycle_number (filenames
+// only; 0 when none).
+func latestCycleNumber(dir string) int {
+	max := 0
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		var n int
+		if _, err := fmt.Sscanf(e.Name(), "review-cycle-%d.md", &n); err == nil && e.Name() == fmt.Sprintf("review-cycle-%d.md", n) && n > max {
+			max = n
+		}
+	}
+	return max
+}
+
+// runArbiterOverride is _run_arbiter_override: persist the decision as a
+// ReviewOverride annotation and remember the rejection's review_ref.
+func (st *moveState) runArbiterOverride() error {
+	note := strings.TrimSpace(st.note)
+	if st.target == string(status.Done) && st.doneExecMode == "code_change" && !st.doneMerged {
+		if o := strings.TrimSpace(st.doneOverride); o != "" {
+			if note != "" {
+				note += " | Done override: " + o
+			} else {
+				note = "Done override: " + o
+			}
+		}
+	}
+	if stream, err := status.ReadStream(st.featureDir, ""); err == nil {
+		for _, e := range stream.Transitions {
+			if e.WPID == st.taskID {
+				st.arbReviewRef = e.ReviewRef
+			}
+		}
+	}
+	cat, expl := parseArbiterNote(note)
+	actor := st.agent
+	if actor == "" {
+		actor = "operator"
+	}
+	sub := filepath.Join(st.m.ReadDir(), "tasks", st.w.Stem())
+	path := filepath.Join(sub, fmt.Sprintf("review-cycle-%d.md", latestCycleNumber(sub)))
+	if err := st.persistReviewOverride(actor, fmt.Sprintf("[%s] %s", cat, expl)); err != nil {
+		return err
+	}
+	st.console(fmt.Sprintf("Arbiter override recorded: %s — %s", cat, expl))
+	st.console("  Decision persisted: " + path)
 	return nil
 }
 
@@ -1091,7 +1238,7 @@ func (st *moveState) decide() {
 			st.doneOverrideNote = true
 		}
 	}
-	st.plan = buildTransitionPlan(st.oldLane, st.target, st.force, "", st.noteText, nil)
+	st.plan = buildTransitionPlan(st.oldLane, st.target, st.force, "", nil, st.noteText, nil)
 	st.evidence = nil
 	if st.target == string(status.Approved) || st.target == string(status.Done) {
 		ref := st.effectiveApproval
@@ -1134,13 +1281,16 @@ var wireMatrix = map[string]bool{
 	"approved>in_progress": true, "approved>planned": true, "in_progress>planned": true, "blocked>in_progress": true,
 }
 
-func buildTransitionPlan(old, target string, force bool, feedbackPointer, noteText string, rr *status.ReviewResult) *transitionPlan {
+func buildTransitionPlan(old, target string, force bool, feedbackPointer string, arbReviewRef *string, noteText string, rr *status.ReviewResult) *transitionPlan {
 	canonical := status.ResolveLaneAlias(target)
 	var reviewRef *string
 	if isReviewRejectionEdge(old, target) && feedbackPointer != "" {
 		reviewRef = strp(feedbackPointer)
 	} else if old == string(status.ForReview) && (canonical == string(status.InProgress) || canonical == string(status.Planned)) && force {
 		reviewRef = strp("force-override")
+	}
+	if reviewRef == nil && arbReviewRef != nil && *arbReviewRef != "" {
+		reviewRef = strp(*arbReviewRef)
 	}
 	if reviewRef == nil && rr != nil && strings.TrimSpace(rr.Reference) != "" {
 		reviewRef = strp(rr.Reference)
@@ -1401,7 +1551,7 @@ func (st *moveState) finalizePlan() error {
 		st.rejectedResult = &rr
 		st.announceDurabilityGap(c)
 	}
-	if st.target == string(status.Approved) || st.target == string(status.Done) {
+	if (st.target == string(status.Approved) || st.target == string(status.Done)) && !st.isArbiter {
 		c, err := st.persistApprovedCycle()
 		if err != nil {
 			return err
@@ -1417,8 +1567,8 @@ func (st *moveState) finalizePlan() error {
 		st.console("⚠️  Proceeding with done override; reason recorded in history/events.")
 	}
 	st.planReviewResult = st.planReview()
-	if isRejection {
-		st.plan = buildTransitionPlan(st.oldLane, st.target, st.force, st.feedbackPointer, st.noteText, st.planReviewResult)
+	if isRejection || st.isArbiter {
+		st.plan = buildTransitionPlan(st.oldLane, st.target, st.force, st.feedbackPointer, st.arbReviewRef, st.noteText, st.planReviewResult)
 	}
 	return nil
 }
