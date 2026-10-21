@@ -366,11 +366,22 @@ func (r *run) execute() error {
 		ids = append(ids, l.LaneID)
 	}
 	say(r.w, "  Lanes: "+strings.Join(ids, ", "))
-	say(r.w, fmt.Sprintf("  [green]✓[/green] Gate evidence: All %d WPs have review approval", len(r.wps)))
-	say(r.w, "  [green]✓[/green] Gate risk: Risk score 0.00 within threshold")
-	say(r.w, "  [green]✓[/green] Gate dependency: All dependencies complete")
-	say(r.w, "  [green]✓[/green] Gate issue_matrix_completeness: No gating issue references discovered — nothing to enforce")
-	say(r.w, "  [green]✓[/green] Gate issue_matrix_verdict_terminality: No gating issue references discovered — nothing to enforce")
+	gatesPass := true
+	for _, g := range EvaluateGates(r.root, r.sf.PrimaryDir, r.sf.StatusDir(), r.sf.StatusDir(), r.wps, LoadGatePolicy(r.root)) {
+		icon := "[green]✓[/green]"
+		if g.Verdict != "pass" {
+			icon = "[yellow]⚠[/yellow]"
+			if g.Blocking {
+				icon = "[red]✗[/red]"
+				gatesPass = false
+			}
+		}
+		say(r.w, fmt.Sprintf("  %s Gate %s: %s", icon, g.Name, g.Details))
+	}
+	if !gatesPass {
+		say(r.w, "\n[red]Error:[/red] Merge gates failed.")
+		return exit(1)
+	}
 
 	restore := activateDrivers(r.root)
 	defer restore()

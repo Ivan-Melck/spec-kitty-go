@@ -116,6 +116,9 @@ func comparePair(t *testing.T, p *testkit.Pair, args ...string) (testkit.Result,
 	g := p.Go.Run(subst(args, slugOf(t, p.Go))...)
 	o := p.Oracle.RunOracle(subst(args, slugOf(t, p.Oracle))...)
 	name := strings.Join(args, " ")
+	if os.Getenv("KITTY_TEST_TRACE") != "" {
+		t.Logf("%s\n== go %d ==\n%s%s== oracle %d ==\n%s%s", name, g.Code, g.Stdout, g.Stderr, o.Code, o.Stdout, o.Stderr)
+	}
 	g.Stdout, o.Stdout = reCommit.ReplaceAllString(g.Stdout, "Commit: <C>"), reCommit.ReplaceAllString(o.Stdout, "Commit: <C>")
 	if g.Code != o.Code {
 		t.Errorf("%s: exit go=%d oracle=%d\n--- go:\n%s%s\n--- oracle:\n%s%s", name, g.Code, o.Code, g.Stdout, g.Stderr, o.Stdout, o.Stderr)
