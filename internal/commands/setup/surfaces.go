@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
@@ -130,23 +131,21 @@ func RunSurfaceRepair(root string) (SurfaceSummary, error) {
 		newEntries = append(newEntries, entries...)
 	}
 	if len(newEntries) > 0 {
+		// _prepare_project_skills: a fresh manifest carries no version; each
+		// reconciled (path, agent) is re-added in (path, agent) order.
 		m := agents.LoadSkillsManifest(root)
 		if m == nil {
-			m = &agents.SkillsManifest{CreatedAt: now, UpdatedAt: now, SpecKittyVersion: app.Version}
+			m = &agents.SkillsManifest{}
 		}
-		byKey := map[string]int{}
-		for i, e := range m.Entries {
-			byKey[e.InstalledPath+"\x00"+e.AgentKey] = i
-		}
-		for _, e := range newEntries {
-			if i, ok := byKey[e.InstalledPath+"\x00"+e.AgentKey]; ok {
-				m.Entries[i] = e
-				continue
+		sort.SliceStable(newEntries, func(i, j int) bool {
+			if newEntries[i].InstalledPath != newEntries[j].InstalledPath {
+				return newEntries[i].InstalledPath < newEntries[j].InstalledPath
 			}
-			byKey[e.InstalledPath+"\x00"+e.AgentKey] = len(m.Entries)
-			m.Entries = append(m.Entries, e)
+			return newEntries[i].AgentKey < newEntries[j].AgentKey
+		})
+		for _, e := range newEntries {
+			m.AddEntry(e)
 		}
-		m.SpecKittyVersion = app.Version
 		if err := agents.SaveSkillsManifest(root, m, now); err != nil {
 			return sum, err
 		}

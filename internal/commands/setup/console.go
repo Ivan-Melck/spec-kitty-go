@@ -228,7 +228,18 @@ func (t *tracker) render(w io.Writer) {
 		if s.detail != "" {
 			line += " (" + s.detail + ")"
 		}
-		fmt.Fprintln(w, branch+line)
+		cont := "│   "
+		if i == len(t.steps)-1 {
+			cont = "    "
+		}
+		// rich Tree wraps each label at the width left after the guide.
+		for j, l := range uconsole.WrapWords(line, cli.Width()-4) {
+			if j == 0 {
+				fmt.Fprintln(w, branch+l)
+			} else {
+				fmt.Fprintln(w, cont+l)
+			}
+		}
 	}
 }
 

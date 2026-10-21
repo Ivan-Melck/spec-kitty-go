@@ -53,6 +53,18 @@ type SkillsManifest struct {
 	Entries          []SkillEntry
 }
 
+// AddEntry replaces any entry with the same (installed_path, agent_key) and
+// appends e (ManagedSkillManifest.add_entry).
+func (m *SkillsManifest) AddEntry(e SkillEntry) {
+	out := m.Entries[:0]
+	for _, x := range m.Entries {
+		if x.key() != e.key() {
+			out = append(out, x)
+		}
+	}
+	m.Entries = append(out, e)
+}
+
 // SkillsManifestPath returns the manifest path for root.
 func SkillsManifestPath(root string) string {
 	return filepath.Join(root, ".kittify", SkillsManifestFile)
