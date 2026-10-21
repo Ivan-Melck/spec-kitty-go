@@ -23,9 +23,6 @@ func stub(name, short string) *cli.Command {
 func newNormalizeLifecycleCmd() *cli.Command {
 	return stub("normalize-lifecycle", "Normalize legacy ``kitty-specs`` missions for the MVP lifecycle model.")
 }
-func newRewriteOpposedByCmd() *cli.Command {
-	return stub("rewrite-opposed-by", "Rewrite a pack's legacy ``opposed_by`` entries into DRG edges.")
-}
 func newBackfillRuntimeStateCmd() *cli.Command {
 	return stub("backfill-runtime-state", "Seed legacy runtime state as events, verify fail-closed, and flip status_phase.")
 }
