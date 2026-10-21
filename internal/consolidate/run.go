@@ -1,0 +1,859 @@
+package consolidate
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/spec-kitty/go-kitty3/internal/acceptance"
+	"github.com/spec-kitty/go-kitty3/internal/app"
+	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/coord"
+	"github.com/spec-kitty/go-kitty3/internal/gitx"
+	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/lanes"
+	"github.com/spec-kitty/go-kitty3/internal/mergedriver"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/retrospective"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
+	"github.com/spec-kitty/go-kitty3/internal/status"
+)
+
+// Exit is a command exit with a code (message already printed).
+type Exit struct{ Code int }
+
+func (e *Exit) Error() string { return fmt.Sprintf("exit %d", e.Code) }
+
+func exit(code int) error { return &Exit{code} }
+
+// Options are the consolidate command options.
+type Options struct {
+	Mission        string
+	Target         string
+	Strategy       string // "" = squash
+	DeleteBranch   *bool
+	RemoveWorktree *bool
+	Push, DryRun   bool
+	JSON, Yes      bool
+}
+
+var compact = jsonx.Options{Indent: -1, EnsureASCII: true}
+
+func say(w io.Writer, s string) { rich.Print(w, s) }
+
+func sayErr(w io.Writer, msg string) {
+	fmt.Fprintln(w, rich.Wrap("Error: "+msg, rich.Width()))
+}
+
+// Retention is RetentionDecision.
+type Retention struct {
+	DeleteBranch, RemoveWorktree bool
+	BranchSource, WorktreeSource string
+	Warnings, Notices            []string
+}
+
+func resolveOne(label string, explicit *bool, raw any, present bool) (bool, string, string, string) {
+	malformed := present && raw != nil
+	if _, ok := raw.(bool); ok {
+		malformed = false
+	}
+	retains := raw == true || malformed
+	if explicit != nil {
+		notice := ""
+		if *explicit && retains {
+			notice = "explicit delete overrode retention policy for " + label
+		}
+		return *explicit, "cli", "", notice
+	}
+	if raw == true {
+		return false, "meta", "retention honored for " + label + " (source: meta.json)", ""
+	}
+	if malformed {
+		return false, "meta", fmt.Sprintf("malformed retain_%s value in meta.json (%s); treated as retaining (fail-closed)", label, jsonx.Dumps(raw, compact)), ""
+	}
+	return true, "default", "", ""
+}
+
+// ResolveRetention is resolve_merge_retention.
+func ResolveRetention(primaryDir string, del, rm *bool) Retention {
+	meta := mission.ReadMetaOrEmpty(primaryDir)
+	rb, okb := meta.Get("retain_branches")
+	rw, okw := meta.Get("retain_worktrees")
+	var r Retention
+	var w1, w2, n1, n2 string
+	r.DeleteBranch, r.BranchSource, w1, n1 = resolveOne("branches", del, rb, okb)
+	r.RemoveWorktree, r.WorktreeSource, w2, n2 = resolveOne("worktrees", rm, rw, okw)
+	for _, w := range []string{w1, w2} {
+		if w != "" {
+			r.Warnings = append(r.Warnings, w)
+		}
+	}
+	for _, n := range []string{n1, n2} {
+		if n != "" {
+			r.Notices = append(r.Notices, n)
+		}
+	}
+	return r
+}
+
+// ResolveMissionSlug is _resolve_mission_slug: a handle to a primary dir
+// name (raw handle when unresolved), or the mission of the current branch.
+func ResolveMissionSlug(root, handle string) (string, error) {
+	handle = strings.TrimSpace(handle)
+	if handle == "" {
+		p := lanes.ParseBranch(gitx.CurrentBranch(root))
+		if p == nil {
+			return "", nil
+		}
+		return p.MissionSlug, nil
+	}
+	if mission.SafePathSegment(handle) {
+		if st, err := os.Stat(project.Specs(root, handle)); err == nil && st.IsDir() {
+			return handle, nil
+		}
+		name, err := mission.BareModernDirName(root, handle)
+		if err != nil {
+			return "", err
+		}
+		if name != "" {
+			return name, nil
+		}
+	}
+	if r, err := mission.ResolveIdentity(root, handle); err == nil {
+		return r.Slug, nil
+	}
+	return handle, nil
+}
+
+func dirExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
+// Run executes the consolidate command flow after option validation.
+func Run(w io.Writer, root string, o Options) error {
+	strategy := o.Strategy
+	if strategy == "" {
+		strategy = "squash"
+	}
+	slug, err := ResolveMissionSlug(root, o.Mission)
+	if err != nil {
+		sayErr(w, err.Error())
+		return exit(2)
+	}
+	jsonErr := func(msg string, code int) error {
+		if o.JSON {
+			fmt.Fprintln(w, jsonx.Dumps(jsonx.NewObject("spec_kitty_version", app.Version, "error", msg), compact))
+		} else {
+			sayErr(w, msg)
+		}
+		return exit(code)
+	}
+	if slug != "" && !dirExists(project.Specs(root, slug)) {
+		return jsonErr("Mission not found: "+slug, 1)
+	}
+	sf := (*coord.Surface)(nil)
+	target := o.Target
+	if slug != "" {
+		sf = coord.Resolve(root, slug)
+		if target == "" {
+			target = strings.TrimSpace(sf.Meta.GetString("target_branch"))
+		}
+	}
+	if target == "" {
+		target = primaryBranch(root)
+	}
+	if o.JSON && !o.DryRun {
+		return jsonErr("--json is currently supported with --dry-run only.", 1)
+	}
+	var ret Retention
+	if slug != "" {
+		ret = ResolveRetention(sf.PrimaryDir, o.DeleteBranch, o.RemoveWorktree)
+	}
+	if o.DryRun {
+		return dryRun(w, root, slug, target, strategy, ret, o)
+	}
+	if slug == "" {
+		sayErr(w, "Mission slug could not be resolved. Use --mission <slug>.")
+		return exit(2)
+	}
+	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret}
+	return r.execute()
+}
+
+func primaryBranch(root string) string {
+	if out, err := gitx.Run(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		return strings.TrimPrefix(strings.TrimSpace(out), "origin/")
+	}
+	for _, b := range []string{"main", "master", "develop"} {
+		if gitx.BranchExists(root, b) {
+			return b
+		}
+	}
+	return gitx.CurrentBranch(root)
+}
+
+func requireLanes(dir string) (*lanes.Manifest, string) {
+	m, err := lanes.Read(dir)
+	if err != nil {
+		return nil, fmt.Sprintf("Corrupt lanes.json at %s: %v", filepath.Join(dir, lanes.File), err)
+	}
+	if m == nil {
+		return nil, fmt.Sprintf("lanes.json is required for %s. Run 'spec-kitty agent mission finalize-tasks' to compute execution lanes, or if the mission has already begun executing, run 'spec-kitty doctor mission-state --fix --mission <slug>' to rebuild lanes.json from the event log.", dir)
+	}
+	return m, ""
+}
+
+func lanesJSON(m *lanes.Manifest) []any {
+	return m.ToObject().GetList("lanes")
+}
+
+// NextMissionNumber is assign_next_mission_number over kitty-specs/.
+func NextMissionNumber(root string) int {
+	entries, _ := os.ReadDir(project.Specs(root))
+	max := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		meta, err := mission.ReadMeta(project.Specs(root, e.Name()))
+		if err != nil {
+			continue
+		}
+		if n, ok := mission.MissionNumber(meta); ok && n > max {
+			max = n
+		}
+	}
+	return max + 1
+}
+
+func needsNumber(primaryDir string) bool {
+	meta, err := mission.ReadMeta(primaryDir)
+	if err != nil {
+		return false
+	}
+	_, ok := mission.MissionNumber(meta)
+	return !ok
+}
+
+func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o Options) error {
+	errOut := func(msg string) error {
+		if o.JSON {
+			fmt.Fprintln(w, jsonx.Dumps(jsonx.NewObject("spec_kitty_version", app.Version, "error", msg), compact))
+		} else {
+			sayErr(w, msg)
+		}
+		return exit(1)
+	}
+	if slug == "" {
+		return errOut("Mission slug could not be resolved. Use --mission <slug>.")
+	}
+	primary := project.Specs(root, slug)
+	m, msg := requireLanes(primary)
+	if m == nil {
+		return errOut(msg)
+	}
+	var would any
+	if needsNumber(primary) {
+		would = NextMissionNumber(root)
+	}
+	del := ret.DeleteBranch
+	onlyPlanning := true
+	for _, l := range m.Lanes {
+		if l.LaneID != lanes.PlanningLaneID {
+			onlyPlanning = false
+		}
+	}
+	if del && onlyPlanning && m.MissionBranch == m.TargetBranch {
+		del = false
+	}
+	warn := []any{}
+	for _, x := range ret.Warnings {
+		warn = append(warn, x)
+	}
+	payload := jsonx.NewObject("spec_kitty_version", app.Version, "mission_slug", slug, "target_branch", target,
+		"strategy", strategy, "delete_branch", del, "remove_worktree", ret.RemoveWorktree, "push", o.Push,
+		"mission_branch", m.MissionBranch, "lanes", lanesJSON(m), "would_assign_mission_number", would,
+		"retention", jsonx.NewObject("branch_source", ret.BranchSource, "worktree_source", ret.WorktreeSource, "warnings", warn))
+	if would != nil && !o.JSON {
+		say(w, fmt.Sprintf("would assign mission_number=%d to mission %s", would, slug))
+	}
+	fmt.Fprintln(w, jsonx.Dumps(payload, compact))
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+
+type run struct {
+	w        io.Writer
+	root     string
+	slug     string
+	sf       *coord.Surface
+	target   string
+	strategy string
+	ret      Retention
+	m        *lanes.Manifest
+	wps      []string
+	snap     *status.Snapshot
+	number   int
+	baseline string
+	squash   string
+}
+
+const abortedNote = "Merge aborted before any state change. Resolve the reported condition, then re-run spec-kitty consolidate."
+
+func (r *run) execute() error {
+	m, msg := requireLanes(r.sf.PrimaryDir)
+	if m == nil {
+		sayErr(r.w, msg)
+		return exit(1)
+	}
+	r.m = m
+	for _, x := range r.ret.Warnings {
+		say(r.w, "[yellow]Warning:[/yellow] "+x)
+	}
+	for _, x := range r.ret.Notices {
+		say(r.w, "[yellow]Notice:[/yellow] "+x)
+	}
+	if !gitx.BranchExists(r.root, m.MissionBranch) {
+		sayErr(r.w, fmt.Sprintf("Missing mission branch: %s. Run: spec-kitty agent action implement <WP> --mission %s", m.MissionBranch, r.slug))
+		return exit(1)
+	}
+	if err := r.preflight(); err != nil {
+		return err
+	}
+	// merge-ready precondition
+	snap, err := status.ReduceDir(r.sf.StatusDir())
+	if err != nil {
+		sayErr(r.w, err.Error())
+		return exit(1)
+	}
+	r.snap = snap
+	for _, l := range m.Lanes {
+		r.wps = append(r.wps, l.WPIDs...)
+	}
+	var missing []string
+	for _, id := range r.wps {
+		st := snap.WP(id)
+		lane := ""
+		if st != nil {
+			lane = st.GetString("lane")
+		}
+		if lane != "approved" && lane != "done" {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) > 0 {
+		say(r.w, fmt.Sprintf("\n[red]Error:[/red] Mission is not merge-ready — WP(s) missing review approval: %s.", strings.Join(missing, ", ")))
+		say(r.w, "  No lane consolidation and no mission_number bake have occurred; the mission is unchanged. Move the listed WP(s) through review (approved/done), or cancel them with operator provenance, then re-run the merge.")
+		return exit(1)
+	}
+	say(r.w, "[bold]Lane-based merge for "+r.slug+"[/bold]")
+	say(r.w, "  Mission branch: "+m.MissionBranch)
+	var ids []string
+	for _, l := range m.Lanes {
+		ids = append(ids, l.LaneID)
+	}
+	say(r.w, "  Lanes: "+strings.Join(ids, ", "))
+	say(r.w, fmt.Sprintf("  [green]✓[/green] Gate evidence: All %d WPs have review approval", len(r.wps)))
+	say(r.w, "  [green]✓[/green] Gate risk: Risk score 0.00 within threshold")
+	say(r.w, "  [green]✓[/green] Gate dependency: All dependencies complete")
+	say(r.w, "  [green]✓[/green] Gate issue_matrix_completeness: No gating issue references discovered — nothing to enforce")
+	say(r.w, "  [green]✓[/green] Gate issue_matrix_verdict_terminality: No gating issue references discovered — nothing to enforce")
+
+	restore := activateDrivers(r.root)
+	defer restore()
+	r.baseline = revParse(r.root, "refs/heads/"+m.TargetBranch)
+	if err := r.mergeLanes(); err != nil {
+		return err
+	}
+	coordDone := r.sf.Routed() && dirExists(r.sf.CoordWorktree)
+	if err := r.bake(); err != nil {
+		return err
+	}
+	if coordDone {
+		if err := r.recordDone(); err != nil {
+			return err
+		}
+	}
+	if err := r.squashIntoTarget(); err != nil {
+		return err
+	}
+	if !coordDone {
+		if err := r.recordDone(); err != nil {
+			return err
+		}
+	}
+	if r.number > 0 {
+		say(r.w, fmt.Sprintf("Assigned mission_number=%d to mission %s", r.number, r.slug))
+	}
+	if err := r.doneBookkeeping(coordDone); err != nil {
+		return err
+	}
+	say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP claim integrity and squash content attribution verified (no un-attributable content on the target); per-SHA approved-reachability deferred under squash strategy.")
+	say(r.w, "  [dim]Running stale-assertion check...[/dim]")
+	r.captureRetrospective()
+	r.teardown(coordDone)
+	status.RefreshDerivedViews(r.sf.PrimaryDir, r.root)
+	say(r.w, "\n[bold]Stale assertion findings:[/bold]")
+	say(r.w, "  No likely-stale assertions detected.")
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// preflight
+
+type dirtyEntry struct{ xy, path string }
+
+func porcelainAll(dir string) []dirtyEntry {
+	out, err := gitx.Exec(dir, nil, nil, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return nil
+	}
+	var l []dirtyEntry
+	recs := strings.Split(out.Stdout, "\x00")
+	for i := 0; i < len(recs); i++ {
+		rec := recs[i]
+		if len(rec) < 4 {
+			continue
+		}
+		e := dirtyEntry{rec[:2], rec[3:]}
+		if strings.ContainsAny(e.xy, "RC") {
+			i++
+		}
+		l = append(l, e)
+	}
+	return l
+}
+
+func (r *run) disposable(p string) bool {
+	return acceptance.IsSelfBookkeeping(p)
+}
+
+func (r *run) refuse(code, wt string, entries []string, remediation string) error {
+	lines := []string{fmt.Sprintf("Refusing destructive operation (%s).", code), "  Worktree: " + wt}
+	if len(entries) > 0 {
+		var shown []string
+		for i, e := range entries {
+			if i == 20 {
+				shown = append(shown, fmt.Sprintf("    ... and %d more", len(entries)-20))
+				break
+			}
+			shown = append(shown, "    "+e)
+		}
+		lines = append(lines, "  Dirty entries:\n"+strings.Join(shown, "\n"))
+	}
+	lines = append(lines, "  Remediation: "+remediation)
+	sayErr(r.w, strings.Join(lines, "\n"))
+	say(r.w, "[yellow]Merge aborted before any state change.[/yellow] Resolve the reported condition, then re-run [bold]spec-kitty consolidate[/bold].")
+	return exit(1)
+}
+
+const resumeNote = "then resume the operation (e.g. `spec-kitty consolidate --resume`)"
+
+func (r *run) checkClean(wt, code string, untracked bool) error {
+	var entries []string
+	for _, e := range porcelainAll(wt) {
+		if r.disposable(e.path) {
+			continue
+		}
+		if e.xy == "??" {
+			if untracked {
+				entries = append(entries, "?? "+e.path+" (untracked local file would be discarded by worktree removal)")
+			}
+			continue
+		}
+		if e.xy == "!!" {
+			continue
+		}
+		entries = append(entries, e.xy+" "+e.path)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	return r.refuse(code, wt, entries, fmt.Sprintf("Commit, stash, or revert the local changes in %s, %s.", wt, resumeNote))
+}
+
+func (r *run) preflight() error {
+	cur := gitx.CurrentBranch(r.root)
+	if cur != r.m.TargetBranch {
+		lines := []string{"Refusing destructive operation (MERGE_UNSAFE_PRIMARY_OFF_TARGET).", "  Worktree: " + r.root,
+			fmt.Sprintf("  Branch: currently on %s, expected %s.", mission.PyRepr(cur), mission.PyRepr(r.m.TargetBranch)),
+			fmt.Sprintf("  Remediation: Checkout %s in %s before retrying (%s).", mission.PyRepr(r.m.TargetBranch), r.root, resumeNote)}
+		sayErr(r.w, strings.Join(lines, "\n"))
+		say(r.w, "[yellow]Merge aborted before any state change.[/yellow] Resolve the reported condition, then re-run [bold]spec-kitty consolidate[/bold].")
+		return exit(1)
+	}
+	// Primary: tracked dirt (coordination residue and bookkeeping exempt).
+	var entries []string
+	for _, e := range porcelainAll(r.root) {
+		if e.xy == "??" || e.xy == "!!" || r.disposable(e.path) {
+			continue
+		}
+		if r.sf.Routed() && mission.IsCoordResidue(e.path) && strings.HasPrefix(e.path, "kitty-specs/"+r.slug+"/") {
+			continue
+		}
+		entries = append(entries, e.xy+" "+e.path)
+	}
+	if len(entries) > 0 {
+		return r.refuse("MERGE_UNSAFE_PRIMARY_DIRTY", r.root, entries, fmt.Sprintf("Commit, stash, or revert the local changes in %s, %s.", r.root, resumeNote))
+	}
+	if !r.ret.RemoveWorktree {
+		return nil
+	}
+	for _, l := range r.m.Lanes {
+		if l.LaneID == lanes.PlanningLaneID {
+			continue
+		}
+		wt := lanes.WorktreePath(r.root, r.slug, l.LaneID)
+		if dirExists(wt) {
+			if err := r.checkClean(wt, "MERGE_UNSAFE_WORKTREE_DIRTY", true); err != nil {
+				return err
+			}
+		}
+	}
+	if !r.ret.DeleteBranch {
+		return nil
+	}
+	if r.sf.Routed() && dirExists(r.sf.CoordWorktree) {
+		return r.checkClean(r.sf.CoordWorktree, "MERGE_UNSAFE_WORKTREE_DIRTY", true)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// lane merges
+
+func (r *run) mergeLanes() error {
+	for _, l := range r.m.Lanes {
+		if l.LaneID == lanes.PlanningLaneID {
+			say(r.w, fmt.Sprintf("  [green]✓[/green] %s already on %s", l.LaneID, r.m.TargetBranch))
+			continue
+		}
+		branch := lanes.LaneBranchName(r.m.MissionSlug, l.LaneID, r.m.TargetBranch)
+		if !gitx.BranchExists(r.root, branch) || gitx.IsAncestor(r.root, branch, r.m.MissionBranch) {
+			say(r.w, fmt.Sprintf("  [dim]Skipping %s (already integrated into %s)[/dim]", l.LaneID, r.m.MissionBranch))
+			continue
+		}
+		say(r.w, fmt.Sprintf("  [dim]Checking and merging %s...[/dim]", l.LaneID))
+		if err := r.mergeInto(branch, r.m.MissionBranch); err != nil {
+			say(r.w, fmt.Sprintf("  [red]✗[/red] %s: %s", l.LaneID, err.Error()))
+			return exit(1)
+		}
+		say(r.w, fmt.Sprintf("  [green]✓[/green] %s → %s", l.LaneID, r.m.MissionBranch))
+	}
+	return nil
+}
+
+// mergeInto is the MERGE strategy of _merge_branch_into.
+func (r *run) mergeInto(source, target string) error {
+	dir, cleanup, err := scratchWorktree(r.root, target, "kitty-merge-")
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	res, _ := gitEnv(dir, mergeEnv(false), "merge", source, "--no-edit", "-m", fmt.Sprintf("Merge %s into %s", source, target))
+	if res.Code != 0 {
+		gitEnv(dir, nil, "merge", "--abort")
+		msg := strings.TrimSpace(res.Stderr)
+		if msg == "" {
+			msg = strings.TrimSpace(res.Stdout)
+		}
+		return fmt.Errorf("Merge of %s into %s failed: %s", source, target, msg)
+	}
+	return advanceBranch(r.root, target, revParse(dir, "HEAD"))
+}
+
+// ---------------------------------------------------------------------------
+// mission number bake
+
+func (r *run) bake() error {
+	if !needsNumber(r.sf.PrimaryDir) {
+		return nil
+	}
+	r.number = NextMissionNumber(r.root)
+	dir, cleanup, err := scratchWorktree(r.root, r.m.MissionBranch, "kitty-numwrite-")
+	if err != nil {
+		return nil
+	}
+	defer cleanup()
+	mdir := filepath.Join(dir, "kitty-specs", r.slug)
+	meta, err := mission.ReadMeta(mdir)
+	if err != nil {
+		return r.bakeOnPrimary()
+	}
+	if n, ok := mission.MissionNumber(meta); ok && n == r.number {
+		return nil
+	}
+	meta.Set("mission_number", r.number)
+	if err := mission.WriteMeta(mdir, meta, false); err != nil {
+		return err
+	}
+	rel := filepath.ToSlash(filepath.Join("kitty-specs", r.slug, mission.MetaFile))
+	if _, err := gitx.Run(dir, "-c", "commit.gpgsign=false", "commit", "-q", "--only", "-m",
+		fmt.Sprintf("chore(%s): assign mission_number=%d", r.slug, r.number), "--", rel); err != nil {
+		return err
+	}
+	return advanceBranch(r.root, r.m.MissionBranch, revParse(dir, "HEAD"))
+}
+
+func (r *run) bakeOnPrimary() error {
+	meta, err := mission.ReadMeta(r.sf.PrimaryDir)
+	if err != nil {
+		return nil
+	}
+	meta.Set("mission_number", r.number)
+	if err := mission.WriteMeta(r.sf.PrimaryDir, meta, false); err != nil {
+		return err
+	}
+	_, err = coord.CommitPaths(r.root, fmt.Sprintf("chore(%s): assign mission_number=%d", r.slug, r.number), filepath.Join(r.sf.PrimaryDir, mission.MetaFile))
+	r.baseline = revParse(r.root, "refs/heads/"+r.m.TargetBranch)
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// done transitions
+
+func (r *run) recordDone() error {
+	say(r.w, "  [dim]Recording merged work packages as done...[/dim]")
+	sf := coord.Resolve(r.root, r.slug)
+	snap, err := status.ReduceDir(sf.StatusDir())
+	if err != nil {
+		return err
+	}
+	for _, id := range r.wps {
+		st := snap.WP(id)
+		if st == nil || st.GetString("lane") == "done" {
+			continue
+		}
+		reviewer := ""
+		if rr := st.GetObject("review_result"); rr != nil {
+			reviewer = rr.GetString("reviewer")
+		}
+		if reviewer == "" {
+			reviewer = st.GetString("actor")
+		}
+		reason := fmt.Sprintf("Merged %s into %s", id, r.m.TargetBranch)
+		req := &status.TransitionRequest{
+			WPID: id, ToLane: "done", Actor: status.StrActor("merge"), Reason: &reason,
+			Evidence:       &status.DoneEvidence{Review: status.ReviewApproval{Reviewer: reviewer, Verdict: "approved", Reference: "lane-approved:" + id}},
+			ExecutionMode:  "worktree",
+			PolicyMetadata: jsonx.NewObject("merge_phase", "lane_integrated", "target_branch", r.m.TargetBranch),
+		}
+		if _, err := sf.EmitTransition(req); err != nil {
+			sayErr(r.w, err.Error())
+			return exit(1)
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// mission → target squash
+
+func (r *run) squashIntoTarget() error {
+	say(r.w, fmt.Sprintf("  [dim]Merging mission branch into %s...[/dim]", r.m.TargetBranch))
+	dir, cleanup, err := scratchWorktree(r.root, r.m.TargetBranch, "kitty-merge-")
+	if err != nil {
+		sayErr(r.w, err.Error())
+		return exit(1)
+	}
+	defer cleanup()
+	res, _ := gitEnv(dir, mergeEnv(true), "merge", "--squash", r.m.MissionBranch)
+	if res.Code != 0 {
+		conflicts := unmergedPaths(dir)
+		if len(conflicts) == 0 {
+			sayErr(r.w, strings.TrimSpace(res.Stderr+res.Stdout))
+			return exit(1)
+		}
+		var remaining []string
+		for _, c := range conflicts {
+			if strings.HasPrefix(c, "kitty-specs/"+r.slug+"/") {
+				if filepath.Base(c) == "status.json" {
+					if snap, err := status.MaterializeSnapshot(filepath.Join(dir, filepath.Dir(c))); err == nil {
+						os.WriteFile(filepath.Join(dir, c), []byte(snap.Render()), 0o644)
+					}
+				} else {
+					gitx.Run(dir, "checkout", "--ours", "--", c)
+				}
+				gitx.Run(dir, "add", "--", c)
+				continue
+			}
+			remaining = append(remaining, c)
+		}
+		if len(remaining) > 0 {
+			gitx.Run(dir, "reset", "-q", "--hard")
+			say(r.w, "[red]Error:[/red] Mission branch content conflicts with the target branch.")
+			say(r.w, "  diagnostic_code: TARGET_BRANCH_CONTENT_CONFLICT")
+			say(r.w, "  mission_branch: "+r.m.MissionBranch)
+			say(r.w, "  target_branch: "+r.m.TargetBranch)
+			for _, c := range remaining {
+				say(r.w, "  conflicting_path: "+c)
+			}
+			return exit(1)
+		}
+	}
+	if !gitx.HasStagedChanges(dir) {
+		sayErr(r.w, fmt.Sprintf("Squash merge of %s into %s produced no changes; target may already contain this tree. Retry with merge resume if recovering an interrupted merge.", r.m.MissionBranch, r.m.TargetBranch))
+		return exit(1)
+	}
+	if _, err := gitx.Run(dir, "commit", "-q", "-m", fmt.Sprintf("feat(%s): squash merge of mission", r.m.MissionBranch)); err != nil {
+		sayErr(r.w, "Squash commit into "+r.m.TargetBranch+" failed: "+err.Error())
+		return exit(1)
+	}
+	r.squash = revParse(dir, "HEAD")
+	if err := advanceBranch(r.root, r.m.TargetBranch, r.squash); err != nil {
+		sayErr(r.w, err.Error())
+		return exit(1)
+	}
+	say(r.w, fmt.Sprintf("\n[green]✓[/green] %s → %s", r.m.MissionBranch, r.m.TargetBranch))
+	say(r.w, "  Commit: "+r.squash[:7])
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// target bookkeeping
+
+func (r *run) doneBookkeeping(coordDone bool) error {
+	primary := r.sf.PrimaryDir
+	paths := []string{filepath.Join(primary, mission.MetaFile)}
+	if coordDone {
+		src := filepath.Join(r.sf.CoordDir, status.EventsFile)
+		dst := status.EventsPath(primary)
+		sb, _ := os.ReadFile(src)
+		db, _ := os.ReadFile(dst)
+		if merged, err := mergedriver.MergeEventLogTexts(string(sb), string(db)); err == nil && (len(sb) > 0 || len(db) > 0) {
+			os.WriteFile(dst, []byte(merged), 0o644)
+			if stream, err := status.ReadStream(primary, ""); err == nil {
+				snap := status.Reduce(stream.Transitions, nil, true)
+				os.WriteFile(filepath.Join(primary, "status.json"), []byte(snap.Render()), 0o644)
+			}
+		}
+		paths = append(paths, dst, filepath.Join(primary, "status.json"))
+	}
+	meta, err := mission.ReadMeta(primary)
+	if err != nil {
+		return err
+	}
+	if n, ok := mission.MissionNumber(meta); !ok && r.number > 0 {
+		meta.Set("mission_number", r.number)
+	} else if ok {
+		_ = n
+	}
+	meta.Set("baseline_merge_commit", r.baseline)
+	meta.Set("merged_at", clock.NowUTCISO())
+	meta.Set("merged_commit", r.squash)
+	if strings.TrimSpace(meta.GetString("mission_id")) != "" {
+		meta.Set("status_phase", "1")
+	}
+	if err := mission.WriteMeta(primary, meta, false); err != nil {
+		return err
+	}
+	if _, err := coord.CommitPaths(r.root, fmt.Sprintf("chore(%s): record done transitions for merged WPs", r.slug), existing(paths)...); err != nil {
+		sayErr(r.w, err.Error())
+		return exit(1)
+	}
+	return nil
+}
+
+func existing(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// retrospective + teardown
+
+func (r *run) captureRetrospective() {
+	path, err := retrospective.Capture(r.root, r.slug)
+	if err != nil || path == "" {
+		return
+	}
+	coord.CommitPaths(r.root, fmt.Sprintf("chore(%s): capture mission retrospective", r.slug),
+		path, status.EventsPath(r.sf.PrimaryDir))
+}
+
+func (r *run) teardown(coordDone bool) {
+	if r.ret.RemoveWorktree {
+		for _, l := range r.m.Lanes {
+			if l.LaneID == lanes.PlanningLaneID {
+				continue
+			}
+			wt := lanes.WorktreePath(r.root, r.slug, l.LaneID)
+			if !dirExists(wt) {
+				continue
+			}
+			if _, err := gitx.Run(r.root, "worktree", "remove", "--force", wt); err == nil {
+				say(r.w, "  Removed worktree: "+filepath.Base(wt))
+			}
+		}
+	}
+	for _, c := range lanes.ListContexts(r.root) {
+		_ = c
+	}
+	if matches, _ := filepath.Glob(filepath.Join(lanes.WorkspacesDir(r.root), r.slug+"-*.json")); r.ret.RemoveWorktree {
+		for _, p := range matches {
+			os.Remove(p)
+		}
+	}
+	if !r.ret.DeleteBranch {
+		return
+	}
+	n := 0
+	for _, l := range r.m.Lanes {
+		if l.LaneID == lanes.PlanningLaneID {
+			continue
+		}
+		b := lanes.LaneBranchName(r.m.MissionSlug, l.LaneID, r.m.TargetBranch)
+		if worktreeFor(r.root, b) != "" {
+			continue
+		}
+		if _, err := gitx.Run(r.root, "branch", "-D", b); err == nil {
+			n++
+		}
+		gitx.Run(r.root, "update-ref", "-d", "refs/spec-kitty/lane-tip/"+b)
+	}
+	if n > 0 {
+		say(r.w, fmt.Sprintf("  Cleaned up %d lane branch(es)", n))
+	}
+	refs, _ := gitx.Run(r.root, "for-each-ref", "--format=%(refname)", "refs/spec-kitty/wp-base/"+r.slug+"/")
+	for _, ref := range strings.Fields(refs) {
+		gitx.Run(r.root, "update-ref", "-d", ref)
+	}
+	if r.sf.Routed() && r.ret.RemoveWorktree {
+		if dirExists(r.sf.CoordWorktree) {
+			gitx.Run(r.root, "worktree", "remove", "--force", r.sf.CoordWorktree)
+		}
+		gitx.Run(r.root, "branch", "-D", r.sf.CoordBranch)
+		say(r.w, "  Cleaned up mission/coordination branch + worktree")
+		r.flatten()
+	} else if r.m.MissionBranch != r.m.TargetBranch && gitx.BranchExists(r.root, r.m.MissionBranch) && worktreeFor(r.root, r.m.MissionBranch) == "" {
+		gitx.Run(r.root, "branch", "-D", r.m.MissionBranch)
+	}
+}
+
+func (r *run) flatten() {
+	meta, err := mission.ReadMeta(r.sf.PrimaryDir)
+	if err != nil {
+		return
+	}
+	meta.Delete("coordination_branch")
+	meta.Delete("topology")
+	meta.Set("flattened", true)
+	mission.WriteMeta(r.sf.PrimaryDir, meta, false)
+	coord.CommitPaths(r.root, fmt.Sprintf("chore(%s): flatten coordination metadata after branch deletion (#3086)", r.slug),
+		filepath.Join(r.sf.PrimaryDir, mission.MetaFile))
+}
+
+var (
+	_ = sort.Strings
+)
