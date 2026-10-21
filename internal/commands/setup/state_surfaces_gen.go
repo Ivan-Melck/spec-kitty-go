@@ -66,4 +66,3 @@ var stateSurfaces = []stateSurface{
 	{"legacy_mission_sessions", "~/.spec-kitty/missions/*/session.json", "global_sync", "deprecated", "outside_repo"},
 	{"legacy_reset_backups", "~/.spec-kitty/reset-backup-*", "global_sync", "deprecated", "outside_repo"},
 }
-
