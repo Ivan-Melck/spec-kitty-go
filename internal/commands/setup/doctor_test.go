@@ -43,4 +43,15 @@ func TestDoctorSetupLeavesMatchOracle(t *testing.T) {
 	p.Compare(false, "doctor", "skills", "--fix", "--json")
 	p.Compare(false, "doctor", "skills")
 	p.CompareTree(".agents", true)
+
+	p.Compare(false, "doctor", "state-roots")
+	p.Compare(false, "doctor", "state-roots", "--json")
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile(".gitignore", "")
+		s.WriteFile(".kittify/merge-state.json", "{}\n")
+		s.WriteFile("kitty-specs/001-x/meta.json", "{}\n")
+	})
+	p.Compare(false, "doctor", "state-roots")
+	p.Compare(false, "doctor", "state-roots", "--json")
+	p.Compare(false, "regen", "--check")
 }
