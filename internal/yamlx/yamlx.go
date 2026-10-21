@@ -134,6 +134,9 @@ type Options struct {
 	// NullAsNull renders None as "null" (PyYAML safe_dump) instead of an
 	// empty value (ruamel round-trip).
 	NullAsNull bool
+	// Width > 0 folds long plain / single-quoted scalars at that best_width
+	// like ruamel.yaml (write_plain / write_single_quoted); 0 = never fold.
+	Width int
 }
 
 // Emit renders v (normally *jsonx.Object) as block YAML.
@@ -206,6 +209,11 @@ func (e *emitter) value(v any, indent int, inSeq bool) {
 			s = "null"
 		}
 		if s == "" {
+			e.b.WriteString("\n")
+			return
+		}
+		if str, ok := v.(string); ok && e.opts.Width > 0 && !needsDouble(str) && !strings.ContainsAny(str, "\n\r") {
+			e.b.WriteString(wrapScalar(str, s != str, e.column(), indent+2, e.opts.Width))
 			e.b.WriteString("\n")
 			return
 		}
