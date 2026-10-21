@@ -29,6 +29,8 @@ type ImplementOptions struct {
 	// SkipPreamble: the caller already printed the leading blank line and
 	// the charter preflight (the command resolves --mission after them).
 	SkipPreamble bool
+	// Base is the explicit --base ref ("" = auto-detect).
+	Base string
 }
 
 // ImplementResult is the outcome of the top-level implement.
@@ -348,7 +350,19 @@ func TopImplement(o *Out, opt ImplementOptions) (*ImplementResult, error) {
 		o.Console(tracker.Render())
 		return nil, err
 	}
-	res, err := CreateLaneWorkspace(o, root, slug, wpID, wpFile, ws, manifest, deps)
+	effectiveBase := ""
+	if opt.Base != "" {
+		if ws.LaneID == lanes.PlanningLaneID {
+			o.Console("Warning: --base is ignored for repository-root planning work")
+		} else if ref, _, ok := ResolveBaseRef(root, opt.Base); ok {
+			effectiveBase = ref
+		} else {
+			o.Console(BaseRefUnresolvedMessage(opt.Base))
+			o.Console(tracker.Render())
+			return nil, ExitErr(1)
+		}
+	}
+	res, err := CreateLaneWorkspaceBase(o, root, slug, wpID, wpFile, ws, manifest, deps, effectiveBase)
 	if err != nil {
 		tracker.Error("create", "workspace allocation failed: "+err.Error())
 		o.Console(tracker.Render())
@@ -394,6 +408,9 @@ func TopImplement(o *Out, opt ImplementOptions) (*ImplementResult, error) {
 		o.Console("→ Lane branch: " + res.BranchName)
 	} else {
 		o.Console("→ Workspace contract: repository root planning workspace")
+	}
+	if effectiveBase != "" && ws.LaneID != lanes.PlanningLaneID {
+		o.Console("→ Using explicit base ref: " + effectiveBase)
 	}
 	commitClaim(o, root, slug, wpID, wpFile, autoCommit, start, s, metaWritten, metaDirty, res.WPStamped, wpDirty)
 	return &ImplementResult{Workspace: res, Changed: len(start.Events) > 0}, nil

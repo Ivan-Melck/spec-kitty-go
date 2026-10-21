@@ -7,6 +7,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/workflow"
 )
@@ -77,18 +78,7 @@ func runTopImplement(ctx *cli.Context) error {
 		return cli.Exit(2)
 	}
 	if ctx.Bool("recover") {
-		o.Console("Error: --recover is not supported by this build.")
-		if jsonMode {
-			emitJSONError(summary())
-		}
-		return cli.Exit(1)
-	}
-	if ctx.IsSet("base") {
-		o.Console("Error: --base is not supported by this build.")
-		if jsonMode {
-			emitJSONError(summary())
-		}
-		return cli.Exit(1)
+		return runRecover(ctx, jsonMode)
 	}
 	root := locateRoot()
 	if root == "" {
@@ -107,7 +97,7 @@ func runTopImplement(ctx *cli.Context) error {
 		ac = &v
 	}
 	res, err := workflow.TopImplement(o, workflow.ImplementOptions{Root: root, MissionDir: slug, WPID: wpID, AutoCommit: ac,
-		JSON: jsonMode, Actor: ctx.String("actor"), SkipPreamble: true})
+		JSON: jsonMode, Actor: ctx.String("actor"), SkipPreamble: true, Base: ctx.String("base")})
 	if err != nil {
 		if jsonMode {
 			emitJSONError(summary())
@@ -119,5 +109,84 @@ func runTopImplement(ctx *cli.Context) error {
 		return nil
 	}
 	workflow.PrintWorkspaceReadyBanner(o, res.Workspace)
+	return nil
+}
+
+// runRecover is implement_recover._run_recover_mode.
+func runRecover(ctx *cli.Context, jsonMode bool) error {
+	root := locateRoot()
+	if root == "" {
+		if jsonMode {
+			fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("status", "error", "error", "Could not locate project root"), compact))
+		}
+		return cli.Exit(1)
+	}
+	slug, err := mission.ResolveHandle(root, ctx.String("mission"))
+	if err != nil {
+		if jsonMode {
+			fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("status", "error", "error", err.Error()), compact))
+		} else {
+			rich.Print(ctx.Stdout, "[red]Error:[/red] "+err.Error())
+		}
+		return cli.Exit(1)
+	}
+	states := workflow.ScanRecoveryState(root, slug)
+	var needs []*workflow.RecoveryState
+	for _, s := range states {
+		if s.RecoveryAction != "no_action" {
+			needs = append(needs, s)
+		}
+	}
+	if len(needs) == 0 {
+		if jsonMode {
+			fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("status", "ok", "message", "No crashed implementation sessions found.",
+				"recovered_wps", []any{}, "worktrees_recreated", 0, "transitions_emitted", 0, "errors", []any{}), compact))
+		} else {
+			rich.Print(ctx.Stdout, "No crashed implementation sessions found.")
+		}
+		return nil
+	}
+	if !jsonMode {
+		yn := func(b bool) string {
+			if b {
+				return "yes"
+			}
+			return "NO"
+		}
+		var rows [][]string
+		for _, s := range needs {
+			rows = append(rows, []string{s.WPID, s.LaneID, s.BranchName, yn(s.WorktreeExists), yn(s.ContextExists), s.StatusLane, s.RecoveryAction})
+		}
+		rich.Table(ctx.Stdout, "Recovery Scan Results", []string{"WP", "Lane", "Branch", "Worktree", "Context", "Status", "Action"}, rows)
+		fmt.Fprintln(ctx.Stdout)
+	}
+	rep := workflow.RunRecovery(root, slug)
+	if jsonMode {
+		wps, errs := []any{}, []any{}
+		for _, w := range rep.RecoveredWPs {
+			wps = append(wps, w)
+		}
+		for _, e := range rep.Errors {
+			errs = append(errs, e)
+		}
+		fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("status", "ok", "recovered_wps", wps, "worktrees_recreated", rep.WorktreesRecreated,
+			"transitions_emitted", rep.TransitionsEmitted, "errors", errs), compact))
+		return nil
+	}
+	none := strings.Join(rep.RecoveredWPs, ", ")
+	if none == "" {
+		none = "none"
+	}
+	fmt.Fprintln(ctx.Stdout, "Recovery complete")
+	fmt.Fprintf(ctx.Stdout, "  WPs recovered: %s\n", none)
+	fmt.Fprintf(ctx.Stdout, "  Worktrees recreated: %d\n", rep.WorktreesRecreated)
+	fmt.Fprintf(ctx.Stdout, "  Contexts recreated: %d\n", rep.ContextsRecreated)
+	fmt.Fprintf(ctx.Stdout, "  Status transitions emitted: %d\n", rep.TransitionsEmitted)
+	if len(rep.Errors) > 0 {
+		fmt.Fprintln(ctx.Stdout, "  Errors:")
+		for _, e := range rep.Errors {
+			fmt.Fprintf(ctx.Stdout, "    - %s\n", e)
+		}
+	}
 	return nil
 }
