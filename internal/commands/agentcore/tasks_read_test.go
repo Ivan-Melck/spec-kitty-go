@@ -1,6 +1,7 @@
 package agentcore_test
 
 import (
+	"os"
 	"regexp"
 	"testing"
 
@@ -15,6 +16,9 @@ func comparePairSteps(t *testing.T, p *testkit.Pair, goSlug, orSlug string, step
 		ga, oa := subst(s, goSlug), subst(s, orSlug)
 		g := p.Go.Run(ga...)
 		o := p.Oracle.RunOracle(oa...)
+		if os.Getenv("KITTY_TEST_TRACE") != "" {
+			t.Logf("%v\n== go %d ==\n%s%s== oracle %d ==\n%s%s", s, g.Code, g.Stdout, g.Stderr, o.Code, o.Stdout, o.Stderr)
+		}
 		if g.Code != o.Code {
 			t.Errorf("%v: exit go=%d oracle=%d\ngo stdout:\n%s\ngo stderr:\n%s\noracle stdout:\n%s\noracle stderr:\n%s", s, g.Code, o.Code, g.Stdout, g.Stderr, o.Stdout, o.Stderr)
 			continue

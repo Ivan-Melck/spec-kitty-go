@@ -247,6 +247,9 @@ func (st *moveState) run() error {
 		return err
 	}
 	if err := st.execute(); err != nil {
+		if rerr := st.revertVerdictWrite(); rerr != nil {
+			return fmt.Errorf("Transition emit failed for %s (%v); the FR-002 revert-compensator ALSO failed to undo the already-committed verdict write (%v). Operator attention required -- a committed verdict may still exist.", st.taskID, err, rerr)
+		}
 		return err
 	}
 	st.output()
@@ -1573,6 +1576,31 @@ func (st *moveState) finalizePlan() error {
 	return nil
 }
 
+// revertVerdictWrite is revert_committed_verdict_write (FR-002): when the
+// transition emit fails after a review-cycle verdict was durably committed,
+// delete the artifact and commit the deletion on the same surface.
+func (st *moveState) revertVerdictWrite() error {
+	c := st.verdictWrite
+	if c == nil || !c.Outcome.Durable || c.ArtifactPath == "" {
+		return nil
+	}
+	if _, err := os.Stat(c.ArtifactPath); err != nil {
+		return nil
+	}
+	if err := os.Remove(c.ArtifactPath); err != nil {
+		return err
+	}
+	root, _, err := review.WriteRoot(st.m.Surface)
+	if err != nil {
+		return err
+	}
+	msg := fmt.Sprintf("revert: undo review-cycle-%d verdict for %s on %s (transition emit failed, FR-002)", c.CycleNumber, st.taskID, st.m.Slug)
+	if _, err := coord.CommitPaths(root, msg, c.ArtifactPath); err != nil {
+		return fmt.Errorf("Deleted %s on disk but could not commit the deletion (%v). A committed verdict may still be reachable at a prior commit for %s -- operator attention required.", c.ArtifactPath, err, st.taskID)
+	}
+	return nil
+}
+
 func (st *moveState) checkVerdictDurable(c *review.Cycle) error {
 	if !st.autoCommit || c.Outcome.Durable {
 		return nil
@@ -1839,26 +1867,9 @@ func (st *moveState) execute() error {
 }
 
 func (st *moveState) warnApproval() {
-	e := st.event
-	if e == nil {
-		return
+	for _, w := range approvalWarnings(st.event, st.m.PrimaryDir(), st.featureDir) {
+		fmt.Fprintln(st.ctx.Stderr, w)
 	}
-	isApproval := e.To == status.Approved || (e.To == status.Done && !e.Force && e.From != status.Approved)
-	if !isApproval || e.Force {
-		return
-	}
-	if e.PolicyMetadata != nil && e.PolicyMetadata.Has("lane_head") {
-		return
-	}
-	m, err := lanes.Read(st.m.PrimaryDir())
-	if err != nil || m == nil {
-		return
-	}
-	l := m.LaneForWP(e.WPID)
-	if l == nil || l.LaneID == lanes.PlanningLaneID {
-		return
-	}
-	fmt.Fprintf(st.ctx.Stderr, "Warning: no lane head could be recorded for %s's approval; `spec-kitty consolidate` will refuse it (APPROVAL_STAMP_MISSING) until it is approved again or attested.\n", e.WPID)
 }
 
 func (st *moveState) emitRuntimeState() error {

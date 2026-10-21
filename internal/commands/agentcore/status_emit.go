@@ -240,14 +240,8 @@ func runStatusEmit(ctx *cli.Context) error {
 		lanes.RecordTipForWP(root, slug, wpID)
 	}
 	m = newMissionCtx(root, slug)
-	if ev.To == status.Approved || (ev.To == status.Done && !ev.Force && ev.From != status.Approved) {
-		if !ev.Force && (ev.PolicyMetadata == nil || !ev.PolicyMetadata.Has("lane_head")) {
-			if man, _ := lanes.Read(m.PrimaryDir()); man != nil {
-				if l := man.LaneForWP(wpID); l != nil && l.LaneID != lanes.PlanningLaneID {
-					fmt.Fprintf(ctx.Stderr, "Warning: no lane head could be recorded for %s's approval; `spec-kitty consolidate` will refuse it (APPROVAL_STAMP_MISSING) until it is approved again or attested.\n", wpID)
-				}
-			}
-		}
+	for _, w := range approvalWarnings(ev, m.PrimaryDir(), m.ReadDir()) {
+		fmt.Fprintln(ctx.Stderr, w)
 	}
 	if jsonMode {
 		printJSON(ctx.Stdout, jsonx.NewObject("event_id", ev.EventID, "wp_id", ev.WPID, "work_package_id", ev.WPID,

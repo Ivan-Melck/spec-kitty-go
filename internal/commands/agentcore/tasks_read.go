@@ -253,6 +253,10 @@ type boardRow struct {
 	title string
 	lane  string
 	deps  []string
+	stale bool // _stale_verdict
+	// arbiterCat is the category of the WP's complete event-sourced
+	// ReviewOverride ("" when none).
+	arbiterCat string
 }
 
 func runTasksStatus(ctx *cli.Context) error {
@@ -309,6 +313,7 @@ func runTasksStatus(ctx *cli.Context) error {
 	}
 	manifest, _ := lanes.Read(m.PrimaryDir())
 	var rows []*boardRow
+	staleVerdicts := []any{}
 	for _, p := range wpGlob(tasksDir) {
 		w, err := wp.Read(p)
 		if err != nil {
@@ -369,7 +374,20 @@ func runTasksStatus(ctx *cli.Context) error {
 		if key == "" {
 			key = w.Stem()
 		}
-		rows = append(rows, &boardRow{obj: o, id: id, title: w.String("title"), lane: lane, deps: w.Dependencies()})
+		row := &boardRow{obj: o, id: id, title: w.String("title"), lane: lane, deps: w.Dependencies()}
+		if id != "" && state != nil {
+			if rv := state.GetObject("review"); rv != nil {
+				if rv.GetString("at") != "" && rv.GetString("actor") != "" && rv.GetString("wp_id") != "" && rv.GetString("reason") != "" {
+					row.arbiterCat, _ = parseArbiterNote(rv.GetString("reason"))
+				}
+			}
+		}
+		if id != "" && (lane == string(status.Approved) || lane == string(status.Done)) {
+			if warn := reviewVerdictFlag(row, state); warn != nil {
+				staleVerdicts = append(staleVerdicts, warn)
+			}
+		}
+		rows = append(rows, row)
 		_ = key
 	}
 	// staleness for in_progress rows (no lane worktree → fresh)
@@ -436,7 +454,7 @@ func runTasksStatus(ctx *cli.Context) error {
 		res.Set("done_count", done)
 		res.Set("done_percentage", donePct)
 		res.Set("stale_wps", 0)
-		res.Set("stale_verdicts", []any{})
+		res.Set("stale_verdicts", staleVerdicts)
 		res.Set("stalled_wps", []any{})
 		res.Set("auto_commit", autoCommit)
 		printJSONPretty(ctx.Stdout, res)
@@ -536,6 +554,9 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 		if len([]rune(t)) > 22 {
 			t = truncateRunes(t, 22) + "..."
 		}
+		if r.stale {
+			return []string{"⚠ " + r.id, t}
+		}
 		return []string{r.id + suffix, t}
 	}
 	type col struct{ cells [][]string }
@@ -598,6 +619,19 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 	fmt.Fprintln(w)
 
 	bullet := func(r *boardRow) string { return fmt.Sprintf("  • %s - %s", r.id, r.title) }
+	var arbiterLines []string
+	for _, r := range rows {
+		if r.arbiterCat != "" {
+			arbiterLines = append(arbiterLines, fmt.Sprintf("  • %s Cycle 1: rejected → overridden (%s)", r.id, r.arbiterCat))
+		}
+	}
+	if len(arbiterLines) > 0 {
+		fmt.Fprintln(w, "⚖️  Arbiter Override History:")
+		for _, l := range arbiterLines {
+			consolePrint(w, l)
+		}
+		fmt.Fprintln(w)
+	}
 	if l := byLane["for_review"]; len(l) > 0 {
 		fmt.Fprintln(w, "👀 Ready for Review:")
 		for _, r := range l {
@@ -608,9 +642,26 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 	if l := byLane["approved"]; len(l) > 0 {
 		fmt.Fprintln(w, "👍 Approved (merge when all WPs approved):")
 		for _, r := range l {
-			consolePrint(w, bullet(r))
+			line := bullet(r)
+			if r.stale {
+				line += "  ⚠ review artifact: verdict=rejected"
+			}
+			consolePrint(w, line)
 		}
 		fmt.Fprintln(w, "   Approved WPs stay here until feature merge. Dependents can start immediately.")
+		fmt.Fprintln(w)
+	}
+	var doneStale []*boardRow
+	for _, r := range byLane["done"] {
+		if r.stale {
+			doneStale = append(doneStale, r)
+		}
+	}
+	if len(doneStale) > 0 {
+		fmt.Fprintln(w, "✅ Done (with stale verdict warnings):")
+		for _, r := range doneStale {
+			consolePrint(w, bullet(r)+"  ⚠ review artifact: verdict=rejected")
+		}
 		fmt.Fprintln(w)
 	}
 	if l := byLane["claimed"]; len(l) > 0 {
@@ -672,4 +723,41 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 	consolePrint(w, "  spec-kitty next --agent <your-name> --mission "+slug)
 	fmt.Fprintln(w, "  This command tells you exactly what to do next based on the dependency graph.")
 	fmt.Fprintln(w)
+}
+
+// reviewVerdictFlag is _apply_wp_review_verdict_flag: annotate an
+// approved/done row whose event-sourced review_result is a rejection
+// (stale) or damaged. Returns the stale_verdicts entry, if any.
+func reviewVerdictFlag(row *boardRow, state *jsonx.Object) *jsonx.Object {
+	if state == nil {
+		return nil
+	}
+	raw, ok := state.Get("review_result")
+	if !ok || raw == nil {
+		return nil
+	}
+	rr, isObj := raw.(*jsonx.Object)
+	var verdict, ref any
+	valid := false
+	if isObj {
+		_, hasR := rr.Get("reviewer")
+		v, hasV := rr.Get("verdict")
+		r, hasRef := rr.Get("reference")
+		valid = hasR && hasV && hasRef
+		verdict, ref = v, r
+	}
+	if !valid {
+		warn := jsonx.NewObject("wp_id", row.id, "artifact", nil, "verdict", nil, "damaged", true)
+		row.obj.Set("_damaged_verdict", true)
+		row.obj.Set("damaged_review_artifact", warn)
+		return warn
+	}
+	if verdict != "changes_requested" {
+		return nil
+	}
+	warn := jsonx.NewObject("wp_id", row.id, "artifact", ref, "verdict", "rejected")
+	row.stale = true
+	row.obj.Set("_stale_verdict", true)
+	row.obj.Set("stale_review_artifact", warn)
+	return warn
 }
