@@ -135,8 +135,14 @@ func runAgentMerge(ctx *cli.Context) error {
 	handle := ctx.String("mission")
 	slug := handle
 	if handle != "" {
-		if r, err := mission.ResolveIdentity(root, handle); err == nil {
+		r, err := mission.ResolveIdentity(root, handle)
+		switch e := err.(type) {
+		case nil:
 			slug = r.Slug
+		case *mission.NotFoundError:
+			say(ctx.Stderr, "[red]Error:[/red] "+e.HumanMessage())
+		default:
+			sayLiteral(ctx.Stderr, "", err.Error())
 		}
 	}
 	target := ctx.String("target")

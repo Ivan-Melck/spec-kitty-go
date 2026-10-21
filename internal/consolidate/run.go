@@ -839,7 +839,6 @@ func (r *run) teardown(coordDone bool) {
 	} else if r.m.MissionBranch != r.m.TargetBranch && gitx.BranchExists(r.root, r.m.MissionBranch) && worktreeFor(r.root, r.m.MissionBranch) == "" {
 		gitx.Run(r.root, "branch", "-D", r.m.MissionBranch)
 	}
-	os.Remove(filepath.Join(project.Worktrees(r.root)))
 }
 
 func (r *run) flatten() {
