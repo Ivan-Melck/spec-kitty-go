@@ -23,7 +23,7 @@ const (
 // StrandedFinding is StrandedRecordFinding.
 type StrandedFinding struct {
 	MissionSlug, WPID, RetiredResolver, RetiringFR, StrandedClass, ResolvedDirectory string
-	RecordPaths                                                                     []string
+	RecordPaths                                                                      []string
 }
 
 // ReconcileReport is MissionReconciliationReport.
