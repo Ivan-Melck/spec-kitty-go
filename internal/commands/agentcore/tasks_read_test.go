@@ -1,6 +1,7 @@
 package agentcore_test
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
@@ -18,7 +19,7 @@ func comparePairSteps(t *testing.T, p *testkit.Pair, goSlug, orSlug string, step
 			t.Errorf("%v: exit go=%d oracle=%d\ngo stdout:\n%s\ngo stderr:\n%s\noracle stdout:\n%s\noracle stderr:\n%s", s, g.Code, o.Code, g.Stdout, g.Stderr, o.Stdout, o.Stderr)
 			continue
 		}
-		gs, os_ := p.Go.Normalize(g.Stdout), p.Oracle.Normalize(o.Stdout)
+		gs, os_ := shortULID.ReplaceAllString(p.Go.Normalize(g.Stdout), "<ULID12>"), shortULID.ReplaceAllString(p.Oracle.Normalize(o.Stdout), "<ULID12>")
 		if gs != os_ {
 			t.Errorf("%v: stdout differs\n%s", s, testkit.Diff(os_, gs))
 		}
@@ -28,6 +29,9 @@ func comparePairSteps(t *testing.T, p *testkit.Pair, goSlug, orSlug string, step
 		}
 	}
 }
+
+// shortULID masks the 12-char event id prefixes status emit prints.
+var shortULID = regexp.MustCompile(`\b0[0-9A-HJKMNP-TV-Z]{11}\.\.\.`)
 
 func subst(args []string, slug string) []string {
 	out := make([]string, len(args))

@@ -1299,6 +1299,7 @@ func (st *moveState) commitLaneDeliverables() {
 		st.console(fmt.Sprintf("Warning: could not auto-commit lane deliverables for %s: %v", st.taskID, err))
 		return
 	}
+	lanes.RecordTip(st.root, ws.BranchName)
 	st.console(fmt.Sprintf("Committed lane deliverables for %s on %s before review.", st.taskID, ws.BranchName))
 }
 
@@ -1963,4 +1964,3 @@ func (st *moveState) dependentWarnings() {
 	}
 	consolePrint(out, "")
 }
-
