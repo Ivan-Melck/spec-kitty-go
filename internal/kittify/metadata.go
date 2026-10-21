@@ -343,7 +343,7 @@ func PlatformInfo() (string, string) {
 
 // RuntimeVersion stands in for platform.python_version() in metadata.yaml
 // (no consumer reads it; we record the Go toolchain version).
-func RuntimeVersion() string { return strings.TrimPrefix(runtime.Version(), "go") }
+func RuntimeVersion() string { return strings.Fields(strings.TrimPrefix(runtime.Version(), "go"))[0] }
 
 // NewMetadata builds init's metadata record for now.
 func NewMetadata(version string) *Metadata {
