@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // tableSpec configures richTableX, a closer rich.Table model: fixed column
@@ -165,7 +165,7 @@ func richTableX(w io.Writer, spec tableSpec, rows [][]string) {
 	n := len(spec.Headers)
 	maxW := spec.MaxWidth
 	if maxW == 0 {
-		maxW = uconsole.Width()
+		maxW = rich.Width()
 	}
 	widths := make([]int, n) // including padding (2)
 	wrapable := make([]bool, n)
@@ -203,7 +203,7 @@ func richTableX(w io.Writer, spec tableSpec, rows [][]string) {
 		tableW += content[i] + 2
 	}
 	if spec.Title != "" {
-		for _, l := range uconsole.WrapWords(spec.Title, tableW) {
+		for _, l := range rich.WrapWords(spec.Title, tableW) {
 			fmt.Fprintln(w, alignText(strings.TrimRight(l, " "), tableW, 'c'))
 		}
 	}

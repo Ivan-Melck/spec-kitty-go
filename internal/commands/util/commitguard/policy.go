@@ -12,9 +12,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -45,7 +45,7 @@ func resolveMode(section string, raw any, present bool, warn io.Writer) string {
 		return cand
 	}
 	if warn != nil {
-		uconsole.LogWarning(warn, fmt.Sprintf("policy.%s.mode %s is not one of block, off, warn; using 'block' so the gate fails closed", section, pyjson.Repr(raw)))
+		rich.LogWarning(warn, fmt.Sprintf("policy.%s.mode %s is not one of block, off, warn; using 'block' so the gate fails closed", section, pyjson.Repr(raw)))
 	}
 	return "block"
 }
@@ -77,7 +77,7 @@ func LoadConfig(repoRoot string, warn io.Writer) Config {
 	v, err := yamlx.Parse(b)
 	if err != nil {
 		if warn != nil {
-			uconsole.LogWarning(warn, fmt.Sprintf("Failed to read config.yaml for policy: %v", err))
+			rich.LogWarning(warn, fmt.Sprintf("Failed to read config.yaml for policy: %v", err))
 		}
 		return DefaultConfig()
 	}

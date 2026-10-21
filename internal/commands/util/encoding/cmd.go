@@ -11,9 +11,9 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func init() {
@@ -141,7 +141,7 @@ func isDigits(s string) bool {
 
 func run(ctx *cli.Context) error {
 	out := ctx.Stdout
-	p := func(s string) { uconsole.Print(out, s) }
+	p := func(s string) { rich.Print(out, s) }
 	repoRoot := FindRepoRoot()
 	if repoRoot == "" {
 		p("[red]Error:[/red] Unable to locate repository root (missing .git or .kittify).")
@@ -181,7 +181,7 @@ func run(ctx *cli.Context) error {
 			totalFixed += f
 		}
 		fmt.Fprintln(out)
-		uconsole.Panel(out, fmt.Sprintf("Summary:\nTotal files with issues: %d\nTotal files fixed: %d", totalIssues, totalFixed), "Encoding Validation Complete")
+		rich.Panel(out, fmt.Sprintf("Summary:\nTotal files with issues: %d\nTotal files fixed: %d", totalIssues, totalFixed), "Encoding Validation Complete")
 		if totalIssues == 0 || fix {
 			return cli.Exit(0)
 		}
@@ -228,7 +228,7 @@ func relTo(path, base string) string {
 
 func validateDir(out io.Writer, dir string, fix, backup bool) (int, int) {
 	name := filepath.Base(dir)
-	uconsole.Print(out, "[cyan]Checking:[/cyan] "+name)
+	rich.Print(out, "[cyan]Checking:[/cyan] "+name)
 	results := SanitizeDirectory(dir, backup, !fix)
 	var withIssues, fixed []string
 	type ferr struct{ path, msg string }
@@ -254,7 +254,7 @@ func validateDir(out io.Writer, dir string, fix, backup bool) (int, int) {
 			}
 			rows = append(rows, []string{f, st})
 		}
-		uconsole.Table(out, "Files with Encoding Issues: "+name, []string{"File", "Status"}, rows)
+		rich.Table(out, "Files with Encoding Issues: "+name, []string{"File", "Status"}, rows)
 		if !fix {
 			raw, err := os.ReadFile(filepath.Join(dir, withIssues[0]))
 			if err == nil {
@@ -267,15 +267,15 @@ func validateDir(out io.Writer, dir string, fix, backup bool) (int, int) {
 				}
 				if issues := DetectProblematic(content); len(issues) > 0 {
 					fmt.Fprintln(out)
-					uconsole.Print(out, fmt.Sprintf("[yellow]Example issues in %s:[/yellow]", withIssues[0]))
+					rich.Print(out, fmt.Sprintf("[yellow]Example issues in %s:[/yellow]", withIssues[0]))
 					for i, is := range issues {
 						if i == 5 {
 							break
 						}
-						uconsole.Print(out, fmt.Sprintf("  Line %d, col %d: '%c' (U+%04X) → '%s'", is.Line, is.Col, is.Char, is.Char, is.Replacement))
+						rich.Print(out, fmt.Sprintf("  Line %d, col %d: '%c' (U+%04X) → '%s'", is.Line, is.Col, is.Char, is.Char, is.Replacement))
 					}
 					if len(issues) > 5 {
-						uconsole.Print(out, fmt.Sprintf("  ... and %d more", len(issues)-5))
+						rich.Print(out, fmt.Sprintf("  ... and %d more", len(issues)-5))
 					}
 				}
 			}
@@ -283,9 +283,9 @@ func validateDir(out io.Writer, dir string, fix, backup bool) (int, int) {
 	}
 	if len(errs) > 0 {
 		fmt.Fprintln(out)
-		uconsole.Print(out, "[red]Errors encountered:[/red]")
+		rich.Print(out, "[red]Errors encountered:[/red]")
 		for _, e := range errs {
-			uconsole.Print(out, fmt.Sprintf("  [red]✗[/red] %s: %s", e.path, e.msg))
+			rich.Print(out, fmt.Sprintf("  [red]✗[/red] %s: %s", e.path, e.msg))
 		}
 	}
 	return len(withIssues), len(fixed)

@@ -14,11 +14,11 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/bootstrap"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 const upgradeDoc = `Upgrade a Spec Kitty project to the current version.
@@ -933,7 +933,7 @@ func renderUpgradeText(w io.Writer, root string, o *upgradeOutcome, leftUncommit
 	if o.hadMigrations {
 		fmt.Fprintln(w)
 		if o.dryRun {
-			uconsole.Panel(w, "[yellow]DRY RUN[/yellow] - No changes were made", "")
+			rich.Panel(w, "[yellow]DRY RUN[/yellow] - No changes were made", "")
 		}
 		printSection(w, "[green]Migrations applied:[/green]", o.applied, "  [green]✓[/green] ")
 		printSection(w, "[dim]Migrations skipped (already applied or not needed):[/dim]", o.skipped, "  [dim]○[/dim] ")

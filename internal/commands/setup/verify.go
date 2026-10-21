@@ -15,11 +15,11 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // toolLabels is verify.TOOL_LABELS.
@@ -1004,7 +1004,7 @@ func printDiagnostics(w io.Writer, d *jsonx.Object, withTools bool, status map[s
 	if active == "" {
 		active = "[yellow]None[/yellow]"
 	}
-	uconsole.Panel(w, fmt.Sprintf("[bold]Project Path:[/bold] %s\n[bold]Current Directory:[/bold] %s\n[bold]Git Branch:[/bold] %s\n[bold]Active Mission:[/bold] %s",
+	rich.Panel(w, fmt.Sprintf("[bold]Project Path:[/bold] %s\n[bold]Current Directory:[/bold] %s\n[bold]Git Branch:[/bold] %s\n[bold]Active Mission:[/bold] %s",
 		d.GetString("project_path"), d.GetString("current_working_directory"), branch, active), "Project Information")
 	fi := d.GetObject("file_integrity")
 	te, _ := fi.GetInt("total_expected")
@@ -1027,18 +1027,18 @@ func printDiagnostics(w io.Writer, d *jsonx.Object, withTools bool, status map[s
 			info += fmt.Sprintf("\n  ... and %d more", len(mf)-5)
 		}
 	}
-	uconsole.Panel(w, info, "File Integrity")
+	rich.Panel(w, info, "File Integrity")
 	wo := d.GetObject("worktree_overview")
 	aw, _ := wo.GetInt("active_worktrees")
 	tf, _ := wo.GetInt("total_features")
-	uconsole.Panel(w, fmt.Sprintf("[bold]Worktrees Exist:[/bold] %s\n[bold]Currently in Worktree:[/bold] %s\n[bold]Active Worktrees:[/bold] %d\n[bold]Total Features:[/bold] %d",
+	rich.Panel(w, fmt.Sprintf("[bold]Worktrees Exist:[/bold] %s\n[bold]Currently in Worktree:[/bold] %s\n[bold]Active Worktrees:[/bold] %d\n[bold]Total Features:[/bold] %d",
 		yesNo(d.GetBool("worktrees_exist")), yesNo(d.GetBool("in_worktree")), aw, tf), "Worktrees")
 	cf := d.GetObject("current_feature")
 	if cf.GetBool("detected") {
-		uconsole.Panel(w, fmt.Sprintf("[bold]Detected Feature:[/bold] %s\n[bold]State:[/bold] %s\n[bold]Branch Exists:[/bold] %s\n[bold]Worktree Exists:[/bold] %s",
+		rich.Panel(w, fmt.Sprintf("[bold]Detected Feature:[/bold] %s\n[bold]State:[/bold] %s\n[bold]Branch Exists:[/bold] %s\n[bold]Worktree Exists:[/bold] %s",
 			cf.GetString("name"), cf.GetString("state"), yesNo(cf.GetBool("branch_exists")), yesNo(cf.GetBool("worktree_exists"))), "Current Feature")
 	} else {
-		uconsole.Panel(w, "[yellow]No feature detected in current context[/yellow]", "Current Feature")
+		rich.Panel(w, "[yellow]No feature detected in current context[/yellow]", "Current Feature")
 	}
 	if all := d.GetList("all_features"); len(all) > 0 {
 		var rows [][]string

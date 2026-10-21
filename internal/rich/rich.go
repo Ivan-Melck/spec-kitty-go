@@ -1,7 +1,7 @@
-// Package uconsole approximates rich.Console.print for the utility commands:
+// Package rich approximates rich.Console.print for the utility commands:
 // it strips rich markup tags and soft-wraps on word boundaries at the console
 // width (COLUMNS, else 80), like rich does when stdout is not a terminal.
-package uconsole
+package rich
 
 import (
 	"fmt"

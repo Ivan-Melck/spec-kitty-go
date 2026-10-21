@@ -5,8 +5,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // richTable renders a rich.Table (HEAVY_HEAD box, padding (0, 1)) with a
@@ -29,7 +29,7 @@ func richTable(w io.Writer, title string, headers []string, justify []byte, rows
 		total += wd + 3
 	}
 	if title != "" {
-		for _, l := range uconsole.WrapWords(title, total) {
+		for _, l := range rich.WrapWords(title, total) {
 			fmt.Fprintln(w, alignText(strings.TrimRight(l, " "), total, 'c'))
 		}
 	}

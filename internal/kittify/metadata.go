@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 

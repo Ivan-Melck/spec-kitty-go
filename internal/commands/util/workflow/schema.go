@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 )
 
 // pydanticVersion is the major.minor in the errors.pydantic.dev links the

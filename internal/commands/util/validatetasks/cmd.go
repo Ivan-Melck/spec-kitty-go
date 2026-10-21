@@ -15,11 +15,11 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/commands/util/encoding"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/pyyaml"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func init() {
@@ -74,7 +74,7 @@ func ParseFrontmatter(content string, warn io.Writer) (*jsonx.Object, string) {
 	v, err := pyyaml.SafeLoad(fmText)
 	if err != nil {
 		if warn != nil {
-			uconsole.LogWarning(warn, "YAML parse error in frontmatter (WP may vanish from dashboard): "+err.Error())
+			rich.LogWarning(warn, "YAML parse error in frontmatter (WP may vanish from dashboard): "+err.Error())
 		}
 		return &jsonx.Object{}, body
 	}
@@ -230,7 +230,7 @@ func RepairLaneMismatch(path, agent, shellPID string, warn io.Writer) (bool, str
 
 func run(ctx *cli.Context) error {
 	out := ctx.Stdout
-	p := func(s string) { uconsole.Print(out, s) }
+	p := func(s string) { rich.Print(out, s) }
 	repoRoot := encoding.FindRepoRoot()
 	if repoRoot == "" {
 		p("[red]Error:[/red] Unable to locate repository root (missing .git or .kittify).")
@@ -289,7 +289,7 @@ func run(ctx *cli.Context) error {
 				fixed += f
 			}
 			fmt.Fprintln(out)
-			uconsole.Panel(out, fmt.Sprintf("Summary:\nTotal mismatches found: %d\nTotal mismatches fixed: %d", total, fixed), "Task Metadata Validation Complete")
+			rich.Panel(out, fmt.Sprintf("Summary:\nTotal mismatches found: %d\nTotal mismatches fixed: %d", total, fixed), "Task Metadata Validation Complete")
 			if total == 0 || fix {
 				return cli.Exit(0)
 			}
@@ -334,13 +334,13 @@ func run(ctx *cli.Context) error {
 
 func validateFeature(ctx *cli.Context, dir string, fix bool, agent, shellPID string) (int, int, error) {
 	out := ctx.Stdout
-	uconsole.Print(out, "[cyan]Checking:[/cyan] "+filepath.Base(dir))
+	rich.Print(out, "[cyan]Checking:[/cyan] "+filepath.Base(dir))
 	mms, err := scan(dir, ctx.Stderr)
 	if err != nil {
 		return 0, 0, err
 	}
 	if len(mms) == 0 {
-		uconsole.Print(out, "  [green]✓[/green] No metadata mismatches")
+		rich.Print(out, "  [green]✓[/green] No metadata mismatches")
 		return 0, 0, nil
 	}
 	fixed := 0
@@ -356,7 +356,7 @@ func validateFeature(ctx *cli.Context, dir string, fix bool, agent, shellPID str
 				status = "Fixed"
 				fixed++
 			} else if msg != "" {
-				status = uconsole.Strip("Error: " + msg)
+				status = rich.Strip("Error: " + msg)
 			}
 		}
 		exp, act := m.expected, m.actual
@@ -368,10 +368,10 @@ func validateFeature(ctx *cli.Context, dir string, fix bool, agent, shellPID str
 		}
 		rows = append(rows, []string{m.rel, exp, act, status})
 	}
-	uconsole.Table(out, "Task Metadata Mismatches: "+filepath.Base(dir), []string{"File", "Expected Lane", "Actual Lane", "Status"}, rows)
+	rich.Table(out, "Task Metadata Mismatches: "+filepath.Base(dir), []string{"File", "Expected Lane", "Actual Lane", "Status"}, rows)
 	if fix {
 		fmt.Fprintln(out)
-		uconsole.Print(out, fmt.Sprintf("  [green]Fixed %d of %d mismatches[/green]", fixed, len(mms)))
+		rich.Print(out, fmt.Sprintf("  [green]Fixed %d of %d mismatches[/green]", fixed, len(mms)))
 	}
 	return len(mms), fixed, nil
 }

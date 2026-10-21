@@ -11,9 +11,9 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func init() {
@@ -216,5 +216,5 @@ func checkVersionPin(ctx *cli.Context, root string) {
 		return
 	}
 	v, _ := rt.Get("pin_version")
-	uconsole.LogWarning(ctx.Stderr, fmt.Sprintf("runtime.pin_version=%v found in .kittify/config.yaml. Version pinning is not yet supported. Using latest global assets. The pin will NOT be silently honored.", v))
+	rich.LogWarning(ctx.Stderr, fmt.Sprintf("runtime.pin_version=%v found in .kittify/config.yaml. Version pinning is not yet supported. Using latest global assets. The pin will NOT be silently honored.", v))
 }

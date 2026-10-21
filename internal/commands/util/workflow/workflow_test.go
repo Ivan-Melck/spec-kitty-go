@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/pyyaml"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
 

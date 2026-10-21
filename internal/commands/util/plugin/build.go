@@ -12,9 +12,9 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/app"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // MinSkillCount is the minimum number of command skills a bundle carries.
@@ -76,7 +76,7 @@ func WrapperCmd(version string) string { return strings.Replace(cmdWrapper, "{ve
 // <prefix>/<spec-kitty.cmd>/SKILL.md (paths relative to root). The command
 // source root is "/" upstream, whose missing config is logged.
 func commandMembers(stderr io.Writer, root, prefix string) ([]StagedFile, error) {
-	uconsole.LogWarning(stderr, "Config file not found: /.kittify/config.yaml")
+	rich.LogWarning(stderr, "Config file not found: /.kittify/config.yaml")
 	var out []StagedFile
 	for _, cmd := range agents.CommandSkillCommands {
 		content, err := agents.RenderCommandSkill("", cmd)

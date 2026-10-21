@@ -2,7 +2,7 @@
 
 Go implementation of the upstream `spec-kitty` 4.0.0rc8 utility commands.
 Code: `internal/mergedriver` (merge-driver library), `internal/commands/util/*`
-(commands plus the support packages `uconsole`, `pyyaml`), `internal/pyjson`.
+(commands plus the shared packages `internal/rich` (formerly `uconsole`), `internal/pyyaml`), `internal/pyjson`.
 Registered through `cmd/spec-kitty/imports_util.go`.
 
 Differential tests run both binaries in identical sandboxes
@@ -45,7 +45,7 @@ and compare exit code, normalized stdout/stderr and the resulting file trees
 `ReconcileReviewCycleTexts`, `UnionDecisionIndex`/`ReconcileDecisionIndexDocuments`/
 `ValidateDecisionIndex`.
 
-Support packages: `uconsole` (rich-compatible markup stripping, wrapping,
+Shared packages: `internal/rich` (formerly `uconsole`) (rich-compatible markup stripping, wrapping,
 tables with rich column collapsing/ellipsis, panels, RichHandler-style log
 lines), `pyyaml` (PyYAML `safe_load` YAML 1.1 typing and `yaml.dump` emitter),
 `pyjson` (CPython `json` decoding, `repr`/`str` semantics).
@@ -54,6 +54,6 @@ lines), `pyyaml` (PyYAML `safe_load` YAML 1.1 typing and `yaml.dump` emitter),
 
 - `internal/cli`: `Arg.ErrorHint` (optional) names an argument in
   "Missing argument" errors when the usage line shows a `{name}` metavar.
-- `internal/commands/util/uconsole.Table` now honours the console width
+- `internal/rich.Table` now honours the console width
   (columns collapse and cells wrap/ellipsize like rich); unchanged output when
   the table fits.

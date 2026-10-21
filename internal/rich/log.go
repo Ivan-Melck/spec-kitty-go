@@ -1,4 +1,4 @@
-package uconsole
+package rich
 
 import (
 	"fmt"

@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
 )
@@ -105,7 +105,7 @@ func reduceLanes(missionDir string, warn io.Writer) (map[string]string, error) {
 		}
 		warned[e.MissionSlug] = true
 		if _, err := os.Stat(filepath.Join(filepath.Dir(missionDir), e.MissionSlug, "meta.json")); err != nil && warn != nil {
-			uconsole.LogWarning(warn, fmt.Sprintf("No meta.json found for mission_slug %s (orphaned event); mission_id will be None for these events", pyjson.ReprString(e.MissionSlug)))
+			rich.LogWarning(warn, fmt.Sprintf("No meta.json found for mission_slug %s (orphaned event); mission_id will be None for these events", pyjson.ReprString(e.MissionSlug)))
 		}
 	}
 	snap := status.Reduce(st.Transitions, st.Annotations, false)

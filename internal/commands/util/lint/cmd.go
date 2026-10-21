@@ -14,10 +14,10 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func init() {
@@ -209,7 +209,7 @@ func run(ctx *cli.Context) error {
 			if jsonOut {
 				ctx.Println(line(jsonx.NewObject("skipped", true, "reason", "No file path provided")))
 			} else {
-				uconsole.Print(ctx.Stdout, "[dim]Skipping:[/dim] no file path provided.")
+				rich.Print(ctx.Stdout, "[dim]Skipping:[/dim] no file path provided.")
 			}
 			return nil
 		}
@@ -219,7 +219,7 @@ func run(ctx *cli.Context) error {
 		if jsonOut {
 			ctx.Println(line(jsonx.NewObject("error", "File "+shown+" does not exist")))
 		} else {
-			uconsole.Print(ctx.Stdout, "[red]Error:[/red] File [cyan]"+shown+"[/cyan] does not exist.")
+			rich.Print(ctx.Stdout, "[red]Error:[/red] File [cyan]"+shown+"[/cyan] does not exist.")
 		}
 		return cli.Exit(1)
 	}
@@ -227,7 +227,7 @@ func run(ctx *cli.Context) error {
 		if jsonOut {
 			ctx.Println(line(jsonx.NewObject("skipped", true, "reason", "Not a Python file", "file", shown)))
 		} else {
-			uconsole.Print(ctx.Stdout, "[dim]Skipping:[/dim] [cyan]"+shown+"[/cyan] is not a Python file.")
+			rich.Print(ctx.Stdout, "[dim]Skipping:[/dim] [cyan]"+shown+"[/cyan] is not a Python file.")
 		}
 		return nil
 	}
@@ -246,23 +246,23 @@ func run(ctx *cli.Context) error {
 	case jsonOut:
 		ctx.Println(jsonx.Dumps(jsonx.NewObject("file", shown, "success", !failed, "ruff_errors", strList(ruffErrs), "mypy_errors", strList(mypyErrs)), jsonx.Pretty))
 	case !failed:
-		uconsole.Print(ctx.Stdout, "[green]✓[/green] [cyan]"+shown+"[/cyan] passed all checks.")
+		rich.Print(ctx.Stdout, "[green]✓[/green] [cyan]"+shown+"[/cyan] passed all checks.")
 	default:
 		w := ctx.Stdout
-		uconsole.Print(w, "[red]✗[/red] [cyan]"+shown+"[/cyan] failed code quality checks:")
+		rich.Print(w, "[red]✗[/red] [cyan]"+shown+"[/cyan] failed code quality checks:")
 		if len(ruffErrs) > 0 {
-			uconsole.Print(w, "\n[bold]Ruff Violations:[/bold]")
+			rich.Print(w, "\n[bold]Ruff Violations:[/bold]")
 			for _, e := range ruffErrs {
-				uconsole.Print(w, "  "+e)
+				rich.Print(w, "  "+e)
 			}
 		}
 		if len(mypyErrs) > 0 {
-			uconsole.Print(w, "\n[bold]Mypy Type Errors:[/bold]")
+			rich.Print(w, "\n[bold]Mypy Type Errors:[/bold]")
 			for _, e := range mypyErrs {
-				uconsole.Print(w, "  "+e)
+				rich.Print(w, "  "+e)
 			}
 		}
-		uconsole.Print(w, "\n[yellow]Tip:[/yellow] Fix these errors before proceeding to ensure high code quality.")
+		rich.Print(w, "\n[yellow]Tip:[/yellow] Fix these errors before proceeding to ensure high code quality.")
 	}
 	if failed {
 		return cli.Exit(1)

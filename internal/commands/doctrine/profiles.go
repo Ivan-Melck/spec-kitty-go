@@ -6,9 +6,9 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 const profileShowShort = "Show the full resolved definition of an agent profile (FR-013/014/015)."
@@ -122,7 +122,7 @@ func runProfileList(ctx *cli.Context) error {
 		}
 		t.Rows = append(t.Rows, r)
 	}
-	t.render(ctx.Stdout, uconsole.Width())
+	t.render(ctx.Stdout, rich.Width())
 	return nil
 }
 
@@ -318,5 +318,5 @@ func renderProfileHuman(ctx *cli.Context, p *jsonx.Object) {
 		{"Directive refs", joinF("directive_references", "code")},
 		{"Tactic refs", joinF("tactic_references", "id")},
 	}
-	t.render(ctx.Stdout, uconsole.Width())
+	t.render(ctx.Stdout, rich.Width())
 }

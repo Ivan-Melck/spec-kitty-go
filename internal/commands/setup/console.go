@@ -9,21 +9,21 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // out prints rich-markup text (stripped, wrapped at the console width).
-func out(w io.Writer, s string) { uconsole.Print(w, s) }
+func out(w io.Writer, s string) { rich.Print(w, s) }
 
-func outf(w io.Writer, format string, a ...any) { uconsole.Print(w, fmt.Sprintf(format, a...)) }
+func outf(w io.Writer, format string, a ...any) { rich.Print(w, fmt.Sprintf(format, a...)) }
 
 // raw prints text verbatim (markup=False, soft_wrap=True).
 func raw(w io.Writer, s string) { fmt.Fprintln(w, s) }
 
 // plain prints text without markup processing but wrapped at the console
 // width (console.print(..., markup=False)).
-func plain(w io.Writer, s string) { fmt.Fprintln(w, uconsole.Wrap(s, cli.Width())) }
+func plain(w io.Writer, s string) { fmt.Fprintln(w, rich.Wrap(s, cli.Width())) }
 
 func runeLen(s string) int { return utf8.RuneCountInString(s) }
 
@@ -81,7 +81,7 @@ func panel(w io.Writer, content, title string) {
 	inner := width - 6
 	top := strings.Repeat("─", width-2)
 	if title != "" {
-		t := " " + uconsole.Strip(title) + " "
+		t := " " + rich.Strip(title) + " "
 		left := (width - 2 - runeLen(t)) / 2
 		right := width - 2 - runeLen(t) - left
 		top = strings.Repeat("─", left) + t + strings.Repeat("─", right)
@@ -89,7 +89,7 @@ func panel(w io.Writer, content, title string) {
 	fmt.Fprintln(w, "╭"+top+"╮")
 	blank := "│" + strings.Repeat(" ", width-2) + "│"
 	fmt.Fprintln(w, blank)
-	for _, l := range strings.Split(uconsole.Strip(content), "\n") {
+	for _, l := range strings.Split(rich.Strip(content), "\n") {
 		for _, wl := range wrapWords(l, inner) {
 			fmt.Fprintln(w, "│  "+padRight(wl, inner)+"  │")
 		}
@@ -237,7 +237,7 @@ func (t *tracker) render(w io.Writer) {
 			cont = "    "
 		}
 		// rich Tree wraps each label at the width left after the guide.
-		for j, l := range uconsole.WrapWords(line, cli.Width()-4) {
+		for j, l := range rich.WrapWords(line, cli.Width()-4) {
 			if j == 0 {
 				fmt.Fprintln(w, branch+l)
 			} else {

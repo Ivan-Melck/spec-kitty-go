@@ -58,6 +58,9 @@ internal/gitx              git executable wrapper
 internal/project           project-root resolution (worktree aware), ~/.kittify paths
 internal/assets            go:embed of the upstream wheel's data files (scripts/sync-assets.sh)
 internal/testkit           sandboxes, Go/oracle pair runner, output normalisation
+internal/rich              rich-compatible console output: markup, wrapping, tables, panels, log lines
+internal/pyjson            CPython json/repr semantics (repr of dicts/lists in error messages)
+internal/pyyaml            PyYAML safe_load / yaml.dump port (for files upstream writes with PyYAML)
 ```
 
 Domain and command packages live under `internal/<area>/...`.
@@ -70,13 +73,15 @@ Domain and command packages live under `internal/<area>/...`.
   of your package. Never edit another area's files to register.
 - **Help text**: copy the upstream one-line and long help from
   `inventory/help/<path>.txt`. Flags: copy names, aliases, defaults, choices.
+- **Console output**: use `internal/rich` for rich markup, wrapped text, tables
+  and panels rather than writing another renderer; extend it there if needed.
 - **JSON output**: build `*jsonx.Object` in upstream key order and print with
   `jsonx.Dumps(v, jsonx.Pretty)` (= `json.dumps(indent=2)`, ensure_ascii) unless
   upstream uses another style. Files: use the exact `json.dumps` options listed
   in `formats.md` §A.0 (`jsonx.Options{...}`).
 - **YAML**: parse with `yamlx.Parse*`, emit with `yamlx.Emit` (ruamel style).
-  For files upstream writes with PyYAML `safe_dump` (sorted keys, different
-  indentation) write a dedicated emitter option rather than approximating.
+  For files upstream writes with PyYAML (`safe_dump`/`yaml.dump`: sorted keys,
+  different indentation and line folding) use `internal/pyyaml`.
 - **Errors**: usage errors → `cli.Usage(cmd, ...)` (exit 2). Domain failures →
   print upstream's message/JSON and return `cli.Exit(1)` (or the upstream code).
 - **Paths**: resolve the project with `project.Locate("")`; it follows linked

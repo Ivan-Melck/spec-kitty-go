@@ -11,11 +11,11 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func init() {
@@ -215,7 +215,7 @@ func payload(gv GuardVerdict) *jsonx.Object {
 }
 
 func report(w io.Writer, gv GuardVerdict) {
-	p := func(s string) { uconsole.Print(w, s) }
+	p := func(s string) { rich.Print(w, s) }
 	p("\n[bold]cutover-guard report[/bold]")
 	p(fmt.Sprintf("  Missions touched by diff : %d", len(gv.Touched)))
 	p(fmt.Sprintf("  Pre-accept (exempt)      : %d", len(gv.Exempt)))
@@ -249,7 +249,7 @@ func report(w io.Writer, gv GuardVerdict) {
 }
 
 func fail(ctx *cli.Context, msg string) error {
-	uconsole.Print(ctx.Stderr, "[red]Error:[/red] "+msg)
+	rich.Print(ctx.Stderr, "[red]Error:[/red] "+msg)
 	return cli.Exit(1)
 }
 

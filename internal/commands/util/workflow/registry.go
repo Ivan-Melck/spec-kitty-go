@@ -13,8 +13,8 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/commands/util/encoding"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 )
 
 // BuiltinRoot is the asset directory of the shipped workflows; its

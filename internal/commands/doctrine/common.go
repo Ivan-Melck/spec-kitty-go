@@ -9,9 +9,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // repoRoot is upstream find_repo_root (project root, else cwd).
@@ -31,15 +31,15 @@ func cwd() string {
 // cprint is rich console.print (markup stripped, wrapped).
 func cprint(w io.Writer, format string, a ...any) {
 	if len(a) == 0 {
-		uconsole.Print(w, format)
+		rich.Print(w, format)
 		return
 	}
-	uconsole.Print(w, fmt.Sprintf(format, a...))
+	rich.Print(w, fmt.Sprintf(format, a...))
 }
 
 // cprintRaw prints without markup processing (markup=False) but wrapped.
 func cprintRaw(w io.Writer, s string) {
-	fmt.Fprintln(w, uconsole.Wrap(s, uconsole.Width()))
+	fmt.Fprintln(w, rich.Wrap(s, rich.Width()))
 }
 
 func jsonOut(w io.Writer, v any, opts jsonx.Options) {

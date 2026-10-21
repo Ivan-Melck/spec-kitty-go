@@ -7,11 +7,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
-// This file extends uconsole (D0) with the two rich renderables the
-// doctrine commands need and uconsole lacks: a table whose columns
+// This file extends internal/rich with the two rich renderables the
+// doctrine commands need and internal/rich lacks: a table whose columns
 // collapse/wrap to the console width (optionally with row separators) and a
 // non-expanded ("fit") panel. Markup must already be stripped.
 
@@ -116,7 +116,7 @@ func collapseWidths(widths []int, wrapable []bool, maxWidth int) []int {
 func cellLines(s string, width int) []string {
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
-		out = append(out, uconsole.WrapWords(l, width)...)
+		out = append(out, rich.WrapWords(l, width)...)
 	}
 	return out
 }
@@ -147,7 +147,7 @@ func (t *rtable) render(w io.Writer, consoleWidth int) {
 		total += wd
 	}
 	if t.Title != "" {
-		for _, l := range uconsole.WrapWords(t.Title, total) {
+		for _, l := range rich.WrapWords(t.Title, total) {
 			l = strings.TrimRight(l, " ")
 			ex := total - rlen(l)
 			left := ex / 2
@@ -207,7 +207,7 @@ func (t *rtable) render(w io.Writer, consoleWidth int) {
 // fitPanel renders rich.Panel(..., expand=False): ROUNDED box sized to the
 // content (capped at the console width), centered title.
 func fitPanel(w io.Writer, content, title string) {
-	width := uconsole.Width()
+	width := rich.Width()
 	lines := strings.Split(content, "\n")
 	inner := 0
 	for _, l := range lines {
@@ -223,7 +223,7 @@ func fitPanel(w io.Writer, content, title string) {
 	}
 	var body []string
 	for _, l := range lines {
-		body = append(body, uconsole.WrapWords(l, inner)...)
+		body = append(body, rich.WrapWords(l, inner)...)
 	}
 	top := strings.Repeat("─", inner+2)
 	if title != "" {

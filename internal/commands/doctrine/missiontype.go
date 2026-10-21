@@ -10,10 +10,10 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -184,7 +184,7 @@ func missionTypeList(ctx *cli.Context, jsonMode, includeInactive bool) error {
 		}
 		trows = append(trows, []string{r.GetString("id"), r.GetString("source_layer"), r.GetString("display_name"), seq})
 	}
-	uconsole.Table(ctx.Stdout, "", []string{"ID", "SOURCE", "DISPLAY NAME", "ACTION SEQUENCE"}, trows)
+	rich.Table(ctx.Stdout, "", []string{"ID", "SOURCE", "DISPLAY NAME", "ACTION SEQUENCE"}, trows)
 	return nil
 }
 
@@ -232,7 +232,7 @@ func runMissionShow(ctx *cli.Context) error {
 	} else {
 		lines = append(lines, "Template Set: (none)")
 	}
-	uconsole.Panel(ctx.Stdout, strings.Join(lines, "\n"), "Mission Type · "+mt.ID)
+	rich.Panel(ctx.Stdout, strings.Join(lines, "\n"), "Mission Type · "+mt.ID)
 	return nil
 }
 
@@ -374,7 +374,7 @@ func runMissionInfo(ctx *cli.Context) error {
 		}
 		return cli.Exit(1)
 	}
-	uconsole.Panel(ctx.Stdout, strings.Join(missionDetailLines(m), "\n"), "Mission Details · "+m.Data.GetString("name"))
+	rich.Panel(ctx.Stdout, strings.Join(missionDetailLines(m), "\n"), "Mission Details · "+m.Data.GetString("name"))
 	return nil
 }
 
@@ -432,7 +432,7 @@ func runMissionCurrent(ctx *cli.Context) error {
 		cprintRaw(ctx.Stdout, fmt.Sprintf("Error: Mission '%s' not found", mtype))
 		return cli.Exit(1)
 	}
-	uconsole.Panel(ctx.Stdout, strings.Join(missionDetailLines(m), "\n"), "Active Mission (Mission: "+slug+")")
+	rich.Panel(ctx.Stdout, strings.Join(missionDetailLines(m), "\n"), "Active Mission (Mission: "+slug+")")
 	return nil
 }
 

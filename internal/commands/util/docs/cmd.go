@@ -14,9 +14,9 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/commands/util/encoding"
-	"github.com/spec-kitty/go-kitty3/internal/commands/util/uconsole"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -195,7 +195,7 @@ func matchingAnchors(e Entry, term string, section *string) []Anchor {
 	return out
 }
 
-func errPrint(w io.Writer, s string) { uconsole.Print(w, s) }
+func errPrint(w io.Writer, s string) { rich.Print(w, s) }
 
 func runQuery(ctx *cli.Context) error {
 	term := ctx.Arg("term")
@@ -257,7 +257,7 @@ func runQuery(ctx *cli.Context) error {
 	}
 
 	if len(matches) == 0 {
-		fmt.Fprintln(ctx.Stdout, uconsole.Wrap(uconsole.Strip(fmt.Sprintf("[dim]No docs pages match '%s'.[/dim]", term)), tableWidth))
+		fmt.Fprintln(ctx.Stdout, rich.Wrap(rich.Strip(fmt.Sprintf("[dim]No docs pages match '%s'.[/dim]", term)), tableWidth))
 		return nil
 	}
 	lower := strings.ToLower(strings.TrimSpace(term))
@@ -273,6 +273,6 @@ func runQuery(ctx *cli.Context) error {
 		}
 		rows = append(rows, []string{e.Path, e.Title, e.DivioType, anchorText})
 	}
-	uconsole.TableWidth(ctx.Stdout, uconsole.Strip(fmt.Sprintf("Docs matching '%s'", term)), []string{"Path", "Title", "Type", "Matching anchors"}, rows, tableWidth)
+	rich.TableWidth(ctx.Stdout, rich.Strip(fmt.Sprintf("Docs matching '%s'", term)), []string{"Path", "Title", "Type", "Matching anchors"}, rows, tableWidth)
 	return nil
 }
