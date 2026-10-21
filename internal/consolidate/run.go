@@ -401,7 +401,11 @@ func (r *run) execute() error {
 	if err := r.doneBookkeeping(coordDone); err != nil {
 		return err
 	}
-	say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP claim integrity and squash content attribution verified (no un-attributable content on the target); per-SHA approved-reachability deferred under squash strategy.")
+	if r.strategy == "squash" {
+		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP claim integrity and squash content attribution verified (no un-attributable content on the target); per-SHA approved-reachability deferred under squash strategy.")
+	} else {
+		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP commit reachability on the target (no excluded commit reachable).")
+	}
 	say(r.w, "  [dim]Running stale-assertion check...[/dim]")
 	r.captureRetrospective()
 	r.teardown(coordDone)
@@ -546,6 +550,10 @@ func (r *run) mergeLanes() error {
 			continue
 		}
 		say(r.w, fmt.Sprintf("  [dim]Checking and merging %s...[/dim]", l.LaneID))
+		if msg := r.checkStale(l, branch); msg != "" {
+			say(r.w, fmt.Sprintf("  [red]✗[/red] %s: %s", l.LaneID, msg))
+			return exit(1)
+		}
 		if err := r.mergeInto(branch, r.m.MissionBranch); err != nil {
 			say(r.w, fmt.Sprintf("  [red]✗[/red] %s: %s", l.LaneID, err.Error()))
 			return exit(1)
@@ -669,6 +677,12 @@ func (r *run) squashIntoTarget() error {
 		return exit(1)
 	}
 	defer cleanup()
+	switch r.strategy {
+	case "merge":
+		return r.mergeTarget(dir)
+	case "rebase":
+		return r.rebaseTarget(dir)
+	}
 	res, _ := gitEnv(dir, mergeEnv(true), "merge", "--squash", r.m.MissionBranch)
 	if res.Code != 0 {
 		conflicts := unmergedPaths(dir)
@@ -719,6 +733,61 @@ func (r *run) squashIntoTarget() error {
 	say(r.w, fmt.Sprintf("\n[green]✓[/green] %s → %s", r.m.MissionBranch, r.m.TargetBranch))
 	say(r.w, "  Commit: "+r.squash[:7])
 	return nil
+}
+
+// landed advances the target to sha and prints the success lines.
+func (r *run) landed(sha string) error {
+	r.squash = sha
+	if err := advanceBranch(r.root, r.m.TargetBranch, sha); err != nil {
+		sayErr(r.w, err.Error())
+		return exit(1)
+	}
+	say(r.w, fmt.Sprintf("\n[green]✓[/green] %s → %s", r.m.MissionBranch, r.m.TargetBranch))
+	say(r.w, "  Commit: "+sha[:7])
+	return nil
+}
+
+// mergeTarget is the MERGE strategy of the mission→target step (no-ff
+// merge commit, meta.json driver in two-way mode).
+func (r *run) mergeTarget(dir string) error {
+	pre := revParse(dir, "HEAD")
+	res, _ := gitEnv(dir, mergeEnv(true), "merge", r.m.MissionBranch, "--no-edit", "-m", fmt.Sprintf("Merge %s into %s", r.m.MissionBranch, r.m.TargetBranch))
+	if res.Code != 0 {
+		gitEnv(dir, nil, "merge", "--abort")
+		msg := strings.TrimSpace(res.Stderr)
+		if msg == "" {
+			msg = strings.TrimSpace(res.Stdout)
+		}
+		say(r.w, "[red]Error:[/red] "+fmt.Sprintf("Merge of %s into %s failed: %s", r.m.MissionBranch, r.m.TargetBranch, msg))
+		return exit(1)
+	}
+	post := revParse(dir, "HEAD")
+	if post == pre {
+		say(r.w, "[red]Error:[/red] "+fmt.Sprintf("Merge of %s into %s produced no changes; target may already contain this tree. Retry with merge resume if recovering an interrupted merge.", r.m.MissionBranch, r.m.TargetBranch))
+		return exit(1)
+	}
+	return r.landed(post)
+}
+
+// rebaseTarget is the REBASE strategy: rebase the mission branch onto the
+// target in the scratch worktree and fast-forward the target to it.
+func (r *run) rebaseTarget(dir string) error {
+	fail := func(prefix string, res gitx.Result) error {
+		msg := strings.TrimSpace(res.Stderr)
+		if msg == "" {
+			msg = strings.TrimSpace(res.Stdout)
+		}
+		say(r.w, "[red]Error:[/red] "+prefix+msg)
+		return exit(1)
+	}
+	if res, _ := gitEnv(dir, mergeEnv(false), "checkout", "--detach", r.m.MissionBranch); res.Code != 0 {
+		return fail(fmt.Sprintf("Failed to check out %s in merge worktree: ", r.m.MissionBranch), res)
+	}
+	if res, _ := gitEnv(dir, mergeEnv(false), "rebase", r.m.TargetBranch); res.Code != 0 {
+		gitEnv(dir, nil, "rebase", "--abort")
+		return fail(fmt.Sprintf("Rebase of %s onto %s failed: ", r.m.MissionBranch, r.m.TargetBranch), res)
+	}
+	return r.landed(revParse(dir, "HEAD"))
 }
 
 // ---------------------------------------------------------------------------

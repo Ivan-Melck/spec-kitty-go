@@ -106,3 +106,36 @@ func TestDiffConsolidateTrace(t *testing.T) {
 	comparePair(t, p, "consolidate", "--mission", "$M", "--yes")
 	compareGit(t, p)
 }
+
+// TestDiffConsolidateStrategies covers the merge strategy for the
+// mission→target step on both topologies (coord through `agent mission
+// merge`, whose default strategy is merge). Visible lane history also proves
+// the stale-lane auto-rebase (mission merged into the lane worktree, then a
+// fast-forward of the mission branch).
+func TestDiffConsolidateStrategies(t *testing.T) {
+	for _, tc := range []struct{ name, strategy, topo string }{
+		{"coord-agent-merge", "", "coord"},
+		{"lanes-merge", "merge", "lanes"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var p *testkit.Pair
+			if tc.topo == "lanes" {
+				p = acceptedPair(t, "--pr-bound", "--branch-strategy", "already-confirmed", "--start-branch", "feat/calc-ops", "--topology", "lanes")
+			} else {
+				p = acceptedPair(t)
+			}
+			if tc.strategy == "" {
+				comparePair(t, p, "agent", "mission", "merge", "--mission", "$M", "--dry-run")
+				comparePair(t, p, "agent", "mission", "merge", "--mission", "$M")
+			} else {
+				comparePair(t, p, "consolidate", "--mission", "$M", "--strategy", tc.strategy, "--dry-run", "--json")
+				comparePair(t, p, "consolidate", "--mission", "$M", "--strategy", tc.strategy, "--yes")
+			}
+			compareGit(t, p)
+			compareMissionTree(t, p, false)
+			p.CompareTree(".kittify/derived", true)
+		})
+	}
+}
