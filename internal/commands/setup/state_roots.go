@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -18,18 +17,15 @@ type stateSurface struct {
 	name, pattern, root, authority, gitClass string
 }
 
-func init() {
-	app.Register(func(root *cli.Command) {
-		g := app.Group(root, "doctor", "Project health diagnostics")
-		g.Add(&cli.Command{
-			Name:  "state-roots",
-			Short: "Show state roots, surface classification, and safety warnings.",
-			Long: "Show state roots, surface classification, and safety warnings.\n\nDisplays the three state roots with resolved paths, all registered\nstate surfaces grouped by root with authority and Git classification,\n" +
-				"and warnings for any runtime surfaces not covered by .gitignore.\n\nExamples:\n    spec-kitty doctor state-roots\n    spec-kitty doctor state-roots --json",
-			Flags: []*cli.Flag{{Name: "json", Kind: cli.Bool, Help: "Machine-readable JSON output"}},
-			Run:   runDoctorStateRoots,
-		})
-	})
+func newDoctorStateRootsCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "state-roots",
+		Short: "Show state roots, surface classification, and safety warnings.",
+		Long: "Show state roots, surface classification, and safety warnings.\n\nDisplays the three state roots with resolved paths, all registered\nstate surfaces grouped by root with authority and Git classification,\n" +
+			"and warnings for any runtime surfaces not covered by .gitignore.\n\nExamples:\n    spec-kitty doctor state-roots\n    spec-kitty doctor state-roots --json",
+		Flags: []*cli.Flag{{Name: "json", Kind: cli.Bool, Help: "Machine-readable JSON output"}},
+		Run:   runDoctorStateRoots,
+	}
 }
 
 type surfaceCheck struct {

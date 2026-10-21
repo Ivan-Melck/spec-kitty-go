@@ -32,6 +32,7 @@ func init() {
 		}
 		jsonFlag := func() *cli.Flag { return &cli.Flag{Name: "json", Kind: cli.Bool, Help: "Machine-readable JSON output"} }
 		g.Add(
+			newDoctorBytecodeCmd(),
 			&cli.Command{
 				Name:  "channel",
 				Short: "Report the active release channel (stable vs. prerelease-opt-in).",
@@ -63,6 +64,8 @@ func init() {
 				Flags: []*cli.Flag{{Name: "fix", Kind: cli.Bool, Help: "Repair missing command-skill files"}, jsonFlag()},
 				Run:   runDoctorSkills,
 			},
+			newDoctorToolSurfacesCmd(),
+			newDoctorStateRootsCmd(),
 		)
 	})
 }

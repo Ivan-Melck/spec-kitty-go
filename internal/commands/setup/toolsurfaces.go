@@ -22,23 +22,20 @@ import (
 // presence, native config, charter skills, agent profiles, plugin bundle
 // manifests) which are probed against disk and reported with findings.
 
-func init() {
-	app.Register(func(root *cli.Command) {
-		g := app.Group(root, "doctor", "Project health diagnostics")
-		g.Add(&cli.Command{
-			Name:  "tool-surfaces",
-			Short: "Audit (and optionally repair) every configured tool surface.",
-			Long: "Audit (and optionally repair) every configured tool surface.\n\nExamples:\n    spec-kitty doctor tool-surfaces --json\n" +
-				"    spec-kitty doctor tool-surfaces --kind command-skill --json\n    spec-kitty doctor tool-surfaces --tool codex --fix",
-			Flags: []*cli.Flag{
-				{Name: "kind", Kind: cli.StringList, Metavar: "<str>", Help: "Filter to surface kind(s), e.g. command-skill"},
-				{Name: "tool", Kind: cli.String, Metavar: "<str>", Help: "Filter to a single configured tool key"},
-				{Name: "fix", Kind: cli.Bool, Help: "Repair missing or stale surfaces"},
-				{Name: "json", Kind: cli.Bool, Help: "Machine-readable JSON output"},
-			},
-			Run: runDoctorToolSurfaces,
-		})
-	})
+func newDoctorToolSurfacesCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "tool-surfaces",
+		Short: "Audit (and optionally repair) every configured tool surface.",
+		Long: "Audit (and optionally repair) every configured tool surface.\n\nExamples:\n    spec-kitty doctor tool-surfaces --json\n" +
+			"    spec-kitty doctor tool-surfaces --kind command-skill --json\n    spec-kitty doctor tool-surfaces --tool codex --fix",
+		Flags: []*cli.Flag{
+			{Name: "kind", Kind: cli.StringList, Metavar: "<str>", Help: "Filter to surface kind(s), e.g. command-skill"},
+			{Name: "tool", Kind: cli.String, Metavar: "<str>", Help: "Filter to a single configured tool key"},
+			{Name: "fix", Kind: cli.Bool, Help: "Repair missing or stale surfaces"},
+			{Name: "json", Kind: cli.Bool, Help: "Machine-readable JSON output"},
+		},
+		Run: runDoctorToolSurfaces,
+	}
 }
 
 var surfaceKindTokens = map[string]string{
