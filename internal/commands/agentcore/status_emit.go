@@ -26,7 +26,7 @@ func init() {
 			Name:  "emit",
 			Short: "Emit a status transition event for a work package.",
 			Long:  statusEmitLong,
-			Args:  []*cli.Arg{{Name: "wp_id", Metavar: "<str>", Help: "Work package ID (e.g., WP01)"}},
+			Args:  []*cli.Arg{{Name: "wp_id", Metavar: "wp_id", Help: "Work package ID (e.g., WP01)"}},
 			Flags: []*cli.Flag{
 				{Name: "to", Kind: cli.String, Required: true, Metavar: "<str>", Help: "Target lane (e.g., claimed, in_progress, for_review, approved, done)"},
 				{Name: "actor", Kind: cli.String, Required: true, Metavar: "<str>", Help: "Who is making this transition"},

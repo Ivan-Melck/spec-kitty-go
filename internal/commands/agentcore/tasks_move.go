@@ -43,7 +43,7 @@ func init() {
 			Name:  "move-task",
 			Short: "Move task between lanes (planned → doing → for_review → approved → done).",
 			Long:  moveTaskLong,
-			Args:  []*cli.Arg{{Name: "task_id", Metavar: "<str>", Required: true, Help: "Task ID (e.g., WP01)"}},
+			Args:  []*cli.Arg{{Name: "task_id", Metavar: "{task_id}", Required: true, Help: "Task ID (e.g., WP01)"}},
 			Flags: []*cli.Flag{
 				{Name: "to", Kind: cli.String, Required: true, Metavar: "<str>", Help: "Target lane (planned/doing/for_review/approved/done)"},
 				{Name: "mission", Kind: cli.String, Metavar: "<str>", Help: "Mission slug"},

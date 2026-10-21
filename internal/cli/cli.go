@@ -669,10 +669,10 @@ func finalize(ctx *Context, cmd *Command) error {
 	}
 	for _, a := range cmd.Args {
 		if a.Required && len(ctx.args[a.Name]) == 0 {
-			if a.Variadic {
-				return Usage(cmd, "Missing argument '%s...'.", argMeta(a))
+			if a.Variadic && argHint(a) == argMeta(a) {
+				return Usage(cmd, "Missing argument '%s...'.", argHint(a))
 			}
-			return Usage(cmd, "Missing argument '%s'.", argMeta(a))
+			return Usage(cmd, "Missing argument '%s'.", argHint(a))
 		}
 	}
 	return nil
@@ -683,6 +683,16 @@ func flagLabel(f *Flag) string {
 		return "--" + f.Name + "' / '-" + f.Short
 	}
 	return "--" + f.Name
+}
+
+// argHint is the missing-argument hint: typer renders a "{name}" usage
+// metavar but names the bare argument in the error.
+func argHint(a *Arg) string {
+	m := argMeta(a)
+	if strings.HasPrefix(m, "{") && strings.HasSuffix(m, "}") {
+		return m[1 : len(m)-1]
+	}
+	return m
 }
 
 func argMeta(a *Arg) string {
