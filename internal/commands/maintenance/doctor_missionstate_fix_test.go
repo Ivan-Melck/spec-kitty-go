@@ -153,7 +153,7 @@ func TestMissionStateFixWithoutOracle(t *testing.T) {
 		t.Fatalf("fix: %d\n%s%s", r.Code, r.Stdout, r.Stderr)
 	}
 	r = s.Run("doctor", "mission-state", "--fix", "--json", "--allow-dirty")
-	if r.Code != 1 || !strings.Contains(r.Stdout, `"missions_error": 4`) {
+	if r.Code != 1 || !strings.Contains(r.Stdout, `"missions_error": 5`) {
 		t.Fatalf("fix: %d\n%s%s", r.Code, r.Stdout, r.Stderr)
 	}
 	if !strings.Contains(s.ReadFile("kitty-specs/020-legacy-rows/tasks/WP01-a.md"), "review_feedback: review-cycle://020/WP01/1") {
