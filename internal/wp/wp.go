@@ -268,3 +268,72 @@ func LoadAll(missionDir string) ([]*WP, []error) {
 	}
 	return out, errs
 }
+
+// RosterError is SubtaskRosterResolutionError (Missing marks the
+// SubtaskRosterMissingError subclass: readable file without a subtasks key).
+type RosterError struct {
+	Msg     string
+	Missing bool
+}
+
+func (e *RosterError) Error() string { return e.Msg }
+
+// AuthoredRoster is core.subtask_rows.authored_subtask_roster: the WP file's
+// `subtasks:` frontmatter ids (authored order, trimmed, de-duplicated).
+// Missing/ambiguous/unreadable files and an absent key are errors.
+func AuthoredRoster(missionDir, wpID string) ([]string, error) {
+	tasks := TasksDir(missionDir)
+	if _, err := os.Stat(tasks); err != nil {
+		return nil, &RosterError{Msg: fmt.Sprintf("Cannot resolve subtask roster for %s: tasks directory is missing", wpID)}
+	}
+	re := regexp.MustCompile(`(?i)^` + regexp.QuoteMeta(wpID) + `(?:[-_.]|\.md$)`)
+	entries, _ := os.ReadDir(tasks)
+	var matches []string
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".md") || strings.ToLower(n) == "readme.md" {
+			continue
+		}
+		if re.MatchString(n) {
+			matches = append(matches, n)
+		}
+	}
+	sort.Strings(matches)
+	if len(matches) == 0 {
+		return nil, &RosterError{Msg: fmt.Sprintf("Cannot resolve subtask roster for %s: work-package file is missing", wpID)}
+	}
+	if len(matches) > 1 {
+		return nil, &RosterError{Msg: fmt.Sprintf("Cannot resolve subtask roster for %s: ambiguous files (%s)", wpID, strings.Join(matches, ", "))}
+	}
+	w, err := Read(filepath.Join(tasks, matches[0]))
+	if err != nil {
+		return nil, &RosterError{Msg: fmt.Sprintf("Cannot resolve subtask roster for %s: %s is unreadable", wpID, matches[0])}
+	}
+	v, ok := w.Doc.Meta.Get("subtasks")
+	if !ok {
+		return nil, &RosterError{Msg: fmt.Sprintf("Cannot resolve subtask roster for %s: subtasks key is missing", wpID), Missing: true}
+	}
+	if v == nil {
+		return []string{}, nil
+	}
+	l, ok := v.([]any)
+	if !ok {
+		return nil, &RosterError{Msg: fmt.Sprintf("Cannot resolve subtask roster for %s: %s is unreadable", wpID, matches[0])}
+	}
+	seen := map[string]bool{}
+	out := []string{}
+	for _, x := range l {
+		var id string
+		switch t := x.(type) {
+		case *jsonx.Object:
+			id = strings.TrimSpace(scalarString(t, "id"))
+		default:
+			id = strings.TrimSpace(scalarString(jsonx.NewObject("v", x), "v"))
+		}
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}

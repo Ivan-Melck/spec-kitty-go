@@ -6,9 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -253,7 +257,16 @@ type boardRow struct {
 	title string
 	lane  string
 	deps  []string
+	stale bool // _stale_verdict
+	// arbiterCat is the category of the WP's complete event-sourced
+	// ReviewOverride ("" when none).
+	arbiterCat string
+	stallLabel string // _stall_label
+	staleRes   *staleResult
+	marker     string // _get_hic_marker ("👤 " for sentinel profiles)
 }
+
+func (r *boardRow) disp() string { return r.marker + r.id }
 
 func runTasksStatus(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
@@ -300,8 +313,10 @@ func runTasksStatus(ctx *cli.Context) error {
 		return statusError(ctx, jsonMode, "Tasks directory not found: "+tasksDir)
 	}
 	var transitions *status.Snapshot
+	var events []*status.Event
 	full := &status.Snapshot{WorkPackages: &jsonx.Object{}}
 	if stream, err := status.ReadStream(readDir, ""); err == nil {
+		events = stream.Transitions
 		if len(stream.Transitions) > 0 {
 			transitions = status.Reduce(stream.Transitions, nil, true)
 		}
@@ -309,6 +324,7 @@ func runTasksStatus(ctx *cli.Context) error {
 	}
 	manifest, _ := lanes.Read(m.PrimaryDir())
 	var rows []*boardRow
+	staleVerdicts := []any{}
 	for _, p := range wpGlob(tasksDir) {
 		w, err := wp.Read(p)
 		if err != nil {
@@ -329,7 +345,13 @@ func runTasksStatus(ctx *cli.Context) error {
 			if !ok || v == nil || v == "" {
 				return ""
 			}
-			return v
+			sv := status.PyStr(v)
+			switch {
+			case k == "agent_profile" && sv == status.ResolvedProfileAbsent,
+				k == "model" && sv == status.ResolvedModelAbsent:
+				return ""
+			}
+			return sv
 		}
 		if state != nil && state.GetString("lane") != "" {
 			lane = state.GetString("lane")
@@ -363,26 +385,74 @@ func runTasksStatus(ctx *cli.Context) error {
 		if key == "" {
 			key = w.Stem()
 		}
-		rows = append(rows, &boardRow{obj: o, id: id, title: w.String("title"), lane: lane, deps: w.Dependencies()})
-		_ = key
-	}
-	// staleness for in_progress rows (no lane worktree → fresh)
-	for _, r := range rows {
-		if r.lane != string(status.InProgress) {
-			continue
-		}
-		wtExists := false
-		if manifest != nil {
-			if l := manifest.LaneForWP(r.id); l != nil && l.LaneID != lanes.PlanningLaneID {
-				if st, err := os.Stat(lanes.WorktreePath(root, slug, l.LaneID)); err == nil && st.IsDir() {
-					wtExists = true
+		row := &boardRow{obj: o, id: id, title: w.String("title"), lane: lane, deps: w.Dependencies()}
+		if id != "" && state != nil {
+			if rv := state.GetObject("review"); rv != nil {
+				if rv.GetString("at") != "" && rv.GetString("actor") != "" && rv.GetString("wp_id") != "" && rv.GetString("reason") != "" {
+					row.arbiterCat, _ = parseArbiterNote(rv.GetString("reason"))
 				}
 			}
 		}
-		r.obj.Set("stale", jsonx.NewObject("status", "fresh", "reason", nil, "minutes_since_commit", nil, "last_commit_time", nil))
-		r.obj.Set("is_stale", false)
-		r.obj.Set("minutes_since_commit", nil)
-		r.obj.Set("worktree_exists", wtExists)
+		if id != "" && (lane == string(status.Approved) || lane == string(status.Done)) {
+			if warn := reviewVerdictFlag(row, state); warn != nil {
+				staleVerdicts = append(staleVerdicts, warn)
+			}
+		}
+		rows = append(rows, row)
+		_ = key
+	}
+	stalledWPs := []any{}
+	stallThreshold := reviewStallThreshold(root)
+	now := clock.Now().UTC()
+	for _, r := range rows {
+		if r.id == "" || r.lane != string(status.InReview) {
+			continue
+		}
+		var last time.Time
+		for _, e := range events {
+			if e.WPID != r.id || e.At == "" {
+				continue
+			}
+			t, err := clock.ParseISO(e.At)
+			if err != nil {
+				continue
+			}
+			if t.UTC().After(last) {
+				last = t.UTC()
+			}
+		}
+		if last.IsZero() {
+			continue
+		}
+		age := int(now.Sub(last).Seconds() / 60)
+		if age > stallThreshold {
+			r.stallLabel = fmt.Sprintf("STALLED — no move-task in %dm", age)
+			warn := jsonx.NewObject("wp_id", r.id, "age_minutes", age, "threshold_minutes", stallThreshold)
+			stalledWPs = append(stalledWPs, warn)
+			r.obj.Set("_stall_label", r.stallLabel)
+			r.obj.Set("review_stall", warn)
+		}
+	}
+	// staleness for in_progress rows (check_doing_wps_for_staleness)
+	var doing []*boardRow
+	for _, r := range rows {
+		if r.lane == string(status.InProgress) {
+			doing = append(doing, r)
+		}
+	}
+	// Claim liveness reads the WORK_PACKAGE_TASK (primary) dir's snapshot,
+	// which is empty under a coordination topology (as the oracle does).
+	livenessSnap, _ := status.ReduceDir(m.PrimaryDir())
+	staleResults := checkDoingStaleness(root, slug, doing, ctx.Int("stale-threshold"), livenessSnap)
+	staleCount := 0
+	for _, r := range doing {
+		if res := staleResults[r.id]; res != nil && r.id != "" {
+			res.apply(r.obj)
+			r.staleRes = res
+			if res.isStale() {
+				staleCount++
+			}
+		}
 	}
 	total := len(rows)
 	byLane := map[string][]*boardRow{}
@@ -429,9 +499,9 @@ func runTasksStatus(ctx *cli.Context) error {
 		res.Set("weighted_percentage", progress)
 		res.Set("done_count", done)
 		res.Set("done_percentage", donePct)
-		res.Set("stale_wps", 0)
-		res.Set("stale_verdicts", []any{})
-		res.Set("stalled_wps", []any{})
+		res.Set("stale_wps", staleCount)
+		res.Set("stale_verdicts", staleVerdicts)
+		res.Set("stalled_wps", stalledWPs)
 		res.Set("auto_commit", autoCommit)
 		printJSONPretty(ctx.Stdout, res)
 		return nil
@@ -444,6 +514,7 @@ func runTasksStatus(ctx *cli.Context) error {
 	if transitions != nil {
 		pctText = pyFloat(progressF)
 	}
+	applyHICMarkers(root, rows)
 	renderBoard(ctx.Stdout, slug, rows, byLane, done, total, donePct, pctText, progressF, autoCommit)
 	return nil
 }
@@ -530,7 +601,16 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 		if len([]rune(t)) > 22 {
 			t = truncateRunes(t, 22) + "..."
 		}
-		return []string{r.id + suffix, t}
+		if r.stale {
+			return []string{"⚠ " + r.disp(), t}
+		}
+		if r.lane == string(status.InProgress) && r.staleRes != nil && r.staleRes.isStale() {
+			return []string{"⚠️ " + r.disp(), t}
+		}
+		if r.stallLabel != "" {
+			return []string{"⚠ " + r.disp() + " (review)", t}
+		}
+		return []string{r.disp() + suffix, t}
 	}
 	type col struct{ cells [][]string }
 	cols := make([]col, 5)
@@ -591,7 +671,20 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 	fmt.Fprintln(w, boxLine("└", "─", "┴", "┘", widths))
 	fmt.Fprintln(w)
 
-	bullet := func(r *boardRow) string { return fmt.Sprintf("  • %s - %s", r.id, r.title) }
+	bullet := func(r *boardRow) string { return fmt.Sprintf("  • %s - %s", r.disp(), r.title) }
+	var arbiterLines []string
+	for _, r := range rows {
+		if r.arbiterCat != "" {
+			arbiterLines = append(arbiterLines, fmt.Sprintf("  • %s Cycle 1: rejected → overridden (%s)", r.id, r.arbiterCat))
+		}
+	}
+	if len(arbiterLines) > 0 {
+		fmt.Fprintln(w, "⚖️  Arbiter Override History:")
+		for _, l := range arbiterLines {
+			consolePrint(w, l)
+		}
+		fmt.Fprintln(w)
+	}
 	if l := byLane["for_review"]; len(l) > 0 {
 		fmt.Fprintln(w, "👀 Ready for Review:")
 		for _, r := range l {
@@ -602,9 +695,26 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 	if l := byLane["approved"]; len(l) > 0 {
 		fmt.Fprintln(w, "👍 Approved (merge when all WPs approved):")
 		for _, r := range l {
-			consolePrint(w, bullet(r))
+			line := bullet(r)
+			if r.stale {
+				line += "  ⚠ review artifact: verdict=rejected"
+			}
+			consolePrint(w, line)
 		}
 		fmt.Fprintln(w, "   Approved WPs stay here until feature merge. Dependents can start immediately.")
+		fmt.Fprintln(w)
+	}
+	var doneStale []*boardRow
+	for _, r := range byLane["done"] {
+		if r.stale {
+			doneStale = append(doneStale, r)
+		}
+	}
+	if len(doneStale) > 0 {
+		fmt.Fprintln(w, "✅ Done (with stale verdict warnings):")
+		for _, r := range doneStale {
+			consolePrint(w, bullet(r)+"  ⚠ review artifact: verdict=rejected")
+		}
 		fmt.Fprintln(w)
 	}
 	if l := byLane["claimed"]; len(l) > 0 {
@@ -617,15 +727,35 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 	}
 	if l := byLane["in_progress"]; len(l) > 0 {
 		fmt.Fprintln(w, "🔄 In Progress:")
+		staleN := 0
 		for _, r := range l {
-			consolePrint(w, bullet(r))
+			agent, _ := r.obj.Get("agent")
+			label := r.staleRes.label()
+			switch {
+			case r.staleRes != nil && r.staleRes.isStale():
+				consolePrint(w, fmt.Sprintf("  • ⚠️ %s - %s (%s, agent: %v)", r.disp(), r.title, label, agent))
+				staleN++
+			case label != "":
+				consolePrint(w, fmt.Sprintf("%s (%s, agent: %v)", bullet(r), label, agent))
+			default:
+				consolePrint(w, bullet(r))
+			}
 		}
 		fmt.Fprintln(w)
+		if staleN > 0 {
+			fmt.Fprintf(w, "⚠️  %d stale WP(s) detected - agents may have stopped without transitioning\n", staleN)
+			fmt.Fprintln(w, "   Run: spec-kitty agent tasks move-task <WP_ID> --to for_review")
+			fmt.Fprintln(w)
+		}
 	}
 	if l := byLane["in_review"]; len(l) > 0 {
 		fmt.Fprintln(w, "🔍 In Review (shown in Doing column):")
 		for _, r := range l {
-			consolePrint(w, bullet(r))
+			line := bullet(r)
+			if r.stallLabel != "" {
+				line += "  ⚠ " + r.stallLabel
+			}
+			consolePrint(w, line)
 		}
 		fmt.Fprintln(w)
 	}
@@ -666,4 +796,98 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 	consolePrint(w, "  spec-kitty next --agent <your-name> --mission "+slug)
 	fmt.Fprintln(w, "  This command tells you exactly what to do next based on the dependency graph.")
 	fmt.Fprintln(w)
+}
+
+// reviewVerdictFlag is _apply_wp_review_verdict_flag: annotate an
+// approved/done row whose event-sourced review_result is a rejection
+// (stale) or damaged. Returns the stale_verdicts entry, if any.
+func reviewVerdictFlag(row *boardRow, state *jsonx.Object) *jsonx.Object {
+	if state == nil {
+		return nil
+	}
+	raw, ok := state.Get("review_result")
+	if !ok || raw == nil {
+		return nil
+	}
+	rr, isObj := raw.(*jsonx.Object)
+	var verdict, ref any
+	valid := false
+	if isObj {
+		_, hasR := rr.Get("reviewer")
+		v, hasV := rr.Get("verdict")
+		r, hasRef := rr.Get("reference")
+		valid = hasR && hasV && hasRef
+		verdict, ref = v, r
+	}
+	if !valid {
+		warn := jsonx.NewObject("wp_id", row.id, "artifact", nil, "verdict", nil, "damaged", true)
+		row.obj.Set("_damaged_verdict", true)
+		row.obj.Set("damaged_review_artifact", warn)
+		return warn
+	}
+	if verdict != "changes_requested" {
+		return nil
+	}
+	warn := jsonx.NewObject("wp_id", row.id, "artifact", ref, "verdict", "rejected")
+	row.stale = true
+	row.obj.Set("_stale_verdict", true)
+	row.obj.Set("stale_review_artifact", warn)
+	return warn
+}
+
+// reviewStallThreshold is _review_stall_threshold_minutes:
+// review.stall_threshold_minutes from .kittify/config.yaml, default 30.
+func reviewStallThreshold(root string) int {
+	rv := mission.ProjectConfig(root).GetObject("review")
+	if rv == nil {
+		return 30
+	}
+	v, ok := rv.Get("stall_threshold_minutes")
+	if !ok {
+		return 30
+	}
+	switch t := v.(type) {
+	case bool:
+		if t {
+			return 1
+		}
+		return 0
+	case int:
+		return t
+	case int64:
+		return int(t)
+	case float64:
+		return int(t)
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(t)); err == nil {
+			return n
+		}
+	default:
+		if n, err := strconv.Atoi(fmt.Sprint(t)); err == nil {
+			return n
+		}
+	}
+	return 30
+}
+
+// applyHICMarkers is _get_hic_marker over the rows: a WP whose frontmatter
+// agent_profile resolves to a sentinel profile (human-in-charge) is shown
+// with a "👤 " prefix. The catalog is only loaded when a row names a profile.
+func applyHICMarkers(root string, rows []*boardRow) {
+	var cat *doctrine.ProfileCatalog
+	for _, r := range rows {
+		v, ok := r.obj.Get("agent_profile")
+		id, isStr := v.(string)
+		if !ok || !isStr || id == "" {
+			continue
+		}
+		if cat == nil {
+			cat = doctrine.LoadProfileCatalog(root)
+		}
+		if p := cat.ByID[id]; p != nil {
+			if sv, ok := p.Data.Get("sentinel"); ok && sv == true {
+				r.marker = "👤 "
+			}
+		}
+	}
 }

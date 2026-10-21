@@ -63,7 +63,7 @@ func RichWrap(line string, width int) []string {
 			continue
 		}
 		if lineBuf != "" {
-			out = append(out, strings.TrimRight(lineBuf, " "))
+			out = append(out, rstripEnd(lineBuf, width))
 			lineBuf = ""
 		}
 		for utf8.RuneCountInString(strings.TrimRight(wd, " ")) > width {
@@ -74,9 +74,24 @@ func RichWrap(line string, width int) []string {
 		lineBuf = wd
 	}
 	if strings.TrimRight(lineBuf, " ") != "" || len(out) == 0 {
-		out = append(out, strings.TrimRight(lineBuf, " "))
+		out = append(out, rstripEnd(lineBuf, width))
 	}
 	return out
+}
+
+// rstripEnd is rich Text.rstrip_end(size): drop trailing whitespace only as
+// far as it overflows size.
+func rstripEnd(s string, size int) string {
+	n := utf8.RuneCountInString(s)
+	if n <= size {
+		return s
+	}
+	excess := n - size
+	trail := len(s) - len(strings.TrimRight(s, " "))
+	if trail > excess {
+		trail = excess
+	}
+	return s[:len(s)-trail]
 }
 
 // printJSON writes v as compact json.dumps(v) + newline.
