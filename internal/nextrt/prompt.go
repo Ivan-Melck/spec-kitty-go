@@ -1,6 +1,7 @@
 package nextrt
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"path"
@@ -93,6 +94,38 @@ func writeNextPrompt(root, action, wpID, agent, slug, content string) string {
 		return ""
 	}
 	return p
+}
+
+// writeTemplatelessPrompt is decision._write_templateless_step_prompt: a
+// short actionable prompt in a mkstemp-named file.
+func writeTemplatelessPrompt(m *missionCtx, action, agent string) (string, error) {
+	content := fmt.Sprintf("# %s — %s\n\nPerform the `%s` step for this Mission according to its charter and spec.\n\nWhen the step is done, advance with:\n\n    spec-kitty next --agent %s --mission %s\n",
+		m.MissionType, action, action, agent, m.Slug)
+	dir := workflow.PromptTmpDir(m.Root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789_"
+	for i := 0; i < 100; i++ {
+		var b [8]byte
+		rand.Read(b[:])
+		suffix := make([]byte, 8)
+		for j := range b {
+			suffix[j] = chars[int(b[j])%len(chars)]
+		}
+		p := filepath.Join(dir, "spec-kitty-step-"+action+"-"+string(suffix)+".md")
+		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return "", err
+		}
+		_, err = f.WriteString(content)
+		f.Close()
+		return p, err
+	}
+	return "", fmt.Errorf("No usable temporary file name found")
 }
 
 // buildTemplatePrompt is _build_template_prompt.

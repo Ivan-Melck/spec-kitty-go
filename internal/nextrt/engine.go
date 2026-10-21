@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/invocation"
@@ -222,10 +223,36 @@ func missionOrigin(root, missionType string) *jsonx.Object {
 		{filepath.Join(project.GlobalKittify(), "missions", missionType, "mission.yaml"), "global_mission"},
 	} {
 		if _, err := os.Stat(c.p); err == nil {
+			if c.tier == "legacy" {
+				legacyNudge()
+			}
 			return jsonx.NewObject("mission_tier", c.tier, "mission_path", filepath.Dir(c.p))
 		}
 	}
 	return jsonx.NewObject("mission_tier", "package_default", "mission_path", "packs/built-in/missions/"+missionType)
+}
+
+var nudgeOnce sync.Once
+
+// legacyNudge is runtime.resolver._emit_migrate_nudge for a legacy-tier hit
+// (once per invocation, never in --json invocations, only when the global
+// runtime is configured).
+func legacyNudge() {
+	nudgeOnce.Do(func() {
+		for _, a := range os.Args[1:] {
+			if a == "--json" {
+				return
+			}
+		}
+		if st, err := os.Stat(filepath.Join(project.GlobalKittify(), "cache", "version.lock")); err != nil || !st.Mode().IsRegular() {
+			return
+		}
+		disp := project.GlobalKittify()
+		if h, err := os.UserHomeDir(); err == nil && (disp == h || strings.HasPrefix(disp, h+"/")) {
+			disp = "~" + strings.TrimPrefix(disp, h)
+		}
+		fmt.Fprintf(os.Stderr, "Note: Run `spec-kitty migrate` to clean up legacy project files and use the global runtime (%s).\n", disp)
+	})
 }
 
 type advanceCtx struct {
@@ -358,14 +385,20 @@ func (c *advanceCtx) stepDecision(stepID string, guards []string, errorCode *str
 		return c.wpIterationDecision(stepID, guards)
 	}
 	action, wpID, wsPath := c.stateToAction(stepID)
+	if action == "" {
+		action = stepID
+	}
 	d := c.decision(KindStep, stepID)
 	d.StepID, d.GuardFailures, d.ErrorCode = sp(stepID), guards, errorCode
 	d.Action, d.WPID, d.WorkspacePath = spOrNil(action), spOrNil(wpID), spOrNil(wsPath)
 	if action == "" {
-		d.Reason = sp(fmt.Sprintf("no action mapped for step '%s'; cannot resolve prompt", stepID))
+		d.Reason = sp("no action and no step_id; cannot resolve prompt")
 		return materialize(d)
 	}
 	p, err := buildTemplatePrompt(c.m, c.featureDir, action, c.agent)
+	if err != nil && wpID == "" {
+		p, err = writeTemplatelessPrompt(c.m, action, c.agent)
+	}
 	if err != nil {
 		d.Reason = sp(err.Error())
 	} else {
@@ -535,6 +568,7 @@ func DecideNext(root, slug, agent, result string) *Decision {
 		return materialize(d)
 	case KindDecisionRequired:
 		d := c.decision(KindDecisionRequired, firstNonEmpty(plan.StepID, "unknown"))
+		d.Reason = sp(firstNonEmpty(plan.Reason, "Decision required"))
 		d.StepID, d.DecisionID, d.InputKey, d.Question = spOrNil(plan.StepID), spOrNil(plan.DecisionID), spOrNil(plan.InputKey), spOrNil(plan.Question)
 		d.Options = plan.Options
 		d.PromptFile = spOrNil(buildDecisionPrompt(m, plan, agent))

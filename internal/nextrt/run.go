@@ -13,6 +13,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
@@ -28,8 +29,9 @@ type TemplateStep struct {
 
 // Template is a mission-runtime planning template.
 type Template struct {
-	Key   string
-	Steps []TemplateStep
+	Key        string
+	Steps      []TemplateStep
+	AuditSteps []TemplateStep
 }
 
 // ParseTemplate parses mission-runtime.yaml.
@@ -81,24 +83,136 @@ func (t *Template) HasStep(id string) bool {
 	return false
 }
 
-// templateSource resolves the runtime template bytes for a mission type
-// (project override, global mission, then the packaged default) and the
-// path recorded as template_path.
-func templateSource(root, missionType string) ([]byte, string, error) {
-	for _, p := range []string{
-		filepath.Join(root, ".kittify", "overrides", "missions", missionType, "mission-runtime.yaml"),
-		filepath.Join(project.GlobalKittify(), "missions", missionType, "mission-runtime.yaml"),
-	} {
-		if b, err := os.ReadFile(p); err == nil {
-			return b, p, nil
+// templateKeyOf is load_mission_template_file(path).mission.key ("" on
+// any load failure); shorthand templates fall back to key/name/parent dir.
+func templateKeyOf(b []byte, p string) string {
+	o, err := yamlx.ParseObject(b)
+	if err != nil || o == nil {
+		return ""
+	}
+	if !o.Has("mission") {
+		for _, k := range []string{"key", "name"} {
+			if s := o.GetString(k); s != "" {
+				return s
+			}
+		}
+		return filepath.Base(filepath.Dir(p))
+	}
+	if m := o.GetObject("mission"); m != nil {
+		return m.GetString("key")
+	}
+	return ""
+}
+
+// templateCandidates is _candidate_templates_for_root.
+func templateCandidates(root, missionType string) []string {
+	st, err := os.Stat(root)
+	if err != nil {
+		return nil
+	}
+	if !st.IsDir() {
+		if b := filepath.Base(root); b == "mission-runtime.yaml" || b == "mission.yaml" {
+			return []string{root}
+		}
+		return nil
+	}
+	return []string{
+		filepath.Join(root, missionType, "mission-runtime.yaml"), filepath.Join(root, missionType, "mission.yaml"),
+		filepath.Join(root, "missions", missionType, "mission-runtime.yaml"), filepath.Join(root, "missions", missionType, "mission.yaml"),
+		filepath.Join(root, "mission-runtime.yaml"), filepath.Join(root, "mission.yaml"),
+	}
+}
+
+// resolveTemplateInRoot is _resolve_runtime_template_in_root.
+func resolveTemplateInRoot(root, missionType string) ([]byte, string) {
+	for _, c := range templateCandidates(root, missionType) {
+		if st, err := os.Stat(c); err != nil || !st.Mode().IsRegular() {
+			continue
+		}
+		try := []string{c}
+		if filepath.Base(c) == "mission.yaml" {
+			side := filepath.Join(filepath.Dir(c), "mission-runtime.yaml")
+			if st, err := os.Stat(side); err == nil && st.Mode().IsRegular() {
+				try = []string{side, c}
+			}
+		}
+		for _, p := range try {
+			b, err := os.ReadFile(p)
+			if err == nil && templateKeyOf(b, p) == missionType {
+				if r, err := filepath.EvalSymlinks(p); err == nil {
+					p = r
+				}
+				if a, err := filepath.Abs(p); err == nil {
+					p = a
+				}
+				return b, p
+			}
 		}
 	}
-	rel := path.Join("packs/built-in/missions", missionType, "mission-runtime.yaml")
-	b, err := assets.ReadFile(rel)
+	return nil, ""
+}
+
+// projectConfigPackPaths is _project_config_pack_paths.
+func projectConfigPackPaths(root string) []string {
+	b, err := os.ReadFile(filepath.Join(root, ".kittify", "config.yaml"))
 	if err != nil {
-		return nil, "", fmt.Errorf("No runtime template found for mission type '%s'", missionType)
+		return nil
 	}
-	return b, rel, nil
+	o, err := yamlx.ParseObject(b)
+	if err != nil || o == nil {
+		return nil
+	}
+	var out []string
+	for _, x := range o.GetList("mission_packs") {
+		if s, ok := x.(string); ok {
+			out = append(out, filepath.Join(root, s))
+		}
+	}
+	return out
+}
+
+func envMissionPaths() []string {
+	var out []string
+	for _, c := range strings.Split(os.Getenv("SPEC_KITTY_MISSION_PATHS"), string(os.PathListSeparator)) {
+		if strings.TrimSpace(c) != "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// templateSource is _runtime_template_key + template loading: the runtime
+// template bytes for a mission type and the path recorded as template_path.
+// Tier walk: env, project override, project legacy, org packs, project
+// config packs, then built-in/global (software-dev) or global/built-in.
+func templateSource(root, missionType string) ([]byte, string, error) {
+	k := filepath.Join(root, ".kittify")
+	tiers := [][]string{envMissionPaths(), {filepath.Join(k, "overrides", "missions")}, {filepath.Join(k, "missions")},
+		dct.OrgRoots(root), projectConfigPackPaths(root)}
+	global := []string{filepath.Join(project.GlobalKittify(), "missions")}
+	builtin := []string{"<builtin>"}
+	if missionType == "software-dev" {
+		tiers = append(tiers, builtin, global)
+	} else {
+		tiers = append(tiers, global, builtin)
+	}
+	for _, roots := range tiers {
+		for _, r := range roots {
+			if r == "<builtin>" {
+				for _, name := range []string{"mission-runtime.yaml", "mission.yaml"} {
+					rel := path.Join("packs/built-in/missions", missionType, name)
+					if b, err := assets.ReadFile(rel); err == nil && templateKeyOf(b, rel) == missionType {
+						return b, rel, nil
+					}
+				}
+				continue
+			}
+			if b, p := resolveTemplateInRoot(r, missionType); p != "" {
+				return b, p, nil
+			}
+		}
+	}
+	return nil, "", fmt.Errorf("No runtime template found for mission type '%s'", missionType)
 }
 
 // Snapshot is the run state.json.
@@ -237,8 +351,8 @@ func startRun(store, root, slug, missionType string) (*RunRef, error) {
 	}
 	sum := sha256.Sum256(tb)
 	key := missionType
-	if t, err := ParseTemplate(tb); err == nil && t.Key != "" {
-		key = t.Key
+	if k := templateKeyOf(tb, tpath); k != "" {
+		key = k
 	}
 	st := jsonx.NewObject("blocked_reason", nil, "completed_steps", []any{}, "decisions", &jsonx.Object{},
 		"inputs", jsonx.NewObject("mission_slug", slug), "issued_step_id", nil, "mission_id", nil, "mission_key", key,
@@ -373,6 +487,7 @@ func advanceRun(ref *RunRef, agent, result string) (planned, error) {
 	if err != nil {
 		return planned{}, err
 	}
+	completed := s.issued()
 	if issued := s.issued(); issued != "" {
 		switch result {
 		case "success":
@@ -411,6 +526,11 @@ func advanceRun(ref *RunRef, agent, result string) (planned, error) {
 		}
 		appendRunEvent(ref.RunDir, "NextStepIssued", jsonx.NewObject("actor", agentActor(agent), "agent_id", agent,
 			"mission_id", nil, "mission_slug", nil, "run_id", ref.RunID, "step_id", p.StepID))
+	} else if p.Kind == KindDecisionRequired && p.DecisionID != "" {
+		requestDecisionInput(ref, s, p, agent)
+	} else if p.Kind == KindTerminal && completed != "" {
+		appendRunEvent(ref.RunDir, "MissionRunCompleted", jsonx.NewObject("actor", agentActor(agent), "mission_id", nil,
+			"mission_slug", nil, "mission_type", s.Obj.GetString("mission_key"), "run_id", ref.RunID))
 	}
 	if err := writeSnapshot(ref.RunDir, s); err != nil {
 		return planned{}, err

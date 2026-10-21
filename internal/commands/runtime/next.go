@@ -161,18 +161,27 @@ func runNext(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	agent := ctx.String("agent")
+	var answeredID *string
 	if answer != nil {
 		if agent == "" {
 			printNextError(ctx, "Error: --agent is required when --answer is provided", jsonMode)
 			return cli.Exit(1)
 		}
-		msg := "Error answering decision: decision answering is not supported by this build"
-		if jsonMode {
-			fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("error", msg), compact))
-		} else {
-			ctx.Eprintf("%s\n", msg)
+		id, err := nextrt.AnswerDecision(root, slug, ctx.String("decision-id"), *answer, agent)
+		if err != nil {
+			msg := "Error answering decision: " + err.Error()
+			switch err.(type) {
+			case nextrt.NoPendingDecisionError, nextrt.AmbiguousPendingDecisionError:
+				msg = "Error: " + err.Error()
+			}
+			if jsonMode {
+				fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("error", msg), compact))
+			} else {
+				ctx.Eprintf("%s\n", msg)
+			}
+			return cli.Exit(1)
 		}
-		return cli.Exit(1)
+		answeredID = &id
 	}
 	if result == nil {
 		d, err := nextrt.QueryCurrentState(root, slug, agent)
@@ -190,7 +199,7 @@ func runNext(ctx *cli.Context) error {
 			}
 			return err
 		}
-		printDecision(ctx, d, jsonMode)
+		printDecision(ctx, d, jsonMode, answeredID, answer)
 		return nil
 	}
 	if agent == "" {
@@ -204,7 +213,7 @@ func runNext(ctx *cli.Context) error {
 	d := nextrt.DecideNext(root, slug, agent, *result)
 	nextrt.EmitMissionNextInvoked(root, slug, agent, *result, d)
 	nextrt.WriteIssuanceRecord(root, slug, agent, d)
-	printDecision(ctx, d, jsonMode)
+	printDecision(ctx, d, jsonMode, answeredID, answer)
 	if d.Kind == nextrt.KindBlocked {
 		return cli.Exit(1)
 	}
@@ -227,10 +236,18 @@ func deref(p *string) string {
 }
 
 // printDecision is next_cmd._print_decision.
-func printDecision(ctx *cli.Context, d *nextrt.Decision, jsonMode bool) {
+func printDecision(ctx *cli.Context, d *nextrt.Decision, jsonMode bool, answeredID, answer *string) {
 	if jsonMode {
-		printIndentJSON(ctx, d.ToObject())
+		o := d.ToObject()
+		if answeredID != nil {
+			o.Set("answered", *answeredID)
+			o.Set("answer", *answer)
+		}
+		printIndentJSON(ctx, o)
 		return
+	}
+	if answeredID != nil {
+		fmt.Fprintf(ctx.Stdout, "  Answered decision: %s\n", *answeredID)
 	}
 	p := func(f string, a ...any) { fmt.Fprintf(ctx.Stdout, f+"\n", a...) }
 	progress := func() {
