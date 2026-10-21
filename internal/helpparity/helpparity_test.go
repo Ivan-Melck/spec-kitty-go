@@ -129,9 +129,18 @@ func TestHelpInventoryParity(t *testing.T) {
 // panelCommands lists the names in a help output's Commands panel.
 func panelCommands(help string) []string {
 	var names []string
-	in := false
+	in, simple := false, false
 	for _, l := range strings.Split(help, "\n") {
 		switch {
+		case l == "Commands:":
+			simple = true
+		case simple:
+			// click's plain formatter: "  name  description"
+			if strings.HasPrefix(l, "  ") && !strings.HasPrefix(l, "   ") {
+				if f := strings.Fields(l); len(f) > 0 {
+					names = append(names, f[0])
+				}
+			}
 		case strings.HasPrefix(l, "╭─ Commands"):
 			in = true
 		case in && strings.HasPrefix(l, "╰"):
