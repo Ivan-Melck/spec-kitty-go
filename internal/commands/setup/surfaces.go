@@ -22,6 +22,11 @@ var notApplicableSurfaces = map[string]int{
 	"pi": 3, "q": 5, "qwen": 5, "vibe": 2, "windsurf": 2,
 }
 
+// RegeneratedSurfaceLine is tool_surface.repair.REGENERATED_SURFACE_LINE.
+func RegeneratedSurfaceLine(path string) string {
+	return "Regenerated a generated command skill that differed from the current version: " + path
+}
+
 // SurfaceSummary is DriftPolicySummary (counts only).
 type SurfaceSummary struct {
 	Created  []string
