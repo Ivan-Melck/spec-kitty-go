@@ -462,11 +462,21 @@ func simpleHelpEnabled() bool {
 	return Width() < 100
 }
 
+// invocationArgs is the command line Execute received (sys.argv[1:]).
+var invocationArgs []string
+
+// RootHelpBanner, when set, runs before the root group's rich help with the
+// invocation's arguments (upstream's BannerGroup.format_help).
+var RootHelpBanner func(w io.Writer, argv []string)
+
 // WriteHelp renders typer-style help for c.
 func WriteHelp(w io.Writer, c *Command) {
 	if c.parent == nil && c.isGroup() && simpleHelpEnabled() {
 		writeSimpleHelp(w, c)
 		return
+	}
+	if c.parent == nil && RootHelpBanner != nil {
+		RootHelpBanner(w, invocationArgs)
 	}
 	width := Width()
 	printRenderable(w, rich.Pad(rich.NewText(usageLine(c)), 1), width)

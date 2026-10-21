@@ -374,6 +374,7 @@ func BadParameter(cmd *Command, flag, msg string) error {
 // Execute parses argv against root and runs the selected command, returning
 // the process exit code.
 func Execute(root *Command, argv []string, io_ IO) int {
+	invocationArgs = argv
 	err := execute(root, argv, io_)
 	return handleErr(err, io_)
 }
