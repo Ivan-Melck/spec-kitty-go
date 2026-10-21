@@ -246,8 +246,15 @@ func NewOffering(repoRoot string, orgRoots []string) *Offering {
 }
 
 // ProjectKindDir is the project-layer directory for kind (upstream
-// PROJECT_KIND_DIRS: the plural name).
-func ProjectKindDir(k Kind) string { return k.Plural() }
+// PROJECT_KIND_DIRS: singular for directive/tactic/styleguide/procedure,
+// the plural name otherwise).
+func ProjectKindDir(k Kind) string {
+	switch k {
+	case Directive, Tactic, Styleguide, Procedure:
+		return string(k)
+	}
+	return k.Plural()
+}
 
 // Repo returns the repository of kind (cached).
 func (o *Offering) Repo(k Kind) *Repository {
