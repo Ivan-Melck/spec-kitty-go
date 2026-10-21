@@ -14,16 +14,22 @@ func TestExploreOracle(t *testing.T) {
 		t.Skip("exploration only")
 	}
 	p := newOraclePair(t)
-	_, o := missionfx.OracleCalcMission(t, p)
+	missionfx.OracleCalcMission(t, p)
+	p.Both(legacyCorpus)
 	for _, a := range [][]string{
-		{"doctor", "decisions", "--mission", o, "--json"},
-		{"doctor", "decisions", "--mission", o},
-		{"doctor", "mission-state", "--json"},
-		{"doctor", "mission-state"},
+		{"doctor", "mission-state", "--audit"},
+		{"doctor", "mission-state", "--fix"},
+		{"git", "status"},
+		
+		{"doctor", "mission-state", "--fix", "--json"},
+		{"doctor", "mission-state", "--teamspace-dry-run"},
 		{"doctor", "coordination", "--json"},
 		{"doctor", "coordination"},
 	} {
 		r := p.Oracle.RunOracle(a...)
+		if a[0] == "git" {
+			r.Stdout = p.Oracle.Git("status", "--short")
+		}
 		t.Logf("%v exit=%d\n%s\n--stderr--\n%s", a, r.Code, r.Stdout, r.Stderr)
 	}
 }
