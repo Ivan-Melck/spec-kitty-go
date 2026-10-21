@@ -48,6 +48,9 @@ func stepStdin(t *testing.T, p *testkit.Pair, stdin string, args ...string) {
 	t.Helper()
 	g := execStdin(t, p.Go, testkit.Binary(t), stdin, args...)
 	o := execStdin(t, p.Oracle, testkit.Oracle(t), stdin, args...)
+	if os.Getenv("KITTY_TEST_TRACE") == "1" {
+		t.Logf("$ %s < %q\n[oracle %d] %s%s\n[go %d] %s%s", strings.Join(args, " "), stdin, o.Code, o.Stdout, o.Stderr, g.Code, g.Stdout, g.Stderr)
+	}
 	if g.Code != o.Code {
 		t.Errorf("%s: exit code go=%d oracle=%d\n--- go:\n%s%s\n--- oracle:\n%s%s", strings.Join(args, " "), g.Code, o.Code, g.Stdout, g.Stderr, o.Stdout, o.Stderr)
 	}

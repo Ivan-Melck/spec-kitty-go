@@ -82,18 +82,21 @@ func verbs() []*cli.Command {
 	}
 }
 
-var invalidChoiceRe = regexp.MustCompile(`^Invalid value for '[^']*': '(.*)' is not one of (.*)\.$`)
+var invalidChoiceRe = regexp.MustCompile(`^Invalid value for '([^']*)': '(.*)' is not one of (.*)\.$`)
 
 // usageMessage is click's UsageError.format_message() as the group's JSON
-// handler sees it: a click.Choice failure carries no parameter hint and
-// joins the choices with ", ".
+// handler sees it: choices are joined with ", ", and an explicit
+// click_type=Choice (--origin-check) carries no parameter hint.
 func usageMessage(msg string) string {
 	if m := invalidChoiceRe.FindStringSubmatch(msg); m != nil {
-		choices := m[2]
+		choices := m[3]
 		if i := strings.LastIndex(choices, "' or '"); i >= 0 {
 			choices = choices[:i] + "', '" + choices[i+len("' or '"):]
 		}
-		return fmt.Sprintf("Invalid value: '%s' is not one of %s.", m[1], choices)
+		if m[1] == "--origin-check" {
+			return fmt.Sprintf("Invalid value: '%s' is not one of %s.", m[2], choices)
+		}
+		return fmt.Sprintf("Invalid value for '%s': '%s' is not one of %s.", m[1], m[2], choices)
 	}
 	return msg
 }

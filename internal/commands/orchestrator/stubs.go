@@ -47,7 +47,7 @@ func artifactSubmitCmd() *cli.Command {
 	return &cli.Command{Name: "artifact-submit", Short: "Submit design content through host placement, validators and commit authority.",
 		Flags: []*cli.Flag{missionFlag(), str("request-json", "Closed bounded artifact batch JSON; '-' reads UTF-8 stdin", true),
 			str("actor", "Accountable author", true), str("policy", helpPolicy, false)},
-		Run: notYet("artifact-submit")}
+		Run: runArtifactSubmit}
 }
 
 func designValidateCmd() *cli.Command {
