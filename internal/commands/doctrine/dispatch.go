@@ -27,7 +27,7 @@ func init() {
 				{Name: "json", Kind: cli.Bool, Help: "Output JSON payload"},
 				{Name: "dry-run", Kind: cli.Bool, Help: "Route the request and return the routing signal without opening an Op or writing anything."},
 			},
-			Args: []*cli.Arg{{Name: "request", Help: "Natural language request. The router picks the best profile.", Required: true}},
+			Args: []*cli.Arg{{Name: "request", Help: "Natural language request. The router picks the best profile.", Required: true, Metavar: "{request}"}},
 			Run:  runDispatch,
 		})
 	})

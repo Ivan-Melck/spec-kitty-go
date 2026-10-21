@@ -36,7 +36,7 @@ func missionTypeLeaves() []*cli.Command {
 		{
 			Name:  "info",
 			Short: "Show details for a specific mission without switching.",
-			Args:  []*cli.Arg{{Name: "mission_name", Help: "Mission name to display details for", Required: true}},
+			Args:  []*cli.Arg{{Name: "mission_name", Help: "Mission name to display details for", Required: true, Metavar: "{mission_name}"}},
 			Run:   runMissionInfo,
 		},
 		{
@@ -44,7 +44,7 @@ func missionTypeLeaves() []*cli.Command {
 			Short: "[REMOVED] Switch active mission - this command was removed in v0.8.0. (deprecated)",
 			Long:  "(deprecated)\n\n[REMOVED] Switch active mission - this command was removed in v0.8.0.",
 			Flags: []*cli.Flag{{Name: "force", Kind: cli.Bool, Help: "(ignored)"}},
-			Args:  []*cli.Arg{{Name: "mission_name", Help: "Mission name (no longer supported)", Required: true}},
+			Args:  []*cli.Arg{{Name: "mission_name", Help: "Mission name (no longer supported)", Required: true, Metavar: "{mission_name}"}},
 			Run:   runMissionSwitch,
 		},
 		{
@@ -61,7 +61,7 @@ func missionTypeLeaves() []*cli.Command {
 			Short: "Show the fully resolved MissionType definition for this project (FR-017).",
 			Long:  missionShowLong,
 			Flags: []*cli.Flag{{Name: "json", Kind: cli.Bool, Help: "Output as JSON."}},
-			Args:  []*cli.Arg{{Name: "mission_type_id", Help: "Mission type ID (e.g. software-dev).", Required: true}},
+			Args:  []*cli.Arg{{Name: "mission_type_id", Help: "Mission type ID (e.g. software-dev).", Required: true, Metavar: "{mission_type_id}"}},
 			Run:   runMissionShow,
 		},
 	}

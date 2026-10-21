@@ -1,0 +1,15 @@
+terms:
+  - surface: workspace
+    definition: A git worktree where one lane of work packages is implemented, isolated from the primary checkout so that parallel lanes never collide.
+    confidence: 0.9
+    status: active
+  - surface: lane
+    definition: A sequence of work packages executed in one worktree.
+    status: active
+  - surface: mission
+    definition: The unit of planned work.
+    status: draft
+  - surface: legacy thing
+    definition: An old term.
+    status: deprecated
+    confidence: 0.25

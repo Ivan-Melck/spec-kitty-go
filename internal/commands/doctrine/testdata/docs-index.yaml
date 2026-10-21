@@ -1,0 +1,60 @@
+# GENERATED — do not edit by hand; run scripts/docs/docs_index.py --write to refresh.
+# Common Docs retrieval index: title / heading-anchor / abstract per page.
+# Sorted alphabetically by `path` for a deterministic, byte-stable diff.
+pages:
+  - path: "docs/adr/1.x/2026-01-23-1-record-architecture-decisions.md"
+    title: "Record Architecture Decisions"
+    divio_type: "none"
+    abstract: "Adopts lightweight one-decision-per-file ADRs as the durable home for architectural rationale, so settled choices stop being relitigated in chat history."
+    anchors:
+    - {slug: "context-and-problem-statement", text: "Context and Problem Statement", level: 2}
+    - {slug: "decision-drivers", text: "Decision Drivers", level: 2}
+    - {slug: "considered-options", text: "Considered Options", level: 2}
+    - {slug: "decision-outcome", text: "Decision Outcome", level: 2}
+    - {slug: "consequences", text: "Consequences", level: 3}
+    - {slug: "confirmation", text: "Confirmation", level: 3}
+    - {slug: "pros-and-cons-of-the-options", text: "Pros and Cons of the Options", level: 2}
+    - {slug: "option-1-no-formal-decision-documentation", text: "Option 1: No Formal Decision Documentation", level: 3}
+    - {slug: "option-2-architecture-decision-records-adrs", text: "Option 2: Architecture Decision Records (ADRs)", level: 3}
+    - {slug: "option-3-design-documents-in-wiki", text: "Option 3: Design Documents in Wiki", level: 3}
+    - {slug: "option-4-comprehensive-architecture-specification", text: "Option 4: Comprehensive Architecture Specification", level: 3}
+    - {slug: "more-information", text: "More Information", level: 2}
+    - {slug: "template-and-guidelines", text: "Template and Guidelines", level: 3}
+    - {slug: "external-references", text: "External References", level: 3}
+    - {slug: "related-decisions", text: "Related Decisions", level: 3}
+  - path: "docs/adr/1.x/2026-01-23-2-explicit-base-branch-tracking.md"
+    title: "Explicit Base Branch Tracking in Work Package Frontmatter"
+    divio_type: "none"
+    abstract: "Stores each work package's base branch in its frontmatter instead of recomputing it from git, making workspace provenance visible, auditable, and recreatable."
+    anchors:
+    - {slug: "context-and-problem-statement", text: "Context and Problem Statement", level: 2}
+    - {slug: "decision-drivers", text: "Decision Drivers", level: 2}
+    - {slug: "considered-options", text: "Considered Options", level: 2}
+    - {slug: "decision-outcome", text: "Decision Outcome", level: 2}
+    - {slug: "consequences", text: "Consequences", level: 3}
+    - {slug: "confirmation", text: "Confirmation", level: 3}
+    - {slug: "pros-and-cons-of-the-options", text: "Pros and Cons of the Options", level: 2}
+    - {slug: "option-1-continue-runtime-derivation", text: "Option 1: Continue Runtime Derivation", level: 3}
+    - {slug: "option-2-store-base-branch-in-wp-frontmatter", text: "Option 2: Store Base Branch in WP Frontmatter", level: 3}
+    - {slug: "option-3-store-base-branch-in-git-commit-message", text: "Option 3: Store Base Branch in Git Commit Message", level: 3}
+    - {slug: "option-4-store-base-branch-in-separate-metadata-file", text: "Option 4: Store Base Branch in Separate Metadata File", level: 3}
+    - {slug: "more-information", text: "More Information", level: 2}
+    - {slug: "implementation-summary", text: "Implementation Summary", level: 3}
+    - {slug: "related-decisions", text: "Related Decisions", level: 3}
+    - {slug: "code-references", text: "Code References", level: 3}
+  - path: "docs/adr/1.x/2026-01-23-3-centralized-workspace-context-storage.md"
+    title: "Centralized Workspace Context Storage"
+    divio_type: "none"
+    abstract: "Centralised runtime workspace context in a shared .kittify directory in the main checkout, so agents could read it from anywhere and it outlived the worktree."
+    anchors:
+    - {slug: "context-and-problem-statement", text: "Context and Problem Statement", level: 2}
+    - {slug: "decision-drivers", text: "Decision Drivers", level: 2}
+    - {slug: "considered-options", text: "Considered Options", level: 2}
+    - {slug: "decision-outcome", text: "Decision Outcome", level: 2}
+    - {slug: "consequences", text: "Consequences", level: 3}
+    - {slug: "confirmation", text: "Confirmation", level: 3}
+    - {slug: "pros-and-cons-of-the-options", text: "Pros and Cons of the Options", level: 2}
+    - {slug: "option-1-per-worktree-spec-kitty-context-file", text: "Option 1: Per-Worktree `.spec-kitty-context` File", level: 3}
+    - {slug: "option-2-centralized-storage-in-kittify-workspaces", text: "Option 2: Centralized Storage in `.kittify/workspaces/`", level: 3}
+    - {slug: "option-3-environment-variables-only", text: "Option 3: Environment Variables Only", level: 3}
+    - {slug: "option-4-store-in-git-config", text: "Option 4: Store in Git Config", level: 3}
