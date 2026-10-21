@@ -36,6 +36,8 @@ func firstLine(s string) string {
 
 func doctorLeafCommands() []*cli.Command {
 	return []*cli.Command{
+		newDoctorIdentityCmd(),
+		newDoctorTopologyCmd(),
 		{Name: "shim-registry", Short: short("shim-registry"), Long: longHelp["doctor_shim-registry"], Flags: []*cli.Flag{doctorJSONFlag(machineJSON)}, Run: runDoctorShimRegistry},
 		{Name: "contracts", Short: short("contracts"), Long: longHelp["doctor_contracts"], Flags: []*cli.Flag{doctorJSONFlag(machineJSON)}, Run: runDoctorContracts},
 	}
@@ -58,6 +60,11 @@ func doctorRoot(ctx *cli.Context, jsonOut bool, code int) (string, error) {
 // a header row and data rows, each cell padded two spaces on both sides.
 // Cells may carry markup (stripped).
 func plainTable(w io.Writer, headers []string, minWidths []int, rows [][]string) {
+	plainTableR(w, headers, minWidths, nil, rows)
+}
+
+// plainTableR is plainTable with per-column right justification.
+func plainTableR(w io.Writer, headers []string, minWidths []int, right []bool, rows [][]string) {
 	n := len(headers)
 	width := make([]int, n)
 	for i, h := range headers {
@@ -83,10 +90,14 @@ func plainTable(w io.Writer, headers []string, minWidths []int, rows [][]string)
 	line := func(cells []string) string {
 		var b strings.Builder
 		for i, c := range cells {
-			if i == 0 {
-				b.WriteString(c + strings.Repeat(" ", width[i]-utf8.RuneCountInString(c)))
+			if i > 0 {
+				b.WriteString("    ")
+			}
+			fill := strings.Repeat(" ", width[i]-utf8.RuneCountInString(c))
+			if i < len(right) && right[i] {
+				b.WriteString(fill + c)
 			} else {
-				b.WriteString("    " + c + strings.Repeat(" ", width[i]-utf8.RuneCountInString(c)))
+				b.WriteString(c + fill)
 			}
 		}
 		return "  " + b.String() + "  "
