@@ -178,6 +178,9 @@ type Context struct {
 	Stderr io.Writer
 	// Extra holds unconsumed positionals when AllowExtraArgs is set.
 	Extra []string
+	// InvokedSubcommand is the subcommand name a group's Callback is about
+	// to dispatch to ("" when none; click's ctx.invoked_subcommand).
+	InvokedSubcommand string
 
 	values map[string]any
 	set    map[string]bool
@@ -392,6 +395,9 @@ func execute(root *Command, argv []string, io_ IO) error {
 			if cmd.Callback != nil {
 				if err := finalize(ctx, cmd); err != nil {
 					return err
+				}
+				if sub != "" && cmd.Find(sub) != nil {
+					ctx.InvokedSubcommand = sub
 				}
 				if err := cmd.Callback(ctx); err != nil {
 					return err
