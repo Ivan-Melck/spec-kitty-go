@@ -151,6 +151,17 @@ func runMissionStateAudit(ctx *cli.Context, root string, jsonOut bool, failSev s
 		only = &slug
 	}
 	rep := healthcheck.RunAudit(root, only)
+	cwd, _ := os.Getwd()
+	for _, d := range missionstate.AuditDisagreements(cwd, root, only) {
+		miss := func(p *string) string {
+			if p == nil {
+				return "missing"
+			}
+			return *p
+		}
+		rep.AddFinding(d.Slug, "CHECKOUT_DISAGREEMENT", "error", d.Artifact,
+			fmt.Sprintf("%s disagrees with primary (invoking sha256 %s, primary sha256 %s)", d.Artifact, miss(d.InvokingSHA), miss(d.PrimarySHA)))
+	}
 	if jsonOut {
 		fmt.Fprint(out, jsonx.Dumps(rep.ToObject(), jsonx.SortedPretty))
 	} else {

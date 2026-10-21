@@ -120,6 +120,29 @@ func TestDiffDoctorMissionStateFixCalc(t *testing.T) {
 		}
 	}
 	compareFiles(t, p, g, o, "kitty-specs/$M/meta.json", "kitty-specs/$M/status.events.jsonl", "kitty-specs/$M/status.json")
+	// from the coordination worktree: --fix is refused, --audit reports the
+	// invoking-vs-primary disagreement
+	gw, ow := coordWorktree(t, p.Go), coordWorktree(t, p.Oracle)
+	for _, a := range [][]string{
+		{"doctor", "mission-state", "--fix"},
+		{"doctor", "mission-state", "--audit"},
+		{"doctor", "mission-state", "--audit", "--json"},
+	} {
+		gr := p.Go.RunIn(gw, a...)
+		or := p.Oracle.Exec(ow, testkit.Oracle(t), a...)
+		if os.Getenv("KITTY_TEST_TRACE") != "" {
+			t.Logf("%v\n== go %d ==\n%s%s== oracle %d ==\n%s%s", a, gr.Code, gr.Stdout, gr.Stderr, or.Code, or.Stdout, or.Stderr)
+		}
+		if gr.Code != or.Code {
+			t.Errorf("%v (worktree): exit go=%d oracle=%d", a, gr.Code, or.Code)
+		}
+		for _, pair := range [][2]string{{gr.Stdout, or.Stdout}, {gr.Stderr, or.Stderr}} {
+			gs, os_ := maskRunID(p.Go.Normalize(pair[0])), maskRunID(p.Oracle.Normalize(pair[1]))
+			if gs != os_ {
+				t.Errorf("%v (worktree): output differs\n%s", a, testkit.Diff(os_, gs))
+			}
+		}
+	}
 }
 
 func TestMissionStateFixWithoutOracle(t *testing.T) {
