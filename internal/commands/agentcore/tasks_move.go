@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
+	"github.com/spec-kitty/go-kitty3/internal/issuematrix"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/lifecycle"
@@ -122,6 +123,7 @@ type moveState struct {
 	doneExecMode       string
 	doneMerged         bool
 	doneMergeMsg       string
+	issueMatrixBlocker string // area E: issue-matrix approval blocker
 	effectiveReviewer  string
 	effectiveApproval  string
 	isArbiter          bool
@@ -933,6 +935,9 @@ func (st *moveState) guards() *refusal {
 	if st.target == string(status.Done) && st.doneExecMode == "code_change" && !st.doneMerged && strings.TrimSpace(st.doneOverride) == "" {
 		return &refusal{err: fmt.Sprintf("Cannot move %s to done without verified merge ancestry.\n%s\nIf review just passed, move it to approved first:\n  spec-kitty agent tasks move-task %s --to approved --note \"Review passed\"\nTo proceed anyway, provide --done-override-reason \"<why this is acceptable>\".", st.taskID, st.doneMergeMsg, st.taskID)}
 	}
+	if (st.target == string(status.Approved) || st.target == string(status.Done)) && st.issueMatrixBlocker != "" {
+		return &refusal{err: st.issueMatrixBlocker}
+	}
 	return nil
 }
 
@@ -1041,6 +1046,9 @@ func (st *moveState) gatherLateFacts() {
 		if st.effectiveApproval == "" {
 			st.effectiveApproval = review.SyntheticAutoApprovalRef(st.taskID, clock.Now().UTC().Format("20060102"))
 		}
+	}
+	if st.target == string(status.Approved) || st.target == string(status.Done) {
+		st.issueMatrixBlocker = issuematrix.ApprovalBlocker(st.m.ReadDir(), st.target, st.m.PrimaryDir())
 	}
 	st.isArbiter = st.arbiterOverride()
 }

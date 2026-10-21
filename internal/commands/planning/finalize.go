@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
+	"github.com/spec-kitty/go-kitty3/internal/issuematrix"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/lifecycle"
@@ -299,6 +300,10 @@ func (f *finalizeRun) validationGates() error {
 		}
 		return nil
 	})
+	if !f.validateOnly {
+		f.scaffoldIssueMatrix()
+	}
+	f.lintIssueMatrix()
 	// TODO(wps.yaml): the tasks-outline manifest flow is not ported.
 	if err := f.resolveDeps(); err != nil {
 		return err
@@ -1563,4 +1568,52 @@ func scandirGlob(dir, pattern string) []string {
 		}
 	}
 	return out
+}
+
+// scaffoldIssueMatrix is _scaffold_issue_matrix_if_present.
+func (f *finalizeRun) scaffoldIssueMatrix() {
+	dir := issueMatrixReadDir(f.root, f.slug)
+	jsonPath := filepath.Join(dir, issuematrix.JSONFile)
+	path := ""
+	if fileExists(jsonPath) || fileExists(filepath.Join(dir, issuematrix.MDFile)) {
+		path = jsonPath
+	} else {
+		refs, err := issuematrix.DetectReferences(filepath.Join(f.dir, "spec.md"))
+		if err != nil {
+			f.human(fmt.Sprintf("[yellow]Warning:[/yellow] could not scaffold issue-matrix.json: %v", err))
+			return
+		}
+		if len(refs) == 0 {
+			return
+		}
+		rows := issuematrix.ScaffoldRows(refs)
+		if !coord.RoutesThroughCoordination(coord.Resolve(f.root, f.slug).Topology) {
+			os.WriteFile(jsonPath, rows.Render(), 0o644)
+			path = jsonPath
+		} else if r, err := writeIssueMatrix(f.root, f.slug, rows, ""); err == nil && (r.Status == safecommit.StatusCommitted || r.Status == safecommit.StatusUnchanged) {
+			path = filepath.Join(issueMatrixWriteDir(f.root, f.slug), issuematrix.JSONFile)
+		}
+	}
+	if path != "" {
+		f.human("[info] Scaffolded " + relOrAbs(f.root, path))
+	}
+}
+
+// lintIssueMatrix is _advisory_issue_matrix_lint.
+func (f *finalizeRun) lintIssueMatrix() {
+	if !issuematrix.ArtifactPresent(f.dir) {
+		return
+	}
+	p := filepath.Join(f.dir, issuematrix.JSONFile)
+	if !fileExists(p) {
+		p = filepath.Join(f.dir, issuematrix.MDFile)
+	}
+	r := issuematrix.Validate(p, nil)
+	if r.Passed || f.json {
+		return
+	}
+	say(f.ctx.Stdout, "[yellow]Advisory:[/yellow] issue-matrix.md has lint finding(s) (non-blocking — does not affect finalize):")
+	for _, d := range r.Diagnostics {
+		sayPlain(f.ctx.Stdout, fmt.Sprintf("  - %s: %s", d.Code, d.Message))
+	}
 }
