@@ -272,3 +272,51 @@ func ReadAllWPRawRefs(tasksDir string) (map[string][]string, []string) {
 	}
 	return out, order
 }
+
+var (
+	wpSectionRe = regexp.MustCompile(`(?m)^#{2,4}\s+(?:Work Package\s+)?(WP\d{2})(?:\b|:)`)
+	refLineRe   = regexp.MustCompile(`(?i)\*?\*?Requirements?\s*(?:Refs)?\*?\*?\s*:\s*(.+)`)
+)
+
+// TasksMDSections is _parse_wp_sections_from_tasks_md (WP id -> section).
+func TasksMDSections(content string) (map[string]string, []string) {
+	out := map[string]string{}
+	var order []string
+	ms := wpSectionRe.FindAllStringSubmatchIndex(content, -1)
+	for i, m := range ms {
+		id := content[m[2]:m[3]]
+		end := len(content)
+		if i+1 < len(ms) {
+			end = ms[i+1][0]
+		}
+		if _, ok := out[id]; !ok {
+			order = append(order, id)
+		}
+		out[id] = content[m[1]:end]
+	}
+	return out, order
+}
+
+// TasksMDRefs is _parse_requirement_refs_from_tasks_md.
+func TasksMDRefs(content, missionType string) map[string][]string {
+	secs, _ := TasksMDSections(content)
+	out := map[string][]string{}
+	for id, sec := range secs {
+		var refs []string
+		seen := map[string]bool{}
+		for _, m := range refLineRe.FindAllStringSubmatch(sec, -1) {
+			for _, r := range FindAll(m[1], false, missionType) {
+				s := r.String()
+				if !seen[s] {
+					seen[s] = true
+					refs = append(refs, s)
+				}
+			}
+		}
+		if refs == nil {
+			refs = []string{}
+		}
+		out[id] = refs
+	}
+	return out
+}
