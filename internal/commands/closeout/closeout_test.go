@@ -138,6 +138,31 @@ func TestDiffConsolidate(t *testing.T) {
 			comparePair(t, p, "review")
 			comparePair(t, p, "review", "--mission", "nope")
 			compareMissionTree(t, p, false)
+			// Retrospective, archive and release surfaces on the merged mission.
+			for _, c := range [][]string{
+				{"retrospect", "summary", "--json"},
+				{"retrospect", "summary"},
+				{"agent", "retrospect", "summary", "--json", "--limit", "5"},
+				{"retrospect", "summary", "--filter", "missing", "--json"},
+				{"retrospect", "summary", "--filter", "bogus"},
+				{"agent", "retrospect", "synthesize", "--mission", "$M", "--json"},
+				{"agent", "retrospect", "synthesize", "--mission", "$M"},
+				{"agent", "retrospect", "synthesize", "--mission", "$M", "--proposal-id", "p-1"},
+				{"retrospect", "create", "--mission", "$M", "--json"},
+				{"retrospect", "create", "--mission", "$M", "--overwrite", "--json"},
+				{"retrospect", "backfill", "--dry-run", "--json"},
+				{"agent", "release", "prep", "--channel", "alpha", "--json"},
+				{"archive", "list"},
+				{"archive", "create", "$M", "--by", "me", "--reason", "done", "--json"},
+				{"archive", "list", "--json"},
+			} {
+				comparePair(t, p, c...)
+			}
+			p.Both(func(s *testkit.Sandbox) { s.WriteFile("pyproject.toml", "[project]\nname = \"x\"\nversion = \"1.2.0a3\"\n") })
+			comparePair(t, p, "agent", "release", "prep", "--channel", "beta", "--json")
+			comparePair(t, p, "agent", "release", "prep", "--channel", "stable")
+			compareGit(t, p)
+			compareMissionTree(t, p, false)
 		})
 	}
 }
@@ -150,6 +175,9 @@ func TestDiffConsolidateNotReady(t *testing.T) {
 	comparePair(t, p, "agent", "mission", "merge", "--mission", "$M", "--dry-run")
 	comparePair(t, p, "review", "--mission", "$M")
 	comparePair(t, p, "review", "--mission", "$M", "--mode", "post-merge")
+	comparePair(t, p, "retrospect", "create", "--mission", "$M", "--json")
+	comparePair(t, p, "agent", "retrospect", "synthesize", "--mission", "$M")
+	comparePair(t, p, "archive", "create", "$M", "--by", "me", "--reason", "x")
 	compareMissionTree(t, p, false)
 	compareGit(t, p)
 }

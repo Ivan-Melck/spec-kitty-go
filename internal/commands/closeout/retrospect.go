@@ -73,8 +73,8 @@ func init() {
 		ar.Add(&cli.Command{
 			Name:  "synthesize",
 			Short: "Apply staged proposals from a mission's retrospective record.",
-			Long: "Apply staged proposals from a mission's retrospective record.\n\n--dry-run is the default; pass --apply to mutate project state.\n\nflag_not_helpful is the only auto-applied kind (Q2-A).\n\n" +
-				"Conflict detection is fail-closed: any conflict blocks the whole batch.\n\nWhen no retrospective.yaml exists, the command errors with RETROSPECTIVE_RECORD_MISSING (exit 1) and points to 'spec-kitty retrospect create'.\n\nPass --fabricate-empty to use the legacy auto-fabrication path instead.",
+			Long: "Apply staged proposals from a mission's retrospective record.\n\n--dry-run is the default; pass --apply to mutate project state.\nflag_not_helpful is the only auto-applied kind (Q2-A).\n" +
+				"Conflict detection is fail-closed: any conflict blocks the whole batch.\n\nWhen no retrospective.yaml exists, the command errors with RETROSPECTIVE_RECORD_MISSING (exit 1) and points to 'spec-kitty retrospect create'.\nPass --fabricate-empty to use the legacy auto-fabrication path instead.",
 			Flags: []*cli.Flag{
 				{Name: "mission", Kind: cli.String, Metavar: "<str>", Required: true, Help: "Mission handle (mission_id / mid8 / mission_slug)"},
 				{Name: "apply", Kind: cli.Bool, Help: "Execute application after checks pass (default is dry-run)"},

@@ -137,8 +137,11 @@ func simpleTable(w io.Writer, title string, headers []string, rows [][]string, r
 
 // fitPanel renders rich.Panel(expand=False): ROUNDED box sized to its
 // content (or title), title centered in the top border.
-func fitPanel(w io.Writer, content, title string) {
-	lines := strings.Split(rich.Strip(content), "\n")
+func fitPanel(w io.Writer, content, title string) { fitPanelRaw(w, rich.Strip(content), title) }
+
+// fitPanelRaw is fitPanel for markup-free content.
+func fitPanelRaw(w io.Writer, content, title string) {
+	lines := strings.Split(content, "\n")
 	inner := 0
 	for _, l := range lines {
 		if n := runeLen(l); n > inner {
@@ -162,7 +165,11 @@ func fitPanel(w io.Writer, content, title string) {
 	}
 	fmt.Fprintln(w, "╭"+top+"╮")
 	for _, l := range lines {
-		for _, wl := range rich.WrapWords(l, inner) {
+		wrapped := []string{""}
+		if l != "" {
+			wrapped = rich.WrapWords(l, inner)
+		}
+		for _, wl := range wrapped {
 			fmt.Fprintln(w, "│ "+wl+strings.Repeat(" ", inner-runeLen(wl))+" │")
 		}
 	}
