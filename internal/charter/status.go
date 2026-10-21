@@ -559,7 +559,8 @@ func LoadURLListFromConfig(root string) ([]string, error) {
 	return out, nil
 }
 
-func loadCorpus(profileKey string) (string, int, bool) {
+// LoadCorpus is CorpusLoader().load(profile_key): (snapshot id, entry count, found).
+func LoadCorpus(profileKey string) (string, int, bool) {
 	primary, _, _ := strings.Cut(profileKey, "+")
 	for _, c := range []string{primary, "generic"} {
 		b, err := assets.ReadFile("charter/activation/corpus/" + c + ".corpus.yaml")
@@ -588,7 +589,7 @@ func SummarizeEvidence(root string) (*jsonx.Object, error) {
 	warnings := []any{}
 	var snap any
 	count := 0
-	if id, n, ok := loadCorpus(cs.StackID); ok {
+	if id, n, ok := LoadCorpus(cs.StackID); ok {
 		snap, count = id, n
 	} else {
 		warnings = append(warnings, "No corpus found for profile '"+cs.StackID+"' or 'generic'; synthesis proceeds without corpus evidence.")
