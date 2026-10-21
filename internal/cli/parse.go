@@ -234,6 +234,15 @@ func choiceList(xs []string) string {
 	return strings.Join(q, ", ")
 }
 
+// chooseFrom is TyperChoice.get_missing_message appended to a
+// missing-parameter error ("" without choices).
+func chooseFrom(choices []string) string {
+	if len(choices) == 0 {
+		return ""
+	}
+	return " Choose from:\n\t" + strings.Join(choices, ",\n\t")
+}
+
 // describeRange is click's _NumberRangeBase._describe_range.
 func describeRange(lo, hi *int) string {
 	switch {
@@ -260,7 +269,11 @@ func assign(ctx *Context, cmd *Command, f *Flag, val string) error {
 	case Int:
 		n, err := strconv.Atoi(strings.ReplaceAll(strings.TrimSpace(val), "_", ""))
 		if err != nil {
-			return invalid(fmt.Sprintf("%s is not a valid int.", pyjson.ReprString(val)))
+			typeName := "int"
+			if f.Min != nil || f.Max != nil {
+				typeName = "int range"
+			}
+			return invalid(fmt.Sprintf("%s is not a valid %s.", pyjson.ReprString(val), typeName))
 		}
 		if (f.Min != nil && n < *f.Min) || (f.Max != nil && n > *f.Max) {
 			return invalid(fmt.Sprintf("%d is not in the range %s.", n, describeRange(f.Min, f.Max)))
@@ -305,7 +318,7 @@ func finalize(ctx *Context, cmd *Command) error {
 			}
 		}
 		if f.Required && missing == nil {
-			missing = Usage(cmd, "Missing option %s.", flagHint(f))
+			missing = Usage(cmd, "Missing option %s.%s", flagHint(f), chooseFrom(f.Choices))
 		}
 		if f.Default != nil {
 			ctx.values[f.Name] = f.Default
@@ -324,7 +337,7 @@ func finalize(ctx *Context, cmd *Command) error {
 	}
 	for _, a := range cmd.Args {
 		if a.Required && len(ctx.args[a.Name]) == 0 {
-			return Usage(cmd, "Missing argument '%s'.", argHint(a))
+			return Usage(cmd, "Missing argument '%s'.%s", argHint(a), chooseFrom(a.Choices))
 		}
 	}
 	if missing != nil {

@@ -100,9 +100,9 @@ type Command struct {
 	// raised while parsing its arguments (upstream's upgrade re-parses its
 	// arguments under a context named "upgrade").
 	ParseUsagePath string
-	Flags       []*Flag
-	Args        []*Arg
-	Run         func(*Context) error
+	Flags          []*Flag
+	Args           []*Arg
+	Run            func(*Context) error
 
 	// Group behaviour.
 	Subcommands []*Command
@@ -487,7 +487,6 @@ func execute(root *Command, argv []string, io_ IO) error {
 		return cmd.Run(ctx)
 	}
 }
-
 
 // noSuchCommand is typer's resolve_command failure with close-match
 // suggestions among all registered (also hidden) subcommands.
