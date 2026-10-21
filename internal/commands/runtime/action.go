@@ -119,23 +119,11 @@ func profileVersion(root string) func(string) (string, error) {
 	}
 }
 
-// actionPreamble validates the dispatch binding options shared by
-// implement/review (no Op records in this build).
-func actionBinding(ctx *cli.Context, o *workflow.Out, root string) (*status.ResolvedBinding, error) {
-	if ctx.IsSet("invocation-id") {
-		o.Print("Error: --invocation-id is not supported by this build (Op records are not available).")
-		return nil, cli.Exit(1)
-	}
-	if ctx.IsSet("model") {
-		o.Print("Error: --model cannot be recorded as resolved actual without correlated durable dispatch evidence; pass --invocation-id")
-		return nil, cli.Exit(1)
-	}
-	b, err := workflow.ResolveBinding(ctx.OptString("profile"), profileVersion(root))
-	if err != nil {
-		o.Printf("Error: %v", err)
-		return nil, cli.Exit(1)
-	}
-	return b, nil
+// actionBinding collects the dispatch binding options shared by
+// implement/review; they are resolved at the claim point.
+func actionBinding(ctx *cli.Context, root string) *workflow.BindingRequest {
+	return &workflow.BindingRequest{Model: ctx.OptString("model"), Profile: ctx.OptString("profile"),
+		InvocationID: ctx.OptString("invocation-id"), ProfileVersion: profileVersion(root)}
 }
 
 func runActionImplement(ctx *cli.Context) error {
@@ -169,14 +157,11 @@ func runActionImplement(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	binding, err := actionBinding(ctx, o, root)
-	if err != nil {
-		return err
-	}
 	rc := &workflow.Receipts{}
 	err = workflow.ActionImplement(o, rc, root, slug, workflow.ActionImplementOptions{
 		Root: root, Mission: slug, WPID: ctx.Arg("wp_id"), Agent: agent, Force: force, Note: note,
-	}, binding)
+		Dispatch: actionBinding(ctx, root),
+	}, nil)
 	if workflow.IsFixModeDone(err) {
 		return nil
 	}
@@ -199,12 +184,8 @@ func runActionReview(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	binding, err := actionBinding(ctx, o, root)
-	if err != nil {
-		return err
-	}
 	rc := &workflow.Receipts{}
-	err = workflow.ActionReview(o, rc, root, slug, ctx.Arg("wp_id"), ctx.String("agent"), binding)
+	err = workflow.ActionReviewDispatch(o, rc, root, slug, ctx.Arg("wp_id"), ctx.String("agent"), nil, actionBinding(ctx, root))
 	rc.PrintSummary(o, "review")
 	return exitFrom(err)
 }

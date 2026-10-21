@@ -198,6 +198,9 @@ type ActionImplementOptions struct {
 	Profile                    *string
 	Force                      bool
 	Note                       *string
+	// Dispatch, when set, is resolved at the claim point (after workspace
+	// creation) and replaces the binding argument.
+	Dispatch *BindingRequest
 }
 
 // ResolveBinding is _resolve_dispatch_binding without Op records: an
@@ -325,6 +328,15 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 	subtaskCmd := strings.Join(subtasks, " ")
 	if subtaskCmd == "" {
 		subtaskCmd = "<subtask-ids>"
+	}
+
+	if opt.Dispatch != nil {
+		b, err := opt.Dispatch.Resolve(root, slug, wpID, "implement")
+		if err != nil {
+			o.Printf("Error: %v", err)
+			return ExitErr(1)
+		}
+		binding = b
 	}
 
 	// claim transition

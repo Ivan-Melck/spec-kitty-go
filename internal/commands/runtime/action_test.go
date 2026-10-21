@@ -1,9 +1,12 @@
 package runtime_test
 
 import (
+	"path/filepath"
 	"testing"
 
+	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
+	"github.com/spec-kitty/go-kitty3/internal/testkit/missionfx"
 )
 
 // TestDiffImplementReviewLoop replays TRACE 5.F1, 5.F1b, 5.1, 5.3, 5.4,
@@ -77,4 +80,51 @@ func TestDiffImplementReviewLoop(t *testing.T) {
 	compareTree(t, p, "kitty-specs")
 	compareTree(t, p, ".worktrees")
 	compareTree(t, p, ".kittify", "skills-manifest.json")
+}
+
+// writeOpRecord writes a dispatch Op started record correlated with the
+// side's mission (same id on both sides).
+func writeOpRecord(t *testing.T, p *testkit.Pair, id, wpID, action, profile, model string) {
+	p.Both(func(s *testkit.Sandbox) {
+		slug := missionfx.MissionSlug(t, s)
+		meta, err := jsonx.DecodeObject([]byte(s.ReadFile(filepath.Join("kitty-specs", slug, "meta.json"))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := jsonx.NewObject("event", "started", "invocation_id", id, "profile_id", profile, "action", action,
+			"request_text", "implement "+wpID, "actor", "claude", "mode_of_work", "task_execution",
+			"governance_context_hash", "0000000000000000", "governance_context_available", false,
+			"started_at", "2026-01-01T00:00:00+00:00", "mission_id", meta.GetString("mission_id"), "wp_id", wpID)
+		if model != "" {
+			rec.Set("model_id", model)
+		}
+		s.WriteFile("kitty-ops/"+id+".jsonl", jsonx.Dumps(rec, jsonx.Options{Indent: -1, EnsureASCII: true})+"\n")
+	})
+}
+
+// TestDiffActionInvocationID covers the dispatch→claim resolved binding:
+// --model without --invocation-id, malformed/missing/mismatched Op
+// records, and a correlated claim recording profile, model and provider.
+func TestDiffActionInvocationID(t *testing.T) {
+	p := newAnalyzedPair(t)
+	const okID, wpID, badWP = "01KAAAAAAAAAAAAAAAAAAAAAAA", "01KBBBBBBBBBBBBBBBBBBBBBBB", "01KCCCCCCCCCCCCCCCCCCCCCCC"
+	writeOpRecord(t, p, okID, "WP01", "implement", "implementer-ivan", "claude-opus-4-6")
+	writeOpRecord(t, p, badWP, "WP02", "implement", "implementer-ivan", "")
+	writeOpRecord(t, p, wpID, "WP01", "review", "reviewer-renata", "")
+	steps(t, p, true,
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M", "--model", "claude-opus-4-6"},
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M", "--invocation-id", "bogus"},
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M", "--invocation-id", "01KDDDDDDDDDDDDDDDDDDDDDDD"},
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M", "--invocation-id", badWP},
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M", "--invocation-id", wpID},
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M", "--invocation-id", okID, "--profile", "reviewer-renata"},
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M", "--invocation-id", okID, "--model", "other"},
+	)
+	compareGit(t, p)
+	steps(t, p, false,
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M", "--invocation-id", okID},
+	)
+	compareGit(t, p)
+	dropAnalysis(t, p)
+	compareTree(t, p, "kitty-specs")
 }

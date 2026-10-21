@@ -196,6 +196,12 @@ func acquireReviewLock(wsPath, wpID, agent string) error {
 
 // ActionReview is `agent action review` after mission resolution.
 func ActionReview(o *Out, rc *Receipts, root, slug, rawWP, agent string, binding *status.ResolvedBinding) error {
+	return ActionReviewDispatch(o, rc, root, slug, rawWP, agent, binding, nil)
+}
+
+// ActionReviewDispatch is ActionReview with the dispatch binding resolved at
+// the claim point (req != nil replaces binding).
+func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string, binding *status.ResolvedBinding, req *BindingRequest) error {
 	target, err := BranchBanner(o, root, slug)
 	if err != nil {
 		return err
@@ -249,6 +255,15 @@ func ActionReview(o *Out, rc *Receipts, root, slug, rawWP, agent string, binding
 		o.Print("Only work packages in 'for_review' (or already claimed for review) can start workflow review.")
 		o.Printf("Move it first: spec-kitty agent tasks move-task %s --to for_review --mission %s", wpID, slug)
 		return ExitErr(1)
+	}
+
+	if req != nil {
+		b, err := req.Resolve(root, slug, wpID, "review")
+		if err != nil {
+			o.Printf("Error: %v", err)
+			return ExitErr(1)
+		}
+		binding = b
 	}
 
 	// review claim
