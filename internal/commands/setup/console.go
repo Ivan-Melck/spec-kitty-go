@@ -21,6 +21,10 @@ func outf(w io.Writer, format string, a ...any) { uconsole.Print(w, fmt.Sprintf(
 // raw prints text verbatim (markup=False, soft_wrap=True).
 func raw(w io.Writer, s string) { fmt.Fprintln(w, s) }
 
+// plain prints text without markup processing but wrapped at the console
+// width (console.print(..., markup=False)).
+func plain(w io.Writer, s string) { fmt.Fprintln(w, uconsole.Wrap(s, cli.Width())) }
+
 func runeLen(s string) int { return utf8.RuneCountInString(s) }
 
 func padRight(s string, n int) string {

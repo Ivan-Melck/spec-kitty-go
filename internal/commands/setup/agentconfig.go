@@ -267,7 +267,7 @@ func registerSkillAgent(w io.Writer, root string, ac *kittify.AgentConfig, key s
 		*sink = append(*sink, rep.Regenerated...)
 	} else {
 		for _, p := range rep.Regenerated {
-			raw(w, RegeneratedSurfaceLine(p))
+			plain(w, RegeneratedSurfaceLine(p))
 		}
 	}
 	return true, ""

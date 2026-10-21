@@ -194,7 +194,7 @@ func runUpgrade(ctx *cli.Context) error {
 			p.Set("rendered_human", msg)
 			fmt.Fprintln(w, compactJSON(p))
 		} else {
-			raw(w, msg)
+			plain(w, msg)
 		}
 		return cli.Exit(2)
 	}
@@ -638,7 +638,7 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 	if o.success {
 		if opt.dryRun {
 			if n := supportingRepairNotice(root); n != "" && !opt.jsonOut {
-				raw(w, n)
+				plain(w, n)
 			}
 		} else {
 			if _, err := kittify.ProvisionDefaultMissionTypeActivations(root); err != nil {
@@ -939,10 +939,10 @@ func renderUpgradeText(w io.Writer, root string, o *upgradeOutcome, leftUncommit
 		printSection(w, "[dim]Migrations skipped (already applied or not needed):[/dim]", o.skipped, "  [dim]○[/dim] ")
 	}
 	if o.mergeDriverConfig == "installed" {
-		raw(w, "Installed clone-local merge-driver settings")
+		plain(w, "Installed clone-local merge-driver settings")
 	}
 	for _, p := range o.regenerated {
-		raw(w, RegeneratedSurfaceLine(filepath.Join(root, filepath.FromSlash(p))))
+		plain(w, RegeneratedSurfaceLine(filepath.Join(root, filepath.FromSlash(p))))
 	}
 	commitLine := func() {
 		if o.committed {
@@ -960,7 +960,7 @@ func renderUpgradeText(w io.Writer, root string, o *upgradeOutcome, leftUncommit
 		printDryRunProvisioningNotice(w, root, dryRun)
 	}
 	if o.kind() == "no_op" {
-		raw(w, o.closingLine())
+		plain(w, o.closingLine())
 		for _, x := range o.warnings {
 			out(w, "[yellow]Warning:[/yellow] "+escapeMarkup(x))
 		}
@@ -976,7 +976,7 @@ func renderUpgradeText(w io.Writer, root string, o *upgradeOutcome, leftUncommit
 			commitLine()
 		}
 		fmt.Fprintln(w)
-		raw(w, o.closingLine())
+		plain(w, o.closingLine())
 		if !o.dryRun && success {
 			commitLine()
 		}

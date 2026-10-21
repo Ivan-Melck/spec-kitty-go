@@ -237,7 +237,7 @@ func installCommandSkillAgents(w io.Writer, root string, keys []string) bool {
 		}
 		outf(w, "[dim]%s: %d command skills installed[/dim]", agents.Display(k), rep.InstalledCount())
 		for _, p := range rep.Regenerated {
-			raw(w, RegeneratedSurfaceLine(p))
+			plain(w, RegeneratedSurfaceLine(p))
 		}
 	}
 	return ok
