@@ -5,6 +5,7 @@ package retrospective
 
 import (
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -345,8 +346,10 @@ func findingsCount(fm *jsonx.Object) (int, bool) {
 		return len(x), true
 	case int:
 		return x, true
-	case float64:
+	case int64:
 		return int(x), true
+	case *big.Int:
+		return int(x.Int64()), true
 	}
 	return 0, false
 }

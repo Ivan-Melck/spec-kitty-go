@@ -131,6 +131,7 @@ func TestDiffConsolidate(t *testing.T) {
 			comparePair(t, p, "consolidate", "--mission", "$M", "--yes")
 			compareGit(t, p)
 			compareMissionTree(t, p, false)
+			p.CompareTree(".kittify/derived", true)
 			comparePair(t, p, "agent", "tasks", "status", "--mission", "$M")
 			// TRACE 8.3: merged-mission validation.
 			comparePair(t, p, "review", "--mission", "$M")

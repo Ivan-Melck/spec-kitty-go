@@ -320,7 +320,14 @@ func (r *run) execute() error {
 		say(r.w, "[yellow]Notice:[/yellow] "+x)
 	}
 	if !gitx.BranchExists(r.root, m.MissionBranch) {
-		sayErr(r.w, fmt.Sprintf("Missing mission branch: %s. Run: spec-kitty agent action implement <WP> --mission %s", m.MissionBranch, r.slug))
+		base := "<base-commit>"
+		if sha := revParse(r.root, "HEAD"); sha != "" {
+			base = sha
+			if len(base) > 12 {
+				base = base[:12]
+			}
+		}
+		sayErr(r.w, fmt.Sprintf("Missing mission branch: %s. Run: git branch %s %s", m.MissionBranch, m.MissionBranch, base))
 		return exit(1)
 	}
 	if err := r.preflight(); err != nil {
@@ -398,7 +405,6 @@ func (r *run) execute() error {
 	say(r.w, "  [dim]Running stale-assertion check...[/dim]")
 	r.captureRetrospective()
 	r.teardown(coordDone)
-	status.RefreshDerivedViews(r.sf.PrimaryDir, r.root)
 	say(r.w, "\n[bold]Stale assertion findings:[/bold]")
 	say(r.w, "  No likely-stale assertions detected.")
 	return nil
