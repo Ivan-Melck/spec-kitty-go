@@ -6,18 +6,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
-	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
+	"github.com/spec-kitty/go-kitty3/internal/staleassert"
 )
 
 const staleCheckLong = `Detect test assertions likely invalidated by source changes between two refs.
@@ -63,175 +62,88 @@ func init() {
 }
 
 // ---------------------------------------------------------------------------
-// agent tests stale-check (post_merge.stale_assertions, line-based)
+// agent tests stale-check (post_merge.stale_assertions via internal/staleassert)
 // ---------------------------------------------------------------------------
 
-type staleSymbol struct {
-	name, file string
-	line       int
-}
-
-type staleFinding struct {
-	testFile                 string
-	testLine                 int
-	sourceFile               string
-	sourceLine               int
-	symbol, confidence, hint string
-}
-
-var (
-	defRe    = regexp.MustCompile(`^\s*(?:async\s+def|def|class)\s+([A-Za-z_][A-Za-z0-9_]*)`)
-	importRe = regexp.MustCompile(`^(?:from\s+\S+\s+import\s+(.+)|import\s+(.+))$`)
-)
-
-func defs(text string) map[string]int {
-	out := map[string]int{}
-	for i, l := range strings.Split(text, "\n") {
-		if m := defRe.FindStringSubmatch(l); m != nil {
-			if _, ok := out[m[1]]; !ok {
-				out[m[1]] = i + 1
-			}
-		}
-	}
-	return out
-}
-
-func headExports(text, name string) bool {
-	for _, l := range strings.Split(text, "\n") {
-		if strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") {
-			continue
-		}
-		if m := importRe.FindStringSubmatch(strings.TrimSpace(l)); m != nil {
-			list := m[1] + m[2]
-			for _, part := range strings.Split(strings.Trim(list, "()"), ",") {
-				f := strings.Fields(part)
-				if len(f) == 0 {
-					continue
-				}
-				if f[len(f)-1] == name || f[0] == name {
-					return true
-				}
-			}
-		}
-		if strings.HasPrefix(l, "__all__") && strings.Contains(l, "'"+name+"'") || strings.Contains(l, "\""+name+"\"") && strings.HasPrefix(l, "__all__") {
-			return true
-		}
-	}
-	return false
-}
-
 func runStaleCheck(ctx *cli.Context) error {
-	start := time.Now()
 	base, head := ctx.String("base"), ctx.String("head")
 	root, _ := filepath.Abs(ctx.String("repo"))
 	if r, err := filepath.EvalSymlinks(root); err == nil {
 		root = r
 	}
-	changed, _ := gitx.Run(root, "diff", "--name-only", base, head, "--", "*.py")
-	var symbols []staleSymbol
-	for _, rel := range strings.Split(changed, "\n") {
-		if rel == "" || strings.HasPrefix(rel, "tests/") {
-			continue
-		}
-		bt, err := gitx.Run(root, "show", base+":"+rel)
-		if err != nil {
-			continue
-		}
-		ht, _ := gitx.Run(root, "show", head+":"+rel)
-		bd, hd := defs(bt), defs(ht)
-		var names []string
-		for n := range bd {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		for _, n := range names {
-			if _, ok := hd[n]; ok || headExports(ht, n) {
-				continue
-			}
-			symbols = append(symbols, staleSymbol{name: n, file: filepath.Join(root, rel), line: bd[n]})
-		}
-	}
-	top, err := gitx.Toplevel(root)
+	rep, err := staleassert.RunCheck(base, head, root)
 	if err != nil {
-		top = root
+		ctx.Eprintf("Error: %v\n", err)
+		return cli.Exit(1)
 	}
-	var testFiles []string
-	if out, err := gitx.Run(root, "ls-files", "--", "tests/"); err == nil {
-		for _, f := range strings.Split(out, "\n") {
-			if strings.HasSuffix(f, ".py") {
-				testFiles = append(testFiles, filepath.Join(top, f))
-			}
-		}
-	}
-	var findings []staleFinding
-	for _, tf := range testFiles {
-		if len(symbols) == 0 {
-			break
-		}
-		b, err := os.ReadFile(tf)
-		if err != nil {
-			continue
-		}
-		for i, l := range strings.Split(string(b), "\n") {
-			t := strings.TrimSpace(l)
-			isAssert := strings.HasPrefix(t, "assert ") || strings.Contains(t, ".assert")
-			if !isAssert {
-				continue
-			}
-			for _, s := range symbols {
-				if regexp.MustCompile(`\b` + regexp.QuoteMeta(s.name) + `\b`).MatchString(t) {
-					findings = append(findings, staleFinding{testFile: tf, testLine: i + 1, sourceFile: s.file, sourceLine: s.line,
-						symbol: s.name, confidence: "high",
-						hint: fmt.Sprintf("Assertion references '%s' which was renamed/removed in %s:%d", s.name, filepath.Base(s.file), s.line)})
-				}
-			}
-		}
-	}
-	loc := 0
-	if out, err := gitx.Run(root, "diff", "--shortstat", base, head, "--", "*.py"); err == nil {
-		for _, tok := range strings.Split(out, ",") {
-			f := strings.Fields(strings.TrimSpace(tok))
-			if len(f) > 1 && (strings.HasPrefix(f[1], "insertion") || strings.HasPrefix(f[1], "deletion")) {
-				n, _ := strconv.Atoi(f[0])
-				loc += n
-			}
-		}
-	}
-	per := 0.0
-	if loc > 0 {
-		per = float64(len(findings)) / float64(loc) * 100.0
-	}
-	elapsed := time.Since(start).Seconds()
-	if per > 5.0 {
-		rich.Print(ctx.Stderr, fmt.Sprintf("WARNING: findings_per_100_loc=%.1f exceeds NFR-002 ceiling of 5.0. Consider narrowing scope to function-rename detection only (FR-022).", per))
+	if rep.FindingsPer100LOC > staleassert.FPCeiling {
+		rich.Print(ctx.Stderr, fmt.Sprintf("WARNING: findings_per_100_loc=%.1f exceeds NFR-002 ceiling of %.1f. Consider narrowing scope to function-rename detection only (FR-022).", rep.FindingsPer100LOC, staleassert.FPCeiling))
 	}
 	if ctx.Bool("json") {
 		items := []any{}
-		for _, f := range findings {
-			items = append(items, jsonx.NewObject("test_file", f.testFile, "test_line", f.testLine, "source_file", f.sourceFile,
-				"source_line", f.sourceLine, "changed_symbol", f.symbol, "confidence", f.confidence, "hint", f.hint, "label", ""))
+		for _, f := range rep.Findings {
+			items = append(items, jsonx.NewObject("test_file", f.TestFile, "test_line", f.TestLine, "source_file", f.SourceFile,
+				"source_line", f.SourceLine, "changed_symbol", f.ChangedSymbol, "confidence", f.Confidence, "hint", f.Hint, "label", f.Label))
 		}
 		fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("base_ref", base, "head_ref", head, "repo_root", root, "findings", items,
-			"elapsed_seconds", jsonx.Float(elapsed), "files_scanned", len(testFiles), "findings_per_100_loc", jsonx.Float(per)), compact))
+			"elapsed_seconds", jsonx.Float(rep.ElapsedSeconds), "files_scanned", rep.FilesScanned, "findings_per_100_loc", jsonx.Float(rep.FindingsPer100LOC)), compact))
 		return nil
 	}
-	rich.Print(ctx.Stdout, fmt.Sprintf("\nStale-assertion analysis: '%s' → '%s'", base, head))
-	rich.Print(ctx.Stdout, fmt.Sprintf("  scanned %d test file(s) in %.2fs | findings/100 LOC: %.2f", len(testFiles), elapsed, per))
-	if len(findings) == 0 {
+	rich.Print(ctx.Stdout, fmt.Sprintf("\nStale-assertion analysis: %s → %s", pyjson.ReprString(base), pyjson.ReprString(head)))
+	rich.Print(ctx.Stdout, fmt.Sprintf("  scanned %d test file(s) in %.2fs | findings/100 LOC: %.2f", rep.FilesScanned, rep.ElapsedSeconds, rep.FindingsPer100LOC))
+	if len(rep.Findings) == 0 {
 		rich.Print(ctx.Stdout, "No stale assertions detected.\n")
 		return nil
 	}
-	var rows [][]string
-	for _, f := range findings {
-		rel, err := filepath.Rel(root, f.testFile)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			rel = f.testFile
+	for _, level := range []string{"high", "medium", "low", "info"} {
+		var rows [][]string
+		for _, f := range rep.Findings {
+			if f.Confidence != level {
+				continue
+			}
+			rel, err := filepath.Rel(root, f.TestFile)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				rel = f.TestFile
+			}
+			rows = append(rows, []string{rel, strconv.Itoa(f.TestLine), f.ChangedSymbol, fmt.Sprintf("%s:%d", filepath.Base(f.SourceFile), f.SourceLine), f.Hint})
 		}
-		rows = append(rows, []string{rel, strconv.Itoa(f.testLine), f.symbol, fmt.Sprintf("%s:%d", filepath.Base(f.sourceFile), f.sourceLine), f.hint})
+		if len(rows) == 0 {
+			continue
+		}
+		title := strings.ToUpper(level) + " confidence"
+		if level == "info" {
+			title = "INFO — message-content assertions (skipped from CI noise; review manually if diagnostic text changed)"
+		}
+		var buf strings.Builder
+		rich.Table(&buf, title, []string{"Test file", "Line", "Changed symbol", "Source file", "Hint"}, rows)
+		fmt.Fprint(ctx.Stdout, rightJustifyColumn(buf.String(), 1))
 	}
-	rich.Table(ctx.Stdout, "HIGH confidence", []string{"Test file", "Line", "Changed symbol", "Source file", "Hint"}, rows)
 	fmt.Fprintln(ctx.Stdout)
 	return nil
+}
+
+// rightJustifyColumn right-aligns column col of a rendered table's body
+// rows (rich justify="right").
+func rightJustifyColumn(table string, col int) string {
+	lines := strings.Split(table, "\n")
+	for i, l := range lines {
+		if !strings.HasPrefix(l, "│") {
+			continue
+		}
+		parts := strings.Split(l, "│")
+		if len(parts) < col+3 {
+			continue
+		}
+		cell := parts[col+1]
+		w := len([]rune(cell))
+		v := strings.TrimSpace(cell)
+		if v == "" {
+			continue
+		}
+		parts[col+1] = strings.Repeat(" ", w-len([]rune(v))-1) + v + " "
+		lines[i] = strings.Join(parts, "│")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ---------------------------------------------------------------------------
