@@ -43,17 +43,6 @@ func Table(w io.Writer, title string, headers []string, rows [][]string) {
 	TableWidth(w, title, headers, rows, Width())
 }
 
-// maxWordLen is the widest whitespace-separated word (rich's minimum
-// measurement of a Text).
-func maxWordLen(s string) int {
-	m := 0
-	for _, word := range strings.Fields(s) {
-		if n := runeLen(word); n > m {
-			m = n
-		}
-	}
-	return m
-}
 
 func maxLineLen(s string) int {
 	m := 0
@@ -74,77 +63,6 @@ func sum(xs []int) int {
 		t += x
 	}
 	return t
-}
-
-// ratioReduce is rich._ratio.ratio_reduce.
-func ratioReduce(total int, ratios, maximums, values []int) []int {
-	rs := make([]int, len(ratios))
-	totalRatio := 0
-	for i, r := range ratios {
-		if maximums[i] != 0 {
-			rs[i] = r
-			totalRatio += r
-		}
-	}
-	out := append([]int(nil), values...)
-	if totalRatio == 0 {
-		return out
-	}
-	remaining := total
-	for i, r := range rs {
-		if r != 0 && totalRatio > 0 {
-			d := pyRound(float64(r) * float64(remaining) / float64(totalRatio))
-			if maximums[i] < d {
-				d = maximums[i]
-			}
-			out[i] = values[i] - d
-			remaining -= d
-			totalRatio -= r
-		}
-	}
-	return out
-}
-
-// collapseWidths is rich.table.Table._collapse_widths with every column
-// wrappable.
-func collapseWidths(widths []int, maxWidth int) []int {
-	total := sum(widths)
-	excess := total - maxWidth
-	for total != 0 && excess > 0 {
-		maxCol, second := 0, 0
-		for _, w := range widths {
-			if w > maxCol {
-				maxCol = w
-			}
-		}
-		for _, w := range widths {
-			if w != maxCol && w > second {
-				second = w
-			}
-		}
-		diff := maxCol - second
-		if diff == 0 {
-			break
-		}
-		ratios := make([]int, len(widths))
-		for i, w := range widths {
-			if w == maxCol {
-				ratios[i] = 1
-			}
-		}
-		red := excess
-		if diff < red {
-			red = diff
-		}
-		maxReduce := make([]int, len(widths))
-		for i := range maxReduce {
-			maxReduce[i] = red
-		}
-		widths = ratioReduce(excess, ratios, maxReduce, widths)
-		total = sum(widths)
-		excess = total - maxWidth
-	}
-	return widths
 }
 
 // TableWidth is Table printed by a console of width maxWidth: when the
@@ -175,13 +93,17 @@ func TableWidth(w io.Writer, title string, headers []string, rows [][]string, ma
 		}
 	}
 	if sum(widths) > avail {
-		widths = collapseWidths(widths, avail)
+		all := make([]bool, n)
+		for i := range all {
+			all[i] = true
+		}
+		widths = CollapseWidths(widths, all, avail)
 		if sum(widths) > avail {
 			ones := make([]int, n)
 			for i := range ones {
 				ones[i] = 1
 			}
-			widths = ratioReduce(sum(widths)-avail, ones, widths, widths)
+			widths = RatioReduce(sum(widths)-avail, ones, widths, widths)
 		}
 	}
 	inner := make([]int, n)

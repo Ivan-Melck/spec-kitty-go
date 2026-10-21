@@ -590,7 +590,7 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 			for _, m := range migrations {
 				rows = append(rows, []string{m.ID, m.Description, m.TargetVersion})
 			}
-			richTableX(w, tableSpec{Title: "Migration Plan", Headers: []string{"Migration", "Description", "Target"}}, rows)
+			rich.TableX(w, rich.TableSpec{Title: "Migration Plan", Headers: []string{"Migration", "Description", "Target"}}, rows)
 			fmt.Fprintln(w)
 			printDryRunProvisioningNotice(w, root, opt.dryRun)
 			if opt.verbose {

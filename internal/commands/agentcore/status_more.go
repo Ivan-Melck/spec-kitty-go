@@ -9,6 +9,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -145,7 +146,7 @@ func runStatusLifecycle(ctx *cli.Context) error {
 	}
 	w0, w1 := 0, 0
 	for _, r := range rows {
-		w0, w1 = max(w0, cellWidth(r[0])), max(w1, cellWidth(r[1]))
+		w0, w1 = max(w0, rich.CellLen(r[0])), max(w1, rich.CellLen(r[1]))
 	}
 	fmt.Fprintln(ctx.Stdout)
 	consolePrint(ctx.Stdout, "Mission Lifecycle: "+m.Slug)
