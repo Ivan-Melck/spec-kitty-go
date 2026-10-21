@@ -215,7 +215,13 @@ func runSpecify(ctx *cli.Context) error {
 	}
 	slug, bad := slugifyFeatureInput(ctx.Arg("mission"))
 	if bad != "" {
-		fmt.Fprintln(ctx.Stderr, "Error: "+bad)
+		// The global GuardedReadError hook: a JSON envelope under --json,
+		// a plain stderr line otherwise.
+		if jsonMode {
+			printCompact(ctx.Stdout, jsonx.NewObject("error", bad, "kind", "NonAsciiNameError", "path", ctx.Arg("mission")))
+		} else {
+			fmt.Fprintln(ctx.Stderr, "Error: "+bad)
+		}
 		return cli.Exit(1)
 	}
 	argv := []string{}

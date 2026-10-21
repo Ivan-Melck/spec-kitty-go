@@ -49,3 +49,23 @@ func TestDiffLifecycle(t *testing.T) {
 	p.CompareTree("kitty-specs", true)
 	compareGit(t, p)
 }
+
+// TestDiffLifecycleInteractive drives the widen interviews through their
+// prompt path (forced interactive, answers piped on stdin) and the
+// name-validation errors under --json.
+func TestDiffLifecycleInteractive(t *testing.T) {
+	p := missionfx.NewOraclePair(t)
+	fi := `export SPEC_KITTY_FORCE_INTERACTIVE=1; `
+	shellSteps(t, p, "", "",
+		`$SK specify '  ' --json`,
+		`$SK specify 'auth日本' --json`,
+		fi+`printf 'the problem\n!cancel\nd\n' | $SK specify 'alpha one' --topology lanes`,
+		`cat kitty-specs/alpha-one-*/decisions/index.json`,
+		fi+`printf 'only one\n' | $SK specify 'beta two' --topology lanes`,
+		`cat kitty-specs/beta-two-*/decisions/index.json`,
+		fi+`M=$(ls kitty-specs | grep alpha); cp $TD/calc/authored/spec.md kitty-specs/$M/spec.md; git add -A kitty-specs; git commit -qm spec; printf '\nrisky\n' | $SK plan --mission $M`,
+		`cat kitty-specs/alpha-one-*/decisions/index.json`,
+	)
+	p.CompareTree("kitty-specs", true)
+	compareGit(t, p)
+}
