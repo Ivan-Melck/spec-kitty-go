@@ -73,9 +73,9 @@ Not implemented (returns an error or is skipped):
   `pre_review_test_scope`): the scoped pytest run is not executed; the
   transition records the undeclared `skipped` verdict.
 * Issue-matrix approval blocker (spec/plan/tasks `#NNNN` references vs
-  `issue-matrix.{json,md}` verdicts) is not evaluated: it needs the
-  issue-matrix reader/validator and scaffold, which belong with
-  `finalize-tasks` (wave 3).
+  `issue-matrix.{json,md}` verdicts): now wired by area E through
+  `issuematrix.ApprovalBlocker` (see docs/parity/planning.md,
+  `TestDiffIssueMatrix`).
 
 ### tasks status
 
