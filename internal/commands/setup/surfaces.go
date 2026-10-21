@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
@@ -19,6 +20,11 @@ var notApplicableSurfaces = map[string]int{
 	"antigravity": 2, "auggie": 5, "claude": 2, "codex": 3, "copilot": 2, "cursor": 2,
 	"gemini": 2, "kilocode": 5, "kiro": 2, "letta": 3, "llxprt": 2, "opencode": 2,
 	"pi": 3, "q": 5, "qwen": 5, "vibe": 2, "windsurf": 2,
+}
+
+// RegeneratedSurfaceLine is tool_surface.repair.REGENERATED_SURFACE_LINE.
+func RegeneratedSurfaceLine(path string) string {
+	return "Regenerated a generated command skill that differed from the current version: " + path
 }
 
 // SurfaceSummary is DriftPolicySummary (counts only).
@@ -130,23 +136,21 @@ func RunSurfaceRepair(root string) (SurfaceSummary, error) {
 		newEntries = append(newEntries, entries...)
 	}
 	if len(newEntries) > 0 {
+		// _prepare_project_skills: a fresh manifest carries no version; each
+		// reconciled (path, agent) is re-added in (path, agent) order.
 		m := agents.LoadSkillsManifest(root)
 		if m == nil {
-			m = &agents.SkillsManifest{CreatedAt: now, UpdatedAt: now, SpecKittyVersion: app.Version}
+			m = &agents.SkillsManifest{}
 		}
-		byKey := map[string]int{}
-		for i, e := range m.Entries {
-			byKey[e.InstalledPath+"\x00"+e.AgentKey] = i
-		}
-		for _, e := range newEntries {
-			if i, ok := byKey[e.InstalledPath+"\x00"+e.AgentKey]; ok {
-				m.Entries[i] = e
-				continue
+		sort.SliceStable(newEntries, func(i, j int) bool {
+			if newEntries[i].InstalledPath != newEntries[j].InstalledPath {
+				return newEntries[i].InstalledPath < newEntries[j].InstalledPath
 			}
-			byKey[e.InstalledPath+"\x00"+e.AgentKey] = len(m.Entries)
-			m.Entries = append(m.Entries, e)
+			return newEntries[i].AgentKey < newEntries[j].AgentKey
+		})
+		for _, e := range newEntries {
+			m.AddEntry(e)
 		}
-		m.SpecKittyVersion = app.Version
 		if err := agents.SaveSkillsManifest(root, m, now); err != nil {
 			return sum, err
 		}

@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 )
 
@@ -83,103 +82,6 @@ func SaveCommandSkillsManifest(root string, entries map[string]*CommandSkillEntr
 		return err
 	}
 	return writeAtomic(p, []byte(content), 0o644)
-}
-
-// CommandSkillReport mirrors command_installer.InstallReport.
-type CommandSkillReport struct {
-	Written   []string
-	Reused    []string
-	Preserved []string // user-edited / unowned files left untouched
-}
-
-// InstalledCount is the number of canonical skills owned after install.
-func (r CommandSkillReport) InstalledCount() int { return len(r.Written) + len(r.Reused) }
-
-func addAgent(list []string, a string) []string {
-	for _, x := range list {
-		if x == a {
-			return list
-		}
-	}
-	list = append(list, a)
-	sort.Strings(list)
-	return list
-}
-
-// InstallCommandSkills installs the 14 command skills for one command-skill
-// agent (command_installer.install): absent files are written (0644),
-// identical files gain the agent as an owner, manifest-owned unchanged files
-// are refreshed and anything else is preserved.
-func InstallCommandSkills(root, agent, now string) (CommandSkillReport, error) {
-	var rep CommandSkillReport
-	manifest := LoadCommandSkillsManifest(root)
-	for _, c := range CommandSkillCommands {
-		content, err := RenderCommandSkill(root, c)
-		if err != nil {
-			return rep, err
-		}
-		rel := CommandSkillPath(c)
-		abs := filepath.Join(root, filepath.FromSlash(rel))
-		hash := sha256Hex(content)
-		existing, rerr := os.ReadFile(abs)
-		entry := manifest[rel]
-		switch {
-		case rerr == nil && string(existing) == string(content):
-			rep.Reused = append(rep.Reused, rel)
-		case rerr == nil && (entry == nil || sha256Hex(existing) != entry.ContentHash):
-			rep.Preserved = append(rep.Preserved, rel)
-			continue
-		default:
-			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-				return rep, err
-			}
-			if err := writeAtomic(abs, content, 0o644); err != nil {
-				return rep, err
-			}
-			rep.Written = append(rep.Written, rel)
-			if entry != nil {
-				entry.InstalledAt = now
-			}
-		}
-		if entry == nil {
-			entry = &CommandSkillEntry{Path: rel, InstalledAt: now}
-			manifest[rel] = entry
-		}
-		entry.ContentHash = hash
-		entry.SpecKittyVersion = app.Version
-		entry.Agents = addAgent(entry.Agents, agent)
-	}
-	return rep, SaveCommandSkillsManifest(root, manifest)
-}
-
-// RemoveCommandSkills releases agent's ownership; files whose last owner is
-// removed are deleted when unchanged.
-func RemoveCommandSkills(root, agent string) ([]string, error) {
-	manifest := LoadCommandSkillsManifest(root)
-	var deleted []string
-	for rel, e := range manifest {
-		var keep []string
-		for _, a := range e.Agents {
-			if a != agent {
-				keep = append(keep, a)
-			}
-		}
-		if len(keep) == len(e.Agents) {
-			continue
-		}
-		e.Agents = keep
-		if len(keep) == 0 {
-			abs := filepath.Join(root, filepath.FromSlash(rel))
-			if b, err := os.ReadFile(abs); err == nil && sha256Hex(b) == e.ContentHash {
-				os.Remove(abs)
-				os.Remove(filepath.Dir(abs))
-				deleted = append(deleted, rel)
-			}
-			delete(manifest, rel)
-		}
-	}
-	sort.Strings(deleted)
-	return deleted, SaveCommandSkillsManifest(root, manifest)
 }
 
 // VibeSkillPath is the shared skills root vibe must discover.

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/commands/util/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
@@ -223,7 +224,7 @@ func (m *Metadata) Save(root string) (bool, error) {
 		}
 		merged.Set(kv.Key, block)
 	}
-	content := MetadataHeader + yamlx.EmitWith(merged, yamlx.Options{NullAsNull: true})
+	content := MetadataHeader + pyyaml.Dump(merged, pyyaml.Options{})
 	if hasExisting && maskVolatile(string(bytes.TrimPrefix(existingText, []byte("\xef\xbb\xbf")))) == maskVolatile(content) {
 		return false, nil
 	}
