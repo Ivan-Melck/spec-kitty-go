@@ -761,7 +761,12 @@ func MaterializeSnapshot(dir string) (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := ParseRows(rows)
+	// materialize_snapshot reads the CLI stream first (store errors), then
+	// reduces the raw rows through the shared diary parser.
+	if _, err := ReadStream(dir, ""); err != nil {
+		return nil, err
+	}
+	st, err := ParseDiary(rows)
 	if err != nil {
 		return nil, err
 	}

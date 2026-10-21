@@ -32,7 +32,7 @@ func richPrint(w io.Writer, text string) {
 // words longer than width are folded.
 func RichWrap(line string, width int) []string {
 	if utf8.RuneCountInString(line) <= width || width <= 0 {
-		return []string{strings.TrimRight(line, " ")}
+		return []string{line}
 	}
 	// split into words keeping trailing whitespace with each word
 	var words []string
@@ -95,7 +95,7 @@ func emitJSON(w io.Writer, payload *jsonx.Object) {
 // consolePrint renders rich text with markup tags stripped and soft wrapping.
 func consolePrint(w io.Writer, text string) { richPrint(w, stripMarkup(text)) }
 
-var markupRe = regexp.MustCompile(`\[/?(?:bold|dim|red|green|yellow|cyan|blue|magenta|white|italic|underline)(?: [a-z]+)*\]`)
+var markupRe = regexp.MustCompile(`\[[a-z#/@][^\[]*?\]`)
 
 func stripMarkup(s string) string { return markupRe.ReplaceAllString(s, "") }
 
