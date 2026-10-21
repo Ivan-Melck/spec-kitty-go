@@ -501,5 +501,3 @@ func SourceURN(root, token, stem string) string {
 	}
 	return string(k) + ":" + id
 }
-
-
