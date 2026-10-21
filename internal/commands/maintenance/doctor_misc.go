@@ -91,38 +91,54 @@ func runDoctorRunIndex(ctx *cli.Context) error {
 	return cli.Exit(1)
 }
 
+// isBuiltInPackPath approximates charter.provenance.is_built_in_pack_path
+// ("resolves under the installed built-in pack root"). The Go build embeds
+// its packs, so: under $SPEC_KITTY_PACKS_ROOT/built-in when that is set,
+// otherwise an existing file inside some `packs/built-in/` tree.
 func isBuiltInPackPath(p string) bool {
-	return strings.Contains(filepath.ToSlash(p), "/packs/built-in/")
+	if v := os.Getenv("SPEC_KITTY_PACKS_ROOT"); v != "" {
+		base, err := filepath.Abs(filepath.Join(v, "built-in"))
+		if err != nil {
+			return false
+		}
+		rel, err := filepath.Rel(base, filepath.Clean(p))
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+	}
+	if !strings.Contains(filepath.ToSlash(p), "/packs/built-in/") {
+		return false
+	}
+	_, err := os.Stat(p)
+	return err == nil
 }
 
-// provenanceFindings is _provenance_doctor._collect_findings (built-in-pack
-// leak classification approximated by a `/packs/built-in/` path segment;
-// template-set provenance ambiguities are not evaluated).
+// provenanceFindings is _provenance_doctor._collect_findings: describe_leaks
+// (non-template-set catalog refs + agent profile manifest), then the
+// template-set leaks and ambiguities of the 4.0.0rc5 heal. The built-in
+// pack classification is approximated by a `/packs/built-in/` path segment
+// (the Go build has no on-disk pack root), and former-checkout proof is not
+// attempted, so an unproven template-set path is reported as ambiguous.
 func provenanceFindings(root string) ([]string, []string) {
-	var leaks, unresolved []string
+	var leaks, unresolved, tsLeaks []string
 	cp := project.Kittify(root, "charter", "charter.yaml")
 	if b, err := os.ReadFile(cp); err == nil {
 		v, perr := yamlx.Parse(b)
 		if perr != nil {
-			return nil, []string{"unreadable charter.yaml (YAMLError): provenance was not evaluated; nothing was changed"}
+			return nil, []string{"unreadable charter.yaml (" + ruamelErrorClass(perr) + "): provenance was not evaluated; nothing was changed"}
 		}
 		if doc, ok := v.(*jsonx.Object); ok {
 			if cat, ok := valueGet(doc, "catalog").(*jsonx.Object); ok {
 				for _, r := range cat.GetList("references") {
 					ref, ok := r.(*jsonx.Object)
-					if !ok {
+					if !ok || valueGet(ref, "kind") == "template_set" {
 						continue
 					}
 					sp, _ := valueGet(ref, "source_path").(string)
 					if sp == "" || !filepath.IsAbs(sp) || !isBuiltInPackPath(sp) {
 						continue
 					}
-					id := "?"
-					if x, ok := ref.Get("id"); ok {
-						id = pyjson.Str(x)
-					}
-					leaks = append(leaks, fmt.Sprintf("charter.yaml catalog[%s].source_path=%s", id, pyjson.ReprString(sp)))
+					leaks = append(leaks, fmt.Sprintf("charter.yaml catalog[%s].source_path=%s", refID(ref), pyjson.ReprString(sp)))
 				}
+				tsLeaks, unresolved = templateSetProvenance(cat)
 			}
 		}
 	}
@@ -131,7 +147,66 @@ func provenanceFindings(root string) ([]string, []string) {
 			walkManifest(v, &leaks)
 		}
 	}
-	return leaks, unresolved
+	return append(leaks, tsLeaks...), unresolved
+}
+
+// ruamelErrorClass maps a YAML parse failure to the ruamel exception class
+// name upstream reports (type(exc).__name__).
+func ruamelErrorClass(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "already defined"):
+		return "DuplicateKeyError"
+	case strings.Contains(msg, "cannot start any token"), strings.Contains(msg, "mapping values are not allowed"),
+		strings.Contains(msg, "could not find expected ':'"), strings.Contains(msg, "unknown escape character"),
+		strings.Contains(msg, "found a tab character"), strings.Contains(msg, "control characters are not allowed"),
+		strings.Contains(msg, "unexpected end of stream"), strings.Contains(msg, "while scanning"):
+		return "ScannerError"
+	}
+	return "ParserError"
+}
+
+func refID(ref *jsonx.Object) string {
+	if x, ok := ref.Get("id"); ok {
+		return pyjson.Str(x)
+	}
+	return "?"
+}
+
+// templateSetProvenance is describe_template_set_leaks /
+// describe_template_set_ambiguities over catalog.references.
+func templateSetProvenance(cat *jsonx.Object) (leaks, ambiguous []string) {
+	mission, _ := valueGet(cat, "mission").(string)
+	if mission == "" || strings.ContainsAny(mission, `/\`) || mission == "." || mission == ".." {
+		return nil, nil
+	}
+	set, _ := valueGet(cat, "template_set").(string)
+	if set == "" {
+		return nil, nil
+	}
+	expectedID := "TEMPLATE_SET:" + set
+	suffix := []string{"built-in", "missions", mission, "mission.yaml"}
+	for _, r := range cat.GetList("references") {
+		ref, ok := r.(*jsonx.Object)
+		if !ok || valueGet(ref, "kind") != "template_set" || valueGet(ref, "id") != expectedID {
+			continue
+		}
+		sp, _ := valueGet(ref, "source_path").(string)
+		if sp == "" || !filepath.IsAbs(sp) {
+			continue
+		}
+		parts := strings.Split(strings.Trim(filepath.ToSlash(strings.ReplaceAll(sp, `\`, "/")), "/"), "/")
+		endsWith := len(parts) >= len(suffix) && strings.Join(parts[len(parts)-len(suffix):], "/") == strings.Join(suffix, "/")
+		canonical := endsWith && len(parts) > len(suffix) && parts[len(parts)-len(suffix)-1] == "packs"
+		if canonical && isBuiltInPackPath(sp) {
+			leaks = append(leaks, fmt.Sprintf("charter.yaml catalog[%s].source_path=%s", refID(ref), pyjson.ReprString(sp)))
+			continue
+		}
+		if endsWith {
+			ambiguous = append(ambiguous, fmt.Sprintf("ambiguous template-set provenance (checkout identity cannot be verified; path not healed and left unchanged): charter.yaml catalog[%s].source_path=%s", expectedID, pyjson.ReprString(sp)))
+		}
+	}
+	return leaks, ambiguous
 }
 
 func walkManifest(v any, leaks *[]string) {
