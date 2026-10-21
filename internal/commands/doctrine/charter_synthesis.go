@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -414,7 +415,7 @@ func runRefreshStep(root string, args []string) (bool, string) {
 			timeout = f
 		}
 	}
-	bin, err := exec.LookPath(args[0])
+	bin, err := spekittyBinary(args[0])
 	if err != nil {
 		return false, args[0] + " not on PATH; cannot run `" + strings.Join(args, " ") + "`"
 	}
@@ -445,6 +446,118 @@ func runRefreshStep(root string, args []string) (bool, string) {
 		first = l[len(l)-1]
 	}
 	return false, strings.TrimRight(fmt.Sprintf("%s failed (exit %d): %s", label, cmd.ProcessState.ExitCode(), first), ": ")
+}
+
+// spekittyBinary resolves cmd[0]: "spec-kitty" runs this executable.
+func spekittyBinary(name string) (string, error) {
+	if name == "spec-kitty" {
+		if exe, err := os.Executable(); err == nil {
+			return exe, nil
+		}
+	}
+	return exec.LookPath(name)
+}
+
+// pyListRepr renders a Python list-of-str repr.
+func pyListRepr(l []string) string {
+	q := make([]string, len(l))
+	for i, s := range l {
+		q[i] = dct.PyRepr(s)
+	}
+	return "[" + strings.Join(q, ", ") + "]"
+}
+
+// refreshReferences is references_refresh.refresh_references_if_needed
+// (attempted, succeeded, detail).
+func refreshReferences(root, cause string) (bool, bool, string) {
+	hit := false
+	for _, c := range strings.Split(cause, ",") {
+		hit = hit || c == "synthesized_drg"
+	}
+	if !hit {
+		return false, false, ""
+	}
+	args := []string{"spec-kitty", "charter", "generate", "--no-from-interview", "--json"}
+	if c := charter.LoadBundle(root); c != nil {
+		if cat := c.GetObject("catalog"); cat != nil {
+			if m := cat.GetString("mission"); m != "" {
+				args = append(args, "--mission-type", m)
+			}
+			if t := cat.GetString("template_set"); t != "" {
+				args = append(args, "--template-set", t)
+			}
+		}
+	}
+	bin, err := spekittyBinary(args[0])
+	if err != nil {
+		return true, false, "`" + strings.Join(args, " ") + "` invocation failed: [Errno 2] No such file or directory: 'spec-kitty'"
+	}
+	cmd := exec.Command(bin, args[1:]...)
+	cmd.Dir = root
+	var so, se strings.Builder
+	cmd.Stdout, cmd.Stderr = &so, &se
+	if err := cmd.Start(); err != nil {
+		return true, false, "`" + strings.Join(args, " ") + "` invocation failed: " + err.Error()
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-time.After(30 * time.Second):
+		cmd.Process.Kill()
+		return true, false, fmt.Sprintf("`%s` invocation failed: Command '%s' timed out after 30.0 seconds", strings.Join(args, " "), pyListRepr(args))
+	case err := <-done:
+		if err == nil {
+			return true, true, ""
+		}
+	}
+	out := so.String()
+	for _, cand := range append([]string{out}, reverseLines(out)...) {
+		if v, err := jsonx.Decode([]byte(cand)); err == nil {
+			if o, ok := v.(*jsonx.Object); ok {
+				if e := strings.TrimSpace(o.GetString("error")); e != "" {
+					return true, false, e
+				}
+			}
+		}
+	}
+	for _, stream := range []string{out, se.String()} {
+		var lines []string
+		for _, l := range strings.Split(stream, "\n") {
+			if t := strings.TrimSpace(l); t != "" {
+				lines = append(lines, t)
+			}
+		}
+		start := -1
+		for i, l := range lines {
+			if strings.HasPrefix(l, "Unexpected error:") || strings.HasPrefix(l, "Error:") {
+				start = i
+			}
+		}
+		if start >= 0 {
+			return true, false, strings.Join(lines[start:], " ")
+		}
+	}
+	for _, stream := range []string{se.String(), out} {
+		var lines []string
+		for _, l := range strings.Split(stream, "\n") {
+			if strings.TrimSpace(l) != "" {
+				lines = append(lines, l)
+			}
+		}
+		if len(lines) > 0 {
+			return true, false, lines[len(lines)-1]
+		}
+	}
+	return true, false, fmt.Sprintf("generate exited %d with no captured output", cmd.ProcessState.ExitCode())
+}
+
+func reverseLines(s string) []string {
+	l := strings.Split(s, "\n")
+	out := make([]string, 0, len(l))
+	for i := len(l) - 1; i >= 0; i-- {
+		out = append(out, l[i])
+	}
+	return out
 }
 
 func runPreflight(root string, autoRefresh bool) preflightResult {
@@ -541,6 +654,26 @@ func attemptAutoRefresh(root string, checks []preflightCheck) preflightResult {
 	if !ok {
 		res.blocked = reason
 		return res
+	}
+	var stale []string
+	for _, c := range checks {
+		if !preflightPass[c.state] {
+			stale = append(stale, c.name)
+		}
+	}
+	sort.Strings(stale)
+	attempted, succeeded, detail := refreshReferences(root, strings.Join(stale, ","))
+	if attempted && !succeeded {
+		res.blocked = "references-parity refresh failed: " + detail
+		return res
+	}
+	if attempted && succeeded {
+		ok, reason := runRefreshStep(root, []string{"spec-kitty", "charter", "synthesize"})
+		res.actions = append(res.actions, "spec-kitty charter synthesize")
+		if !ok {
+			res.blocked = reason
+			return res
+		}
 	}
 	res.checks = buildPreflightChecks(root)
 	res.passed = allPass(res.checks)
