@@ -132,6 +132,12 @@ func TestDiffConsolidate(t *testing.T) {
 			compareGit(t, p)
 			compareMissionTree(t, p, false)
 			comparePair(t, p, "agent", "tasks", "status", "--mission", "$M")
+			// TRACE 8.3: merged-mission validation.
+			comparePair(t, p, "review", "--mission", "$M")
+			comparePair(t, p, "review", "--mission", "$M", "--mode", "lightweight")
+			comparePair(t, p, "review")
+			comparePair(t, p, "review", "--mission", "nope")
+			compareMissionTree(t, p, false)
 		})
 	}
 }
@@ -142,6 +148,9 @@ func TestDiffConsolidateNotReady(t *testing.T) {
 	comparePair(t, p, "consolidate", "--mission", "$M", "--yes")
 	comparePair(t, p, "agent", "mission", "merge", "--mission", "calc-ops", "--dry-run")
 	comparePair(t, p, "agent", "mission", "merge", "--mission", "$M", "--dry-run")
+	comparePair(t, p, "review", "--mission", "$M")
+	comparePair(t, p, "review", "--mission", "$M", "--mode", "post-merge")
+	compareMissionTree(t, p, false)
 	compareGit(t, p)
 }
 
