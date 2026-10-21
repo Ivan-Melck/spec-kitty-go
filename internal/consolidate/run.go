@@ -20,6 +20,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/retrospective"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
+	"github.com/spec-kitty/go-kitty3/internal/staleassert"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -452,11 +453,41 @@ func (r *run) execute() error {
 		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP commit reachability on the target (no excluded commit reachable).")
 	}
 	say(r.w, "  [dim]Running stale-assertion check...[/dim]")
+	stale, staleErr := staleassert.RunCheck(r.baseline, "HEAD", r.root)
 	r.captureRetrospective()
 	r.teardown(coordDone)
-	say(r.w, "\n[bold]Stale assertion findings:[/bold]")
-	say(r.w, "  No likely-stale assertions detected.")
 	ClearState(r.root, mid)
+	say(r.w, "\n[bold]Stale assertion findings:[/bold]")
+	switch {
+	case staleErr != nil || stale == nil:
+		say(r.w, "  [yellow]Stale-assertion check could not run.[/yellow]")
+	case len(stale.Findings) == 0:
+		say(r.w, "  No likely-stale assertions detected.")
+	default:
+		line := func(grade string, f staleassert.Finding) {
+			fmt.Fprintln(r.w, rich.Wrap(fmt.Sprintf("  [%s] %s:%d — %s", grade, filepath.Base(f.TestFile), f.TestLine, f.Hint), rich.Width()))
+		}
+		var info []staleassert.Finding
+		for _, f := range stale.Findings {
+			switch f.Confidence {
+			case "high", "medium":
+				line(f.Confidence, f)
+			case "info":
+				info = append(info, f)
+			}
+		}
+		if len(info) > 0 {
+			say(r.w, fmt.Sprintf("  Message-content assertions skipped as info grade (%d) — review manually if diagnostic text changed:", len(info)))
+			for _, f := range info {
+				line("info", f)
+			}
+		}
+		for _, f := range stale.Findings {
+			if f.Confidence == "low" {
+				line("low", f)
+			}
+		}
+	}
 	return nil
 }
 
