@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -123,6 +124,48 @@ func (v *verb) enforceClaimAncestry(m *orch.Mission, wpID, workspace string) err
 		identity(m.StatusDir, "wp_id", wpID, "missing_refs", strList(missing)))
 }
 
+// surfaceFor resolves the mission's coordination surface; status events are
+// stamped with the raw --mission handle like upstream's TransitionRequest
+// (mission_slug=mission).
+func surfaceFor(m *orch.Mission, handle string) *coord.Surface {
+	s := coord.Resolve(m.Root, m.Slug)
+	s.Slug = handle
+	return s
+}
+
+// forReviewGate is evaluate_for_review_gate(main_repo_root, mission, wp):
+// the lane worktree / branch names key on the raw handle, the manifest and
+// base ref on the canonical mission.
+func forReviewGate(m *orch.Mission, handle, wpID string, force bool) lanes.GateDecision {
+	if force {
+		return lanes.GateDecision{Passed: true}
+	}
+	manifest, err := lanes.Read(m.PrimaryDir)
+	if err != nil || manifest == nil {
+		return lanes.GateDecision{Passed: true}
+	}
+	l := manifest.LaneForWP(wpID)
+	if l == nil {
+		return lanes.GateDecision{Passed: true}
+	}
+	if l.LaneID == lanes.PlanningLaneID {
+		return lanes.EvaluateForReviewGate(m.Root, m.Slug, wpID, false)
+	}
+	wt := lanes.WorktreePath(m.Root, handle, l.LaneID)
+	branch := lanes.LaneBranchName(handle, l.LaneID, manifest.TargetBranch)
+	base := lanes.LaneBaseRef(m.Root, m.Slug, manifest)
+	if isDir(wt) && lanes.HasCommitBeyondBase(wt, base) {
+		return lanes.GateDecision{Passed: true, LaneID: l.LaneID, LaneBranch: branch, BaseRef: base}
+	}
+	return lanes.GateDecision{Reason: fmt.Sprintf("%s cannot move to for_review: no implementation commit on lane %s (%s) beyond %s. Commit the work in the lane worktree first, or pass --force if there is genuinely nothing to commit.", wpID, l.LaneID, branch, base),
+		LaneID: l.LaneID, LaneBranch: branch, BaseRef: base}
+}
+
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
+}
+
 // existingWorkspaceForStamp is _existing_workspace_for_stamp: only a stored
 // single_branch mission consults the lane manifest.
 func existingWorkspaceForStamp(m *orch.Mission, handle, wpID string) *startWorkspace {
@@ -176,7 +219,7 @@ func runStartImplementation(ctx *cli.Context) error {
 		return err
 	}
 	workflow.RefreshReusedLaneContext(root, m.Slug, ws.laneID, wpID, wpDependencies(wpPath))
-	s := coord.Resolve(root, m.Slug)
+	s := surfaceFor(m, handle)
 	res, err := workflow.StartImplementation(s, wpID, status.StrActor(actor), ws.path, ws.executionMode(), pol.Object(), nil, false, nil)
 	if err != nil {
 		return v.claimFailure(m, err, actor)
@@ -216,7 +259,7 @@ func runStartReview(ctx *cli.Context) error {
 		return v.wpNotFound(wpID, handle)
 	}
 	ws := existingWorkspaceForStamp(m, handle, wpID)
-	s := coord.Resolve(root, m.Slug)
+	s := surfaceFor(m, handle)
 	res, err := workflow.StartReviewRef(s, wpID, status.StrActor(actor), "orchestrator-api:"+root, ws.executionMode(), pol.Object(), optString(ctx, "review-ref"))
 	if err != nil {
 		var cc *workflow.ClaimConflict
@@ -303,7 +346,7 @@ func runTransition(ctx *cli.Context) error {
 	var ws *startWorkspace
 	switch toLane {
 	case string(status.ForReview):
-		if d := lanes.EvaluateForReviewGate(root, m.Slug, wpID, force); !d.Passed {
+		if d := forReviewGate(m, handle, wpID, force); !d.Passed {
 			var lane any
 			if d.LaneID != "" {
 				lane = d.LaneID
@@ -338,7 +381,7 @@ func runTransition(ctx *cli.Context) error {
 		}
 		req.Evidence = ev
 	}
-	s := coord.Resolve(root, m.Slug)
+	s := surfaceFor(m, handle)
 	res, err := s.EmitTransition(req)
 	if err != nil {
 		return v.fail("TRANSITION_REJECTED", err.Error(), nil)

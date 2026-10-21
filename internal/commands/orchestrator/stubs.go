@@ -18,7 +18,7 @@ func originCheckFlag() *cli.Flag {
 
 func acceptMissionCmd() *cli.Command {
 	return &cli.Command{Name: "accept-mission", Short: "Accept a mission after all WPs are approved or done.",
-		Flags: []*cli.Flag{missionFlag(), str("actor", helpActor, true), originCheckFlag()}, Run: notYet("accept-mission")}
+		Flags: []*cli.Flag{missionFlag(), str("actor", helpActor, true), originCheckFlag()}, Run: runAcceptMission}
 }
 
 func consolidateMissionCmd() *cli.Command {

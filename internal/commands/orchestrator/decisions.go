@@ -153,7 +153,9 @@ func resolveDecisionCmd() *cli.Command {
 			str("policy", helpPolicy, false),
 			ownedFlag(),
 		},
-		Run: func(ctx *cli.Context) error { return runTerminalDecision(ctx, "resolve-decision", decision.StatusResolved) },
+		Run: func(ctx *cli.Context) error {
+			return runTerminalDecision(ctx, "resolve-decision", decision.StatusResolved)
+		},
 	}
 }
 
@@ -170,7 +172,9 @@ func deferDecisionCmd() *cli.Command {
 			str("policy", helpPolicy, false),
 			ownedFlag(),
 		},
-		Run: func(ctx *cli.Context) error { return runTerminalDecision(ctx, "defer-decision", decision.StatusDeferred) },
+		Run: func(ctx *cli.Context) error {
+			return runTerminalDecision(ctx, "defer-decision", decision.StatusDeferred)
+		},
 	}
 }
 
@@ -187,7 +191,9 @@ func cancelDecisionCmd() *cli.Command {
 			str("policy", helpPolicy, false),
 			ownedFlag(),
 		},
-		Run: func(ctx *cli.Context) error { return runTerminalDecision(ctx, "cancel-decision", decision.StatusCanceled) },
+		Run: func(ctx *cli.Context) error {
+			return runTerminalDecision(ctx, "cancel-decision", decision.StatusCanceled)
+		},
 	}
 }
 
