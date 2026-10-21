@@ -1,0 +1,17 @@
+project:
+  uuid: d65253b4-a278-49cd-b535-879701d3d66d
+  slug: t1
+  node_id: aec3eace9d25
+  build_id: 2585bee8-798d-54b3-ac9b-57524f2779cb
+mission_type_activations:
+- software-dev
+- documentation
+- research
+- plan
+vcs:
+  type: git
+agents:
+  available:
+  - claude
+  auto_commit: true
+  lint_on_edit: false

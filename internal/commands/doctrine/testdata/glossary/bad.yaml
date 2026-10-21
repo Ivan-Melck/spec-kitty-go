@@ -1,0 +1,10 @@
+terms:
+  - surface: Workspace
+    definition: ""
+    confidence: 2
+    status: weird
+    extra: 1
+  - definition: missing surface
+  - surface: ok
+    definition: fine
+    confidence: "high"

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -23,6 +24,8 @@ type rtable struct {
 	Headers   []string
 	NoWrap    []bool
 	ShowLines bool
+	Right     []bool // right-justified columns
+	Center    []bool // centered columns
 	Rows      [][]string
 }
 
@@ -116,9 +119,53 @@ func collapseWidths(widths []int, wrapable []bool, maxWidth int) []int {
 func cellLines(s string, width int) []string {
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
-		out = append(out, rich.WrapWords(l, width)...)
+		out = append(out, wrapEllipsis(l, width)...)
 	}
 	return out
+}
+
+var reCellWord = regexp.MustCompile(`\s*\S+\s*`)
+
+// wrapEllipsis is rich Text.wrap with overflow="ellipsis" (a table cell's
+// default): divide_line(fold=False), rstrip_end, then truncate overlong
+// lines with "…".
+func wrapEllipsis(line string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	var breaks []int
+	offset := 0
+	for _, loc := range reCellWord.FindAllStringIndex(line, -1) {
+		start, word := loc[0], line[loc[0]:loc[1]]
+		wl := rlen(strings.TrimRight(word, " \t"))
+		if width-offset >= wl {
+			offset += rlen(word)
+			continue
+		}
+		if wl > width {
+			if start != 0 {
+				breaks = append(breaks, start)
+			}
+			offset = rlen(word)
+		} else if offset != 0 && start != 0 {
+			breaks = append(breaks, start)
+			offset = rlen(word)
+		}
+	}
+	var lines []string
+	prev := 0
+	for _, b := range append(breaks, len(line)) {
+		l := line[prev:b]
+		for rlen(l) > width && strings.HasSuffix(l, " ") {
+			l = l[:len(l)-1]
+		}
+		if rlen(l) > width {
+			l = string([]rune(l)[:width-1]) + "…"
+		}
+		lines = append(lines, l)
+		prev = b
+	}
+	return lines
 }
 
 func (t *rtable) render(w io.Writer, consoleWidth int) {
@@ -187,7 +234,15 @@ func (t *rtable) render(w io.Writer, consoleWidth int) {
 				if k < len(cols[i]) {
 					c = cols[i][k]
 				}
-				b.WriteString(" " + c + strings.Repeat(" ", max(0, widths[i]-2-rlen(c))) + " " + sep)
+				padding := strings.Repeat(" ", max(0, widths[i]-2-rlen(c)))
+				if i < len(t.Right) && t.Right[i] {
+					b.WriteString(" " + padding + c + " " + sep)
+				} else if i < len(t.Center) && t.Center[i] {
+					ex := len(padding)
+					b.WriteString(" " + strings.Repeat(" ", ex/2) + c + strings.Repeat(" ", ex-ex/2) + " " + sep)
+				} else {
+					b.WriteString(" " + c + padding + " " + sep)
+				}
 			}
 			fmt.Fprintln(w, b.String())
 		}

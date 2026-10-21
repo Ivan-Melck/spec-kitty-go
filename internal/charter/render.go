@@ -92,39 +92,15 @@ func RenderCompact(root string, in CompactInput) string {
 		lines = append(lines, "  - Diagnostics: "+strings.Join(diags, " | "))
 	}
 	text := strings.Join(lines, "\n")
-	if in.Profile != nil {
-		if pb := renderProfileSections(in.Profile); pb != "" {
-			text += "\n\n" + pb
-		}
+	var blocks []string
+	profileBlock := RenderProfileSections(root, in.Profile)
+	if profileBlock != "" {
+		blocks = append(blocks, profileBlock)
 	}
-	return text
-}
-
-// renderProfileSections lists the profile-cited directives and tactics.
-func renderProfileSections(p *dct.Profile) string {
-	var lines []string
-	refs, _ := p.Data.Get("directive-references")
-	if l, ok := refs.([]any); ok && len(l) > 0 {
-		lines = append(lines, "Profile-Cited Directives:")
-		for _, x := range l {
-			if o, ok := x.(*jsonx.Object); ok {
-				lines = append(lines, fmt.Sprintf("  - %s: %s", dct.NormalizeDirectiveID(o.GetString("code")), o.GetString("name")))
-			}
-		}
+	if len(blocks) == 0 {
+		return text
 	}
-	trefs, _ := p.Data.Get("tactic-references")
-	if l, ok := trefs.([]any); ok && len(l) > 0 {
-		if len(lines) > 0 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, "Profile-Cited Tactics:")
-		for _, x := range l {
-			if o, ok := x.(*jsonx.Object); ok {
-				lines = append(lines, "  - "+o.GetString("id"))
-			}
-		}
-	}
-	return strings.Join(lines, "\n")
+	return enforceTokenBudget(text+"\n\n"+strings.Join(blocks, "\n\n"), in.Action, profileBlock, "")
 }
 
 // Reference is one charter.yaml catalog.references entry.
@@ -200,57 +176,6 @@ func referencePath(r Reference) string {
 		}
 	}
 	return r.LocalPath
-}
-
-// renderBootstrap is a simplified upstream _render_bootstrap_text.
-func renderBootstrap(root, action string, b *ActionBundle, refs []Reference, profile *dct.Profile) string {
-	mdPath := Path(root, CharterMD)
-	content, _ := os.ReadFile(mdPath)
-	lines := []string{"Charter Context (Bootstrap):", "  - Source: " + mdPath,
-		"  - This is the first load for this action. Use the summary and follow references as needed.", "", "Policy Summary:"}
-	sum := PolicySummary(string(content))
-	if len(sum) == 0 {
-		lines = append(lines, "  - "+noneLabel)
-	}
-	for _, s := range sum {
-		lines = append(lines, "  - "+s)
-	}
-	if profile != nil {
-		if pb := renderProfileSections(profile); pb != "" {
-			lines = append(lines, "", pb)
-		}
-	}
-	lines = append(lines, "", "Action Doctrine ("+action+"):")
-	any := false
-	if b != nil {
-		for _, k := range []dct.Kind{dct.Directive, dct.Tactic, dct.Styleguide, dct.Toolguide, dct.Procedure} {
-			ids := b.IDs[k]
-			if len(ids) == 0 {
-				continue
-			}
-			any = true
-			lines = append(lines, "  "+strings.Title(strings.ReplaceAll(k.Plural(), "_", " "))+":")
-			repo := b.Offer.Repo(k)
-			for _, id := range ids {
-				t := id
-				if a := repo.Get(id); a != nil {
-					t = id + ": " + a.Title()
-				}
-				lines = append(lines, "    - "+t)
-			}
-		}
-	}
-	if !any {
-		lines = append(lines, "  - "+noneLabel)
-	}
-	lines = append(lines, "", "Reference Docs:")
-	if len(refs) == 0 {
-		lines = append(lines, "  - "+noneLabel)
-	}
-	for _, r := range refs {
-		lines = append(lines, fmt.Sprintf("  - %s: %s (%s)", r.ID, r.Title, referencePath(r)))
-	}
-	return strings.Join(lines, "\n")
 }
 
 // readYAMLObject parses a YAML file into an object (nil on failure).

@@ -1,0 +1,8 @@
+terms:
+  - surface: mission
+    definition: Spec Kitty's top-level unit of work with spec, plan and tasks.
+    status: active
+  - surface: workspace
+    definition: The checkout an agent edits.
+    status: active
+    confidence: 0.75

@@ -23,7 +23,7 @@ func profileLeaves() []*cli.Command {
 				{Name: "json", Kind: cli.Bool, Help: "Output JSON object."},
 				{Name: "all", Kind: cli.Bool, Help: "Bypass the activation gate for inspection (show non-activated profiles)."},
 			},
-			Args: []*cli.Arg{{Name: "profile_id", Help: "Profile ID to show.", Required: true}},
+			Args: []*cli.Arg{{Name: "profile_id", Help: "Profile ID to show.", Required: true, Metavar: "{profile_id}"}},
 			Run:  runProfileShow,
 		}
 	}

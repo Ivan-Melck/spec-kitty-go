@@ -205,20 +205,43 @@ func keyOf(k Kind, o *jsonx.Object) string {
 	return ""
 }
 
+// languageMatch is scoping.applies_to_languages_match (active nil = no
+// filter; empty = admit nothing scoped).
 func languageMatch(o *jsonx.Object, active []string) bool {
-	if active == nil {
+	norm := func(vals []string) map[string]bool {
+		out := map[string]bool{}
+		for _, v := range vals {
+			if t := strings.ToLower(strings.TrimSpace(v)); t != "" {
+				out[t] = true
+			}
+		}
+		return out
+	}
+	var rawVals []string
+	for _, x := range o.GetList("applies_to_languages") {
+		rawVals = append(rawVals, pyStr(x))
+	}
+	scope := norm(rawVals)
+	if len(scope) == 0 {
 		return true
 	}
-	raw := o.GetList("applies_to_languages")
-	if len(raw) == 0 {
+	delete(scope, "unknown")
+	if len(scope) == 0 {
+		return false
+	}
+	onlySentinel := true
+	for t := range scope {
+		if t != "any" && t != "all" {
+			onlySentinel = false
+		}
+	}
+	if onlySentinel || active == nil {
 		return true
 	}
-	set := map[string]bool{}
-	for _, l := range active {
-		set[strings.ToLower(strings.TrimSpace(l))] = true
-	}
-	for _, x := range raw {
-		if s, ok := x.(string); ok && set[strings.ToLower(strings.TrimSpace(s))] {
+	act := norm(active)
+	delete(act, "unknown")
+	for t := range scope {
+		if act[t] {
 			return true
 		}
 	}
@@ -246,8 +269,15 @@ func NewOffering(repoRoot string, orgRoots []string) *Offering {
 }
 
 // ProjectKindDir is the project-layer directory for kind (upstream
-// PROJECT_KIND_DIRS: the plural name).
-func ProjectKindDir(k Kind) string { return k.Plural() }
+// PROJECT_KIND_DIRS: singular for directive/tactic/styleguide/procedure,
+// the plural name otherwise).
+func ProjectKindDir(k Kind) string {
+	switch k {
+	case Directive, Tactic, Styleguide, Procedure:
+		return string(k)
+	}
+	return k.Plural()
+}
 
 // Repo returns the repository of kind (cached).
 func (o *Offering) Repo(k Kind) *Repository {

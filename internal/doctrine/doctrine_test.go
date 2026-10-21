@@ -35,7 +35,7 @@ func TestBuiltInRepositories(t *testing.T) {
 func TestProjectOverlayMerge(t *testing.T) {
 	setHome(t)
 	root := t.TempDir()
-	dir := filepath.Join(root, ".kittify", "charter-packs", "directives")
+	dir := filepath.Join(root, ".kittify", "charter-packs", "directive")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "024-x.directive.yaml"), []byte("id: DIRECTIVE_024\ntitle: Local Title\n"), 0o644)
 	off := NewOffering(root, nil)
