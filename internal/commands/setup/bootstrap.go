@@ -21,7 +21,13 @@ func init() {
 				return err
 			}
 		}
-		return StartupBootstrap(ctx, os.Args[1:])
+		if err := StartupBootstrap(ctx, os.Args[1:]); err != nil {
+			return err
+		}
+		if os.Getenv("SPEC_KITTY_GO_SKIP_BOOTSTRAP") == "1" {
+			return nil
+		}
+		return SchemaGate(ctx, os.Args[1:])
 	}
 }
 
