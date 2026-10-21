@@ -53,23 +53,34 @@ func MissingCanonicalStatus(wpID, slug string) string {
 	return fmt.Sprintf("%s has no canonical status in mission %s. Run `spec-kitty agent mission finalize-tasks --mission %s` to seed the event log.", wpID, slug, slug)
 }
 
-// analysisGate is _require_current_analysis_report (presence check).
+// analysisGate is _require_current_analysis_report.
 func analysisGate(o *Out, root, slug string) error {
-	p := filepath.Join(project.Specs(root, slug), "analysis-report.md")
-	b, err := os.ReadFile(p)
-	if err == nil {
-		if strings.Contains(string(b), "analysis-findings/v1") && !strings.Contains(string(b), "spec-kitty.analysis-report") {
-			o.Print("Error: analysis_report_required: /spec-kitty.analyze must be run inside your coding agent (Claude Code, Codex, Cursor) before implementation.")
-			o.Print("  Reason: analysis-report.md is in carrier format (analysis-findings/v1) — written directly\n          rather than via record-analysis. The implement gate requires the persisted\n          outer-wrapper format (artifact_type: spec-kitty.analysis-report).")
-			o.Printf("  Recovery: spec-kitty agent mission record-analysis --mission %s --input-file %s", slug, p)
-			return ExitErr(1)
-		}
+	f := CheckAnalysisReport(root, slug)
+	if f.OK {
 		return nil
 	}
 	o.Print("Error: analysis_report_required: /spec-kitty.analyze must be run inside your coding agent (Claude Code, Codex, Cursor) before implementation.")
-	o.Printf("  Missing: %s", p)
-	o.Print("  Run step 1: /spec-kitty.analyze")
-	o.Printf("  Run step 2: spec-kitty agent mission record-analysis --mission %s --input-file -", slug)
+	switch {
+	case f.Reason == "carrier_format_not_wrapped":
+		o.Print("  Reason: analysis-report.md is in carrier format (analysis-findings/v1) — written directly\n          rather than via record-analysis. The implement gate requires the persisted\n          outer-wrapper format (artifact_type: spec-kitty.analysis-report).")
+		o.Printf("  Recovery: spec-kitty agent mission record-analysis --mission %s --input-file %s", slug, f.Path)
+	case f.Missing:
+		o.Printf("  Missing: %s", f.Path)
+		o.Print("  Run step 1: /spec-kitty.analyze")
+		o.Printf("  Run step 2: spec-kitty agent mission record-analysis --mission %s --input-file -", slug)
+	case len(f.Mismatches) > 0:
+		o.Printf("  Reason: %s", f.Reason)
+		o.Print("  Stale inputs:")
+		for _, m := range f.Mismatches {
+			o.Printf("    - %s", m)
+		}
+		o.Printf("  Run: /spec-kitty.analyze --mission %s", slug)
+	default:
+		if f.Reason != "" {
+			o.Printf("  Reason: %s", f.Reason)
+		}
+		o.Printf("  Run: /spec-kitty.analyze --mission %s", slug)
+	}
 	return ExitErr(1)
 }
 

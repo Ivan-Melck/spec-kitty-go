@@ -1,0 +1,417 @@
+package nextrt
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/spec-kitty/go-kitty3/internal/assets"
+	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/yamlx"
+)
+
+// TemplateStep is one mission-runtime.yaml step.
+type TemplateStep struct {
+	ID, Title, Description, PromptTemplate string
+	DependsOn                              []string
+	RequiresInputs                         []string
+}
+
+// Template is a mission-runtime planning template.
+type Template struct {
+	Key   string
+	Steps []TemplateStep
+}
+
+// ParseTemplate parses mission-runtime.yaml.
+func ParseTemplate(b []byte) (*Template, error) {
+	o, err := yamlx.ParseObject(b)
+	if err != nil {
+		return nil, err
+	}
+	t := &Template{}
+	if m := o.GetObject("mission"); m != nil {
+		t.Key = m.GetString("key")
+	}
+	v, _ := o.Get("steps")
+	list, _ := v.([]any)
+	for _, it := range list {
+		so, ok := it.(*jsonx.Object)
+		if !ok {
+			continue
+		}
+		st := TemplateStep{ID: so.GetString("id"), Title: so.GetString("title"), Description: so.GetString("description"),
+			PromptTemplate: so.GetString("prompt_template")}
+		st.DependsOn = strList(so, "depends_on")
+		st.RequiresInputs = strList(so, "requires_inputs")
+		t.Steps = append(t.Steps, st)
+	}
+	return t, nil
+}
+
+func strList(o *jsonx.Object, k string) []string {
+	v, _ := o.Get(k)
+	l, _ := v.([]any)
+	var out []string
+	for _, x := range l {
+		if s, ok := x.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// HasStep reports whether the template declares step id.
+func (t *Template) HasStep(id string) bool {
+	for _, s := range t.Steps {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// templateSource resolves the runtime template bytes for a mission type
+// (project override, global mission, then the packaged default) and the
+// path recorded as template_path.
+func templateSource(root, missionType string) ([]byte, string, error) {
+	for _, p := range []string{
+		filepath.Join(root, ".kittify", "overrides", "missions", missionType, "mission-runtime.yaml"),
+		filepath.Join(project.GlobalKittify(), "missions", missionType, "mission-runtime.yaml"),
+	} {
+		if b, err := os.ReadFile(p); err == nil {
+			return b, p, nil
+		}
+	}
+	rel := path.Join("packs/built-in/missions", missionType, "mission-runtime.yaml")
+	b, err := assets.ReadFile(rel)
+	if err != nil {
+		return nil, "", fmt.Errorf("No runtime template found for mission type '%s'", missionType)
+	}
+	return b, rel, nil
+}
+
+// Snapshot is the run state.json.
+type Snapshot struct {
+	Obj *jsonx.Object
+}
+
+// RunRef points at a run directory.
+type RunRef struct {
+	RunID, RunDir, MissionType string
+}
+
+func (s *Snapshot) issued() string { return s.Obj.GetString("issued_step_id") }
+
+func (s *Snapshot) completed() []string { return strList(s.Obj, "completed_steps") }
+
+func (s *Snapshot) untouched() bool {
+	pd := s.Obj.GetObject("pending_decisions")
+	dd := s.Obj.GetObject("decisions")
+	return len(s.completed()) == 0 && (pd == nil || pd.Len() == 0) && (dd == nil || dd.Len() == 0)
+}
+
+// ReadSnapshot reads <run>/state.json.
+func ReadSnapshot(runDir string) (*Snapshot, error) {
+	b, err := os.ReadFile(filepath.Join(runDir, "state.json"))
+	if err != nil {
+		return nil, err
+	}
+	o, err := jsonx.DecodeObject(b)
+	if err != nil {
+		return nil, err
+	}
+	return &Snapshot{Obj: o}, nil
+}
+
+func writeSnapshot(runDir string, s *Snapshot) error {
+	return os.WriteFile(filepath.Join(runDir, "state.json"), []byte(jsonx.Dumps(s.Obj, jsonx.SortedPretty)), 0o644)
+}
+
+func runIndexPath(root string) string {
+	return filepath.Join(root, ".kittify", "runtime", "feature-runs.json")
+}
+
+func loadIndex(root string) *jsonx.Object {
+	b, err := os.ReadFile(runIndexPath(root))
+	if err != nil {
+		return &jsonx.Object{}
+	}
+	o, err := jsonx.DecodeObject(b)
+	if err != nil || o == nil {
+		return &jsonx.Object{}
+	}
+	return o
+}
+
+func indexKey(slug, missionID string) string {
+	if missionID != "" {
+		return missionID
+	}
+	return "legacy-" + slug
+}
+
+func entryFor(idx *jsonx.Object, slug, missionID string) *jsonx.Object {
+	if e := idx.GetObject(indexKey(slug, missionID)); e != nil {
+		return e
+	}
+	for _, k := range idx.Keys() {
+		if e := idx.GetObject(k); e != nil && e.GetString("mission_slug") == slug {
+			return e
+		}
+	}
+	return nil
+}
+
+// ExistingRun returns the indexed run of the mission (nil when none).
+func ExistingRun(root, slug, missionID, missionType string) *RunRef {
+	e := entryFor(loadIndex(root), slug, missionID)
+	if e == nil {
+		return nil
+	}
+	dir := e.GetString("run_dir")
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(root, dir)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state.json")); err != nil {
+		return nil
+	}
+	mt := e.GetString("mission_type")
+	if mt == "" {
+		mt = missionType
+	}
+	return &RunRef{RunID: e.GetString("run_id"), RunDir: dir, MissionType: mt}
+}
+
+func newRunID() string {
+	var b [16]byte
+	rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return hex.EncodeToString(b[:])
+}
+
+func systemActor() *jsonx.Object {
+	return jsonx.NewObject("actor_id", "system", "actor_type", "service", "display_name", "", "model", nil, "provider", nil, "tool", nil)
+}
+
+func agentActor(agent string) *jsonx.Object {
+	return jsonx.NewObject("actor_id", agent, "actor_type", "llm", "display_name", "", "model", nil, "provider", nil, "tool", nil)
+}
+
+// appendRunEvent appends one runtime event to run.events.jsonl.
+func appendRunEvent(runDir, eventType string, payload *jsonx.Object) {
+	o := jsonx.NewObject("event_type", eventType, "payload", payload, "timestamp", clock.NowUTCISO())
+	f, err := os.OpenFile(filepath.Join(runDir, "run.events.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.WriteString(jsonx.Dumps(o, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true}) + "\n")
+}
+
+// startRun creates a run directory under store (frozen template, state,
+// MissionRunStarted event).
+func startRun(store, root, slug, missionType string) (*RunRef, error) {
+	tb, tpath, err := templateSource(root, missionType)
+	if err != nil {
+		return nil, err
+	}
+	runID := newRunID()
+	dir := filepath.Join(store, "runs", runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mission_template_frozen.yaml"), tb, 0o644); err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(tb)
+	key := missionType
+	if t, err := ParseTemplate(tb); err == nil && t.Key != "" {
+		key = t.Key
+	}
+	st := jsonx.NewObject("blocked_reason", nil, "completed_steps", []any{}, "decisions", &jsonx.Object{},
+		"inputs", jsonx.NewObject("mission_slug", slug), "issued_step_id", nil, "mission_id", nil, "mission_key", key,
+		"mission_slug", nil, "pending_decisions", &jsonx.Object{},
+		"policy_snapshot", jsonx.NewObject("default_route", "same_llm_context", "extras", &jsonx.Object{}, "strictness", "medium"),
+		"run_id", runID, "template_hash", hex.EncodeToString(sum[:]), "template_path", tpath)
+	if err := writeSnapshot(dir, &Snapshot{Obj: st}); err != nil {
+		return nil, err
+	}
+	appendRunEvent(dir, "MissionRunStarted", jsonx.NewObject("actor", systemActor(), "mission_id", nil, "mission_slug", nil,
+		"mission_type", missionType, "run_id", runID))
+	return &RunRef{RunID: runID, RunDir: dir, MissionType: key}, nil
+}
+
+// GetOrStartRun is runtime_bridge_io.get_or_start_run.
+func GetOrStartRun(root, slug, missionID, missionType string) (*RunRef, error) {
+	if r := ExistingRun(root, slug, missionID, missionType); r != nil {
+		return r, nil
+	}
+	store := filepath.Join(root, ".kittify", "runtime")
+	ref, err := startRun(store, root, slug, missionType)
+	if err != nil {
+		return nil, err
+	}
+	idx := loadIndex(root)
+	var mid any
+	if missionID != "" {
+		mid = missionID
+	}
+	rel, _ := filepath.Rel(root, ref.RunDir)
+	idx.Set(indexKey(slug, missionID), jsonx.NewObject("mission_id", mid, "mission_key", ref.MissionType,
+		"mission_slug", slug, "mission_type", missionType, "run_dir", filepath.ToSlash(rel), "run_id", ref.RunID))
+	os.MkdirAll(filepath.Dir(runIndexPath(root)), 0o755)
+	lock := runIndexPath(root) + ".lock"
+	if _, err := os.Stat(lock); err != nil {
+		os.WriteFile(lock, nil, 0o644)
+	}
+	if err := os.WriteFile(runIndexPath(root), []byte(jsonx.Dumps(idx, jsonx.SortedPretty)), 0o644); err != nil {
+		return nil, err
+	}
+	return ref, nil
+}
+
+// loadTemplate reads the run's frozen template.
+func loadTemplate(runDir string) (*Template, error) {
+	b, err := os.ReadFile(filepath.Join(runDir, "mission_template_frozen.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	return ParseTemplate(b)
+}
+
+// planned is a planner result (_internal_runtime.planner.plan_next).
+type planned struct {
+	Kind, StepID, Reason string
+	DecisionID, Question string
+	Options              []string
+	InputKey             string
+}
+
+// planNext is plan_next over a snapshot and template.
+func planNext(s *Snapshot, t *Template) planned {
+	if r := s.Obj.GetString("blocked_reason"); r != "" {
+		return planned{Kind: KindBlocked, Reason: r}
+	}
+	if pd := s.Obj.GetObject("pending_decisions"); pd != nil && pd.Len() > 0 {
+		keys := pd.Keys()
+		sort.Strings(keys)
+		req := pd.GetObject(keys[0])
+		p := planned{Kind: KindDecisionRequired, Reason: "pending_decision"}
+		if req != nil {
+			p.StepID, p.DecisionID, p.Question = req.GetString("step_id"), req.GetString("decision_id"), req.GetString("question")
+			p.Options = strList(req, "options")
+			if strings.HasPrefix(p.DecisionID, "input:") {
+				p.InputKey = strings.TrimPrefix(p.DecisionID, "input:")
+			}
+		}
+		return p
+	}
+	done := map[string]bool{}
+	for _, c := range s.completed() {
+		done[c] = true
+	}
+	issued := s.issued()
+	remaining := false
+	for _, st := range t.Steps {
+		if done[st.ID] || st.ID == issued {
+			continue
+		}
+		remaining = true
+		ok := true
+		for _, d := range st.DependsOn {
+			if !done[d] {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		inputs := s.Obj.GetObject("inputs")
+		decisions := s.Obj.GetObject("decisions")
+		for _, req := range st.RequiresInputs {
+			if (inputs == nil || !inputs.Has(req)) && (decisions == nil || !decisions.Has(req)) {
+				return planned{Kind: KindDecisionRequired, StepID: st.ID, DecisionID: "input:" + req, InputKey: req,
+					Question: fmt.Sprintf("Input required before step '%s': provide value for '%s'.", st.ID, req), Reason: "missing_required_input"}
+			}
+		}
+		return planned{Kind: KindStep, StepID: st.ID}
+	}
+	if remaining {
+		return planned{Kind: KindBlocked, Reason: "No eligible steps: remaining steps have unmet dependencies."}
+	}
+	return planned{Kind: KindTerminal, Reason: "All mission steps completed"}
+}
+
+// raciDecision is the inferred RACI record of a prompt step.
+func raciDecision(stepID string) *jsonx.Object {
+	return jsonx.NewObject("accountable", jsonx.NewObject("actor_id", nil, "actor_type", "human"), "consulted", []any{},
+		"inferred_rule", "prompt_default", "informed", []any{}, "override_reason", nil,
+		"responsible", jsonx.NewObject("actor_id", nil, "actor_type", "llm"), "source", "inferred", "step_id", stepID)
+}
+
+// advanceRun completes the issued step (success) and issues the next
+// planned step; returns the planner decision after the advance.
+func advanceRun(ref *RunRef, agent, result string) (planned, error) {
+	s, err := ReadSnapshot(ref.RunDir)
+	if err != nil {
+		return planned{}, err
+	}
+	t, err := loadTemplate(ref.RunDir)
+	if err != nil {
+		return planned{}, err
+	}
+	if issued := s.issued(); issued != "" {
+		switch result {
+		case "success":
+			comp := s.completed()
+			has := false
+			for _, c := range comp {
+				has = has || c == issued
+			}
+			if !has {
+				comp = append(comp, issued)
+			}
+			l := []any{}
+			for _, c := range comp {
+				l = append(l, c)
+			}
+			s.Obj.Set("completed_steps", l)
+		case "failed":
+			s.Obj.Set("blocked_reason", fmt.Sprintf("Previous step '%s' failed; manual intervention required.", issued))
+		case "blocked":
+			s.Obj.Set("blocked_reason", fmt.Sprintf("Previous step '%s' reported blocked state.", issued))
+		}
+		s.Obj.Set("issued_step_id", nil)
+		appendRunEvent(ref.RunDir, "NextStepAutoCompleted", jsonx.NewObject("actor", agentActor(agent), "agent_id", agent,
+			"mission_id", nil, "mission_slug", nil, "result", result, "run_id", ref.RunID, "step_id", issued))
+	}
+	p := planNext(s, t)
+	if p.Kind == KindStep {
+		s.Obj.Set("issued_step_id", p.StepID)
+		dec := s.Obj.GetObject("decisions")
+		if dec == nil {
+			dec = &jsonx.Object{}
+			s.Obj.Set("decisions", dec)
+		}
+		if !dec.Has("raci:" + p.StepID) {
+			dec.Set("raci:"+p.StepID, raciDecision(p.StepID))
+		}
+		appendRunEvent(ref.RunDir, "NextStepIssued", jsonx.NewObject("actor", agentActor(agent), "agent_id", agent,
+			"mission_id", nil, "mission_slug", nil, "run_id", ref.RunID, "step_id", p.StepID))
+	}
+	if err := writeSnapshot(ref.RunDir, s); err != nil {
+		return planned{}, err
+	}
+	return p, nil
+}
