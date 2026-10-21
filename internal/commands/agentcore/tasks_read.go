@@ -12,6 +12,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -262,7 +263,10 @@ type boardRow struct {
 	arbiterCat string
 	stallLabel string // _stall_label
 	staleRes   *staleResult
+	marker     string // _get_hic_marker ("👤 " for sentinel profiles)
 }
+
+func (r *boardRow) disp() string { return r.marker + r.id }
 
 func runTasksStatus(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
@@ -510,6 +514,7 @@ func runTasksStatus(ctx *cli.Context) error {
 	if transitions != nil {
 		pctText = pyFloat(progressF)
 	}
+	applyHICMarkers(root, rows)
 	renderBoard(ctx.Stdout, slug, rows, byLane, done, total, donePct, pctText, progressF, autoCommit)
 	return nil
 }
@@ -597,15 +602,15 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 			t = truncateRunes(t, 22) + "..."
 		}
 		if r.stale {
-			return []string{"⚠ " + r.id, t}
+			return []string{"⚠ " + r.disp(), t}
 		}
 		if r.lane == string(status.InProgress) && r.staleRes != nil && r.staleRes.isStale() {
-			return []string{"⚠️ " + r.id, t}
+			return []string{"⚠️ " + r.disp(), t}
 		}
 		if r.stallLabel != "" {
-			return []string{"⚠ " + r.id + " (review)", t}
+			return []string{"⚠ " + r.disp() + " (review)", t}
 		}
-		return []string{r.id + suffix, t}
+		return []string{r.disp() + suffix, t}
 	}
 	type col struct{ cells [][]string }
 	cols := make([]col, 5)
@@ -666,7 +671,7 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 	fmt.Fprintln(w, boxLine("└", "─", "┴", "┘", widths))
 	fmt.Fprintln(w)
 
-	bullet := func(r *boardRow) string { return fmt.Sprintf("  • %s - %s", r.id, r.title) }
+	bullet := func(r *boardRow) string { return fmt.Sprintf("  • %s - %s", r.disp(), r.title) }
 	var arbiterLines []string
 	for _, r := range rows {
 		if r.arbiterCat != "" {
@@ -728,7 +733,7 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 			label := r.staleRes.label()
 			switch {
 			case r.staleRes != nil && r.staleRes.isStale():
-				consolePrint(w, fmt.Sprintf("  • ⚠️ %s - %s (%s, agent: %v)", r.id, r.title, label, agent))
+				consolePrint(w, fmt.Sprintf("  • ⚠️ %s - %s (%s, agent: %v)", r.disp(), r.title, label, agent))
 				staleN++
 			case label != "":
 				consolePrint(w, fmt.Sprintf("%s (%s, agent: %v)", bullet(r), label, agent))
@@ -863,4 +868,26 @@ func reviewStallThreshold(root string) int {
 		}
 	}
 	return 30
+}
+
+// applyHICMarkers is _get_hic_marker over the rows: a WP whose frontmatter
+// agent_profile resolves to a sentinel profile (human-in-charge) is shown
+// with a "👤 " prefix. The catalog is only loaded when a row names a profile.
+func applyHICMarkers(root string, rows []*boardRow) {
+	var cat *doctrine.ProfileCatalog
+	for _, r := range rows {
+		v, ok := r.obj.Get("agent_profile")
+		id, isStr := v.(string)
+		if !ok || !isStr || id == "" {
+			continue
+		}
+		if cat == nil {
+			cat = doctrine.LoadProfileCatalog(root)
+		}
+		if p := cat.ByID[id]; p != nil {
+			if sv, ok := p.Data.Get("sentinel"); ok && sv == true {
+				r.marker = "👤 "
+			}
+		}
+	}
 }

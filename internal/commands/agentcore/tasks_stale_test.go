@@ -1,6 +1,7 @@
 package agentcore_test
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -25,6 +26,9 @@ func TestDiffTasksStatusStaleness(t *testing.T) {
 		or := p.Oracle.RunOracle(subst(args, o)...)
 		gs := staleMinutes.ReplaceAllString(p.Go.Normalize(gr.Stdout), "${1}<MIN>")
 		os_ := staleMinutes.ReplaceAllString(p.Oracle.Normalize(or.Stdout), "${1}<MIN>")
+		if os.Getenv("KITTY_TEST_TRACE") != "" {
+			t.Logf("%v\n== go ==\n%s== oracle ==\n%s", args, gs, os_)
+		}
 		if gr.Code != or.Code || gs != os_ {
 			t.Errorf("%v: exit go=%d oracle=%d\n%s", args, gr.Code, or.Code, testkit.Diff(os_, gs))
 		}
@@ -52,5 +56,13 @@ func TestDiffTasksStatusStaleness(t *testing.T) {
 		{"agent", "tasks", "move-task", "WP01", "--to", "in_review", "--mission", "$M", "--agent", "rev", "--json"},
 	})
 	compare("agent", "tasks", "status", "--mission", "$M", "--json")
+	compare("agent", "tasks", "status", "--mission", "$M")
+	// human-in-charge (sentinel profile) marker.
+	p.Both(func(s *testkit.Sandbox) {
+		for _, f := range []string{"WP01-subtract-helper.md", "WP02-multiply.md"} {
+			rel := filepath.Join("kitty-specs", missionSlug(t, s), "tasks", f)
+			s.WriteFile(rel, replaceOnce(s.ReadFile(rel), "agent_profile: python-pedro", "agent_profile: human-in-charge"))
+		}
+	})
 	compare("agent", "tasks", "status", "--mission", "$M")
 }
