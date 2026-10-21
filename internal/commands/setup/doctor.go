@@ -553,11 +553,11 @@ func verifyCommandSkills(root string) commandSkillVerify {
 }
 
 type skillsState struct {
-	entries                     int
-	report                      commandSkillVerify
-	configured, manifestAgents  []string
-	uninstalled                 []string
-	vibeMissing                 bool
+	entries                    int
+	report                     commandSkillVerify
+	configured, manifestAgents []string
+	uninstalled                []string
+	vibeMissing                bool
 }
 
 func loadSkillsState(root string) (skillsState, error) {
