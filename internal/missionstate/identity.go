@@ -56,7 +56,7 @@ func WriteRefusal(cwd, root string) string {
 
 // Disagreement is CheckoutDisagreement.
 type Disagreement struct {
-	Slug, Artifact         string
+	Slug, Artifact          string
 	InvokingSHA, PrimarySHA *string
 }
 
