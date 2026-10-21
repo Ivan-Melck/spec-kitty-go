@@ -26,9 +26,26 @@ func subst(args []string, slug string) []string {
 // exit code, normalized stdout and stderr.
 func compareSteps(t *testing.T, p *testkit.Pair, goSlug, orSlug string, steps ...step) {
 	t.Helper()
+	compareStepsVars(t, p, map[string]string{"$M": goSlug}, map[string]string{"$M": orSlug}, steps...)
+}
+
+func substVars(args []string, vars map[string]string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		for k, v := range vars {
+			a = strings.ReplaceAll(a, k, v)
+		}
+		out[i] = a
+	}
+	return out
+}
+
+// compareStepsVars is compareSteps with arbitrary per-side placeholders.
+func compareStepsVars(t *testing.T, p *testkit.Pair, goVars, orVars map[string]string, steps ...step) {
+	t.Helper()
 	for _, s := range steps {
-		g := p.Go.Run(subst(s, goSlug)...)
-		o := p.Oracle.RunOracle(subst(s, orSlug)...)
+		g := p.Go.Run(substVars(s, goVars)...)
+		o := p.Oracle.RunOracle(substVars(s, orVars)...)
 		if os.Getenv("KITTY_TEST_TRACE") != "" {
 			t.Logf("%v\n== go %d ==\n%s%s== oracle %d ==\n%s%s", s, g.Code, g.Stdout, g.Stderr, o.Code, o.Stdout, o.Stderr)
 		}

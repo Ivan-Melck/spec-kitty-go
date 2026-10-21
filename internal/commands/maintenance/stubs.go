@@ -20,9 +20,6 @@ func stub(name, short string) *cli.Command {
 	}
 }
 
-func newBackfillMergeCommitCmd() *cli.Command {
-	return stub("backfill-merge-commit", "Record a GitHub PR's real merge commit as a mission's review baseline (#4231).")
-}
 func newCharterEncodingCmd() *cli.Command {
 	return stub("charter-encoding", "Scan charter content for non-UTF-8 encodings; normalize-or-fail-loud.")
 }
