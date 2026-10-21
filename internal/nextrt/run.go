@@ -21,6 +21,7 @@ import (
 // TemplateStep is one mission-runtime.yaml step.
 type TemplateStep struct {
 	ID, Title, Description, PromptTemplate string
+	AgentProfile, ContractRef              string
 	DependsOn                              []string
 	RequiresInputs                         []string
 }
@@ -49,7 +50,8 @@ func ParseTemplate(b []byte) (*Template, error) {
 			continue
 		}
 		st := TemplateStep{ID: so.GetString("id"), Title: so.GetString("title"), Description: so.GetString("description"),
-			PromptTemplate: so.GetString("prompt_template")}
+			PromptTemplate: so.GetString("prompt_template"), AgentProfile: so.GetString("agent_profile"),
+			ContractRef: so.GetString("contract_ref")}
 		st.DependsOn = strList(so, "depends_on")
 		st.RequiresInputs = strList(so, "requires_inputs")
 		t.Steps = append(t.Steps, st)

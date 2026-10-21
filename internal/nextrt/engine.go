@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/invocation"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -500,6 +501,24 @@ func DecideNext(root, slug, agent, result string) *Decision {
 			}
 		}
 	}
+	// composition dispatch
+	if result == "success" && current != "" && shouldDispatchViaComposition(root, m.MissionType, current, tpl) {
+		action := normalizeComposedAction(current)
+		hint, contract := compositionInputs(root, m.MissionType, current, action, tpl)
+		var failures []string
+		if _, err := ExecuteStepContract(root, m.MissionType, action, agent, hint, "", contract); err != nil {
+			if _, ok := err.(*StepContractError); ok {
+				failures = []string{fmt.Sprintf("composition failed for %s/%s: %v", m.MissionType, action, err)}
+			} else {
+				failures = []string{fmt.Sprintf("composition crashed for %s/%s: %s: %v", m.MissionType, action, pyErrType(err), err)}
+			}
+		} else if m.MissionType == "software-dev" && action != "implement" && action != "review" {
+			failures = c.softwareDevGuards(action)
+		}
+		if len(failures) > 0 {
+			return c.compositionBlocked(current, failures)
+		}
+	}
 	plan, err := advanceRun(ref, agent, result)
 	if err != nil {
 		d := c.decision(KindBlocked, firstNonEmpty(current, "unknown"))
@@ -530,6 +549,41 @@ func DecideNext(root, slug, agent, result string) *Decision {
 	d.Reason = spOrNil(plan.Reason)
 	d.StepID = spOrNil(state)
 	return materialize(d)
+}
+
+// compositionBlocked is _dn_composition_blocked_decision.
+func (c *advanceCtx) compositionBlocked(step string, failures []string) *Decision {
+	action, wpID, wsPath := c.stateToAction(step)
+	d := c.decision(KindBlocked, step)
+	d.Reason, d.StepID, d.GuardFailures = sp(failures[0]), sp(step), failures
+	d.Action, d.WPID, d.WorkspacePath = spOrNil(action), spOrNil(wpID), spOrNil(wsPath)
+	if action != "" {
+		var p string
+		var err error
+		if wpID != "" {
+			p, err = buildWPPrompt(c.m, action, wpID, c.agent)
+		} else {
+			p, err = buildTemplatePrompt(c.m, c.featureDir, action, c.agent)
+		}
+		if err == nil {
+			d.PromptFile = spOrNil(p)
+		}
+	}
+	return materialize(d)
+}
+
+// pyErrType names an error class for the composition crash surface.
+func pyErrType(err error) string {
+	switch err.(type) {
+	case *invocation.WriteError:
+		return "InvocationWriteError"
+	case *invocation.Error:
+		return "InvocationError"
+	}
+	if strings.Contains(err.Error(), "not found") {
+		return "ProfileNotFoundError"
+	}
+	return "RuntimeError"
 }
 
 func buildDecisionPrompt(m *missionCtx, p planned, agent string) string {
