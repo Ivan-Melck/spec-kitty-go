@@ -100,6 +100,11 @@ func TestValidateTasksParity(t *testing.T) {
 	p.CompareTree("kitty-specs", true)
 	p.CompareTree(".worktrees", true)
 	p.Compare(true, "validate-tasks", "--all")
+
+	// A narrow console collapses and wraps the table and summary panel.
+	p.Both(legacyFixtures)
+	p.Both(func(s *testkit.Sandbox) { s.Env = append(s.Env, "COLUMNS=52") })
+	p.Compare(true, "validate-tasks", "--all")
 }
 
 func TestValidateTasksParityEdgeCases(t *testing.T) {

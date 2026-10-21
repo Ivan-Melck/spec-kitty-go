@@ -3,6 +3,7 @@ package uconsole
 import (
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"unicode/utf8"
 )
@@ -36,23 +37,161 @@ func WrapWords(s string, width int) []string {
 }
 
 // Table renders a rich.Table with the default HEAVY_HEAD box, padding (0, 1)
-// and an optional centered (wrapped) title. Cell text must be markup-free.
+// and an optional centered (wrapped) title at the console width. Cell text
+// must be markup-free.
 func Table(w io.Writer, title string, headers []string, rows [][]string) {
-	widths := make([]int, len(headers))
+	TableWidth(w, title, headers, rows, Width())
+}
+
+// maxWordLen is the widest whitespace-separated word (rich's minimum
+// measurement of a Text).
+func maxWordLen(s string) int {
+	m := 0
+	for _, word := range strings.Fields(s) {
+		if n := runeLen(word); n > m {
+			m = n
+		}
+	}
+	return m
+}
+
+func maxLineLen(s string) int {
+	m := 0
+	for _, line := range strings.Split(s, "\n") {
+		if n := runeLen(line); n > m {
+			m = n
+		}
+	}
+	return m
+}
+
+// pyRound is Python's round() (half to even).
+func pyRound(f float64) int { return int(math.RoundToEven(f)) }
+
+func sum(xs []int) int {
+	t := 0
+	for _, x := range xs {
+		t += x
+	}
+	return t
+}
+
+// ratioReduce is rich._ratio.ratio_reduce.
+func ratioReduce(total int, ratios, maximums, values []int) []int {
+	rs := make([]int, len(ratios))
+	totalRatio := 0
+	for i, r := range ratios {
+		if maximums[i] != 0 {
+			rs[i] = r
+			totalRatio += r
+		}
+	}
+	out := append([]int(nil), values...)
+	if totalRatio == 0 {
+		return out
+	}
+	remaining := total
+	for i, r := range rs {
+		if r != 0 && totalRatio > 0 {
+			d := pyRound(float64(r) * float64(remaining) / float64(totalRatio))
+			if maximums[i] < d {
+				d = maximums[i]
+			}
+			out[i] = values[i] - d
+			remaining -= d
+			totalRatio -= r
+		}
+	}
+	return out
+}
+
+// collapseWidths is rich.table.Table._collapse_widths with every column
+// wrappable.
+func collapseWidths(widths []int, maxWidth int) []int {
+	total := sum(widths)
+	excess := total - maxWidth
+	for total != 0 && excess > 0 {
+		maxCol, second := 0, 0
+		for _, w := range widths {
+			if w > maxCol {
+				maxCol = w
+			}
+		}
+		for _, w := range widths {
+			if w != maxCol && w > second {
+				second = w
+			}
+		}
+		diff := maxCol - second
+		if diff == 0 {
+			break
+		}
+		ratios := make([]int, len(widths))
+		for i, w := range widths {
+			if w == maxCol {
+				ratios[i] = 1
+			}
+		}
+		red := excess
+		if diff < red {
+			red = diff
+		}
+		maxReduce := make([]int, len(widths))
+		for i := range maxReduce {
+			maxReduce[i] = red
+		}
+		widths = ratioReduce(excess, ratios, maxReduce, widths)
+		total = sum(widths)
+		excess = total - maxWidth
+	}
+	return widths
+}
+
+// TableWidth is Table printed by a console of width maxWidth: when the
+// table does not fit, columns collapse and cells word-wrap like rich.
+func TableWidth(w io.Writer, title string, headers []string, rows [][]string, maxWidth int) {
+	n := len(headers)
+	extra := 2 + n - 1 // outer edges + column dividers
+	avail := maxWidth - extra
+	// widths include the cell padding (one space each side).
+	widths := make([]int, n)
 	for i, h := range headers {
-		widths[i] = runeLen(h)
+		widths[i] = maxLineLen(h)
 	}
 	for _, r := range rows {
-		for i, c := range r {
-			if i < len(widths) && runeLen(c) > widths[i] {
-				widths[i] = runeLen(c)
+		for i := 0; i < n && i < len(r); i++ {
+			if l := maxLineLen(r[i]); l > widths[i] {
+				widths[i] = l
 			}
 		}
 	}
-	total := 1
-	for _, wd := range widths {
-		total += wd + 3
+	for i := range widths {
+		widths[i] += 2
+		if widths[i] > avail {
+			widths[i] = avail
+		}
+		if widths[i] < 1 {
+			widths[i] = 1
+		}
 	}
+	if sum(widths) > avail {
+		widths = collapseWidths(widths, avail)
+		if sum(widths) > avail {
+			ones := make([]int, n)
+			for i := range ones {
+				ones[i] = 1
+			}
+			widths = ratioReduce(sum(widths)-avail, ones, widths, widths)
+		}
+	}
+	inner := make([]int, n)
+	for i := range widths {
+		inner[i] = widths[i] - 2
+		if inner[i] < 1 {
+			inner[i] = 1
+		}
+	}
+	total := sum(widths) + extra
 	if title != "" {
 		for _, line := range WrapWords(title, total) {
 			fmt.Fprintln(w, center(strings.TrimRight(line, " "), total, " "))
@@ -65,22 +204,47 @@ func Table(w io.Writer, title string, headers []string, rows [][]string) {
 			if i > 0 {
 				b.WriteString(m)
 			}
-			b.WriteString(strings.Repeat(h, wd+2))
+			b.WriteString(strings.Repeat(h, wd))
 		}
 		b.WriteString(r)
 		fmt.Fprintln(w, b.String())
 	}
 	cells := func(sep string, vals []string) {
-		var b strings.Builder
-		b.WriteString(sep)
-		for i, wd := range widths {
+		bottom := sep == "┃" // header cells align to the bottom
+		wrapped := make([][]string, n)
+		height := 1
+		for i := 0; i < n; i++ {
 			v := ""
 			if i < len(vals) {
 				v = vals[i]
 			}
-			b.WriteString(" " + pad(v, wd) + " " + sep)
+			var ls []string
+			for _, l := range strings.Split(v, "\n") {
+				for _, wl := range WrapEllipsis(l, inner[i]) {
+					ls = append(ls, strings.TrimRight(wl, " "))
+				}
+			}
+			wrapped[i] = ls
+			if len(ls) > height {
+				height = len(ls)
+			}
 		}
-		fmt.Fprintln(w, b.String())
+		for row := 0; row < height; row++ {
+			var b strings.Builder
+			b.WriteString(sep)
+			for i := 0; i < n; i++ {
+				v := ""
+				r := row
+				if bottom {
+					r = row - (height - len(wrapped[i]))
+				}
+				if r >= 0 && r < len(wrapped[i]) {
+					v = wrapped[i][r]
+				}
+				b.WriteString(" " + pad(v, inner[i]) + " " + sep)
+			}
+			fmt.Fprintln(w, b.String())
+		}
 	}
 	line("┏", "┳", "┓", "━")
 	cells("┃", headers)
