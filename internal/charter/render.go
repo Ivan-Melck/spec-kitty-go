@@ -92,39 +92,15 @@ func RenderCompact(root string, in CompactInput) string {
 		lines = append(lines, "  - Diagnostics: "+strings.Join(diags, " | "))
 	}
 	text := strings.Join(lines, "\n")
-	if in.Profile != nil {
-		if pb := renderProfileSections(in.Profile); pb != "" {
-			text += "\n\n" + pb
-		}
+	var blocks []string
+	profileBlock := RenderProfileSections(root, in.Profile)
+	if profileBlock != "" {
+		blocks = append(blocks, profileBlock)
 	}
-	return text
-}
-
-// renderProfileSections lists the profile-cited directives and tactics.
-func renderProfileSections(p *dct.Profile) string {
-	var lines []string
-	refs, _ := p.Data.Get("directive-references")
-	if l, ok := refs.([]any); ok && len(l) > 0 {
-		lines = append(lines, "Profile-Cited Directives:")
-		for _, x := range l {
-			if o, ok := x.(*jsonx.Object); ok {
-				lines = append(lines, fmt.Sprintf("  - %s: %s", dct.NormalizeDirectiveID(o.GetString("code")), o.GetString("name")))
-			}
-		}
+	if len(blocks) == 0 {
+		return text
 	}
-	trefs, _ := p.Data.Get("tactic-references")
-	if l, ok := trefs.([]any); ok && len(l) > 0 {
-		if len(lines) > 0 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, "Profile-Cited Tactics:")
-		for _, x := range l {
-			if o, ok := x.(*jsonx.Object); ok {
-				lines = append(lines, "  - "+o.GetString("id"))
-			}
-		}
-	}
-	return strings.Join(lines, "\n")
+	return enforceTokenBudget(text+"\n\n"+strings.Join(blocks, "\n\n"), in.Action, profileBlock, "")
 }
 
 // Reference is one charter.yaml catalog.references entry.
@@ -215,10 +191,8 @@ func renderBootstrap(root, action string, b *ActionBundle, refs []Reference, pro
 	for _, s := range sum {
 		lines = append(lines, "  - "+s)
 	}
-	if profile != nil {
-		if pb := renderProfileSections(profile); pb != "" {
-			lines = append(lines, "", pb)
-		}
+	if pb := RenderProfileSections(root, profile); pb != "" {
+		lines = append(lines, "", pb)
 	}
 	lines = append(lines, "", "Action Doctrine ("+action+"):")
 	any := false
