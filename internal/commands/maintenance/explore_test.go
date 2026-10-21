@@ -17,14 +17,9 @@ func TestExploreOracle(t *testing.T) {
 	missionfx.OracleCalcMission(t, p)
 	p.Both(legacyCorpus)
 	for _, a := range [][]string{
-		{"doctor", "mission-state", "--audit"},
-		{"doctor", "mission-state", "--fix"},
-		{"git", "status"},
-
-		{"doctor", "mission-state", "--fix", "--json"},
-		{"doctor", "mission-state", "--teamspace-dry-run"},
-		{"doctor", "coordination", "--json"},
-		{"doctor", "coordination"},
+		{"doctor", "mission-state", "--teamspace-dry-run", "--mission", "nope"},
+		{"doctor", "mission-state", "--teamspace-dry-run", "--mission", "nope", "--json"},
+		{"doctor", "mission-state", "--fix", "--mission", "nope", "--json"},
 	} {
 		r := p.Oracle.RunOracle(a...)
 		if a[0] == "git" {

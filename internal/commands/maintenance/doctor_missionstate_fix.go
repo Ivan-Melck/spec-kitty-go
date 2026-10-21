@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/missionstate"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
@@ -112,11 +113,47 @@ func runMissionStateFix(ctx *cli.Context, root string, jsonOut bool) error {
 
 // runTeamspaceDryRun is _run_teamspace_dry_run_mode.
 func runTeamspaceDryRun(ctx *cli.Context, root string, jsonOut bool) error {
-	msg := "doctor mission-state --teamspace-dry-run is not supported by this build"
-	if jsonOut {
-		fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("error", "TEAMSPACE_DRY_RUN_FAILED", "message", msg), compactJSON))
-	} else {
-		fmt.Fprintln(ctx.Stderr, "Error: "+msg)
+	out := ctx.Stdout
+	rep, err := missionstate.TeamspaceDryRun(root, optString(ctx, "mission"))
+	if err != nil {
+		// upstream only catches MissionStateDryRunError; a selection error
+		// (MissionStateRepairError) escapes as an uncaught exception: the
+		// traceback box is not reproduced, only its final line.
+		fmt.Fprintln(ctx.Stderr, "MissionStateRepairError: "+err.Error())
+		return cli.Exit(1)
 	}
-	return cli.Exit(1)
+	if jsonOut {
+		fmt.Fprint(out, rep.ToJSON())
+	} else if rep.Valid {
+		cprintf(out, "[green]TeamSpace dry-run valid[/green] (%d envelopes, spec-kitty-events %s).", rep.EnvelopeCount, missionstate.EventsPackageVersion)
+	} else {
+		cprintf(out, "[red]TeamSpace dry-run failed[/red] (%d validation issues).", len(rep.Errors))
+		for _, e := range rep.Errors {
+			softPrint(out, formatDryRunError(e))
+		}
+	}
+	if !rep.Valid {
+		return cli.Exit(1)
+	}
+	return nil
+}
+
+// formatDryRunError is _format_dry_run_error.
+func formatDryRunError(e *jsonx.Object) string {
+	get := func(k string, def any) any {
+		if v, ok := e.Get(k); ok {
+			return v
+		}
+		return def
+	}
+	slug := pyjson.Str(get("mission_slug", "<unknown>"))
+	artifact := pyjson.Str(get("artifact_path", ""))
+	line := get("line_number", get("line", nil))
+	code := pyjson.Str(get("error", get("finding_code", "")))
+	msg := pyjson.Str(get("message", ""))
+	loc := artifact
+	if line != nil {
+		loc = artifact + ":" + pyjson.Str(line)
+	}
+	return fmt.Sprintf("  - %s (%s): %s — %s", slug, loc, code, msg)
 }
