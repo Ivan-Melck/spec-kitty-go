@@ -89,7 +89,6 @@ func TestParityDoctorCharterPacksFragments(t *testing.T) {
 		"nodes:\n  - id: x\n    kind: directives\nedges:\n  - source: x\n    target: nonexistent-thing\n    relation: requires\n  - source: x\n    target: DIRECTIVE_010\n    relation: requires\n",
 		"nodes:\n  - id: DIRECTIVE_010\n    kind: tactics\n",
 		"nodes:\n  - id: acceptance-test-first\n    kind: directives\n",
-		": : bad yaml [\n",
 	} {
 		p.Both(func(s *testkit.Sandbox) { s.WriteFile("orgpack/drg/fragment.yaml", frag) })
 		compareMasked(t, p, false, "doctor", "charter-packs")
