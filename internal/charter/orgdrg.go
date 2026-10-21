@@ -11,6 +11,7 @@ import (
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
+	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
 // This file ports the org-tier DRG: charter.offering.drg.org_pack_loader
@@ -189,29 +190,68 @@ func globSuffix(dir, suffix string) []string {
 	return out
 }
 
-// checkOrgPackLevel is _check_org_pack_level (simplified: absent pack.yaml
-// or absent pack_level is a warning; a non-org level is a schema error).
+var packDescriptorModel = &sModel{"PackDescriptor", true, []sField{req("pack_id", tStr), optN("pack_version", tStr), optN("parent_pack", tStr),
+	req("name", tStr), req("pack_level", tEnum("built-in", "org", "project")), optN("requires_core", tStr), optN("active_charter", tStr), optN("pack_drg", tStr)}}
+
+// ValidatePackDescriptor validates a pack.yaml mapping (PackDescriptor);
+// returns pydantic's error text ("" when valid).
+func ValidatePackDescriptor(data any) string {
+	o, ok := data.(*jsonx.Object)
+	if !ok {
+		return formatPydErrors("PackDescriptor", []pydErr{{"", "Input should be a valid dictionary or instance of PackDescriptor", "model_type", data}})
+	}
+	var errs []pydErr
+	if _, ok := o.Get("accompanies_doctrine_pack"); ok {
+		return "RETIRED_PACK_FIELD"
+	}
+	validateModel(o, packDescriptorModel, "", &errs)
+	if len(errs) == 0 {
+		if lv, _ := o.Get("pack_level"); lv == "built-in" {
+			if pv, ok := o.Get("pack_version"); !ok || pv == nil {
+				errs = append(errs, pydErr{"", "Value error, pack_version is required when pack_level is 'built-in'", "value_error", o})
+			}
+		}
+	}
+	if len(errs) == 0 {
+		return ""
+	}
+	return formatPydErrors("PackDescriptor", errs)
+}
+
+// checkOrgPackLevel is _check_org_pack_level.
 func checkOrgPackLevel(packRoot string) (string, error) {
 	py := filepath.Join(packRoot, "pack.yaml")
 	if st, err := os.Stat(py); err != nil || st.IsDir() {
 		return fmt.Sprintf("PACK_LEVEL_MISSING: %s (org pack) has no 'pack.yaml'; add one declaring 'pack_level: org' (required once the deprecation window closes)", packRoot), nil
 	}
-	v, err := readYAMLFile(py)
+	b, err := os.ReadFile(py)
 	if err != nil {
 		return "", &OrgPackSchemaError{fmt.Sprintf("Org pack %s: invalid pack descriptor: %v", py, err), py}
 	}
-	o, ok := v.(*jsonx.Object)
-	if !ok {
-		return "", &OrgPackSchemaError{fmt.Sprintf("Org pack %s: invalid pack descriptor: pack.yaml must be a mapping", py), py}
+	v, err := yamlx.Parse(b)
+	if err != nil {
+		return "", &OrgPackSchemaError{fmt.Sprintf("Org pack %s: invalid pack descriptor: %v", py, err), py}
 	}
-	lv, ok := o.Get("pack_level")
-	if !ok {
-		return fmt.Sprintf("PACK_LEVEL_MISSING: %s has no 'pack_level'; add 'pack_level: org' (required once the deprecation window closes)", py), nil
+	warn := ""
+	verr := ValidatePackDescriptor(v)
+	if o, ok := v.(*jsonx.Object); ok && verr != "" {
+		if _, has := o.Get("pack_level"); !has {
+			o2 := o.Clone()
+			o2.Set("pack_level", "org")
+			if ValidatePackDescriptor(o2) == "" {
+				warn = fmt.Sprintf("PACK_LEVEL_MISSING: %s has no 'pack_level'; add 'pack_level: org' (required once the deprecation window closes)", py)
+				verr = ""
+				v = o2
+			}
+		}
 	}
-	if s, _ := lv.(string); s != "org" {
+	if verr != "" {
+		return "", &OrgPackSchemaError{fmt.Sprintf("Org pack %s: invalid pack descriptor: %s", py, verr), py}
+	}
+	if lv, _ := v.(*jsonx.Object).Get("pack_level"); lv != "org" {
 		return "", &OrgPackSchemaError{fmt.Sprintf("PACK_LEVEL_MISMATCH: %s declares pack_level %s but it is configured as a 'org' org pack", py, pyReprAny(lv)), py}
 	}
-	return "", nil
+	return warn, nil
 }
 
 func pyReprAny(v any) string {

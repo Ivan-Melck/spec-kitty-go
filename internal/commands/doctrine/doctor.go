@@ -51,10 +51,10 @@ func doctorRoot(ctx *cli.Context, jsonMode bool, code int) (string, error) {
 	return "", cli.Exit(code)
 }
 
-// printJSONRich is rich console.print_json(json_text): the payload
-// re-emitted with indent=2 and ensure_ascii=False.
+// printJSONRich is CliConsole.print_json(json.dumps(payload, indent=2)):
+// the pre-serialised text written verbatim (ensure_ascii=True).
 func printJSONRich(w io.Writer, v any) {
-	fmt.Fprintln(w, jsonx.Dumps(v, jsonx.PrettyUTF8))
+	fmt.Fprintln(w, jsonx.Dumps(v, jsonx.Pretty))
 }
 
 func exitCode(code int) error {
@@ -89,7 +89,7 @@ func runDoctorInvocationPairing(ctx *cli.Context) error {
 	rate := float64(rateV.(jsonx.Float))
 	groups, _ := rep.GetInt("total_groups")
 	if jsonMode {
-		fmt.Fprintln(w, jsonx.Dumps(rep, jsonx.Options{Indent: 2, SortKeys: true}))
+		fmt.Fprintln(w, jsonx.Dumps(rep, jsonx.SortedPretty))
 		if count > 0 {
 			return cli.Exit(1)
 		}
