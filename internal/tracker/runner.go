@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/user"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -50,10 +51,11 @@ func runCommand(command []string, cwd string) (string, error) {
 					reprs[i] = c
 				}
 				code := ee.ExitCode()
-				if code < 0 {
-					stderr = fmt.Sprintf("Command %s died with <Signals>.", pyjson.ReprString(pyjson.Repr(reprs)))
+				if ws, ok := ee.Sys().(interface{ Signal() syscall.Signal }); ok && code < 0 {
+					sig := ws.Signal()
+					stderr = fmt.Sprintf("Command '%s' died with <Signals.%s: %d>.", pyjson.Repr(reprs), signalName(sig), int(sig))
 				} else {
-					stderr = fmt.Sprintf("Command %s returned non-zero exit status %d.", pyjson.ReprString(pyjson.Repr(reprs)), code)
+					stderr = fmt.Sprintf("Command '%s' returned non-zero exit status %d.", pyjson.Repr(reprs), code)
 				}
 			}
 			return "", requestError(fmt.Sprintf("Command failed: %s :: %s", joined, stderr))
@@ -67,6 +69,15 @@ func runCommand(command []string, cwd string) (string, error) {
 		return "", &Crash{Type: "OSError", Msg: err.Error()}
 	}
 	return out.String(), nil
+}
+
+func signalName(s syscall.Signal) string {
+	names := map[int]string{1: "SIGHUP", 2: "SIGINT", 3: "SIGQUIT", 4: "SIGILL", 5: "SIGTRAP", 6: "SIGABRT", 7: "SIGBUS", 8: "SIGFPE",
+		9: "SIGKILL", 10: "SIGUSR1", 11: "SIGSEGV", 12: "SIGUSR2", 13: "SIGPIPE", 14: "SIGALRM", 15: "SIGTERM"}
+	if n, ok := names[int(s)]; ok {
+		return n
+	}
+	return fmt.Sprintf("SIG%d", int(s))
 }
 
 // --- program gateway (specify_cli.tracker.gateway) ---

@@ -39,6 +39,13 @@ func step(t *testing.T, p *testkit.Pair, args ...string) (testkit.Result, testki
 	return g, o
 }
 
+func mustContain(t *testing.T, s, want string) {
+	t.Helper()
+	if !strings.Contains(s, want) {
+		t.Errorf("output lacks %q:\n%s", want, s)
+	}
+}
+
 func compareFile(t *testing.T, p *testkit.Pair, abs func(s *testkit.Sandbox) string) {
 	t.Helper()
 	gb, gerr := os.ReadFile(abs(p.Go))
@@ -61,6 +68,65 @@ func credentials(s *testkit.Sandbox) string {
 func newTrackerPair(t *testing.T) *testkit.Pair {
 	t.Helper()
 	return missionfx.NewOraclePair(t)
+}
+
+// setTracker appends a raw tracker block to both projects' config.yaml.
+func setTracker(t *testing.T, p *testkit.Pair, block string) {
+	t.Helper()
+	p.Both(func(s *testkit.Sandbox) {
+		base := s.ReadFile(".kittify/config.yaml")
+		if i := strings.Index(base, "\ntracker:"); i >= 0 {
+			base = base[:i+1]
+		}
+		s.WriteFile(".kittify/config.yaml", base+block)
+	})
+}
+
+func TestOracleEgressVerdicts(t *testing.T) {
+	t.Parallel()
+	p := newTrackerPair(t)
+	for _, raw := range []string{"refused", `"refused"`, "Refused", "", "null", "5", "true", "[a, b]", "{a: 1}", "'refuse'", "1.5"} {
+		setTracker(t, p, "tracker:\n  provider: beads\n  workspace: ws\n  egress: "+raw+"\n")
+		step(t, p, "tracker", "sync", "pull")
+		step(t, p, "tracker", "sync", "push", "--json")
+		step(t, p, "tracker", "sync", "run")
+	}
+	// Bind keeps the recorded decision (with its quoting) and unknown keys.
+	setTracker(t, p, "tracker:\n  custom: 1\n  provider: fp\n  binding_ref: br\n  provider_context:\n    a: 1\n  workspace: old\n  egress: \"refused\"\n  ownership:\n    mode: split_ownership\n    field_owners:\n      title: local\n")
+	step(t, p, "tracker", "status", "--json")
+	step(t, p, "tracker", "bind", "--provider", "beads", "--workspace", "new")
+	compareFile(t, p, configYAML)
+	step(t, p, "tracker", "unbind")
+	compareFile(t, p, configYAML)
+	step(t, p, "tracker", "status")
+	step(t, p, "tracker", "sync", "pull")
+	step(t, p, "tracker", "bind", "--provider", "fp", "--workspace", "again")
+	compareFile(t, p, configYAML)
+}
+
+func TestOracleRemovedAndIncompleteBindings(t *testing.T) {
+	t.Parallel()
+	p := newTrackerPair(t)
+	cmds := [][]string{
+		{"tracker", "status"}, {"tracker", "status", "--json"}, {"tracker", "map", "list", "--json"},
+		{"tracker", "map", "add", "--wp-id", "WP01", "--external-id", "1"},
+		{"tracker", "sync", "pull"}, {"tracker", "sync", "publish", "--json"},
+	}
+	for _, block := range []string{
+		"tracker:\n  provider: linear\n  workspace: team\n",
+		"tracker:\n  provider: weird\n",
+		"tracker:\n  provider: beads\n",
+		"tracker:\n  provider: 5\n  workspace: w\n",
+		"tracker: [1, 2]\n",
+		"tracker:\n  provider: '  FP  '\n  workspace: ' w '\n  ownership: nope\n",
+	} {
+		setTracker(t, p, block)
+		for _, c := range cmds {
+			step(t, p, c...)
+		}
+		step(t, p, "tracker", "unbind")
+		compareFile(t, p, configYAML)
+	}
 }
 
 func TestOracleProvidersAndHelp(t *testing.T) {
