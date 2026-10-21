@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
 
@@ -23,6 +25,28 @@ func TestDiffTasksExtras(t *testing.T) {
 		{"agent", "tasks", "check-terminability", "--mission", "$M"},
 		{"agent", "tasks", "check-terminability", "--mission", "$M", "--json"},
 	})
+	// TRACE 9.7 / 9.8: bare slug, full mission_id and mid8 handles.
+	comparePairSteps(t, p, g, o, [][]string{
+		{"agent", "tasks", "status", "--mission", "calc-ops"},
+		{"agent", "tasks", "status", "--mission", "calc-ops", "--json"},
+	})
+	idOf := func(s *testkit.Sandbox) (string, string) {
+		meta, err := jsonx.DecodeObject([]byte(s.ReadFile(filepath.Join("kitty-specs", missionSlug(t, s), "meta.json"))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := meta.GetString("mission_id")
+		return id, id[:8]
+	}
+	gid, gmid := idOf(p.Go)
+	oid, omid := idOf(p.Oracle)
+	for _, h := range [][2]string{{gid, oid}, {gmid, omid}} {
+		gr := p.Go.Run("agent", "tasks", "status", "--mission", h[0], "--json")
+		or := p.Oracle.RunOracle("agent", "tasks", "status", "--mission", h[1], "--json")
+		if gr.Code != or.Code || p.Go.Normalize(gr.Stdout) != p.Oracle.Normalize(or.Stdout) {
+			t.Errorf("handle %s: go %d vs oracle %d\n%s", h[0], gr.Code, or.Code, testkit.Diff(p.Oracle.Normalize(or.Stdout), p.Go.Normalize(gr.Stdout)))
+		}
+	}
 	p.Both(func(s *testkit.Sandbox) {
 		f := filepath.Join("kitty-specs", missionSlug(t, s), "tasks", "WP02-multiply.md")
 		s.WriteFile(f, s.ReadFile(f)+"\n- [ ] Verified post-merge on main\n- CI is green in CI once enabled for consecutive runs\n")
