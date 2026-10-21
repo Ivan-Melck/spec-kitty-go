@@ -123,10 +123,10 @@ func comparePair(t *testing.T, p *testkit.Pair, args ...string) (testkit.Result,
 	if g.Code != o.Code {
 		t.Errorf("%s: exit go=%d oracle=%d\n--- go:\n%s%s\n--- oracle:\n%s%s", name, g.Code, o.Code, g.Stdout, g.Stderr, o.Stdout, o.Stderr)
 	}
-	if gs, os := p.Go.Normalize(g.Stdout), p.Oracle.Normalize(o.Stdout); gs != os {
+	if gs, os := digitSHA(p.Go.Normalize(g.Stdout)), digitSHA(p.Oracle.Normalize(o.Stdout)); gs != os {
 		t.Errorf("%s: stdout differs\n%s", name, testkit.Diff(os, gs))
 	}
-	if gs, os := p.Go.Normalize(g.Stderr), p.Oracle.Normalize(o.Stderr); gs != os {
+	if gs, os := digitSHA(p.Go.Normalize(g.Stderr)), digitSHA(p.Oracle.Normalize(o.Stderr)); gs != os {
 		t.Errorf("%s: stderr differs\n%s", name, testkit.Diff(os, gs))
 	}
 	return g, o
@@ -161,6 +161,11 @@ func compareGit(t *testing.T, p *testkit.Pair) {
 }
 
 var reCommit = regexp.MustCompile(`Commit: [0-9a-f]{7}\b`)
+
+// reDigitSHA masks all-digit short SHAs that testkit.Normalize keeps.
+var reDigitSHA = regexp.MustCompile(`\b[0-9]{7}(?:[0-9]{3})?\b`)
+
+func digitSHA(s string) string { return reDigitSHA.ReplaceAllString(s, "<SHORTSHA>") }
 
 // compareMissionTree compares kitty-specs (and optionally .worktrees),
 // dropping the oracle-written analysis-report.md whose issue_counts key

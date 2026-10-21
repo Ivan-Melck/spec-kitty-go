@@ -39,6 +39,7 @@ type Options struct {
 	RemoveWorktree *bool
 	Push, DryRun   bool
 	JSON, Yes      bool
+	Resume         bool
 }
 
 var compact = jsonx.Options{Indent: -1, EnsureASCII: true}
@@ -181,7 +182,15 @@ func Run(w io.Writer, root string, o Options) error {
 		sayErr(w, "Mission slug could not be resolved. Use --mission <slug>.")
 		return exit(2)
 	}
-	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret}
+	if o.Resume {
+		st := LoadState(root, missionIDOf(root, slug))
+		if st == nil {
+			sayErr(w, "No interrupted merge to resume.")
+			return exit(1)
+		}
+		say(w, fmt.Sprintf("Resume requested for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
+	}
+	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push}
 	return r.execute()
 }
 
@@ -302,6 +311,8 @@ type run struct {
 	number   int
 	baseline string
 	squash   string
+	push     bool
+	state    *MergeState
 }
 
 const abortedNote = "Merge aborted before any state change. Resolve the reported condition, then re-run spec-kitty consolidate."
@@ -359,6 +370,17 @@ func (r *run) execute() error {
 		say(r.w, "  No lane consolidation and no mission_number bake have occurred; the mission is unchanged. Move the listed WP(s) through review (approved/done), or cancel them with operator provenance, then re-run the merge.")
 		return exit(1)
 	}
+	mid := missionIDOf(r.root, r.slug)
+	st := LoadState(r.root, mid)
+	if st != nil {
+		done := 0
+		for _, id := range st.CompletedWPs {
+			if contains(st.WPOrder, id) {
+				done++
+			}
+		}
+		say(r.w, fmt.Sprintf("[bold cyan]Resuming[/bold cyan] merge for %s (%d/%d WPs already done)", r.slug, done, len(st.WPOrder)))
+	}
 	say(r.w, "[bold]Lane-based merge for "+r.slug+"[/bold]")
 	say(r.w, "  Mission branch: "+m.MissionBranch)
 	var ids []string
@@ -382,6 +404,15 @@ func (r *run) execute() error {
 		say(r.w, "\n[red]Error:[/red] Merge gates failed.")
 		return exit(1)
 	}
+	if st == nil && mid != "" {
+		coordRef := r.m.TargetBranch
+		if r.sf.Routed() {
+			coordRef = r.m.MissionBranch
+		}
+		st = newState(r.root, r.slug, mid, r.m.TargetBranch, r.strategy, r.m, r.wps, r.ret, r.push, coordRef)
+		st.Save(r.root)
+	}
+	r.state = st
 
 	restore := activateDrivers(r.root)
 	defer restore()
@@ -412,6 +443,9 @@ func (r *run) execute() error {
 	if err := r.doneBookkeeping(coordDone); err != nil {
 		return err
 	}
+	if err := r.reconcile(); err != nil {
+		return err
+	}
 	if r.strategy == "squash" {
 		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP claim integrity and squash content attribution verified (no un-attributable content on the target); per-SHA approved-reachability deferred under squash strategy.")
 	} else {
@@ -422,7 +456,71 @@ func (r *run) execute() error {
 	r.teardown(coordDone)
 	say(r.w, "\n[bold]Stale assertion findings:[/bold]")
 	say(r.w, "  No likely-stale assertions detected.")
+	ClearState(r.root, mid)
 	return nil
+}
+
+func contains(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
+}
+
+func missionIDOf(root, slug string) string {
+	return mission.ReadMetaOrEmpty(project.Specs(root, slug)).GetString("mission_id")
+}
+
+// reconcile is the merge/rebase reconciliation gate: every approved lane
+// commit must be reachable from the landed target; otherwise every branch
+// the run moved is rolled back and the merge refuses.
+func (r *run) reconcile() error {
+	if r.strategy == "squash" || r.state == nil {
+		return nil
+	}
+	base := ""
+	for _, p := range r.state.PreRefs {
+		if p[0] == r.m.MissionBranch {
+			base = p[1]
+		}
+	}
+	tips := map[string]string{}
+	for _, p := range r.state.LaneTips {
+		tips[p[0]] = p[1]
+	}
+	var failures []string
+	for _, l := range r.m.Lanes {
+		tip := tips[lanes.LaneBranchName(r.slug, l.LaneID, r.m.TargetBranch)]
+		if tip == "" || base == "" {
+			continue
+		}
+		out, err := gitx.Run(r.root, "rev-list", "--no-merges", base+".."+tip)
+		if err != nil {
+			continue
+		}
+		commits := strings.Fields(out)
+		for _, id := range l.WPIDs {
+			st := r.snap.WP(id)
+			if st == nil || (st.GetString("lane") != "approved" && st.GetString("lane") != "done") {
+				continue
+			}
+			for _, c := range commits {
+				if res, _ := gitx.Exec(r.root, nil, nil, "merge-base", "--is-ancestor", c, "refs/heads/"+r.m.TargetBranch); res.Code != 0 {
+					failures = append(failures, fmt.Sprintf("approved %s commit %s is NOT reachable from the target — approved work would be dropped", id, c[:10]))
+				}
+			}
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	fmt.Fprintln(r.w, "\nError: Reconciliation FAILED: "+strings.Join(failures, "; ")+". Every branch this consolidation moved (target, mission and coordination branches) is being restored to its pre-consolidation commit; the rollback report below names each branch, and a branch marked NOT restored still carries this run's commits. nothing was torn down. Inspect the target branch and the lane tips, then re-run the merge.")
+	r.state.UpdatedAt = clock.NowUTCISO()
+	r.state.Save(r.root)
+	fmt.Fprintln(r.w, r.state.Rollback(r.root))
+	return exit(1)
 }
 
 // ---------------------------------------------------------------------------
@@ -674,7 +772,35 @@ func (r *run) recordDone() error {
 			return exit(1)
 		}
 	}
+	r.clearTerminalLaneTips(sf)
 	return nil
+}
+
+// clearTerminalLaneTips is the on_wp_terminal hook of the done transitions:
+// a lane's tip ref is cleared once every WP of the lane is terminal.
+func (r *run) clearTerminalLaneTips(sf *coord.Surface) {
+	snap, err := status.ReduceDir(sf.StatusDir())
+	if err != nil {
+		return
+	}
+	for _, l := range r.m.Lanes {
+		if l.LaneID == lanes.PlanningLaneID {
+			continue
+		}
+		all := true
+		for _, id := range l.WPIDs {
+			lane := ""
+			if st := snap.WP(id); st != nil {
+				lane = st.GetString("lane")
+			}
+			if lane != "done" && lane != "canceled" {
+				all = false
+			}
+		}
+		if all {
+			gitx.Run(r.root, "update-ref", "-d", lanes.LaneTipRefPrefix+lanes.LaneBranchName(r.m.MissionSlug, l.LaneID, r.m.TargetBranch))
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

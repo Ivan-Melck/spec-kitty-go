@@ -109,13 +109,12 @@ func runConsolidate(ctx *cli.Context) error {
 		sayLiteral(ctx.Stdout, "Error: ", "Could not locate project root")
 		return cli.Exit(1)
 	}
-	if ctx.Bool("abort") || ctx.Bool("resume") {
-		sayLiteral(ctx.Stdout, "Error: ", "--abort/--resume are not supported by this build (no interrupted merge state is recorded).")
-		return cli.Exit(1)
+	if ctx.Bool("abort") {
+		return exitFrom(consolidate.Abort(ctx.Stdout, root, ctx.String("mission")))
 	}
 	o := consolidate.Options{Mission: ctx.String("mission"), Target: ctx.String("target"), Strategy: ctx.String("strategy"),
 		DeleteBranch: optBool(ctx, "delete-branch"), RemoveWorktree: optBool(ctx, "remove-worktree"),
-		Push: ctx.Bool("push"), DryRun: ctx.Bool("dry-run"), JSON: ctx.Bool("json"), Yes: ctx.Bool("yes")}
+		Push: ctx.Bool("push"), DryRun: ctx.Bool("dry-run"), JSON: ctx.Bool("json"), Yes: ctx.Bool("yes"), Resume: ctx.Bool("resume")}
 	if err := consolidate.Run(ctx.Stdout, root, o); err != nil {
 		return exitFrom(err)
 	}
