@@ -82,7 +82,7 @@ func build(n int, payload int) map[string][]Row {
 }
 
 func TestWriteIntegrity(t *testing.T) {
-	for _, tc := range []struct{ n, payload int }{{0, 0}, {1, 10}, {50, 100}, {400, 50}, {3000, 20}, {30, 9000}, {200, 3000}, {20000, 5}} {
+	for _, tc := range []struct{ n, payload int }{{0, 0}, {1, 10}, {50, 100}, {400, 50}, {3000, 20}, {30, 9000}, {200, 3000}, {20000, 5}, {2000, 1000}, {4500, 1000}, {4600, 1000}} {
 		t.Run(fmt.Sprintf("%d-%d", tc.n, tc.payload), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "t.db")
 			data := build(tc.n, tc.payload)

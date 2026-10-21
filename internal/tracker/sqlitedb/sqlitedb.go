@@ -746,25 +746,33 @@ func (w *writer) buildTable(root int, rows []Row) error {
 			w.writePage(root, 0x05, all, level[len(level)-1].page)
 			return nil
 		}
-		var next []node
+		// Plan groups: children[start..end-1] become cells, children[end]
+		// the right pointer. Every group needs at least one cell.
+		type span struct{ start, end int }
+		var groups []span
 		for start := 0; start < len(level); {
 			end, used := start, 0
-			// take children start..end-1 as cells, child end as right pointer
-			for end+1 < len(level) && used+len(icell(level[end]))+2 <= space {
+			for end+1 < len(level) && (used+len(icell(level[end]))+2 <= space || end == start) {
 				used += len(icell(level[end])) + 2
 				end++
 			}
-			if end == start && end+1 < len(level) {
-				end++
-			}
+			groups = append(groups, span{start, end})
+			start = end + 1
+		}
+		if last := groups[len(groups)-1]; last.start == last.end && len(groups) > 1 {
+			// Borrow the previous group's right child as this group's cell.
+			groups[len(groups)-2].end--
+			groups[len(groups)-1].start--
+		}
+		var next []node
+		for _, g := range groups {
 			var cs [][]byte
-			for _, n := range level[start:end] {
+			for _, n := range level[g.start:g.end] {
 				cs = append(cs, icell(n))
 			}
 			pg := w.alloc()
-			w.writePage(pg, 0x05, cs, level[end].page)
-			next = append(next, node{page: pg, maxKey: level[end].maxKey})
-			start = end + 1
+			w.writePage(pg, 0x05, cs, level[g.end].page)
+			next = append(next, node{page: pg, maxKey: level[g.end].maxKey})
 		}
 		level = next
 	}
