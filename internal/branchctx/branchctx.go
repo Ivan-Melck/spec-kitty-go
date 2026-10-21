@@ -18,7 +18,7 @@ func UTCStamp() string { return clock.Now().UTC().Format("2006-01-02T15:04:05Z")
 
 // Inject is _inject_branch_contract(payload, target_branch, current_branch,
 // expected_checkout_branch) without the primary-branch recommendation.
-func Inject(payload *jsonx.Object, target, current, expectedCheckout string) *jsonx.Object {
+func Inject(payload *jsonx.Object, target, current, matchTarget, expectedCheckout string) *jsonx.Object {
 	e := payload.Clone()
 	rv := e.GetObject("runtime_vars")
 	if rv == nil {
@@ -38,7 +38,11 @@ func Inject(payload *jsonx.Object, target, current, expectedCheckout string) *js
 	if expected == "" {
 		expected = target
 	}
-	matches := cur == expected
+	ref := expected
+	if matchTarget != "" {
+		ref = matchTarget
+	}
+	matches := cur == ref
 	summary := fmt.Sprintf("Current branch at workflow start: %s. Planning/base branch for this mission: %s. Completed changes must merge into %s.", cur, target, target)
 	rv.Set("now_utc_iso", now)
 	rv.Set("current_branch", cur)

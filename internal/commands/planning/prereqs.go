@@ -145,7 +145,7 @@ func runCheckPrerequisites(ctx *cli.Context) error {
 		} else {
 			payload = st.Payload()
 		}
-		emitJSON(ctx.Stdout, branchctx.Inject(payload, target, current, ""))
+		emitJSON(ctx.Stdout, branchctx.Inject(payload, target, current, "", ""))
 		return nil
 	}
 	if st.Valid {
