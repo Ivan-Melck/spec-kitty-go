@@ -96,6 +96,11 @@ Domain and command packages live under `internal/<area>/...`.
 - Unit tests next to the code.
 - End-to-end tests use `testkit.NewGitSandbox(t)` + `s.Run(...)` (builds the
   binary once).
+- Mission fixtures: `internal/testkit/missionfx` gives an initialised project
+  (`NewProject`, Go-only; `NewOraclePair`, both sides set up by the oracle's
+  init) and the two-WP calc mission (`AuthorCalc`, `OracleCalcMission`,
+  `NewLocalMission`, `AnalysisReport`). Reuse and extend it instead of writing
+  per-package fixtures.
 - Differential tests use `testkit.NewPair(t)` and skip unless
   `SPEC_KITTY_ORACLE` points at the oracle:
 

@@ -10,7 +10,7 @@ import (
 
 func fixture(t *testing.T, rel string) []byte {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(testkit.ModuleRoot(), "internal", "commands", "agentcore", "testdata", rel))
+	b, err := os.ReadFile(filepath.Join(testkit.ModuleRoot(), "internal", "testkit", "missionfx", "testdata", rel))
 	if err != nil {
 		t.Fatal(err)
 	}

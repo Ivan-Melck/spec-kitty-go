@@ -10,33 +10,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
 
-const localSlug = "calc-ops-01M54Y16"
-
-// newLocalMission builds (without the oracle) a finalized calc mission in a
-// lanes topology on branch feat/calc-ops, from the recorded fixtures.
-func newLocalMission(t *testing.T) *testkit.Sandbox {
-	t.Helper()
-	s := newProject(t)
-	s.Git("switch", "-q", "-c", "feat/calc-ops")
-	dir := filepath.Join("kitty-specs", localSlug)
-	for _, f := range []string{"spec.md", "plan.md", "tasks.md"} {
-		s.WriteFile(filepath.Join(dir, f), td(t, "calc/authored/"+f))
-	}
-	for _, f := range []string{"lanes.json", "status.events.jsonl", "status.json", "tasks/WP01-subtract-helper.md", "tasks/WP02-multiply.md"} {
-		s.WriteFile(filepath.Join(dir, f), td(t, "calc/finalized/"+f))
-	}
-	meta, err := jsonx.DecodeObject([]byte(td(t, "calc/finalized/meta.json")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	meta.Delete("coordination_branch")
-	meta.Set("topology", "lanes")
-	s.WriteFile(filepath.Join(dir, "meta.json"), jsonx.Dumps(meta, jsonx.Options{Indent: 2, SortKeys: true})+"\n")
-	s.Git("add", "-A")
-	s.Git("commit", "-q", "-m", "finalized calc mission")
-	return s
-}
-
 func mustJSON(t *testing.T, r testkit.Result) *jsonx.Object {
 	t.Helper()
 	line := strings.TrimSpace(r.Stdout)
