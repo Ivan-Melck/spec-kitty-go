@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
+	"github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
@@ -285,8 +286,12 @@ func (st *moveState) resolveTargets() error {
 	}
 	st.binding = &status.ResolvedBinding{}
 	if st.hasProfile {
+		ver, err := resolveProfileVersion(root, st.profile)
+		if err != nil {
+			return st.outErr(err.Error())
+		}
 		p := st.profile
-		st.binding.AgentProfile = &p
+		st.binding.AgentProfile, st.binding.AgentProfileVersion = &p, &ver
 	}
 	if st.autoCommit {
 		st.skipPrimary = isDir(st.m.Surface.CoordWorktree) && st.m.Surface.CoordWorktree != "" && coord.IsProtected(root, slug, st.targetBranch)
@@ -1967,4 +1972,27 @@ func (st *moveState) dependentWarnings() {
 		}
 	}
 	consolePrint(out, "")
+}
+
+// resolveProfileVersion is workflow._resolved_profile_version: the local
+// profile registry's schema version for --profile.
+func resolveProfileVersion(root, id string) (string, error) {
+	cat := doctrine.LoadProfileCatalog(root)
+	p := cat.Resolve(id)
+	if p == nil {
+		ids := cat.IDs()
+		sort.Strings(ids)
+		var quoted []string
+		for _, x := range ids {
+			quoted = append(quoted, "'"+x+"'")
+		}
+		return "", fmt.Errorf("Could not resolve --profile %s: Profile '%s' not found. Available: [%s]. Omit --profile to use the work package's own frontmatter agent_profile instead.",
+			mission.PyRepr(id), id, strings.Join(quoted, ", "))
+	}
+	for _, k := range []string{"schema-version", "schema_version"} {
+		if v, ok := p.Data.Get(k); ok && v != nil {
+			return status.PyStr(v), nil
+		}
+	}
+	return "1.0", nil
 }

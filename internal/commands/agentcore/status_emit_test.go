@@ -33,3 +33,15 @@ func TestDiffStatusEmit(t *testing.T) {
 	p.CompareTree(".kittify/derived", true)
 	compareGit(t, p)
 }
+
+func TestDiffMoveTaskProfile(t *testing.T) {
+	p := newOraclePair(t)
+	g, o := oracleCalcMission(t, p)
+	comparePairSteps(t, p, g, o, [][]string{
+		{"agent", "tasks", "move-task", "WP01", "--to", "claimed", "--mission", "$M", "--agent", "claude", "--profile", "bogus-profile", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "claimed", "--mission", "$M", "--agent", "claude", "--model", "opus", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "claimed", "--mission", "$M", "--agent", "claude", "--profile", "python-pedro", "--json"},
+		{"agent", "tasks", "status", "--mission", "$M", "--json"},
+	})
+	p.CompareTree(".worktrees", true)
+}

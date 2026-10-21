@@ -28,7 +28,7 @@ package unit tests run without the oracle.
 | `agent tasks check-terminability` | done | `TestDiffTasksExtras` | — |
 | `agent tasks finalize-tasks` | missing (wave 3) | — | library support: `lanes.Compute`, `lanes.Write`, `coord.Surface.EmitTransition` |
 | `agent tasks map-requirements` | missing (wave 3) | — | — |
-| `agent status emit` | done | `TestDiffStatusEmit` | `--profile`/`--invocation-id` not supported by `move-task` (see below) |
+| `agent status emit` | done | `TestDiffStatusEmit` | — |
 | `agent status materialize` | done | `TestDiffTasksReadAndAnnotate` | — |
 | `agent status lifecycle` | done | `TestDiffStatusLeaves` | post-mission history (reopen / follow-up events) not rendered |
 | `agent status validate` | done | `TestDiffStatusLeaves` | the "orphaned event" stderr WARNING (human mode) is not printed |
@@ -58,10 +58,9 @@ derived views, approval-stamp warning and the dependency alert.
 
 Not implemented (returns an error or is skipped):
 * `--owned-checkout` (refused), `--invocation-id` (refused: Op records are
-  area C), `--model` without `--invocation-id` refused like upstream;
-  `--profile` is recorded as the resolved profile without the registry
-  schema-version lookup (upstream resolves `agent_profile_version` through
-  the profile registry).
+  area C), `--model` without `--invocation-id` refused like upstream.
+  `--profile` resolves the profile (and its `schema-version`) through the
+  area-C doctrine profile catalog (`TestDiffMoveTaskProfile`).
 * A *declared* pre-review regression gate (`review.test_command` /
   `pre_review_test_scope`): the scoped pytest run is not executed; the
   transition records the undeclared `skipped` verdict.
