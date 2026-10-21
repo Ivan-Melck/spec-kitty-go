@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	tr "github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
@@ -26,8 +28,25 @@ const (
 
 func jsonFlag(help string) *cli.Flag { return &cli.Flag{Name: "json", Kind: cli.Bool, Help: help} }
 
+// limitFlag is typer's IntRange(min=1, max=10000) option. It is parsed in
+// the command (not by the framework) so a non-integer reports click's
+// "is not a valid int range" wording.
 func limitFlag(help string) *cli.Flag {
-	return &cli.Flag{Name: "limit", Kind: cli.Int, Metavar: limitMetavar, Default: 100, Help: help}
+	return &cli.Flag{Name: "limit", Kind: cli.String, Metavar: limitMetavar, Default: "100", Help: help}
+}
+
+// parseLimit validates --limit like click.IntRange(1, 10000).
+func parseLimit(ctx *cli.Context) (int, error) {
+	raw := ctx.String("limit")
+	s := strings.ReplaceAll(strings.TrimSpace(raw), "_", "")
+	n, err := strconv.Atoi(s)
+	if err != nil || s == "" || strings.HasPrefix(strings.TrimSpace(raw), "_") || strings.HasSuffix(strings.TrimSpace(raw), "_") || strings.Contains(raw, "__") {
+		return 0, cli.Usage(ctx.Cmd, "Invalid value for '--limit': %s is not a valid int range.", pyjson.ReprString(raw))
+	}
+	if n < 1 || n > 10000 {
+		return 0, cli.Usage(ctx.Cmd, "Invalid value for '--limit': %d is not in the range 1<=x<=10000.", n)
+	}
+	return n, nil
 }
 
 func init() {
@@ -323,16 +342,10 @@ func syncRoot(ctx *cli.Context) (string, error) {
 	return root, nil
 }
 
-func checkLimit(ctx *cli.Context) error {
-	if l := ctx.Int("limit"); l < 1 || l > 10000 {
-		return cli.Usage(ctx.Cmd, "Invalid value for '--limit': %d is not in the range 1<=x<=10000.", l)
-	}
-	return nil
-}
-
 func syncRunner(op string) func(*cli.Context) error {
 	return func(ctx *cli.Context) error {
-		if err := checkLimit(ctx); err != nil {
+		limit, err := parseLimit(ctx)
+		if err != nil {
 			return err
 		}
 		root, err := syncRoot(ctx)
@@ -340,7 +353,7 @@ func syncRunner(op string) func(*cli.Context) error {
 			return err
 		}
 		jsonMode := ctx.Bool("json")
-		payload, err := tr.NewService(root).Sync(op, ctx.Int("limit"))
+		payload, err := tr.NewService(root).Sync(op, limit)
 		if err != nil {
 			return fail(ctx, err, jsonMode)
 		}

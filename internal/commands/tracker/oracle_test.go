@@ -135,6 +135,8 @@ func TestOracleProvidersAndHelp(t *testing.T) {
 	for _, args := range [][]string{
 		{"tracker", "providers"}, {"tracker", "providers", "--json"},
 		{"tracker", "sync", "pull", "--limit", "0"}, {"tracker", "bind"},
+		{"tracker", "sync", "push", "--limit", "abc"}, {"tracker", "sync", "run", "--limit", "10001"},
+		{"tracker", "sync", "run", "--limit", "-5"},
 	} {
 		step(t, p, args...)
 	}
@@ -162,10 +164,9 @@ func helpCompare(t *testing.T, p *testkit.Pair, args ...string) {
 	}
 }
 
-// helpNorm collapses layout. The shared renderer currently prints INTEGER
-// for every int option instead of the declared metavar (area M).
+// helpNorm collapses layout (column widths and padding belong to the shared
+// renderer) while keeping every word of the help content.
 func helpNorm(s string) string {
-	s = strings.ReplaceAll(s, "<int range> [1<=x<=10000]", "INTEGER")
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
 		l = strings.Join(strings.Fields(strings.Trim(l, "│╭╮╰╯─ ")), " ")
