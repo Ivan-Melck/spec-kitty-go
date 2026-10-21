@@ -44,6 +44,7 @@ func doctorLeafCommands() []*cli.Command {
 		newDoctorProvenanceCmd(),
 		newDoctorCutoverCmd(),
 		newDoctorReviewCycleReconcileCmd(),
+		newDoctorDecisionsCmd(),
 		{Name: "shim-registry", Short: short("shim-registry"), Long: longHelp["doctor_shim-registry"], Flags: []*cli.Flag{doctorJSONFlag(machineJSON)}, Run: runDoctorShimRegistry},
 		{Name: "contracts", Short: short("contracts"), Long: longHelp["doctor_contracts"], Flags: []*cli.Flag{doctorJSONFlag(machineJSON)}, Run: runDoctorContracts},
 	}
