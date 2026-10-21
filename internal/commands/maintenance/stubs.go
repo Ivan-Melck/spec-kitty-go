@@ -32,9 +32,3 @@ func newBackfillRuntimeStateCmd() *cli.Command {
 func newBackfillWPStatusCmd() *cli.Command {
 	return stub("backfill-wp-status", "Seed the lane events a Mission's WP files lack, so the status snapshot counts every WP (#5579).")
 }
-func newRebaselineDossierHashesCmd() *cli.Command {
-	return stub("rebaseline-dossier-hashes", "One-time re-baseline of recorded dossier snapshot hashes (FR-009, WP05).")
-}
-func newRepinHooksCmd() *cli.Command {
-	return stub("repin-hooks", "Re-pin this repository's pre-commit hook to the current interpreter (#254).")
-}
