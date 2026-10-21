@@ -117,10 +117,8 @@ func runTeamspaceDryRun(ctx *cli.Context, root string, jsonOut bool) error {
 	rep, err := missionstate.TeamspaceDryRun(root, optString(ctx, "mission"))
 	if err != nil {
 		// upstream only catches MissionStateDryRunError; a selection error
-		// (MissionStateRepairError) escapes as an uncaught exception: the
-		// traceback box is not reproduced, only its final line.
-		fmt.Fprintln(ctx.Stderr, "MissionStateRepairError: "+err.Error())
-		return cli.Exit(1)
+		// (MissionStateRepairError) escapes as an uncaught exception.
+		return uncaught(ctx, "MissionStateRepairError", err)
 	}
 	if jsonOut {
 		fmt.Fprint(out, rep.ToJSON())
