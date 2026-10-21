@@ -37,6 +37,7 @@ type Selection struct {
 	AvailableTools                                                      []string
 	TemplateSet                                                         string
 	AuthorityPaths, GovernanceReferences                                []any
+	AgentProfiles, MissionStepContracts                                 []string
 }
 
 func strList(v any) []string {
@@ -67,6 +68,7 @@ func LoadSelection(root string) Selection {
 	s.Paradigms, s.Directives, s.Tactics = get("selected_paradigms"), get("selected_directives"), get("selected_tactics")
 	s.Styleguides, s.Toolguides, s.Procedures = get("selected_styleguides"), get("selected_toolguides"), get("selected_procedures")
 	s.AvailableTools = get("available_tools")
+	s.AgentProfiles, s.MissionStepContracts = get("selected_agent_profiles"), get("selected_mission_step_contracts")
 	s.TemplateSet = c.GetString("template_set")
 	s.AuthorityPaths = c.GetList("authority_paths")
 	s.GovernanceReferences = c.GetList("governance_references")

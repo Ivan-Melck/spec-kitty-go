@@ -530,6 +530,7 @@ func RenderProfileSections(root string, p *dct.Profile) string {
 
 type budgetSection struct {
 	id, header, body, selector, when, indent string
+	replacement                              *string
 }
 
 func rlen(s string) int { return utf8.RuneCountInString(s) }
@@ -557,6 +558,23 @@ var headingLineRe = regexp.MustCompile(`^###\s+(\S.*?)\s*$`)
 
 // enforceTokenBudget is _enforce_token_budget (section/profile candidates).
 func enforceTokenBudget(text, action, profileBlock, sectionBlock string) string {
+	return enforceTokenBudgetSel(text, action, profileBlock, sectionBlock, "")
+}
+
+// selectionGroups is token_budget._SELECTION_GROUPS.
+var selectionGroups = map[string][2]string{
+	"Selected paradigms:":              {"paradigm", "are about to choose a reasoning frame"},
+	"Selected directives:":             {"directive", "are about to apply a code change"},
+	"Selected tactics:":                {"tactic", "are about to apply a code change"},
+	"Selected styleguides:":            {"styleguide", "are about to write styled output"},
+	"Selected toolguides:":             {"toolguide", "are about to invoke a project tool"},
+	"Selected procedures:":             {"procedure", "are about to follow a workflow"},
+	"Selected agent profiles:":         {"agent_profile", "are about to apply a code change"},
+	"Selected mission step contracts:": {"mission_step_contract", "are about to step a mission action"},
+}
+
+// enforceTokenBudgetSel is _enforce_token_budget with a selection block.
+func enforceTokenBudgetSel(text, action, profileBlock, sectionBlock, selectionBlock string) string {
 	budget := budgetDefault
 	if rlen(text) <= budget {
 		return text
@@ -599,6 +617,30 @@ func enforceTokenBudget(text, action, profileBlock, sectionBlock string) string 
 			idx++
 		}
 	}
+	if selectionBlock != "" {
+		for _, chunk := range strings.Split(selectionBlock, "\n\n") {
+			if chunk == "" {
+				continue
+			}
+			h, b := splitLeadingHeader(chunk)
+			g, ok := selectionGroups[h]
+			if !ok || b == "" {
+				continue
+			}
+			var ids []string
+			for _, l := range strings.Split(b, "\n") {
+				if strings.HasPrefix(l, "  - ") {
+					ids = append(ids, l)
+				}
+			}
+			if len(ids) == 0 {
+				continue
+			}
+			rep := strings.Join(append(ids, "  Run: spec-kitty charter context --include "+g[0]+":SELECTED_ID",
+				"  When you "+g[1]+", replace SELECTED_ID with an ID above and apply the returned rule."), "\n")
+			cands = append(cands, budgetSection{id: "global-selection:" + g[0], header: h, body: b, replacement: &rep})
+		}
+	}
 	if len(cands) == 0 {
 		return text
 	}
@@ -615,7 +657,12 @@ func enforceTokenBudget(text, action, profileBlock, sectionBlock string) string 
 		if rlen(cur) <= budgetWithoutWarning(swapped, budget) {
 			break
 		}
-		stanza := strings.Join(fetchStanzaLines(s.selector, s.when, s.indent), "\n")
+		stanza := ""
+		if s.replacement != nil {
+			stanza = *s.replacement
+		} else {
+			stanza = strings.Join(fetchStanzaLines(s.selector, s.when, s.indent), "\n")
+		}
 		nt := strings.Replace(cur, s.body, stanza, 1)
 		if nt == cur {
 			continue

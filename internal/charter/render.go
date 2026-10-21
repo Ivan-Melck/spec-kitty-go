@@ -178,55 +178,6 @@ func referencePath(r Reference) string {
 	return r.LocalPath
 }
 
-// renderBootstrap is a simplified upstream _render_bootstrap_text.
-func renderBootstrap(root, action string, b *ActionBundle, refs []Reference, profile *dct.Profile) string {
-	mdPath := Path(root, CharterMD)
-	content, _ := os.ReadFile(mdPath)
-	lines := []string{"Charter Context (Bootstrap):", "  - Source: " + mdPath,
-		"  - This is the first load for this action. Use the summary and follow references as needed.", "", "Policy Summary:"}
-	sum := PolicySummary(string(content))
-	if len(sum) == 0 {
-		lines = append(lines, "  - "+noneLabel)
-	}
-	for _, s := range sum {
-		lines = append(lines, "  - "+s)
-	}
-	if pb := RenderProfileSections(root, profile); pb != "" {
-		lines = append(lines, "", pb)
-	}
-	lines = append(lines, "", "Action Doctrine ("+action+"):")
-	any := false
-	if b != nil {
-		for _, k := range []dct.Kind{dct.Directive, dct.Tactic, dct.Styleguide, dct.Toolguide, dct.Procedure} {
-			ids := b.IDs[k]
-			if len(ids) == 0 {
-				continue
-			}
-			any = true
-			lines = append(lines, "  "+strings.Title(strings.ReplaceAll(k.Plural(), "_", " "))+":")
-			repo := b.Offer.Repo(k)
-			for _, id := range ids {
-				t := id
-				if a := repo.Get(id); a != nil {
-					t = id + ": " + a.Title()
-				}
-				lines = append(lines, "    - "+t)
-			}
-		}
-	}
-	if !any {
-		lines = append(lines, "  - "+noneLabel)
-	}
-	lines = append(lines, "", "Reference Docs:")
-	if len(refs) == 0 {
-		lines = append(lines, "  - "+noneLabel)
-	}
-	for _, r := range refs {
-		lines = append(lines, fmt.Sprintf("  - %s: %s (%s)", r.ID, r.Title, referencePath(r)))
-	}
-	return strings.Join(lines, "\n")
-}
-
 // readYAMLObject parses a YAML file into an object (nil on failure).
 func readYAMLObject(p string) *jsonx.Object {
 	b, err := os.ReadFile(p)
