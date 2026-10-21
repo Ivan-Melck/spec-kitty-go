@@ -3,6 +3,7 @@ package drivers
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -192,6 +193,8 @@ func readOurs(s *testkit.Sandbox) string {
 	return strings.ReplaceAll(string(b), s.Dir, "<PROJ>")
 }
 
+var dictInputValue = regexp.MustCompile(`input_value=\{.*?\}, input_type`)
+
 // TestDriversParity runs every case through both binaries and compares exit
 // code, stdout, stderr (unless upstream crashed with a traceback) and the
 // resulting OURS bytes.
@@ -208,7 +211,12 @@ func TestDriversParity(t *testing.T) {
 			if gr.Code != or.Code {
 				t.Fatalf("exit go=%d oracle=%d\ngo stderr: %s\noracle stderr: %s", gr.Code, or.Code, gr.Stderr, or.Stderr)
 			}
-			norm := func(s *testkit.Sandbox, x string) string { return strings.ReplaceAll(x, s.Dir, "<PROJ>") }
+			// Upstream rebuilds the top-level dict from a set union, so the key
+			// order of pydantic's truncated input_value repr depends on the
+			// Python hash seed. Mask dict reprs there.
+			norm := func(s *testkit.Sandbox, x string) string {
+				return dictInputValue.ReplaceAllString(strings.ReplaceAll(x, s.Dir, "<PROJ>"), "input_value={<dict>}, input_type")
+			}
 			if a, b := norm(g, gr.Stdout), norm(o, or.Stdout); a != b {
 				t.Errorf("stdout differs\n%s", testkit.Diff(b, a))
 			}
