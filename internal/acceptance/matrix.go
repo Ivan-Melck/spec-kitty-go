@@ -12,10 +12,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/atomicfile"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
 // MatrixFile is the acceptance matrix filename.
@@ -675,3 +677,9 @@ func SpliceOwnedRows(fresh, snapshot, judgedM *Matrix) {
 	splice(fresh.NegativeInvariants, snapshot.NegativeInvariants, judgedM.NegativeInvariants, "invariant_id", "result",
 		[]string{"verification_method", "verification_command", "scope"})
 }
+
+func nowISO() string { return clock.NowUTCISO() }
+
+func readAsset(name string) ([]byte, error) { return assets.ReadFile(name) }
+
+func parseYAMLObject(b []byte) (*jsonx.Object, error) { return yamlx.ParseObject(b) }
