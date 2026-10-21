@@ -183,9 +183,17 @@ func isTargetOwnedPath(rel string) bool {
 func abortMerge(dir string) { git(dir, "merge", "--abort") }
 
 // mergeRecordedPlanningCommit is _merge_recorded_planning_commit.
-func mergeRecordedPlanningCommit(root, wt, laneID string, sha *string) error {
+func mergeRecordedPlanningCommit(root, wt, laneID string, sha *string, targetBranch string) error {
 	if sha == nil || *sha == "" {
 		return nil
+	}
+	if tip := branchTip(root, targetBranch); tip != "" && !isAncestorIn(root, *sha, tip) {
+		class, next := "orphaned", fmt.Sprintf("the recorded planning commit '%s' is orphaned (no longer reachable from the mission's target-branch tip); run 'spec-kitty agent mission finalize-tasks --refresh-planning-commit --allow-orphaned' to re-point it, then retry this WP.", *sha)
+		if git(root, "cat-file", "-e", *sha+"^{commit}").Code != 0 {
+			class = "foreign"
+			next = fmt.Sprintf("the recorded planning commit '%s' is foreign (its commit object is absent from this repository, not merely unreachable); a re-pin cannot recover an absent object -- investigate how this SHA was recorded and repair the mission's planning provenance before retrying this WP.", *sha)
+		}
+		return &AllocError{Msg: fmt.Sprintf("cannot merge the recorded planning commit '%s' into lane '%s': it is %s against the target-branch tip. %s", *sha, laneID, class, next), NextStep: next}
 	}
 	if isAncestorIn(wt, *sha, "HEAD") {
 		return nil
@@ -300,7 +308,7 @@ func AllocateLaneWorktree(o *Out, root, slug, wpID string, m *lanes.Manifest) (s
 		if err := validateWorktreeClean(wt, lane.LaneID); err != nil {
 			return "", "", err
 		}
-		if err := mergeRecordedPlanningCommit(root, wt, lane.LaneID, m.PlanningCommitSHA); err != nil {
+		if err := mergeRecordedPlanningCommit(root, wt, lane.LaneID, m.PlanningCommitSHA, m.TargetBranch); err != nil {
 			return "", "", err
 		}
 		if err := mergeDependencyLaneTips(o, root, wt, slug, lane, m); err != nil {
@@ -325,7 +333,7 @@ func AllocateLaneWorktree(o *Out, root, slug, wpID string, m *lanes.Manifest) (s
 				return "", "", err
 			}
 		}
-		if err := mergeRecordedPlanningCommit(root, wt, lane.LaneID, m.PlanningCommitSHA); err != nil {
+		if err := mergeRecordedPlanningCommit(root, wt, lane.LaneID, m.PlanningCommitSHA, m.TargetBranch); err != nil {
 			return "", "", err
 		}
 		if err := mergeDependencyLaneTips(o, root, wt, slug, lane, m); err != nil {
@@ -361,7 +369,7 @@ func AllocateLaneWorktree(o *Out, root, slug, wpID string, m *lanes.Manifest) (s
 			return "", "", err
 		}
 	}
-	if err := mergeRecordedPlanningCommit(root, wt, lane.LaneID, m.PlanningCommitSHA); err != nil {
+	if err := mergeRecordedPlanningCommit(root, wt, lane.LaneID, m.PlanningCommitSHA, m.TargetBranch); err != nil {
 		git(root, "worktree", "remove", "--force", wt)
 		return "", "", err
 	}

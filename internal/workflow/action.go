@@ -291,7 +291,7 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 	if ws.Exists() {
 		if m, err := lanes.Read(primary); err == nil && m != nil {
 			if lane := m.LaneForWP(wpID); lane != nil && lane.LaneID != lanes.PlanningLaneID {
-				if err := mergeRecordedPlanningCommit(root, ws.WorktreePath, lane.LaneID, m.PlanningCommitSHA); err != nil {
+				if err := mergeRecordedPlanningCommit(root, ws.WorktreePath, lane.LaneID, m.PlanningCommitSHA, m.TargetBranch); err != nil {
 					o.Printf("Error self-healing workspace for %s: %v", wpID, err)
 					return ExitErr(1)
 				}
