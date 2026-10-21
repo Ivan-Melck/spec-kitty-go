@@ -6,7 +6,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
 
-var doctorLeaves = []string{"shim-registry", "contracts", "identity", "topology", "workspaces", "sparse-checkout", "run-index", "provenance", "cutover"}
+var doctorLeaves = []string{"shim-registry", "contracts", "identity", "topology", "workspaces", "sparse-checkout", "run-index", "provenance", "cutover", "review-cycle-reconcile"}
 
 const shimRegistry = `shims:
 - legacy_path: specify_cli.old_mod
