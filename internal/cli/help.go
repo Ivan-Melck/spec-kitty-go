@@ -23,11 +23,11 @@ func Width() int { return rich.Width() }
 // usagePieces are click's collect_usage_pieces (after "[OPTIONS]").
 func usagePieces(c *Command) []string {
 	pieces := []string{"[OPTIONS]"}
-	if c.isGroup() {
-		return append(pieces, "COMMAND [ARGS]...")
-	}
 	for _, a := range c.Args {
 		pieces = append(pieces, argUsage(a))
+	}
+	if c.isGroup() || c.GroupUsage {
+		pieces = append(pieces, "COMMAND [ARGS]...")
 	}
 	return pieces
 }
@@ -89,7 +89,8 @@ func textWrap(text string, width int, initial, subsequent string) []string {
 // decoration ("{x}" / "[x]"), else its parameter name.
 func argBase(a *Arg) string {
 	m := a.Metavar
-	if m == "" {
+	if m == "" || strings.HasPrefix(m, "<") {
+		// "<...>" metavars are type names (the panel's type column).
 		return strings.ReplaceAll(a.Name, "-", "_")
 	}
 	if (strings.HasPrefix(m, "{") && strings.HasSuffix(m, "}")) || (strings.HasPrefix(m, "[") && strings.HasSuffix(m, "]")) {
@@ -371,6 +372,9 @@ func flagRow(f *Flag) paramRow {
 
 func argRow(a *Arg) paramRow {
 	typ := a.Type
+	if typ == "" && strings.HasPrefix(a.Metavar, "<") {
+		typ = a.Metavar
+	}
 	if typ == "" {
 		typ = "<str>"
 	}
@@ -395,6 +399,18 @@ func visibleSubcommands(c *Command) []*Command {
 	}
 	if c.parent == nil {
 		sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	} else if order, ok := upstreamOrder[c.Path()]; ok {
+		rank := map[string]int{}
+		for i, n := range order {
+			rank[n] = i
+		}
+		pos := func(s *Command) int {
+			if r, ok := rank[s.Name]; ok {
+				return r
+			}
+			return len(order)
+		}
+		sort.SliceStable(out, func(i, j int) bool { return pos(out[i]) < pos(out[j]) })
 	}
 	return out
 }
@@ -462,6 +478,9 @@ func WriteHelp(w io.Writer, c *Command) {
 		argRows[p] = append(argRows[p], argRow(a))
 	}
 	helpFlag := &Flag{Name: "help", Short: "h", Kind: Bool, Help: "Show this message and exit."}
+	if c.NoShortHelp {
+		helpFlag.Short = ""
+	}
 	for _, f := range append(append([]*Flag(nil), c.Flags...), helpFlag) {
 		if f.Hidden {
 			continue

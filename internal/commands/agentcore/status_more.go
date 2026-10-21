@@ -36,7 +36,7 @@ func init() {
 				{Name: "all", Kind: cli.Bool, Help: "Migrate all features in kitty-specs/"},
 				{Name: "dry-run", Kind: cli.Bool, Help: "Preview migration without writing events"},
 				{Name: "json", Kind: cli.Bool, Help: "Output results as JSON"},
-				{Name: "actor", Kind: cli.String, Default: "migration", Metavar: "<str>", Help: "Actor name for bootstrap events [default: migration]"},
+				{Name: "actor", Kind: cli.String, Default: "migration", Metavar: "<str>", Help: "Actor name for bootstrap events"},
 			},
 			Run: removedCommand("The migrate command has been removed. Bootstrap migration from frontmatter is handled by the upgrade system. Run 'spec-kitty upgrade' to apply pending migrations."),
 		})
@@ -61,7 +61,7 @@ func init() {
 				"Examples:\n    spec-kitty agent status validate --mission 034-feature-name",
 			Flags: []*cli.Flag{
 				{Name: "mission", Kind: cli.String, Metavar: "<str>", Help: "Mission slug (required in multi-mission repos)"},
-				{Name: "dry-run", Kind: cli.Bool, Negatable: true, NoName: "apply", Default: true, Help: "Preview vs persist reconciliation events [default: dry-run]"},
+				{Name: "dry-run", Kind: cli.Bool, Negatable: true, NoName: "apply", Default: true, Help: "Preview vs persist reconciliation events"},
 				{Name: "target-repo", Short: "t", Kind: cli.StringList, Metavar: "<path>", Help: "Target repo path(s) to scan"},
 				{Name: "json", Kind: cli.Bool, Help: "Machine-readable JSON output"},
 			},

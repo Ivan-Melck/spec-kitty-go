@@ -6,8 +6,8 @@ package rich
 import (
 	"fmt"
 	"io"
-	"regexp"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )

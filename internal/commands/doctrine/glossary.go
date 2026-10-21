@@ -68,7 +68,7 @@ func init() {
 				Name:  "validate",
 				Short: "Validate glossary seed file(s) against the schema.",
 				Flags: []*cli.Flag{{Name: "json", Kind: cli.Bool, Help: "Output validation results as JSON"}},
-				Args:  []*cli.Arg{{Name: "path", Help: "Path to a glossary seed file (.yaml) or directory of seed files", Required: true, Metavar: "{path}"}},
+				Args:  []*cli.Arg{{Name: "path", Help: "Path to a glossary seed file (.yaml) or directory of seed files", Required: true, Metavar: "{path}", Type: "<path>"}},
 				Run:   runGlossaryValidate,
 			},
 		)

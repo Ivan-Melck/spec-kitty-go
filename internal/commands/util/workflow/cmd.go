@@ -30,7 +30,7 @@ func init() {
 				Short: "Export a resolvable workflow YAML file.",
 				Args: []*cli.Arg{
 					{Name: "workflow_id", Metavar: "{workflow_id}", ErrorHint: "workflow_id", Required: true, Help: "Workflow id to export."},
-					{Name: "output", Metavar: "{output}", ErrorHint: "output", Required: true, Help: "Destination file or directory."},
+					{Name: "output", Type: "<path>", Metavar: "{output}", ErrorHint: "output", Required: true, Help: "Destination file or directory."},
 				},
 				Flags: []*cli.Flag{
 					rootFlag("Project root used for .kittify workflow discovery."),
@@ -42,7 +42,7 @@ func init() {
 				Name:  "import",
 				Short: "Import a workflow YAML into `.kittify/overrides/workflows`.",
 				Args: []*cli.Arg{
-					{Name: "source", Metavar: "{source}", ErrorHint: "source", Required: true, Help: "Workflow YAML file to import."},
+					{Name: "source", Type: "<path>", Metavar: "{source}", ErrorHint: "source", Required: true, Help: "Workflow YAML file to import."},
 				},
 				Flags: []*cli.Flag{
 					rootFlag("Project root that receives the workflow override."),

@@ -19,6 +19,7 @@ func safeCommitCommand() *cli.Command {
 		Name:  "safe-commit",
 		Short: "Commit only the requested files via Spec Kitty's safe-commit path.",
 		Args: []*cli.Arg{{Name: "files", Metavar: "{files}", Required: true, Variadic: true,
+			Type: "<path>",
 			Help: "Files or directories to commit, relative to the current worktree root or absolute. Directory arguments expand to their contained changed/untracked files with an explicit expansion report."}},
 		Flags: []*cli.Flag{
 			{Name: "message", Short: "m", Kind: cli.StringList, Metavar: "<str>", Required: true, Help: messageHelp},

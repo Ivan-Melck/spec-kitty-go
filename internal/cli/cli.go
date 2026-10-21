@@ -86,9 +86,16 @@ type Command struct {
 	// ShortHelp, when set, replaces the help's first paragraph in the
 	// parent's Commands panel (click short_help).
 	ShortHelp string
-	Flags     []*Flag
-	Args      []*Arg
-	Run       func(*Context) error
+	// GroupUsage renders the usage line like a group's ("COMMAND
+	// [ARGS]...") for a leaf that upstream implements as a typer sub-app
+	// with only a callback.
+	GroupUsage bool
+	// NoShortHelp drops the -h alias of --help (upstream registers a few
+	// commands after the -h alias is applied, e.g. upgrade).
+	NoShortHelp bool
+	Flags       []*Flag
+	Args        []*Arg
+	Run         func(*Context) error
 
 	// Group behaviour.
 	Subcommands []*Command
@@ -484,7 +491,7 @@ func parseInto(ctx *Context, cmd *Command, argv []string) ([]string, string, err
 			onlyPositional = true
 			continue
 		}
-		if a == "-h" || a == "--help" {
+		if a == "--help" || (a == "-h" && !cmd.NoShortHelp) {
 			WriteHelp(ctx.Stdout, cmd)
 			return nil, "", &helpShown{}
 		}

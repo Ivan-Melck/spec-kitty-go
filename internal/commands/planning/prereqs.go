@@ -41,6 +41,19 @@ func checkPrereqFlags() []*cli.Flag {
 	}
 }
 
+// aliasPrereqFlags are the flags of the deprecated top-level
+// `agent check-prerequisites` alias (upstream never grew --resume-probe or
+// --owned-checkout there).
+func aliasPrereqFlags() []*cli.Flag {
+	return []*cli.Flag{
+		{Name: "mission", Kind: cli.String, Metavar: "<str>", Help: "Mission slug"},
+		{Name: "json", Kind: cli.Bool, Help: "Output JSON format"},
+		{Name: "paths-only", Kind: cli.Bool, Help: "Only output path variables"},
+		{Name: "include-tasks", Kind: cli.Bool, Help: "Include tasks.md in validation"},
+		{Name: "require-tasks", Kind: cli.Bool, Hidden: true, Help: "Deprecated alias for --include-tasks"},
+	}
+}
+
 func init() {
 	addCommands(func(_, agent, missionG, _ *cli.Command) {
 		missionG.Add(&cli.Command{
@@ -54,7 +67,7 @@ func init() {
 			Name:   "check-prerequisites",
 			Short:  "Deprecated compatibility alias forwarding to agent mission check-prerequisites.",
 			Hidden: true,
-			Flags:  checkPrereqFlags(),
+			Flags:  aliasPrereqFlags(),
 			Run:    runCheckPrerequisites,
 		})
 	})

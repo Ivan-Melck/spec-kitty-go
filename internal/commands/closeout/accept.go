@@ -26,7 +26,7 @@ func init() {
 				{Name: "no-commit", Kind: cli.Bool, Help: "Report acceptance readiness without writing metadata or status changes"},
 				{Name: "diagnose", Kind: cli.Bool, Help: "Diagnose acceptance blockers without writing metadata or matrix artifacts"},
 				{Name: "allow-fail", Kind: cli.Bool, Help: "Return checklist even when issues remain"},
-				{Name: "normalize-encoding", Kind: cli.Bool, Negatable: true, Help: "Repair acceptance-artifact encoding (Windows-1252/Latin-1 -> UTF-8) before validating."},
+				{Name: "normalize-encoding", Kind: cli.Bool, Negatable: true, Default: false, Help: "Repair acceptance-artifact encoding (Windows-1252/Latin-1 -> UTF-8) before validating."},
 				{Name: "owned-checkout", Kind: cli.String, Metavar: "<path>", Help: ownedCheckoutHelp},
 				{Name: "origin-check", Kind: cli.String, Metavar: "<function>", Choices: []string{"enforce", "warn", "off"}, Help: originCheckHelp},
 				{Name: "merge-commit", Kind: cli.String, Metavar: "SHA", Help: "With --mode pr: record this PR merge commit as the mission's post-merge review baseline. The commit is verified against git before anything is written — it must carry kitty-specs/<slug>/meta.json, its first parent must not, and it must have landed on the target branch. Every landing shape additionally needs --attest-first-landing-commit."},

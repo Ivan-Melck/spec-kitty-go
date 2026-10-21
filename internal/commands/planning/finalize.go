@@ -27,15 +27,42 @@ import (
 
 const finalizeCmd = "spec-kitty agent mission finalize-tasks"
 
-const finalizeLong = `Parse dependencies from tasks.md and update WP frontmatter, then commit to target branch.
-
-This command is designed to be called after LLM generates WP files via /spec-kitty.tasks.
-It post-processes the generated files to add dependency information and commits everything.
-
-Examples:
-    spec-kitty agent mission finalize-tasks --json
-    spec-kitty agent mission finalize-tasks --mission 020-my-feature --json
-    spec-kitty agent mission finalize-tasks --mission 020-my-feature --validate-only --json`
+const finalizeLong = "Parse dependencies from tasks.md and update WP frontmatter, then commit to target branch.\n" +
+	"\n" +
+	"This command is designed to be called after LLM generates WP files via /spec-kitty.tasks.\n" +
+	"It post-processes the generated files to add dependency information and commits everything.\n" +
+	"\n" +
+	"Use --validate-only to check for issues (missing requirement mappings, ownership overlaps,\n" +
+	"dependency cycles) without making any changes or committing.\n" +
+	"\n" +
+	"Use --refresh-planning-commit once execution has begun and a legitimate planning\n" +
+	"amendment has landed on the target branch: it advances the recorded\n" +
+	"planning_commit_sha in lanes.json to the current tip so lanes merge the amended\n" +
+	"planning state instead of a stale snapshot (#4141). It is refused when the recorded\n" +
+	"SHA is not an ancestor of the tip (a history rewrite, not an amendment) -- unless\n" +
+	"that non-ancestor SHA is a proven ORPHAN (present, just unreachable -- a mid-mission\n" +
+	"rebase), in which case add --allow-orphaned to re-point to the live tip (#4827).\n" +
+	"\n" +
+	"Bootstrap Mutation Surface (FR-003 / SC-002)\n" +
+	"=============================================\n" +
+	"The 8 frontmatter fields below may be written or overwritten by this command.\n" +
+	"When ``--validate-only`` is active, ALL writes are skipped — the\n" +
+	"``frontmatter_changed and not validate_only`` guard ensures zero bytes of\n" +
+	"mutation on disk (INV-6). In validate-only mode the bootstrap loop still\n" +
+	"infers all 8 fields in memory so downstream validation operates against the\n" +
+	"post-bootstrap state — not the stale on-disk frontmatter. The T017 tasks.md\n" +
+	"regeneration is likewise skipped (its staleness relative to wps.yaml is\n" +
+	"reported instead of repaired — #3221), so INV-6 covers every tracked-file\n" +
+	"write the command performs.\n" +
+	"\n" +
+	"See also: ``tasks.py:finalize-tasks()`` which writes ``dependencies`` via\n" +
+	"``build_document() + write_text()`` — guarded the same way (T002).\n" +
+	"\n" +
+	"Examples:\n" +
+	"    spec-kitty agent mission finalize-tasks --mission 020-my-feature --json\n" +
+	"    spec-kitty agent mission finalize-tasks --mission 020-my-feature --validate-only --json\n" +
+	"    spec-kitty agent mission finalize-tasks --mission 020-my-feature --refresh-planning-commit\n" +
+	"    spec-kitty agent mission finalize-tasks --mission 020-my-feature --refresh-planning-commit --allow-orphaned"
 
 func init() {
 	addCommands(func(_, _, missionG, _ *cli.Command) {
@@ -49,8 +76,8 @@ func init() {
 				{Name: "validate-only", Kind: cli.Bool, Help: "Run all validations without committing. Reports issues that would block finalization."},
 				{Name: "target-branch", Kind: cli.String, Metavar: "<str>", Help: "Override the canonical planning target branch read from meta.json. Use this for legacy missions created before WP07 persisted target_branch in meta.json, or to correct a mission whose target_branch is stale (FR-012 escape hatch). The override is persisted into the primary meta.json as part of this run, so every other target_branch consumer converges on it too (#3466)."},
 				{Name: "owned-checkout", Kind: cli.String, Metavar: "<path>", Help: "Explicit owned checkout for a single-branch mission."},
-				{Name: "refresh-planning-commit", Kind: cli.Bool, Help: "Force a refresh-ONLY run: re-point the recorded planning_commit_sha in lanes.json to the current target-branch tip and exit, without running the rest of finalize-tasks (#4141)."},
-				{Name: "allow-orphaned", Kind: cli.Bool, Help: "Only meaningful with --refresh-planning-commit (#4827). Permits the re-pin to re-point a recorded planning_commit_sha that is ORPHANED."},
+				{Name: "refresh-planning-commit", Kind: cli.Bool, Help: "Force a refresh-ONLY run: re-point the recorded planning_commit_sha in lanes.json to the current target-branch tip and exit, without running the rest of finalize-tasks (#4141). By default (no flag needed) a normal re-finalize already advances the pin automatically whenever a PRIMARY planning file genuinely changed since it was recorded (FR-012); use this flag only to force JUST the pin refresh for an ADVANCED pin (the common case) or to re-point a deliberate mid-mission rebase with --allow-orphaned (#4827). It is advance-only and REFUSES when the recorded SHA is not an ancestor of the tip without --allow-orphaned, and it CANNOT help a pin the automatic path already warned about and kept unchanged (a FOREIGN object absent from this repository entirely, or an INDETERMINATE pin whose target tip could not even be resolved) -- WP15 cycle 2/3: neither shape is inspectable, so --refresh-planning-commit --allow-orphaned refuses both the same as a bare --refresh-planning-commit would; correct lanes.json's planning_commit_sha by hand instead, per that warning's own text."},
+				{Name: "allow-orphaned", Kind: cli.Bool, Help: "Only meaningful with --refresh-planning-commit (#4827). Permits the re-pin to re-point a recorded planning_commit_sha that is ORPHANED -- present in the repository but no longer an ancestor of the target-branch tip, the mid-mission-rebase shape. Without it, an orphaned pin is refused (a bare --refresh-planning-commit stays advance-only; a plain finalize fails closed before writing lanes.json). Still refused regardless for a FOREIGN (absent) object -- investigate that divergence manually."},
 			},
 			Run: runFinalizeTasks,
 		})
