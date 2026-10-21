@@ -40,6 +40,9 @@ func doctorLeafCommands() []*cli.Command {
 		newDoctorTopologyCmd(),
 		newDoctorWorkspacesCmd(),
 		newDoctorSparseCheckoutCmd(),
+		newDoctorRunIndexCmd(),
+		newDoctorProvenanceCmd(),
+		newDoctorCutoverCmd(),
 		{Name: "shim-registry", Short: short("shim-registry"), Long: longHelp["doctor_shim-registry"], Flags: []*cli.Flag{doctorJSONFlag(machineJSON)}, Run: runDoctorShimRegistry},
 		{Name: "contracts", Short: short("contracts"), Long: longHelp["doctor_contracts"], Flags: []*cli.Flag{doctorJSONFlag(machineJSON)}, Run: runDoctorContracts},
 	}
@@ -89,25 +92,95 @@ func plainTableR(w io.Writer, headers []string, minWidths []int, right []bool, r
 			}
 		}
 	}
-	line := func(cells []string) string {
-		var b strings.Builder
-		for i, c := range cells {
-			if i > 0 {
-				b.WriteString("    ")
-			}
-			fill := strings.Repeat(" ", width[i]-utf8.RuneCountInString(c))
-			if i < len(right) && right[i] {
-				b.WriteString(fill + c)
-			} else {
-				b.WriteString(c + fill)
+	// rich collapses over-wide columns (down to their longest word) until
+	// the table fits the console, widest first.
+	minw := make([]int, n)
+	for i := range headers {
+		minw[i] = maxWord(headers[i])
+		for _, r := range plain {
+			if m := maxWord(r[i]); m > minw[i] {
+				minw[i] = m
 			}
 		}
-		return "  " + b.String() + "  "
 	}
-	fmt.Fprintln(w, line(headers))
+	total := func() int {
+		t := 4 + 4*(n-1)
+		for _, x := range width {
+			t += x
+		}
+		return t
+	}
+	for excess := total() - rich.Width(); excess > 0; excess = total() - rich.Width() {
+		best := -1
+		for i := range width {
+			if width[i] > minw[i] && (best < 0 || width[i] > width[best]) {
+				best = i
+			}
+		}
+		if best < 0 {
+			break
+		}
+		second := 0
+		for i := range width {
+			if i != best && width[i] > second && width[i] > minw[i] {
+				second = width[i]
+			}
+		}
+		target := width[best] - excess
+		if second > target && second < width[best] {
+			target = second
+		}
+		if target < minw[best] {
+			target = minw[best]
+		}
+		width[best] = target
+	}
+	emit := func(cells []string) {
+		wrapped := make([][]string, n)
+		height := 1
+		for i, c := range cells {
+			wrapped[i] = rich.WrapWords(c, width[i])
+			if len(wrapped[i]) == 0 {
+				wrapped[i] = []string{""}
+			}
+			if len(wrapped[i]) > height {
+				height = len(wrapped[i])
+			}
+		}
+		for l := 0; l < height; l++ {
+			var b strings.Builder
+			for i := range cells {
+				c := ""
+				if l < len(wrapped[i]) {
+					c = strings.TrimRight(wrapped[i][l], " ")
+				}
+				if i > 0 {
+					b.WriteString("    ")
+				}
+				fill := strings.Repeat(" ", max(0, width[i]-utf8.RuneCountInString(c)))
+				if i < len(right) && right[i] {
+					b.WriteString(fill + c)
+				} else {
+					b.WriteString(c + fill)
+				}
+			}
+			fmt.Fprintln(w, "  "+b.String()+"  ")
+		}
+	}
+	emit(headers)
 	for _, r := range plain {
-		fmt.Fprintln(w, line(r))
+		emit(r)
 	}
+}
+
+func maxWord(s string) int {
+	m := 0
+	for _, f := range strings.Fields(s) {
+		if l := utf8.RuneCountInString(f); l > m {
+			m = l
+		}
+	}
+	return m
 }
 
 func runDoctorShimRegistry(ctx *cli.Context) error {
