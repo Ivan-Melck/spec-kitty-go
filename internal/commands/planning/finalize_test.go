@@ -59,3 +59,21 @@ func TestDiffFinalizeTasksHuman(t *testing.T) {
 	p.CompareTree(".worktrees", true)
 	compareGit(t, p)
 }
+
+// TestDiffTasksFinalizeTasks covers the legacy `agent tasks finalize-tasks`.
+func TestDiffTasksFinalizeTasks(t *testing.T) {
+	p := missionfx.NewOraclePair(t)
+	g, o := oracleCreate(t, p)
+	p.Both(func(s *testkit.Sandbox) { missionfx.AuthorCalc(t, s, missionfx.MissionSlug(t, s)) })
+	shellSteps(t, p, g, o,
+		`$SK agent tasks finalize-tasks --json`,
+		`$SK agent tasks finalize-tasks --mission $M --validate-only --json`,
+		`$SK agent tasks finalize-tasks --mission $M --validate-only`,
+		`$SK agent tasks finalize-tasks --mission $M --json`,
+		`$SK agent tasks finalize-tasks --mission $M`,
+		`mv kitty-specs/$M/tasks.md $TMPDIR/x-$M.md; $SK agent tasks finalize-tasks --mission $M --json; mv $TMPDIR/x-$M.md kitty-specs/$M/tasks.md`,
+	)
+	p.CompareTree("kitty-specs", true)
+	p.CompareTree(".worktrees", true)
+	compareGit(t, p)
+}
