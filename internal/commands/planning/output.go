@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
+	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
@@ -77,6 +78,13 @@ func joinMessage(paragraphs []string) (string, error) {
 		return "", fmt.Errorf("Commit message is empty.")
 	}
 	return strings.Join(kept, "\n\n"), nil
+}
+
+// helpExit2 renders a no_args_is_help group's help on stdout and exits 2
+// (click's NoArgsIsHelpError).
+func helpExit2(ctx *cli.Context) error {
+	cli.WriteHelp(ctx.Stdout, ctx.Cmd)
+	return cli.Exit(2)
 }
 
 const messageHelp = "Commit message. Repeat -m to add paragraphs (joined by a blank line, the same way git does)."
