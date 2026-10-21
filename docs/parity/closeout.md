@@ -23,8 +23,9 @@ name-status file sets; worktree list; status; branches; all refs).
 | `agent mission accept` (`--diagnose`, `--json`, lenient/dirty refusals) | done | `TestDiffAccept` (for-review-dirty, coord, lanes; TRACE 5.F5, 6.1, 6.4, 6.6, 9.3) | none known |
 | `accept` (`--mission`, `--mode`, `--lenient`, `--no-commit`, `--json`, git_dirty and `docs/` path-convention refusals) | done | `TestDiffAccept` | `--merge-commit` (PR-merge recording) is refused ("not supported by this build") |
 | `consolidate` default squash (`--dry-run [--json]`, coord-residue refusal and retry, lane→mission merges, mission_number bake, squash onto the target, done transitions, retrospective capture, worktree/branch/ref teardown, coord flatten, `Next:` hints) | done | `TestDiffConsolidateTrace` (TRACE 7.1–7.4 replay after the TRACE phase-5 rejection history: dry-run, `MERGE_UNSAFE_WORKTREE_DIRTY` refusal on reviewer feedback drafts, oracle `safe-commit` of the residue inside the coord worktree, retried consolidate, re-run after teardown), `TestDiffConsolidate` (coord, lanes; dry-run variants, unknown mission, `--json` without `--dry-run`, primary-dirty refusal, `--skip-review-artifact-check` without `--note`, TRACE 8.1), `TestDiffConsolidateNotReady` | the merge gates (evidence/risk/dependency/issue-matrix) print the passing lines for a merge-ready mission instead of evaluating risk scores and issue matrices; origin freshness check, `--push`, `--abort`/`--resume` (refused: "not supported by this build"), `--attest-*`, `--release-*`, `--skip-lanes`, sparse-checkout detection and the stale-assertion analyzer (always "No likely-stale assertions detected.") are not ported |
-| `consolidate --strategy merge|rebase` | done | `TestDiffConsolidateStrategies` (coord+merge, lanes+rebase) | same as above |
-| `agent mission merge` (delegates to consolidate; default strategy `merge`) | done | `TestDiffConsolidateNotReady` (dry-run, handle resolution), `TestDiffConsolidateStrategies` | `--auto-retry` is accepted but does not relocate into a worktree |
+| `consolidate --strategy merge` (no-ff `Merge <mission> into <target>`, meta.json driver two-way) | done | `TestDiffConsolidateStrategies/lanes-merge` (full lane history visible on the target, including the stale-lane auto-rebase merges) | same as above |
+| `consolidate --strategy rebase` | partial | none | the rebase + fast-forward is implemented, but upstream's per-SHA reconciliation (`Reconciliation FAILED: approved WPnn commit ... is NOT reachable from the target` + branch rollback report) is not ported: when the rebase rewrites approved lane commits (target moved since the lanes forked) upstream refuses and rolls back, Go lands the rebased history |
+| `agent mission merge` (delegates to consolidate; default strategy `merge`) | done | `TestDiffConsolidateNotReady` (dry-run, handle resolution), `TestDiffConsolidateStrategies/coord-agent-merge` | `--auto-retry` is accepted but does not relocate into a worktree |
 | `review` (merged-mission validation: WP lane gate, dead-code scan, `mission-review-report.md`; `--mode lightweight|post-merge`) | done | `TestDiffConsolidate` (TRACE 8.3), `TestDiffConsolidateTrace`, `TestDiffConsolidateNotReady` | dead-code scan is a port of the upstream Python-symbol heuristic |
 | `retrospect create` (`--overwrite/--update`, `--json`) | done | `TestDiffConsolidate`, `TestDiffConsolidateNotReady` | none known |
 | `retrospect summary` (`--json`, `--json-out`, `--limit`, `--since`, `--filter`, `--include-malformed`) | done | `TestDiffConsolidate` | none known |
@@ -35,10 +36,17 @@ name-status file sets; worktree list; status; branches; all refs).
 | `archive list` (`--json`) | done | `TestDiffConsolidate`, `TestLocalCloseout` | none known |
 | `agent release prep` (`--channel`, `--repo`, `--json`) | done | `TestDiffConsolidate` (alpha/beta/stable), `TestLocalCloseout` | none known |
 
-Git effects of the default consolidate match TRACE 7.4 exactly: lane merge
-commits `Merge kitty/mission-<slug>-lane-x into kitty/mission-<slug>` on the
-mission branch (in a scratch worktree with the custom merge drivers
-activated), `chore(<slug>): assign mission_number=N` on the mission branch,
+Git effects of the default consolidate match TRACE 7.4 exactly. Per lane: the
+stale-lane gate (files changed on both the mission branch and the lane since
+their merge-base, minus target-owned bookkeeping and identical end states);
+when stale and the lane worktree exists, the mission branch is merged into the
+lane worktree (`Merge branch 'kitty/mission-<slug>' into
+kitty/mission-<slug>-lane-x`, status.json re-materialized when status files
+are staged), then the lane is merged into the mission branch in a scratch
+worktree with the custom merge drivers activated (fast-forward when possible,
+else `Merge <lane> into <mission>`). A conflicted auto-rebase is aborted and
+reported as a stale lane (upstream's conflict classifier is not ported). Then
+`chore(<slug>): assign mission_number=N` on the mission branch,
 `feat(kitty/mission-<slug>): squash merge of mission` (parent: previous target
 tip), `chore(<slug>): record done transitions for merged WPs`,
 `chore(<slug>): capture mission retrospective`, and on the coord topology
