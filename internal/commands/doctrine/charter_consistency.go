@@ -2,10 +2,10 @@ package doctrine
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 )
 
@@ -27,11 +27,19 @@ func charterConsistencyCheckCmd() *cli.Command {
 
 func runCharterConsistencyCheck(ctx *cli.Context) error {
 	w := ctx.Stdout
+	// Upstream keeps the --repo-root path as given (default "."), so
+	// messages carry cwd-relative paths.
 	root := ctx.String("repo-root")
-	if root == "" || root == "." {
-		root = cwd()
-	} else {
-		root, _ = filepath.Abs(root)
+	if root == "" {
+		root = "."
+	}
+	// ProjectContext.from_repo -> PackContext.from_config raises (uncaught)
+	// on an invalid active charter configuration.
+	if _, err := dct.LoadActivation(root); err != nil {
+		if _, ok := err.(*dct.ConfigError); ok {
+			fmt.Fprintln(ctx.Stderr, "ActiveCharterConfigError: ACTIVE_CHARTER_CONFIG_INVALID")
+			return cli.Exit(1)
+		}
 	}
 	rep := charter.RunConsistencyCheck(root)
 	if ctx.Bool("json") {

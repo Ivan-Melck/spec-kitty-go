@@ -20,11 +20,11 @@ type TensionFinding struct{ A, B string }
 
 // ConsistencyReport is the consistency-check result.
 type ConsistencyReport struct {
-	Coherent                                                 bool
-	UnknownReferences, MissingFromOffering, KindViolations   []string
+	Coherent                                                  bool
+	UnknownReferences, MissingFromOffering, KindViolations    []string
 	ReferenceIDDivergences, GraphKindGaps, VerificationErrors []string
-	UnreconciledTensions                                     []TensionFinding
-	LatticeViolations, DecisionDocViolations, Suggestions    []string
+	UnreconciledTensions                                      []TensionFinding
+	LatticeViolations, DecisionDocViolations, Suggestions     []string
 }
 
 func ccList(xs []string) []any {
@@ -312,15 +312,22 @@ func (g *gateRes) decisionDoc(rep *ConsistencyReport) {
 // unknownArtifactMessage is UnknownArtifactIdError's message.
 func unknownArtifactMessage(k dct.Kind, stem string, orgRoots []string) string {
 	clause := ""
+	var layers []string
 	if len(orgRoots) > 0 {
 		q := make([]string, len(orgRoots))
 		for i, r := range orgRoots {
-			q[i] = r
+			q[i] = dct.PyRepr(r)
+			layers = append(layers, "org: "+filepath.Join(r, k.Plural()))
 		}
-		clause = " (or org roots " + strings.Join(q, ", ") + ")"
+		clause = " or org/project pack roots [" + strings.Join(q, ", ") + "]"
 	}
-	return fmt.Sprintf("No %s artifact with config ID %s found under doctrine root %s%s. Searched layers: built-in. Check activated_%s in the charter.yaml activation store selected by `.kittify/config.yaml` (or its legacy inline activations) for a stale or misspelled entry, or run `spec-kitty doctor charter-packs` to verify the doctrine corpus (including any org packs) is intact.",
-		string(k), dct.PyRepr(stem), dct.BuiltInRoot(), clause, k.Plural())
+	biDir := k.Plural()
+	if k == dct.MissionStepContract {
+		biDir = "missions/built_in_step_contracts"
+	}
+	layers = append(layers, "built-in: "+filepath.Join(dct.BuiltInRoot(), biDir))
+	return fmt.Sprintf("No %s artifact with config ID %s found under doctrine root %s%s. Searched layers: %s. Check activated_%s in the charter.yaml activation store selected by `.kittify/config.yaml` (or its legacy inline activations) for a stale or misspelled entry, or run `spec-kitty doctor charter-packs` to verify the doctrine corpus (including any org packs) is intact.",
+		string(k), dct.PyRepr(stem), dct.BuiltInRoot(), clause, strings.Join(layers, "; "), k.Plural())
 }
 
 // resolveArtifactURN is resolve_artifact_urn (built-in + org roots).
