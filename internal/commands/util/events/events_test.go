@@ -64,6 +64,8 @@ func fixture(s *testkit.Sandbox) {
 	s.WriteFile("kitty-specs/002-bad/status.events.jsonl", "{\"a\":1}\n[1]\n")
 	s.WriteFile("kitty-specs/003-blank/meta.json", `{"mission_id": "01KZ2222222222222222222222"}`)
 	s.WriteFile("kitty-specs/003-blank/status.events.jsonl", "{\"a\":1}\n\n")
+	s.WriteFile("kitty-specs/004-extra/meta.json", `{"mission_id": "01KZ3333333333333333333333"}`)
+	s.WriteFile("kitty-specs/004-extra/status.events.jsonl", "{\"a\":1} {\"b\":2}\n")
 }
 
 func TestTailParity(t *testing.T) {
@@ -82,10 +84,40 @@ func TestTailParity(t *testing.T) {
 		{"events", "tail", "--mission", "001-demo", "--from-offset", "0", "--once"},
 		{"events", "tail", "--mission", "002-bad", "--once"},
 		{"events", "tail", "--mission", "003-blank", "--once"},
+		{"events", "tail", "--mission", "004-extra", "--once"},
+		{"events", "tail", "--mission", "004-extra", "--max-events", "1"},
 		{"events", "tail", "--once"},
 	} {
-		p.Compare(true, args...)
+		compareTail(t, p, args...)
 	}
+}
+
+// compareTail compares exit code and stdout, and stderr exactly unless the
+// oracle crashed with a Rich traceback (e.g. JSONDecodeError on a blank or
+// trailing-garbage line): then parity means the same exit code and the same
+// final "<Exception>: <message>" line. The Go port prints a plain
+// "Traceback (most recent call last):" stub plus that line instead of Rich's
+// frame dump.
+func compareTail(t *testing.T, p *testkit.Pair, args ...string) {
+	t.Helper()
+	g, o := p.Compare(false, args...)
+	if !strings.Contains(o.Stderr, "Traceback") {
+		if a, b := p.Go.Normalize(g.Stderr), p.Oracle.Normalize(o.Stderr); a != b {
+			t.Errorf("%s: stderr differs\n%s", strings.Join(args, " "), testkit.Diff(b, a))
+		}
+		return
+	}
+	if !strings.HasPrefix(g.Stderr, "Traceback (most recent call last):") {
+		t.Errorf("%s: go stderr is not a traceback: %q", strings.Join(args, " "), g.Stderr)
+	}
+	if a, b := lastLine(g.Stderr), lastLine(o.Stderr); a != b {
+		t.Errorf("%s: final exception line differs\n  oracle: %q\n  go:     %q", strings.Join(args, " "), b, a)
+	}
+}
+
+func lastLine(s string) string {
+	ls := strings.Split(strings.TrimRight(s, "\n "), "\n")
+	return strings.TrimSpace(ls[len(ls)-1])
 }
 
 func TestTailParityResume(t *testing.T) {
@@ -96,7 +128,7 @@ func TestTailParityResume(t *testing.T) {
 	first, _ := jsonx.DecodeObject([]byte(lines[0]))
 	off, _ := first.GetInt("tail_offset")
 	inv := first.GetString("tail_invariant")
-	p.Compare(true, "events", "tail", "--mission", "001-demo", "--once", "--from-offset", itoa(off), "--from-invariant", inv)
+	compareTail(t, p, "events", "tail", "--mission", "001-demo", "--once", "--from-offset", itoa(off), "--from-invariant", inv)
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
