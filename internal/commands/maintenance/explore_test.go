@@ -20,7 +20,7 @@ func TestExploreOracle(t *testing.T) {
 		{"doctor", "mission-state", "--audit"},
 		{"doctor", "mission-state", "--fix"},
 		{"git", "status"},
-		
+
 		{"doctor", "mission-state", "--fix", "--json"},
 		{"doctor", "mission-state", "--teamspace-dry-run"},
 		{"doctor", "coordination", "--json"},
