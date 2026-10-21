@@ -19,7 +19,7 @@ and compare exit code, normalized stdout/stderr and the resulting file trees
 | `merge-driver-issue-matrix` (hidden) | done | same | none known |
 | `merge-driver-review-cycle` (hidden) | done | same | none known |
 | `merge-driver-decision-index` (hidden) | done | same | none known |
-| `merge` (hidden deprecated stub) | done | `drivers.TestDriversParity` | none |
+| `merge` (hidden deprecated stub) | done | `drivers.TestMergeStubParity` | none |
 | `validate-encoding` (`--mission/--fix/--all/--backup/--no-backup`) | done | `encoding.TestValidateEncodingParity`, unit tests | mission handle resolution is a local approximation of `placement_seam` (literal dir, mission_id/mid8, numeric prefix, bare slug) |
 | `commit-guard-hook` (hidden) | done | `commitguard.TestCommitGuardParity`, `TestCommitGuardE2E` | reads ownership/context files directly; lanes via `status.Reduce` |
 | `lint` (`[file_path]`, `--json`, `--fix`, stdin hook payload) | done | `lint.TestLintParity`, `TestLintStdinPayload` | ruff/mypy are external tools: output depends on their presence/version, as upstream |
