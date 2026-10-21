@@ -73,6 +73,11 @@ Domain and command packages live under `internal/<area>/...`.
   of your package. Never edit another area's files to register.
 - **Help text**: copy the upstream one-line and long help from
   `inventory/help/<path>.txt`. Flags: copy names, aliases, defaults, choices.
+  Keep the help's original line breaks (the Commands panel shows the first
+  paragraph unjoined). The renderer reproduces typer's rich help byte for
+  byte; see `docs/parity/help.md` for the declaration conventions
+  (`Metavar`, `Arg.Type`, `Flag.Min/Max`, `Panel`, `Deprecated`, ...) and
+  `go test ./internal/helpparity` to check every path.
 - **Console output**: use `internal/rich` for rich markup, wrapped text, tables
   and panels rather than writing another renderer; extend it there if needed.
 - **JSON output**: build `*jsonx.Object` in upstream key order and print with
