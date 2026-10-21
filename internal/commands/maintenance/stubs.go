@@ -23,6 +23,3 @@ func stub(name, short string) *cli.Command {
 func newBackfillRuntimeStateCmd() *cli.Command {
 	return stub("backfill-runtime-state", "Seed legacy runtime state as events, verify fail-closed, and flip status_phase.")
 }
-func newBackfillWPStatusCmd() *cli.Command {
-	return stub("backfill-wp-status", "Seed the lane events a Mission's WP files lack, so the status snapshot counts every WP (#5579).")
-}

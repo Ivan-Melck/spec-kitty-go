@@ -6,6 +6,10 @@ package maintenance
 import (
 	"fmt"
 	"io"
+	"regexp"
+	"strings"
+
+	"github.com/spec-kitty/go-kitty3/internal/project"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -37,6 +41,23 @@ func cprintf(w io.Writer, format string, a ...any) { rich.Print(w, fmt.Sprintf(f
 func errorLine(ctx *cli.Context, msg string) {
 	cprint(ctx.Stderr, "[red]Error:[/red] "+msg)
 }
+
+var reEscapable = regexp.MustCompile(`(\\*)(\[[a-z#/@][^\[]*?\])`)
+
+// escapeMarkup is rich.markup.escape.
+func escapeMarkup(s string) string {
+	s = reEscapable.ReplaceAllStringFunc(s, func(m string) string {
+		sub := reEscapable.FindStringSubmatch(m)
+		return sub[1] + sub[1] + `\` + sub[2]
+	})
+	if strings.HasSuffix(s, `\`) && !strings.HasSuffix(s, `\\`) {
+		s += `\`
+	}
+	return s
+}
+
+// locateRootQuiet is locate_project_root() ("" when not in a project).
+func locateRootQuiet() string { return project.Locate("") }
 
 func strList(xs []string) []any {
 	out := make([]any, 0, len(xs))
