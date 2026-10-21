@@ -148,6 +148,11 @@ func gitState(s *testkit.Sandbox) string {
 func compareGit(t *testing.T, p *testkit.Pair) {
 	t.Helper()
 	if g, o := gitState(p.Go), gitState(p.Oracle); g != o {
+		if d := os.Getenv("CLOSEOUT_DUMP_DIR"); d != "" {
+			base := filepath.Join(d, strings.ReplaceAll(t.Name(), "/", "_"))
+			os.WriteFile(base+".git.go", []byte(g), 0o644)
+			os.WriteFile(base+".git.oracle", []byte(o), 0o644)
+		}
 		t.Errorf("git state differs:\n%s", testkit.Diff(o, g))
 	}
 }
