@@ -6,9 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -257,6 +260,8 @@ type boardRow struct {
 	// arbiterCat is the category of the WP's complete event-sourced
 	// ReviewOverride ("" when none).
 	arbiterCat string
+	stallLabel string // _stall_label
+	staleRes   *staleResult
 }
 
 func runTasksStatus(ctx *cli.Context) error {
@@ -304,8 +309,10 @@ func runTasksStatus(ctx *cli.Context) error {
 		return statusError(ctx, jsonMode, "Tasks directory not found: "+tasksDir)
 	}
 	var transitions *status.Snapshot
+	var events []*status.Event
 	full := &status.Snapshot{WorkPackages: &jsonx.Object{}}
 	if stream, err := status.ReadStream(readDir, ""); err == nil {
+		events = stream.Transitions
 		if len(stream.Transitions) > 0 {
 			transitions = status.Reduce(stream.Transitions, nil, true)
 		}
@@ -390,23 +397,58 @@ func runTasksStatus(ctx *cli.Context) error {
 		rows = append(rows, row)
 		_ = key
 	}
-	// staleness for in_progress rows (no lane worktree → fresh)
+	stalledWPs := []any{}
+	stallThreshold := reviewStallThreshold(root)
+	now := clock.Now().UTC()
 	for _, r := range rows {
-		if r.lane != string(status.InProgress) {
+		if r.id == "" || r.lane != string(status.InReview) {
 			continue
 		}
-		wtExists := false
-		if manifest != nil {
-			if l := manifest.LaneForWP(r.id); l != nil && l.LaneID != lanes.PlanningLaneID {
-				if st, err := os.Stat(lanes.WorktreePath(root, slug, l.LaneID)); err == nil && st.IsDir() {
-					wtExists = true
-				}
+		var last time.Time
+		for _, e := range events {
+			if e.WPID != r.id || e.At == "" {
+				continue
+			}
+			t, err := clock.ParseISO(e.At)
+			if err != nil {
+				continue
+			}
+			if t.UTC().After(last) {
+				last = t.UTC()
 			}
 		}
-		r.obj.Set("stale", jsonx.NewObject("status", "fresh", "reason", nil, "minutes_since_commit", nil, "last_commit_time", nil))
-		r.obj.Set("is_stale", false)
-		r.obj.Set("minutes_since_commit", nil)
-		r.obj.Set("worktree_exists", wtExists)
+		if last.IsZero() {
+			continue
+		}
+		age := int(now.Sub(last).Seconds() / 60)
+		if age > stallThreshold {
+			r.stallLabel = fmt.Sprintf("STALLED — no move-task in %dm", age)
+			warn := jsonx.NewObject("wp_id", r.id, "age_minutes", age, "threshold_minutes", stallThreshold)
+			stalledWPs = append(stalledWPs, warn)
+			r.obj.Set("_stall_label", r.stallLabel)
+			r.obj.Set("review_stall", warn)
+		}
+	}
+	// staleness for in_progress rows (check_doing_wps_for_staleness)
+	var doing []*boardRow
+	for _, r := range rows {
+		if r.lane == string(status.InProgress) {
+			doing = append(doing, r)
+		}
+	}
+	// Claim liveness reads the WORK_PACKAGE_TASK (primary) dir's snapshot,
+	// which is empty under a coordination topology (as the oracle does).
+	livenessSnap, _ := status.ReduceDir(m.PrimaryDir())
+	staleResults := checkDoingStaleness(root, slug, doing, ctx.Int("stale-threshold"), livenessSnap)
+	staleCount := 0
+	for _, r := range doing {
+		if res := staleResults[r.id]; res != nil && r.id != "" {
+			res.apply(r.obj)
+			r.staleRes = res
+			if res.isStale() {
+				staleCount++
+			}
+		}
 	}
 	total := len(rows)
 	byLane := map[string][]*boardRow{}
@@ -453,9 +495,9 @@ func runTasksStatus(ctx *cli.Context) error {
 		res.Set("weighted_percentage", progress)
 		res.Set("done_count", done)
 		res.Set("done_percentage", donePct)
-		res.Set("stale_wps", 0)
+		res.Set("stale_wps", staleCount)
 		res.Set("stale_verdicts", staleVerdicts)
-		res.Set("stalled_wps", []any{})
+		res.Set("stalled_wps", stalledWPs)
 		res.Set("auto_commit", autoCommit)
 		printJSONPretty(ctx.Stdout, res)
 		return nil
@@ -556,6 +598,12 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 		}
 		if r.stale {
 			return []string{"⚠ " + r.id, t}
+		}
+		if r.lane == string(status.InProgress) && r.staleRes != nil && r.staleRes.isStale() {
+			return []string{"⚠️ " + r.id, t}
+		}
+		if r.stallLabel != "" {
+			return []string{"⚠ " + r.id + " (review)", t}
 		}
 		return []string{r.id + suffix, t}
 	}
@@ -674,15 +722,35 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 	}
 	if l := byLane["in_progress"]; len(l) > 0 {
 		fmt.Fprintln(w, "🔄 In Progress:")
+		staleN := 0
 		for _, r := range l {
-			consolePrint(w, bullet(r))
+			agent, _ := r.obj.Get("agent")
+			label := r.staleRes.label()
+			switch {
+			case r.staleRes != nil && r.staleRes.isStale():
+				consolePrint(w, fmt.Sprintf("  • ⚠️ %s - %s (%s, agent: %v)", r.id, r.title, label, agent))
+				staleN++
+			case label != "":
+				consolePrint(w, fmt.Sprintf("%s (%s, agent: %v)", bullet(r), label, agent))
+			default:
+				consolePrint(w, bullet(r))
+			}
 		}
 		fmt.Fprintln(w)
+		if staleN > 0 {
+			fmt.Fprintf(w, "⚠️  %d stale WP(s) detected - agents may have stopped without transitioning\n", staleN)
+			fmt.Fprintln(w, "   Run: spec-kitty agent tasks move-task <WP_ID> --to for_review")
+			fmt.Fprintln(w)
+		}
 	}
 	if l := byLane["in_review"]; len(l) > 0 {
 		fmt.Fprintln(w, "🔍 In Review (shown in Doing column):")
 		for _, r := range l {
-			consolePrint(w, bullet(r))
+			line := bullet(r)
+			if r.stallLabel != "" {
+				line += "  ⚠ " + r.stallLabel
+			}
+			consolePrint(w, line)
 		}
 		fmt.Fprintln(w)
 	}
@@ -760,4 +828,39 @@ func reviewVerdictFlag(row *boardRow, state *jsonx.Object) *jsonx.Object {
 	row.obj.Set("_stale_verdict", true)
 	row.obj.Set("stale_review_artifact", warn)
 	return warn
+}
+
+// reviewStallThreshold is _review_stall_threshold_minutes:
+// review.stall_threshold_minutes from .kittify/config.yaml, default 30.
+func reviewStallThreshold(root string) int {
+	rv := mission.ProjectConfig(root).GetObject("review")
+	if rv == nil {
+		return 30
+	}
+	v, ok := rv.Get("stall_threshold_minutes")
+	if !ok {
+		return 30
+	}
+	switch t := v.(type) {
+	case bool:
+		if t {
+			return 1
+		}
+		return 0
+	case int:
+		return t
+	case int64:
+		return int(t)
+	case float64:
+		return int(t)
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(t)); err == nil {
+			return n
+		}
+	default:
+		if n, err := strconv.Atoi(fmt.Sprint(t)); err == nil {
+			return n
+		}
+	}
+	return 30
 }

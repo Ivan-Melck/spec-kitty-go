@@ -12,6 +12,25 @@ import (
 // clockTicks is SC_CLK_TCK (100 on every supported Linux).
 const clockTicks = 100.0
 
+// IsProcessAlive is process_liveness.is_process_alive (Linux /proc probe).
+func IsProcessAlive(pid int) bool {
+	if pid < 0 {
+		return false
+	}
+	_, err := os.Stat("/proc/" + strconv.Itoa(pid))
+	return err == nil
+}
+
+// IsClaimingProcessAlive is process_liveness.is_claiming_process_alive: a
+// present baseline must match the live process's creation time.
+func IsClaimingProcessAlive(pid int, baseline string) bool {
+	if baseline == "" {
+		return IsProcessAlive(pid)
+	}
+	got, ok := CreationTimeBaseline(pid)
+	return ok && got == baseline
+}
+
 // CreationTimeBaseline is process_liveness.capture_creation_time_baseline:
 // str(psutil.Process(pid).create_time()) on Linux ("" , false when the
 // process cannot be inspected).
