@@ -25,6 +25,7 @@ type rtable struct {
 	NoWrap    []bool
 	ShowLines bool
 	Right     []bool // right-justified columns
+	Center    []bool // centered columns
 	Rows      [][]string
 }
 
@@ -236,6 +237,9 @@ func (t *rtable) render(w io.Writer, consoleWidth int) {
 				padding := strings.Repeat(" ", max(0, widths[i]-2-rlen(c)))
 				if i < len(t.Right) && t.Right[i] {
 					b.WriteString(" " + padding + c + " " + sep)
+				} else if i < len(t.Center) && t.Center[i] {
+					ex := len(padding)
+					b.WriteString(" " + strings.Repeat(" ", ex/2) + c + strings.Repeat(" ", ex-ex/2) + " " + sep)
 				} else {
 					b.WriteString(" " + c + padding + " " + sep)
 				}
