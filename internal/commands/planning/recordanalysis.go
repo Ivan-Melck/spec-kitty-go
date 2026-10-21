@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
