@@ -234,7 +234,18 @@ func choiceList(xs []string) string {
 	return strings.Join(q, ", ")
 }
 
-// chooseFrom is TyperChoice.get_missing_message appended to a
+// pyInt is Python's int(str): surrounding whitespace, an optional sign and
+// digits with single underscores between them.
+func pyInt(s string) (int, error) {
+	t := strings.TrimSpace(s)
+	body := strings.TrimLeft(t, "+-")
+	if len(t)-len(body) > 1 || body == "" || strings.HasPrefix(body, "_") || strings.HasSuffix(body, "_") || strings.Contains(body, "__") {
+		return 0, strconv.ErrSyntax
+	}
+	return strconv.Atoi(strings.ReplaceAll(t, "_", ""))
+}
+
+// chooseFrom isTyperChoice.get_missing_message appended to a
 // missing-parameter error ("" without choices).
 func chooseFrom(choices []string) string {
 	if len(choices) == 0 {
@@ -267,7 +278,7 @@ func assign(ctx *Context, cmd *Command, f *Flag, val string) error {
 	case String:
 		ctx.values[f.Name] = val
 	case Int:
-		n, err := strconv.Atoi(strings.ReplaceAll(strings.TrimSpace(val), "_", ""))
+		n, err := pyInt(val)
 		if err != nil {
 			typeName := "int"
 			if f.Min != nil || f.Max != nil {
