@@ -21,14 +21,14 @@ func TestSplitLines(t *testing.T) {
 
 func TestRewritePaths(t *testing.T) {
 	cases := map[string]string{
-		"see scripts/x":           "see .kittify/scripts/x",
-		".kittify/scripts/x":      ".kittify/scripts/x",
-		"templates/a.md":          ".kittify/templates/a.md",
-		"src/foo/templates/a.md":  "src/foo/templates/a.md",
-		"memory/charter.md":       ".kittify/memory/charter.md",
-		".kittify/memory/x":       ".kittify/memory/x",
-		"`/templates/x`":          "`/.kittify/templates/x`",
-		"dir-/templates/":         "dir-/templates/",
+		"see scripts/x":          "see .kittify/scripts/x",
+		".kittify/scripts/x":     ".kittify/scripts/x",
+		"templates/a.md":         ".kittify/templates/a.md",
+		"src/foo/templates/a.md": "src/foo/templates/a.md",
+		"memory/charter.md":      ".kittify/memory/charter.md",
+		".kittify/memory/x":      ".kittify/memory/x",
+		"`/templates/x`":         "`/.kittify/templates/x`",
+		"dir-/templates/":        "dir-/templates/",
 	}
 	for in, want := range cases {
 		if got := RewritePaths(in); got != want {

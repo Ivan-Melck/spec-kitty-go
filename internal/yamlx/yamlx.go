@@ -131,6 +131,9 @@ type Options struct {
 	// SequenceIndent is the indentation of "- " under a mapping key
 	// (0 = ruamel offset 0, the upstream frontmatter style).
 	SequenceIndent int
+	// NullAsNull renders None as "null" (PyYAML safe_dump) instead of an
+	// empty value (ruamel round-trip).
+	NullAsNull bool
 }
 
 // Emit renders v (normally *jsonx.Object) as block YAML.
@@ -199,6 +202,9 @@ func (e *emitter) value(v any, indent int, inSeq bool) {
 		e.value(l, indent, inSeq)
 	default:
 		s := FormatScalar(v)
+		if v == nil && e.opts.NullAsNull {
+			s = "null"
+		}
 		if s == "" {
 			e.b.WriteString("\n")
 			return
