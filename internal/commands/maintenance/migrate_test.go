@@ -109,7 +109,9 @@ func TestMigrateWithoutOracle(t *testing.T) {
 	}
 }
 
-func contains(s, sub string) bool { return len(s) >= len(sub) && (func() bool { return indexOf(s, sub) >= 0 })() }
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (func() bool { return indexOf(s, sub) >= 0 })()
+}
 
 func indexOf(s, sub string) int {
 	for i := 0; i+len(sub) <= len(s); i++ {

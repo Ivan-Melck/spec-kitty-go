@@ -20,12 +20,6 @@ func stub(name, short string) *cli.Command {
 	}
 }
 
-func newCharterEncodingCmd() *cli.Command {
-	return stub("charter-encoding", "Scan charter content for non-UTF-8 encodings; normalize-or-fail-loud.")
-}
-func newBackfillProvenanceCmd() *cli.Command {
-	return stub("backfill-provenance", "FR-014: backfill provenance onto legacy acceptance-matrix.json invariants.")
-}
 func newNormalizeLifecycleCmd() *cli.Command {
 	return stub("normalize-lifecycle", "Normalize legacy ``kitty-specs`` missions for the MVP lifecycle model.")
 }
