@@ -34,7 +34,7 @@ package unit tests run without the oracle.
 | `agent status validate` | done | `TestDiffStatusLeaves` | the "orphaned event" stderr WARNING (human mode) is not printed |
 | `agent status migrate` | done (removed-command stub) | `TestDiffStatusLeaves` | — |
 | `agent status reconcile` | done (removed-command stub) | `TestDiffStatusLeaves` | — |
-| `agent status doctor` | missing | — | needs status/doctor.py checks + global runtime checks |
+| `agent status doctor` | done | `TestDiffStatusLeaves` | issue-matrix check not evaluated (no finding); sparse-checkout finding simplified (primary only); human findings table never wraps |
 
 ### move-task deviations
 

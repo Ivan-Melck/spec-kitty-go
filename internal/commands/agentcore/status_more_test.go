@@ -21,6 +21,10 @@ func TestDiffStatusLeaves(t *testing.T) {
 		{"agent", "status", "migrate", "--json"},
 		{"agent", "status", "reconcile", "--mission", "$M", "--json"},
 		{"agent", "status", "reconcile", "--apply"},
+		{"agent", "status", "doctor", "--mission", "$M"},
+		{"agent", "status", "doctor", "--mission", "$M", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "claimed", "--mission", "$M", "--agent", "claude", "--shell-pid", "77", "--json"},
+		{"agent", "status", "doctor", "--mission", "$M", "--json", "--stale-claimed-days", "3"},
 		{"agent", "tasks", "move-task", "WP01", "--to", "doing", "--mission", "$M", "--agent", "claude", "--json"},
 		{"agent", "status", "lifecycle", "--mission", "$M"},
 		{"agent", "status", "validate", "--mission", "$M", "--json"},
@@ -45,6 +49,7 @@ func TestDiffStatusLeaves(t *testing.T) {
 	comparePairSteps(t, p, g, o, [][]string{
 		{"agent", "status", "validate", "--mission", "$M", "--json"},
 	})
+	p.CompareTree(".worktrees", true)
 }
 
 func replaceOnce(s, old, nw string) string {

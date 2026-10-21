@@ -1571,7 +1571,8 @@ func (st *moveState) hopPolicyMetadata(target string) *jsonx.Object {
 		if agent == "" {
 			agent = "unknown"
 		}
-		return jsonx.NewObject("shell_pid", pid, "shell_pid_created_at", "", "agent", agent)
+		baseline, _ := status.CreationTimeBaseline(pid)
+		return jsonx.NewObject("shell_pid", pid, "shell_pid_created_at", baseline, "agent", agent)
 	}
 	if target == string(status.ForReview) && st.gateMeta != nil {
 		return jsonx.NewObject("pre_review_gate", st.gateMeta)
@@ -1726,6 +1727,9 @@ func (st *moveState) emitRuntimeState() error {
 				return fmt.Errorf("invalid literal for int() with base 10: '%s'", st.shellPID)
 			}
 			d.ShellPID = &pid
+			if b, ok := status.CreationTimeBaseline(pid); ok {
+				d.ShellPIDCreatedAt = &b
+			}
 		}
 	}
 	if st.assignee != "" {
