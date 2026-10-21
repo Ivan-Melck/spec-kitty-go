@@ -17,6 +17,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
+	"github.com/spec-kitty/go-kitty3/internal/lifecycle"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/review"
@@ -1856,6 +1857,12 @@ func (st *moveState) execute() error {
 		st.transitionApplied = true
 		st.finalHopActor = hopActor
 		reviewRef = nil
+	}
+	if st.selfReviewFallback {
+		if _, err := lifecycle.EmitReviewerSelfApproval(st.featureDir, st.m.Slug, st.taskID, st.finalHopActor,
+			strings.TrimSpace(st.intendedReviewer), strings.TrimSpace(st.reviewerFailureReason)); err != nil {
+			return err
+		}
 	}
 	st.event = prev
 	st.warnApproval()

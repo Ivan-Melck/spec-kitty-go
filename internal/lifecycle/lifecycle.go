@@ -110,6 +110,20 @@ func Persist(dir, eventType string, payload *jsonx.Object, aggregateID, aggregat
 	return env, nil
 }
 
+// ReviewerSelfApproval is the lifecycle event type recording a self-review
+// fallback approval.
+const ReviewerSelfApproval = "ReviewerSelfApproval"
+
+// EmitReviewerSelfApproval is emit_reviewer_self_approval.
+func EmitReviewerSelfApproval(dir, missionSlug, wpID, implementingActor, intendedReviewer, failureReason string) (*jsonx.Object, error) {
+	p := jsonx.NewObject("mission_slug", missionSlug, "wp_id", wpID, "implementing_actor", implementingActor,
+		"intended_reviewer", intendedReviewer, "failure_reason", failureReason, "fallback_approved", true,
+		"timestamp", clock.NowUTCISO())
+	dedup := jsonx.NewObject("mission_slug", missionSlug, "wp_id", wpID, "implementing_actor", implementingActor,
+		"intended_reviewer", intendedReviewer, "failure_reason", failureReason)
+	return Persist(dir, ReviewerSelfApproval, p, wpID, "WorkPackage", nil, nil, dedup)
+}
+
 // LocalActor is git config user.email (≤ 1024 bytes), else "cli".
 func LocalActor(dir string) string {
 	cmd := exec.Command("git", "config", "user.email")
