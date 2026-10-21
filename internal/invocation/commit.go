@@ -60,11 +60,24 @@ func commitOpRecord(root, id string, started *jsonx.Object) *CommitOutcome {
 		m := fmt.Sprintf("safe_commit: refusing to commit to protected branch %s in %s. Retry against a non-protected topic branch, or set SPEC_KITTY_ALLOW_PROTECTED_BRANCH_COMMITS=1 if you own this branch.", pyRepr(branch), root)
 		return &CommitOutcome{Refusal: "ProtectedBranchRefused(" + pyRepr(m) + ")"}
 	}
-	if _, err := gitx.Run(root, "add", "--force", "--", rel); err != nil {
-		return &CommitOutcome{Refusal: err.Error()}
+	if res, err := gitx.Exec(root, nil, nil, "add", "--force", "--", rel); err != nil || res.Code != 0 {
+		reason := strings.TrimSpace(res.Stderr)
+		m := fmt.Sprintf("safe_commit: failed to stage requested files in %s: %s: %s", root, pyRepr(rel), reason)
+		return &CommitOutcome{Refusal: "RuntimeError(" + pyRepr(m) + ")"}
 	}
-	if _, err := gitx.Run(root, "commit", "--only", "-m", msg, "--", rel); err != nil {
-		return &CommitOutcome{Refusal: err.Error()}
+	res, err := gitx.Exec(root, nil, nil, "commit", "--only", "-m", msg, "--", rel)
+	if err != nil || res.Code != 0 {
+		gitx.Exec(root, nil, nil, "reset", "-q", "--", rel)
+		detail := strings.TrimSpace(res.Stdout + "\n" + res.Stderr)
+		m := fmt.Sprintf("safe_commit: git commit failed in %s for destination_ref=%s", root, pyRepr(branch))
+		if detail != "" {
+			m += ": " + detail
+		}
+		return &CommitOutcome{Refusal: "RuntimeError(" + pyRepr(m) + ")"}
 	}
-	return &CommitOutcome{Committed: true}
+	out := &CommitOutcome{Committed: true}
+	if s := strings.TrimSpace(res.Stderr); s != "" {
+		out.Warning = fmt.Sprintf("git commit in %s produced warnings on a successful commit: %s", root, s)
+	}
+	return out
 }

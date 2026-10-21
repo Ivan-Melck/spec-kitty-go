@@ -50,7 +50,7 @@ func runComplete(ctx *cli.Context) error {
 	outcome := ctx.String("outcome")
 	jsonMode := ctx.Bool("json")
 	if outcome != "done" && outcome != "failed" && outcome != "abandoned" {
-		return cli.BadParameter(ctx.Cmd, "outcome", fmt.Sprintf("invalid outcome %s: must be one of done, failed, abandoned", pyStrRepr(outcome)))
+		return cli.Usage(ctx.Cmd, "Invalid value for --outcome: %s", fmt.Sprintf("invalid outcome %s: must be one of done, failed, abandoned", pyStrRepr(outcome)))
 	}
 	root := repoRoot()
 	artifacts := ctx.Strings("artifact")
@@ -74,7 +74,10 @@ func runComplete(ctx *cli.Context) error {
 		fmt.Fprintln(ctx.Stderr, jsonx.Dumps(jsonx.NewObject("error", "complete_failed", "message", err.Error()), lineJSON))
 		return cli.Exit(1)
 	}
-	if commit != nil && !commit.Committed && commit.Refusal != "not a git worktree" {
+	if !jsonMode && commit != nil && commit.Warning != "" {
+		uconsole.LogWarning(ctx.Stderr, commit.Warning)
+	}
+	if !jsonMode && commit != nil && !commit.Committed && commit.Refusal != "not a git worktree" {
 		uconsole.LogWarning(ctx.Stderr, fmt.Sprintf("Op record auto-commit failed for %s: %s", id, commit.Refusal))
 	}
 	if !jsonMode && commit != nil && !commit.Committed {

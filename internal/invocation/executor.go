@@ -241,6 +241,7 @@ type CompleteOptions struct {
 // CommitOutcome is OpCommitOutcome.
 type CommitOutcome struct {
 	Committed bool
+	Warning   string // stderr of a successful commit (logged at WARNING)
 	Refusal   string
 }
 
