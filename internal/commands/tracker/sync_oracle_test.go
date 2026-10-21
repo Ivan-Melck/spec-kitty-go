@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
+	"github.com/spec-kitty/go-kitty3/internal/testkit/missionfx"
 )
 
 // fakeBD is a stand-in for the beads CLI: it logs its argv and serves
@@ -202,13 +203,48 @@ func TestOracleSyncBeadsCreateAndMissingCommand(t *testing.T) {
 	mustContain(t, g.Stdout, `"pushed_created": 1`)
 	compareLog(t, p)
 	compareDB(t, p)
-	p.Both(func(s *testkit.Sandbox) {
-		cfg := s.ReadFile(".kittify/config.yaml")
-		s.WriteFile(".kittify/config.yaml", strings.Replace(cfg, "command: ", "command: ", 1))
-	})
 	// A missing executable is an uncaught FileNotFoundError.
-	p.Both(func(s *testkit.Sandbox) { os.Rename(filepath.Join(s.Dir, "fake", "bd"), filepath.Join(s.Dir, "fake", "bd.off")) })
+	p.Both(func(s *testkit.Sandbox) {
+		os.Rename(filepath.Join(s.Dir, "fake", "bd"), filepath.Join(s.Dir, "fake", "bd.off"))
+	})
 	step(t, p, "tracker", "sync", "pull")
+}
+
+// TestOracleDBInterop alternates the oracle and the Go binary on ONE
+// project/HOME: each must read and update the other's SQLite cache and
+// credential file.
+func TestOracleDBInterop(t *testing.T) {
+	t.Parallel()
+	testkit.Oracle(t)
+	s := testkit.NewGitSandbox(t)
+	missionfx.OracleInit(t, s)
+	s.WriteFile("fake/bd", fakeBD)
+	os.Chmod(filepath.Join(s.Dir, "fake", "bd"), 0o755)
+	s.WriteFile("fake/state/list.json", bdList1)
+	same := func(args ...string) {
+		t.Helper()
+		g, o := s.Run(args...), s.RunOracle(args...)
+		if g.Code != o.Code || g.Stdout != o.Stdout {
+			t.Errorf("%v: go=%d oracle=%d\n%s\n--- go stderr:\n%s\n--- oracle stderr:\n%s", args, g.Code, o.Code, testkit.Diff(o.Stdout, g.Stdout), g.Stderr, o.Stderr)
+		}
+	}
+	missionfx.RunOracle(t, s, "tracker", "bind", "--provider", "beads", "--workspace", "ws", "--credential", "command="+filepath.Join(s.Dir, "fake", "bd"))
+	s.MustRun("tracker", "map", "add", "--wp-id", "WP01", "--external-id", "1")
+	missionfx.RunOracle(t, s, "tracker", "map", "add", "--wp-id", "WP02", "--external-id", "2", "--external-key", "K2")
+	s.MustRun("tracker", "map", "add", "--wp-id", "WP01", "--external-id", "3", "--external-url", "u")
+	same("tracker", "map", "list", "--json")
+	same("tracker", "status", "--json")
+	s.WriteFile(".kittify/config.yaml", s.ReadFile(".kittify/config.yaml")+"  egress: permitted\n")
+	missionfx.RunOracle(t, s, "tracker", "sync", "pull")
+	same("tracker", "status", "--json")
+	s.MustRun("tracker", "sync", "pull")
+	same("tracker", "sync", "pull", "--json")
+	same("tracker", "map", "list")
+	s.MustRun("tracker", "bind", "--provider", "beads", "--workspace", "ws", "--credential", "command="+filepath.Join(s.Dir, "fake", "bd"), "--credential", "actor=x")
+	same("tracker", "status")
+	if got := dumpIssues(t, s); got != "" && !strings.Contains(got, "\nok\n") {
+		t.Errorf("integrity: %s", got)
+	}
 }
 
 const fpList = `FP-1 [todo] [high] Build the thing
