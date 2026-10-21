@@ -45,6 +45,12 @@ type Flag struct {
 	NoName    string
 	// Envvar, when set, supplies the value if the flag was not given.
 	Envvar string
+	// Help rendering: Panel names a rich_help_panel ("" = Options);
+	// HideDefault suppresses "[default: ...]" (show_default=False);
+	// DefaultText overrides the rendered default value.
+	Panel       string
+	HideDefault bool
+	DefaultText string
 }
 
 // Arg describes a positional argument.
@@ -60,6 +66,11 @@ type Arg struct {
 	// instead of the metavar (typer shows "{name}" in the usage line but the
 	// bare name in the error).
 	ErrorHint string
+	// Help rendering: Type is the Arguments panel type column (default
+	// "<str>"); Panel names a rich_help_panel; Hidden omits it from help.
+	Type   string
+	Panel  string
+	Hidden bool
 }
 
 // Command is a node in the command tree.
@@ -70,9 +81,14 @@ type Command struct {
 	Long    string // full help text; defaults to Short
 	Epilog  string
 	Hidden  bool
-	Flags   []*Flag
-	Args    []*Arg
-	Run     func(*Context) error
+	// Deprecated marks the command "(deprecated)" in help listings.
+	Deprecated bool
+	// ShortHelp, when set, replaces the help's first paragraph in the
+	// parent's Commands panel (click short_help).
+	ShortHelp string
+	Flags     []*Flag
+	Args      []*Arg
+	Run       func(*Context) error
 
 	// Group behaviour.
 	Subcommands []*Command

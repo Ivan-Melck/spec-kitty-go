@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"os"
+	"strconv"
 	"strings"
-
-	"github.com/spec-kitty/go-kitty3/internal/cli"
 )
 
 // reTags is rich.markup.RE_TAGS: any "[x...]" whose first character is a
@@ -92,8 +92,14 @@ func Strip(s string) string {
 	return out
 }
 
-// Width is the console width.
-func Width() int { return cli.Width() }
+// Width is the console width: COLUMNS when set, else 80 (rich's fallback
+// when no terminal is attached).
+func Width() int {
+	if v, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && v > 20 {
+		return v
+	}
+	return 80
+}
 
 // Wrap soft-wraps each line of s at width on spaces (long words are split).
 func Wrap(s string, width int) string {
