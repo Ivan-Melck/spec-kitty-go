@@ -526,7 +526,7 @@ func writeSimpleHelp(w io.Writer, c *Command) {
 	b.WriteString(usageLine(c) + "\n")
 	if h := helpText(c); h != "" {
 		b.WriteString("\n")
-		b.WriteString(clickWriteText(h, width, 2))
+		b.WriteString(clickWriteText(h, width, 0))
 	}
 	var opts [][2]string
 	for _, f := range c.Flags {
@@ -540,21 +540,13 @@ func writeSimpleHelp(w io.Writer, c *Command) {
 	b.WriteString(clickWriteDL(opts, width, 2))
 	var cmds [][2]string
 	for _, s := range visibleSubcommands(c) {
-		cmds = append(cmds, [2]string{s.Name, shortHelpStr(s, width-6-maxNameLen(c))})
+		cmds = append(cmds, [2]string{s.Name, shortHelpStr(s, 45)})
 	}
 	if len(cmds) > 0 {
 		b.WriteString("\nCommands:\n")
 		b.WriteString(clickWriteDL(cmds, width, 2))
 	}
 	io.WriteString(w, b.String())
-}
-
-func maxNameLen(c *Command) int {
-	n := 0
-	for _, s := range visibleSubcommands(c) {
-		n = max(n, len(s.Name))
-	}
-	return n
 }
 
 func simpleFlagRecord(f *Flag) [2]string {
@@ -607,8 +599,7 @@ func shortHelpStr(c *Command, limit int) string {
 
 // makeDefaultShortHelp is click.utils.make_default_short_help.
 func makeDefaultShortHelp(help string, maxLength int) string {
-	paragraphEnd := strings.Index(help, "\n\n")
-	if paragraphEnd >= 0 {
+	if paragraphEnd := strings.Index(help, "\n\n"); paragraphEnd >= 0 {
 		help = help[:paragraphEnd]
 	}
 	words := strings.Fields(help)
@@ -618,31 +609,35 @@ func makeDefaultShortHelp(help string, maxLength int) string {
 	if words[0] == "\b" {
 		words = words[1:]
 	}
+	runes := func(s string) int { return len([]rune(s)) }
 	totalLength := 0
 	lastIndex := len(words) - 1
-	for i, w := range words {
-		totalLength += len(w) + boolInt(i > 0)
+	i := 0
+	truncated := false
+	for i = range words {
+		totalLength += runes(words[i]) + boolInt(i > 0)
 		if totalLength > maxLength {
+			truncated = true
 			break
 		}
-		if strings.HasSuffix(w, ".") {
+		if strings.HasSuffix(words[i], ".") {
 			return strings.Join(words[:i+1], " ")
 		}
 		if totalLength == maxLength && i != lastIndex {
+			truncated = true
 			break
 		}
 	}
-	if totalLength <= maxLength {
+	if !truncated {
 		return strings.Join(words, " ")
 	}
-	totalLength = len("...")
-	i := 0
-	for i < len(words) {
-		totalLength += len(words[i]) + boolInt(i > 0)
-		if totalLength > maxLength {
+	totalLength += len("...")
+	for i > 0 {
+		totalLength -= runes(words[i]) + boolInt(i > 0)
+		if totalLength <= maxLength {
 			break
 		}
-		i++
+		i--
 	}
 	return strings.Join(words[:i], " ") + "..."
 }
