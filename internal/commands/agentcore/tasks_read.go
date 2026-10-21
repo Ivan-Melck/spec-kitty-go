@@ -329,7 +329,13 @@ func runTasksStatus(ctx *cli.Context) error {
 			if !ok || v == nil || v == "" {
 				return ""
 			}
-			return v
+			sv := status.PyStr(v)
+			switch {
+			case k == "agent_profile" && sv == status.ResolvedProfileAbsent,
+				k == "model" && sv == status.ResolvedModelAbsent:
+				return ""
+			}
+			return sv
 		}
 		if state != nil && state.GetString("lane") != "" {
 			lane = state.GetString("lane")
