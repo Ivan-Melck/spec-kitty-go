@@ -34,6 +34,13 @@ func graphIDs(g *dct.Graph, kind dct.Kind) map[string]bool {
 func ResolveActionBundle(root, action, missionType string, depth int) *ActionBundle {
 	orgRoots := dct.OrgRoots(root)
 	off := dct.NewOffering(root, orgRoots)
+	langs, langKnown := InferRepoLanguages(root, nil, false)
+	if langKnown {
+		off.Languages = langs
+		if off.Languages == nil {
+			off.Languages = []string{}
+		}
+	}
 	b := &ActionBundle{Mission: missionType, IDs: map[dct.Kind][]string{}, Offer: off}
 	if missionType == "" {
 		return b
@@ -141,6 +148,9 @@ func ResolveActionBundle(root, action, missionType string, depth int) *ActionBun
 		}
 		id := n.ID()
 		if k == dct.Directive && !directives[id] && !local[id] {
+			continue
+		}
+		if langKnown && (k == dct.Tactic || k == dct.Styleguide || k == dct.Toolguide || k == dct.Procedure) && off.Repo(k).ScopeFiltered[id] {
 			continue
 		}
 		b.IDs[k] = append(b.IDs[k], id)
@@ -257,7 +267,7 @@ func (b *ActionBundle) disclosure(includeAll bool) *jsonx.Object {
 			if isInline {
 				e.Set("delivery", "inline")
 				if a != nil {
-					e.Set("body", a.Data)
+					e.Set("body", ArtifactBody(k, a.Data))
 				}
 			} else {
 				e.Set("delivery", "link")

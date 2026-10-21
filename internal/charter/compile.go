@@ -32,6 +32,9 @@ type Compiled struct {
 	References           []CharterRef
 	Diagnostics          []string
 	Unresolved           []*jsonx.Object
+	// Languages is the active language set (LanguagesKnown=false: None).
+	Languages      []string
+	LanguagesKnown bool
 }
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
@@ -66,7 +69,7 @@ type configRoots struct {
 
 var rootKinds = []dct.Kind{dct.Directive, dct.Paradigm, dct.Tactic, dct.Styleguide, dct.Toolguide, dct.Procedure, dct.AgentProfile}
 
-func resolveConfigRoots(root string) (*configRoots, error) {
+func resolveConfigRoots(root string, langs []string) (*configRoots, error) {
 	t, err := LoadWriteTarget(root)
 	if err != nil {
 		return nil, err
@@ -94,7 +97,9 @@ func resolveConfigRoots(root string) (*configRoots, error) {
 				cr.byKind[k] = []string{}
 				continue
 			}
-			ids := dct.NewOffering("", nil).Repo(k).IDs()
+			bo := dct.NewOffering("", nil)
+			bo.Languages = langs
+			ids := bo.Repo(k).IDs()
 			if ids == nil {
 				ids = []string{}
 			}
@@ -178,10 +183,23 @@ func modelRef(k dct.Kind, a *dct.Artifact) CharterRef {
 		LocalPath: "_LIBRARY/" + kind + "-" + slugify(id) + ".md"}
 }
 
-// CompileCharter is compile_charter.
+// CompileCharter is compile_charter (rederive_languages=False).
 func CompileCharter(root, mission string, iv *Interview, templateSet string) (*Compiled, error) {
+	return CompileCharterWith(root, mission, iv, templateSet, false)
+}
+
+// CompileCharterWith is compile_charter with rederive_languages.
+func CompileCharterWith(root, mission string, iv *Interview, templateSet string, rederive bool) (*Compiled, error) {
 	c := &Compiled{Mission: mission}
-	cr, err := resolveConfigRoots(root)
+	c.Languages, c.LanguagesKnown = InferRepoLanguages(root, iv, rederive)
+	var langs []string
+	if c.LanguagesKnown {
+		langs = c.Languages
+		if langs == nil {
+			langs = []string{}
+		}
+	}
+	cr, err := resolveConfigRoots(root, langs)
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +264,7 @@ func CompileCharter(root, mission string, iv *Interview, templateSet string) (*C
 
 	refs := []CharterRef{userProfileRef(iv)}
 	off := dct.NewOffering(root, dct.OrgRoots(root))
+	off.Languages = langs
 	for _, p := range c.Paradigms {
 		a := dct.NewOffering("", nil).Repo(dct.Paradigm).Get(p)
 		ref := CharterRef{ID: "PARADIGM:" + p, Kind: "paradigm", LocalPath: "_LIBRARY/paradigm-" + slugify(p) + ".md"}
@@ -313,9 +332,19 @@ func CompileCharter(root, mission string, iv *Interview, templateSet string) (*C
 				refs = append(refs, modelRef(k, a))
 				continue
 			}
-			detail := "no artifact with this id in any doctrine layer (project, org, built-in); run `spec-kitty charter validate` to rule out a silent schema-validation drop"
-			c.Diagnostics = append(c.Diagnostics, fmt.Sprintf("Unresolved reference: %s/%s (missing_artifact): %s", k, id, detail))
-			c.Unresolved = append(c.Unresolved, jsonx.NewObject("kind", string(k), "id", id, "cause", "missing_artifact", "detail", detail))
+			cause, detail := "missing_artifact", "no artifact with this id in any doctrine layer (project, org, built-in); run `spec-kitty charter validate` to rule out a silent schema-validation drop"
+			if repo.ScopeFiltered[id] {
+				cause, detail = "scope_filtered", scopeFilteredSuggestion(id, langs, root)
+			} else if sug := closeMatch(id, repo.IDs()); sug != "" {
+				cause, detail = "typo_suspected", "did you mean '"+sug+"'?"
+			}
+			c.Diagnostics = append(c.Diagnostics, fmt.Sprintf("Unresolved reference: %s/%s (%s): %s", k, id, cause, detail))
+			c.Unresolved = append(c.Unresolved, jsonx.NewObject("kind", string(k), "id", id, "cause", cause, "detail", detail))
+			if cause == "scope_filtered" {
+				refs = append(refs, CharterRef{ID: strings.ToUpper(string(k)) + ":" + id, Kind: string(k), Title: id,
+					Summary:   "Definition unavailable in bundled doctrine. Reason: scope_filtered — " + detail,
+					LocalPath: "_LIBRARY/" + string(k) + "-" + slugify(id) + ".md"})
+			}
 		}
 	}
 	refs = append(refs, templateSetRef(mission, c.TemplateSet))
@@ -362,7 +391,35 @@ func (c *Compiled) catalogObject() *jsonx.Object {
 	for _, r := range c.References {
 		refs = append(refs, jsonx.NewObject("id", r.ID, "kind", r.Kind, "title", r.Title, "summary", r.Summary, "source_path", r.SourcePath, "local_path", r.LocalPath))
 	}
-	return jsonx.NewObject("mission", c.Mission, "template_set", c.TemplateSet, "references", refs)
+	o := jsonx.NewObject("mission", c.Mission, "template_set", c.TemplateSet)
+	if c.LanguagesKnown {
+		o.Set("languages", strs(c.Languages))
+	}
+	o.Set("references", refs)
+	return o
+}
+
+// scopeFilteredSuggestion is classify_scope_filtered_miss's suggestion.
+func scopeFilteredSuggestion(id string, active []string, root string) string {
+	if LacksSpecialistGuidance(active, true, root) {
+		return "artifact '" + id + "' is scoped to specific languages and does not apply to a project whose language Spec Kitty does not recognise. " + CharterExtensionAdvisory
+	}
+	if len(active) > 0 {
+		var q []string
+		for _, l := range active {
+			q = append(q, dct.PyRepr(l))
+		}
+		return "artifact '" + id + "' is present but its applies_to_languages scope does not include the active language set (" + strings.Join(q, ", ") + "). Add the active language to the artifact's applies_to_languages field, or remove the field to make it always-applicable."
+	}
+	return "artifact '" + id + "' is present but its applies_to_languages scope was filtered out. Check the artifact's applies_to_languages field, or remove it to make the artifact always-applicable."
+}
+
+func strs(l []string) []any {
+	out := []any{}
+	for _, s := range l {
+		out = append(out, s)
+	}
+	return out
 }
 
 // defaultGovernance is GovernanceConfig().model_dump(mode="json").
@@ -399,7 +456,11 @@ func WriteCompiled(root string, c *Compiled) ([]string, error) {
 		}
 		// The update path dumps CharterCatalog without exclude_none:
 		// languages (None for an unconfigured project) is present.
-		catalog = jsonx.NewObject("mission", c.Mission, "template_set", c.TemplateSet, "languages", nil, "references", mustGetAny(catalog, "references"))
+		var langs any
+		if c.LanguagesKnown {
+			langs = strs(c.Languages)
+		}
+		catalog = jsonx.NewObject("mission", c.Mission, "template_set", c.TemplateSet, "languages", langs, "references", mustGetAny(catalog, "references"))
 		stamp := nowStamp()
 		if old := doc.GetObject("catalog"); old != nil && equalVals(old, catalog) {
 			if m := doc.GetObject("metadata"); m != nil && m.GetString("generated_at") != "" {

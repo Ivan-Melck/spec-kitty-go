@@ -95,7 +95,7 @@ func runCharterGenerate(ctx *cli.Context) error {
 	if err := charter.ProvisionMissionTypes(root); err != nil {
 		return fail(err.Error())
 	}
-	c, err := charter.CompileCharter(root, mission, iv, ctx.String("template-set"))
+	c, err := charter.CompileCharterWith(root, mission, iv, ctx.String("template-set"), source == "interview")
 	if err != nil {
 		return fail(err.Error())
 	}
