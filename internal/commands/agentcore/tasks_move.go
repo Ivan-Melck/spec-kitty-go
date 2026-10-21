@@ -679,10 +679,13 @@ func (st *moveState) kittySpecsContamination(wt, check, retry string) []string {
 		return nil
 	}
 	var files []string
+	seen := map[string]bool{}
 	for _, f := range strings.Split(strings.TrimSpace(out), "\n") {
-		if f != "" && strings.HasPrefix(f, "kitty-specs/"+st.m.Slug+"/") {
-			files = append(files, f)
+		if f == "" || !strings.HasPrefix(f, "kitty-specs/") || seen[f] || isOccurrenceMap(f) || mission.IsCoordResidue(f) {
+			continue
 		}
+		seen[f] = true
+		files = append(files, f)
 	}
 	if len(files) == 0 {
 		return nil
@@ -1097,16 +1100,33 @@ func (st *moveState) decide() {
 // wireAllowsForceFree mirrors the shared spec-kitty-events contract: the
 // review-rejection family (* -> planned out of review/implementation lanes,
 // in_review -> in_progress) requires force.
-func wireAllowsForceFree(old, nw string, reviewRef *string) bool {
-	switch {
-	case nw == string(status.Planned) && (old == string(status.InProgress) || old == string(status.ForReview) || old == string(status.InReview) || old == string(status.Approved)):
+func wireAllowsForceFree(old, nw string, reason, reviewRef *string) bool {
+	if old == string(status.Done) || old == string(status.Canceled) {
 		return false
-	case old == string(status.InReview) && nw == string(status.InProgress):
+	}
+	if nw == string(status.Planned) && (old == string(status.InProgress) || old == string(status.ForReview) || old == string(status.InReview) || old == string(status.Approved)) {
 		return false
-	case (old == string(status.ForReview) || old == string(status.Approved)) && nw == string(status.InProgress):
-		return reviewRef != nil && strings.TrimSpace(*reviewRef) != ""
+	}
+	if !wireMatrix[old+">"+nw] && nw != string(status.Blocked) && nw != string(status.Canceled) {
+		return false
+	}
+	if (old == string(status.ForReview) || old == string(status.InReview) || old == string(status.Approved)) &&
+		(nw == string(status.InProgress) || nw == string(status.Planned)) && (reviewRef == nil || strings.TrimSpace(*reviewRef) == "") {
+		return false
+	}
+	if old == string(status.InProgress) && nw == string(status.Planned) && (reason == nil || strings.TrimSpace(*reason) == "") {
+		return false
 	}
 	return true
+}
+
+// wireMatrix is spec_kitty_events.status._ALLOWED_TRANSITIONS.
+var wireMatrix = map[string]bool{
+	"genesis>planned": true, "planned>claimed": true, "claimed>in_progress": true, "in_progress>for_review": true,
+	"in_progress>approved": true, "for_review>in_review": true, "for_review>approved": true, "for_review>done": true,
+	"in_review>approved": true, "in_review>done": true, "approved>done": true, "for_review>in_progress": true,
+	"for_review>planned": true, "in_review>in_progress": true, "in_review>for_review": true, "in_review>planned": true,
+	"approved>in_progress": true, "approved>planned": true, "in_progress>planned": true, "blocked>in_progress": true,
 }
 
 func buildTransitionPlan(old, target string, force bool, feedbackPointer, noteText string, rr *status.ReviewResult) *transitionPlan {
@@ -1138,7 +1158,7 @@ func buildTransitionPlan(old, target string, force bool, feedbackPointer, noteTe
 	}
 	if !force && status.ResolveLaneAlias(old) != string(status.Done) && status.IsBackwardTransition(old, canonical) {
 		ok, _ := status.ValidateTransition(old, canonical, status.GuardContext{Reason: reason, ReviewRef: reviewRef, ReviewResult: rr})
-		emitForce = !(ok && wireAllowsForceFree(old, canonical, reviewRef))
+		emitForce = !(ok && wireAllowsForceFree(old, canonical, reason, reviewRef))
 		var original string
 		if reason != nil && !strings.HasPrefix(*reason, "move-task: ") {
 			original = *reason
@@ -1275,19 +1295,50 @@ func (st *moveState) commitLaneDeliverables() {
 	if len(paths) == 0 {
 		return
 	}
-	if _, err := coord.CommitPaths(ws.WorktreePath, fmt.Sprintf("chore(%s): commit lane deliverables for review", st.taskID), paths...); err != nil {
+	if err := safeCommitPaths(ws.WorktreePath, fmt.Sprintf("chore(%s): commit lane deliverables for review", st.taskID), paths); err != nil {
 		st.console(fmt.Sprintf("Warning: could not auto-commit lane deliverables for %s: %v", st.taskID, err))
 		return
 	}
 	st.console(fmt.Sprintf("Committed lane deliverables for %s on %s before review.", st.taskID, ws.BranchName))
 }
 
-func isCoordResidue(rel string) bool {
-	switch filepath.Base(rel) {
-	case "status.events.jsonl", "status.json", "acceptance-matrix.json", "issue-matrix.md":
-		return strings.HasPrefix(rel, "kitty-specs/")
+func isCoordResidue(rel string) bool { return mission.IsCoordResidue(rel) }
+
+func isOccurrenceMap(p string) bool {
+	parts := strings.Split(p, "/")
+	return len(parts) == 3 && parts[0] == "kitty-specs" && parts[2] == "occurrence_map.yaml"
+}
+
+// safeCommitPaths is the safe_commit primitive for worktree-relative paths:
+// `add --force -- paths` + `commit --only -- paths`, then refuse (after the
+// commit landed) when the commit carries unrequested paths.
+func safeCommitPaths(dir, message string, paths []string) error {
+	if _, err := gitx.Run(dir, append([]string{"add", "--force", "--"}, paths...)...); err != nil {
+		return err
 	}
-	return false
+	if _, err := gitx.Run(dir, append([]string{"commit", "-q", "--only", "-m", message, "--"}, paths...)...); err != nil {
+		return err
+	}
+	sha, _ := gitx.HeadSHA(dir)
+	out, err := gitx.Run(dir, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD")
+	if err != nil {
+		return nil
+	}
+	req := map[string]bool{}
+	for _, p := range paths {
+		req[strings.TrimSuffix(filepath.ToSlash(p), "/")] = true
+	}
+	var extra []string
+	for _, f := range strings.Split(strings.TrimSpace(out), "\n") {
+		if f != "" && !req[f] {
+			extra = append(extra, f)
+		}
+	}
+	if len(extra) > 0 {
+		sort.Strings(extra)
+		return fmt.Errorf("safe_commit: commit %s landed, but it also carries path(s) the operation did not request (a pre-commit hook staged them): %s", strings.TrimSpace(sha), strings.Join(extra, ", "))
+	}
+	return nil
 }
 
 // --- phase D: finalize plan -------------------------------------------------
@@ -1913,4 +1964,3 @@ func (st *moveState) dependentWarnings() {
 	consolePrint(out, "")
 }
 
-var _ = sort.Strings
