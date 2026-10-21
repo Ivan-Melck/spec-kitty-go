@@ -35,9 +35,11 @@ func usagePieces(c *Command) []string {
 // usageLine is Command.get_usage: click's HelpFormatter.write_usage at the
 // formatter width (min(terminal, 80) - 2, at least 50), without the final
 // newline. It may span several lines.
-func usageLine(c *Command) string {
+func usageLine(c *Command) string { return usageLineFor(c, c.Path()) }
+
+func usageLineFor(c *Command, path string) string {
 	width := max(min(Width(), 80)-2, 50)
-	prefix := "Usage: " + c.Path() + " "
+	prefix := "Usage: " + path + " "
 	args := strings.Join(usagePieces(c), " ")
 	if width >= rich.CellLen(prefix)+20 {
 		return strings.Join(textWrap(args, width, prefix, strings.Repeat(" ", rich.CellLen(prefix))), "\n")
@@ -117,11 +119,18 @@ func writeUsageError(w io.Writer, e *UsageError) {
 	c := e.Cmd
 	width := Width()
 	o := rich.Options{MaxWidth: width}
-	for _, l := range rich.NewText(usageLine(c)).Render(o) {
-		fmt.Fprintln(w, l)
-	}
-	for _, l := range rich.NewText(fmt.Sprintf("Try '%s --help' for help.", c.Path())).Render(o) {
-		fmt.Fprintln(w, l)
+	if !e.NoContext && c != nil {
+		path := c.Path()
+		if e.parsing && c.ParseUsagePath != "" {
+			path = c.ParseUsagePath
+		}
+		for _, l := range rich.NewText(usageLineFor(c, path)).Render(o) {
+			fmt.Fprintln(w, l)
+		}
+		help := "--help"
+		for _, l := range rich.NewText(fmt.Sprintf("Try '%s %s' for help.", path, help)).Render(o) {
+			fmt.Fprintln(w, l)
+		}
 	}
 	printRenderable(w, &rich.BoxPanel{R: rich.NewText(e.Msg), Title: "Error"}, width)
 }
@@ -295,6 +304,9 @@ func flagType(f *Flag) string {
 	}
 	if f.Metavar != "" {
 		return f.Metavar
+	}
+	if f.Kind == Int && (f.Min != nil || f.Max != nil) {
+		return "<int range> [" + describeRange(f.Min, f.Max) + "]"
 	}
 	if len(f.Choices) > 0 {
 		return "<" + strings.Join(f.Choices, "|") + ">"

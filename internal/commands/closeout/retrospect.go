@@ -22,7 +22,7 @@ func summaryFlags(project, json, jsonOut, limit, since, malformed, filter string
 		{Name: "project", Kind: cli.String, Metavar: "<path>", Help: project},
 		{Name: "json", Kind: cli.Bool, Help: json},
 		{Name: "json-out", Kind: cli.String, Metavar: "<path>", Help: jsonOut},
-		{Name: "limit", Kind: cli.Int, Metavar: "<int range> [1<=x<=100]", Default: 20, Help: limit},
+		{Name: "limit", Kind: cli.Int, Min: cli.Bound(1), Max: cli.Bound(100), Default: 20, Help: limit},
 		{Name: "since", Kind: cli.String, Metavar: "<str>", Help: since},
 		{Name: "include-malformed", Kind: cli.Bool, Help: malformed},
 		{Name: "filter", Kind: cli.String, Metavar: "<str>", Help: filter},

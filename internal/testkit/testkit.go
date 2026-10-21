@@ -9,15 +9,19 @@ package testkit
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 var (
@@ -39,7 +43,8 @@ func Binary(t testing.TB) string {
 		return p
 	}
 	buildOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "sk-go-bin-")
+		sweepStaleBinaries()
+		dir, err := os.MkdirTemp("", fmt.Sprintf("sk-go-bin-%d-", os.Getpid()))
 		if err != nil {
 			buildErr = err
 			return
@@ -56,6 +61,35 @@ func Binary(t testing.TB) string {
 		t.Fatalf("building spec-kitty: %v", buildErr)
 	}
 	return binPath
+}
+
+// sweepStaleBinaries removes binary directories left behind by finished
+// test processes ("sk-go-bin-<pid>-*" whose pid is gone; legacy
+// "sk-go-bin-*" directories older than six hours).
+func sweepStaleBinaries() {
+	dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), "sk-go-bin-*"))
+	for _, d := range dirs {
+		rest := strings.TrimPrefix(filepath.Base(d), "sk-go-bin-")
+		if pidStr, _, ok := strings.Cut(rest, "-"); ok {
+			if pid, err := strconv.Atoi(pidStr); err == nil {
+				if !processAlive(pid) {
+					os.RemoveAll(d)
+				}
+				continue
+			}
+		}
+		if st, err := os.Stat(d); err == nil && time.Since(st.ModTime()) > 6*time.Hour {
+			os.RemoveAll(d)
+		}
+	}
+}
+
+func processAlive(pid int) bool {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
 }
 
 type buildError struct{ out string }

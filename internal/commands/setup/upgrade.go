@@ -60,10 +60,11 @@ Examples:
 func init() {
 	app.Register(func(root *cli.Command) {
 		root.Add(&cli.Command{
-			Name:        "upgrade",
-			NoShortHelp: true,
-			Short:       "Upgrade a Spec Kitty project to the current version.",
-			Long:        upgradeDoc,
+			Name:           "upgrade",
+			NoShortHelp:    true,
+			ParseUsagePath: "upgrade",
+			Short:          "Upgrade a Spec Kitty project to the current version.",
+			Long:           upgradeDoc,
 			Flags: []*cli.Flag{
 				{Name: "dry-run", Kind: cli.Bool, Help: "Preview changes without applying"},
 				{Name: "force", Kind: cli.Bool, Help: "Skip confirmation prompts"},
