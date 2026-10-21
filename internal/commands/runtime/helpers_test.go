@@ -21,6 +21,7 @@ var (
 	reCreatedAt  = regexp.MustCompile(`"shell_pid_created_at": "[0-9.]+"`)
 	reDBMid8     = regexp.MustCompile(`_0[0-9A-HJKMNP-TV-Z]{7}_`)
 	reParents    = regexp.MustCompile(`\[parents:([0-9a-f ]*)\]`)
+	reElapsed    = regexp.MustCompile(`"elapsed_seconds": [0-9.e-]+`)
 )
 
 // norm normalizes run-specific values of one sandbox's output.
@@ -33,7 +34,18 @@ func norm(s *testkit.Sandbox, text string) string {
 	text = reShortULID.ReplaceAllString(text, "<ULID12>")
 	text = reCreatedAt.ReplaceAllString(text, `"shell_pid_created_at": "<CT>"`)
 	text = reDBMid8.ReplaceAllString(text, "_<MID8>_")
+	text = reElapsed.ReplaceAllString(text, `"elapsed_seconds": <S>`)
 	return text
+}
+
+// slugOf returns the side's mission slug when args reference $M.
+func slugOf(t *testing.T, s *testkit.Sandbox, args []string) string {
+	for _, a := range args {
+		if strings.Contains(a, "$M") {
+			return missionfx.MissionSlug(t, s)
+		}
+	}
+	return ""
 }
 
 func subst(args []string, slug string) []string {
@@ -49,8 +61,8 @@ func subst(args []string, slug string) []string {
 func steps(t *testing.T, p *testkit.Pair, withStderr bool, cmds ...[]string) {
 	t.Helper()
 	for _, c := range cmds {
-		g := p.Go.Run(subst(c, missionfx.MissionSlug(t, p.Go))...)
-		o := p.Oracle.RunOracle(subst(c, missionfx.MissionSlug(t, p.Oracle))...)
+		g := p.Go.Run(subst(c, slugOf(t, p.Go, c))...)
+		o := p.Oracle.RunOracle(subst(c, slugOf(t, p.Oracle, c))...)
 		if os.Getenv("KITTY_TEST_TRACE") != "" {
 			t.Logf("%v\n== go %d ==\n%s%s== oracle %d ==\n%s%s", c, g.Code, g.Stdout, g.Stderr, o.Code, o.Stdout, o.Stderr)
 		}

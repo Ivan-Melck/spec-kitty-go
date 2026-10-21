@@ -211,8 +211,8 @@ func runStaleCheck(ctx *cli.Context) error {
 			items = append(items, jsonx.NewObject("test_file", f.testFile, "test_line", f.testLine, "source_file", f.sourceFile,
 				"source_line", f.sourceLine, "changed_symbol", f.symbol, "confidence", f.confidence, "hint", f.hint, "label", ""))
 		}
-		emitJSON(ctx, jsonx.NewObject("base_ref", base, "head_ref", head, "repo_root", root, "findings", items,
-			"elapsed_seconds", jsonx.Float(elapsed), "files_scanned", len(testFiles), "findings_per_100_loc", jsonx.Float(per)))
+		fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("base_ref", base, "head_ref", head, "repo_root", root, "findings", items,
+			"elapsed_seconds", jsonx.Float(elapsed), "files_scanned", len(testFiles), "findings_per_100_loc", jsonx.Float(per)), compact))
 		return nil
 	}
 	rich.Print(ctx.Stdout, fmt.Sprintf("\nStale-assertion analysis: '%s' → '%s'", base, head))

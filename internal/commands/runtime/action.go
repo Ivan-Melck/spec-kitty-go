@@ -53,7 +53,7 @@ func init() {
 		action.NoArgsIsError = true
 		action.Add(&cli.Command{
 			Name: "implement", Short: "Display work package prompt with implementation instructions.", Long: implementLong,
-			Args: []*cli.Arg{{Name: "wp_id", Metavar: "<str>", Help: "Work package ID (e.g., WP01, wp01, WP01-slug) - auto-detects first planned if omitted"}},
+			Args: []*cli.Arg{{Name: "wp_id", Metavar: "wp_id", Help: "Work package ID (e.g., WP01, wp01, WP01-slug) - auto-detects first planned if omitted"}},
 			Flags: []*cli.Flag{
 				{Name: "mission", Kind: cli.String, Metavar: "<str>", Help: "Mission slug"},
 				{Name: "agent", Kind: cli.String, Metavar: "<str>", Help: "Agent name (required for auto-move to in_progress). With --force, name the agent that will implement: it is recorded as the implementer of record."},
@@ -69,7 +69,7 @@ func init() {
 			Run: runActionImplement,
 		}, &cli.Command{
 			Name: "review", Short: "Display work package prompt with review instructions.", Long: reviewLong,
-			Args: []*cli.Arg{{Name: "wp_id", Metavar: "<str>", Help: "Work package ID (e.g., WP01) - auto-detects first for_review if omitted"}},
+			Args: []*cli.Arg{{Name: "wp_id", Metavar: "wp_id", Help: "Work package ID (e.g., WP01) - auto-detects first for_review if omitted"}},
 			Flags: []*cli.Flag{
 				{Name: "mission", Kind: cli.String, Metavar: "<str>", Help: "Mission slug"},
 				{Name: "agent", Kind: cli.String, Metavar: "<str>", Help: "Agent name (required for auto-move to in_progress)"},
