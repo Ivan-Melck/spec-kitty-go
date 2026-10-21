@@ -320,14 +320,42 @@ func NormalizeValues(text string) string {
 	})
 	text = reTS.ReplaceAllString(text, "<TS>")
 	text = reSHA.ReplaceAllString(text, "<SHA>")
-	text = reShort.ReplaceAllStringFunc(text, func(m string) string {
-		// only mask tokens that contain both digits and letters (git short shas)
-		if strings.ContainsAny(m, "abcdef") && strings.ContainsAny(m, "0123456789") {
-			return "<SHORTSHA>"
-		}
-		return m
-	})
-	text = reDur.ReplaceAllString(text, "<DUR>")
 	text = rePid.ReplaceAllString(text, `"$1": <PID>`)
+	text = maskShortSHAs(text)
+	text = reDur.ReplaceAllString(text, "<DUR>")
 	return text
+}
+
+// maskShortSHAs masks abbreviated git object names: 7-12 character hex
+// words mixing digits and letters, and all-digit ones (git abbreviations
+// can be all digits) unless they are part of a decimal, version or list
+// number ("1.2345678", "1234567,"). All-letter hex words ("defaced") stay.
+func maskShortSHAs(text string) string {
+	locs := reShort.FindAllStringIndex(text, -1)
+	if len(locs) == 0 {
+		return text
+	}
+	var b strings.Builder
+	prev := 0
+	for _, l := range locs {
+		m := text[l[0]:l[1]]
+		hasLetter := strings.ContainsAny(m, "abcdef")
+		hasDigit := strings.ContainsAny(m, "0123456789")
+		mask := hasLetter && hasDigit
+		if !hasLetter {
+			before := l[0] > 0 && strings.IndexByte(".,", text[l[0]-1]) >= 0
+			after := l[1] < len(text) && strings.IndexByte(".,", text[l[1]]) >= 0 &&
+				l[1]+1 < len(text) && text[l[1]+1] >= '0' && text[l[1]+1] <= '9'
+			mask = !before && !after
+		}
+		b.WriteString(text[prev:l[0]])
+		if mask {
+			b.WriteString("<SHORTSHA>")
+		} else {
+			b.WriteString(m)
+		}
+		prev = l[1]
+	}
+	b.WriteString(text[prev:])
+	return b.String()
 }
