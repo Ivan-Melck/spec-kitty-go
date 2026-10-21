@@ -11,6 +11,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/healthcheck"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/missionstate"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
 
@@ -86,22 +87,47 @@ func runDoctorMissionState(ctx *cli.Context) error {
 		fmt.Fprintln(ctx.Stderr, "Error: --fixture-dir is not supported by this build.")
 		return cli.Exit(2)
 	}
-	if !ctx.Bool("audit") {
-		// TODO(area H): the --fix repair (migration/mission_state.repair_repo)
-		// and --teamspace-dry-run envelope synthesis are not ported.
-		mode := "--fix"
-		code := "MISSION_STATE_REPAIR_FAILED"
-		if ctx.Bool("teamspace-dry-run") {
-			mode, code = "--teamspace-dry-run", "TEAMSPACE_DRY_RUN_FAILED"
-		}
-		msg := fmt.Sprintf("doctor mission-state %s is not supported by this build", mode)
+	if ctx.Bool("fix") {
+		return runMissionStateFix(ctx, root, jsonOut)
+	}
+	if ctx.Bool("teamspace-dry-run") {
+		return runTeamspaceDryRun(ctx, root, jsonOut)
+	}
+	cwd, _ := os.Getwd()
+	disagreements := missionstate.AuditDisagreements(cwd, root, optString(ctx, "mission"))
+	if len(disagreements) > 0 {
 		if jsonOut {
-			fmt.Fprintln(out, jsonx.Dumps(jsonx.NewObject("error", code, "message", msg), compactJSON))
+			var ds []any
+			for _, d := range disagreements {
+				ds = append(ds, d.ToObject())
+			}
+			fmt.Fprintln(ctx.Stderr, jsonx.Dumps(jsonx.NewObject("warning", "CHECKOUT_STATE_DISAGREEMENT", "primary_root", root, "disagreements", ds), compactJSON))
 		} else {
-			fmt.Fprintln(ctx.Stderr, "Error: "+msg)
+			cprint(out, "[red]Audit disagreement:[/red] this checkout's mission state differs from the canonical primary. Reporting the honest mismatch (NOT a false-green from reading the primary at both ends):")
+			for _, d := range disagreements {
+				cprintf(out, "  - %s/%s: invoking != primary", d.Slug, d.Artifact)
+			}
 		}
+	}
+	if err := runMissionStateAudit(ctx, root, jsonOut, failSev, failBlocker); err != nil {
+		return err
+	}
+	if len(disagreements) > 0 {
 		return cli.Exit(1)
 	}
+	return nil
+}
+
+func optString(ctx *cli.Context, name string) *string {
+	if !ctx.IsSet(name) {
+		return nil
+	}
+	v := ctx.String(name)
+	return &v
+}
+
+func runMissionStateAudit(ctx *cli.Context, root string, jsonOut bool, failSev string, failBlocker bool) error {
+	out := ctx.Stdout
 	var only *string
 	if ctx.IsSet("mission") {
 		m := ctx.String("mission")
@@ -125,6 +151,17 @@ func runDoctorMissionState(ctx *cli.Context) error {
 		only = &slug
 	}
 	rep := healthcheck.RunAudit(root, only)
+	cwd, _ := os.Getwd()
+	for _, d := range missionstate.AuditDisagreements(cwd, root, only) {
+		miss := func(p *string) string {
+			if p == nil {
+				return "missing"
+			}
+			return *p
+		}
+		rep.AddFinding(d.Slug, "CHECKOUT_DISAGREEMENT", "error", d.Artifact,
+			fmt.Sprintf("%s disagrees with primary (invoking sha256 %s, primary sha256 %s)", d.Artifact, miss(d.InvokingSHA), miss(d.PrimarySHA)))
+	}
 	if jsonOut {
 		fmt.Fprint(out, jsonx.Dumps(rep.ToObject(), jsonx.SortedPretty))
 	} else {

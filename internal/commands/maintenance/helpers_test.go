@@ -3,6 +3,7 @@ package maintenance_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -53,7 +54,7 @@ func compareStepsVars(t *testing.T, p *testkit.Pair, goVars, orVars map[string]s
 			t.Errorf("%v: exit go=%d oracle=%d\ngo stdout:\n%s\ngo stderr:\n%s\noracle stdout:\n%s\noracle stderr:\n%s", s, g.Code, o.Code, g.Stdout, g.Stderr, o.Stdout, o.Stderr)
 			continue
 		}
-		if gs, os_ := p.Go.Normalize(g.Stdout), p.Oracle.Normalize(o.Stdout); gs != os_ {
+		if gs, os_ := normDiffIndex(p.Go.Normalize(g.Stdout)), normDiffIndex(p.Oracle.Normalize(o.Stdout)); gs != os_ {
 			t.Errorf("%v: stdout differs\n%s", s, testkit.Diff(os_, gs))
 		}
 		if ge, oe := p.Go.Normalize(g.Stderr), p.Oracle.Normalize(o.Stderr); ge != oe {
@@ -88,8 +89,21 @@ func commitBoth(p *testkit.Pair, msg string) {
 	})
 }
 
-func newOraclePair(t *testing.T) *testkit.Pair { t.Helper(); return missionfx.NewOraclePair(t) }
+// newOraclePair builds an oracle-initialised pair. Differential tests are
+// independent sandboxes, so they run in parallel (oracle start-up dominates).
+func newOraclePair(t *testing.T) *testkit.Pair {
+	t.Helper()
+	t.Parallel()
+	return missionfx.NewOraclePair(t)
+}
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 func join(parts ...string) string { return filepath.Join(parts...) }
+
+// diffIndexRe matches git-diff "index a..b" headers. Blob ids hash content
+// that embeds per-side ULIDs, and all-digit abbreviations escape the
+// testkit SHA mask, so they are masked here.
+var diffIndexRe = regexp.MustCompile(`(?m)^index [0-9a-f<>A-Z]+\.\.[0-9a-f<>A-Z]+`)
+
+func normDiffIndex(s string) string { return diffIndexRe.ReplaceAllString(s, "index <IDX>") }
