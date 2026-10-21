@@ -1,11 +1,14 @@
 package orchestrator
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
 	"github.com/spec-kitty/go-kitty3/internal/acceptance"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/consolidate"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
@@ -68,6 +71,52 @@ func runAcceptMission(ctx *cli.Context) error {
 	return v.ok(identity(m.StatusDir, "accepted", true, "mode", "auto", "accepted_at", acceptedAt,
 		"accepted_wps", strList(accepted), "approved_wps", strList(approved), "done_wps", strList(done),
 		"merge_pending_wps", strList(approved)))
+}
+
+// ── consolidate-mission ───────────────────────────────────────────────────
+
+func runConsolidateMission(ctx *cli.Context) error {
+	v := newVerb(ctx, "consolidate-mission")
+	strategy := ctx.String("strategy")
+	supported := []string{"merge", "rebase", "squash"}
+	if strategy != "merge" && strategy != "squash" && strategy != "rebase" {
+		return v.fail("UNSUPPORTED_STRATEGY", fmt.Sprintf("Strategy '%s' is not supported. Supported strategies: %s", strategy, pyjson.ReprStrings(supported)),
+			jsonx.NewObject("strategy", strategy, "supported", strList(supported)))
+	}
+	root := v.root()
+	handle := ctx.String("mission")
+	m, err := v.mission(root, handle)
+	if err != nil {
+		return err
+	}
+	target, errs := consolidate.MergePreflight(root, m.Slug, ctx.String("target"))
+	if len(errs) > 0 {
+		return v.fail("PREFLIGHT_FAILED", "Merge failed", identity(m.StatusDir, "target_branch", target, "errors", strList(errs)))
+	}
+	err = consolidate.RunLaneMerge(root, consolidate.LaneMergeOptions{Handle: handle, Slug: m.Slug, Target: target,
+		Strategy: strategy, Push: ctx.Bool("push"), Log: ctx.Stderr, Console: ctx.Stderr})
+	if err != nil {
+		var dr *consolidate.DestructiveRefusal
+		if errors.As(err, &dr) {
+			code := "PREFLIGHT_FAILED"
+			if orch.IsAllowedErrorCode(dr.Code) {
+				code = dr.Code
+			}
+			data := identity(m.StatusDir, "target_branch", target, "errors", strList([]string{dr.Error()}),
+				"destructive_op_error_code", dr.Code, "remediation", dr.Remediation, "worktree_path", dr.Worktree)
+			if len(dr.Entries) > 0 {
+				data.Set("dirty_entries", strList(dr.Entries))
+			}
+			return v.fail(code, "Merge refused: destructive operation safety check failed", data)
+		}
+		data := identity(m.StatusDir, "target_branch", target, "errors", strList([]string{err.Error()}))
+		var le *consolidate.LaneMergeError
+		if errors.As(err, &le) && le.TeardownCode != "" {
+			data.Set("teardown_error_code", le.TeardownCode)
+		}
+		return v.fail("PREFLIGHT_FAILED", "Merge failed", data)
+	}
+	return v.ok(identity(m.StatusDir, "merged", true, "target_branch", target, "strategy", strategy, "worktree_removed", false))
 }
 
 func checkList(cs []acceptance.Check) []any {

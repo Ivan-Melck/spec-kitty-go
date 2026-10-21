@@ -4,7 +4,10 @@
 package orchestrator
 
 import (
+	"fmt"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
@@ -40,7 +43,7 @@ func init() {
 		g := app.Group(root, "orchestrator-api", "Machine-contract API for external orchestrators (JSON-first)")
 		g.NoArgsIsError = true
 		g.UsageErrorHandler = func(io_ cli.IO, e *cli.UsageError) int {
-			orch.UsageError(io_.Stdout, e.Msg)
+			orch.UsageError(io_.Stdout, usageMessage(e.Msg))
 			return 2
 		}
 		g.Add(verbs()...)
@@ -77,6 +80,22 @@ func verbs() []*cli.Command {
 		interviewRecordCmd(),
 		nextCmd(),
 	}
+}
+
+var invalidChoiceRe = regexp.MustCompile(`^Invalid value for '[^']*': '(.*)' is not one of (.*)\.$`)
+
+// usageMessage is click's UsageError.format_message() as the group's JSON
+// handler sees it: a click.Choice failure carries no parameter hint and
+// joins the choices with ", ".
+func usageMessage(msg string) string {
+	if m := invalidChoiceRe.FindStringSubmatch(msg); m != nil {
+		choices := m[2]
+		if i := strings.LastIndex(choices, "' or '"); i >= 0 {
+			choices = choices[:i] + "', '" + choices[i+len("' or '"):]
+		}
+		return fmt.Sprintf("Invalid value: '%s' is not one of %s.", m[1], choices)
+	}
+	return msg
 }
 
 // verb carries one invocation's context and renders its envelopes.

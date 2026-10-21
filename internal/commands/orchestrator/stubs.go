@@ -28,7 +28,7 @@ func consolidateMissionCmd() *cli.Command {
 			{Name: "strategy", Kind: cli.String, Metavar: "<str>", Default: "merge", Help: "Merge strategy: merge, squash, or rebase"},
 			boolFlag("push", "Push target branch after merge"),
 			originCheckFlag()},
-		Run: notYet("consolidate-mission")}
+		Run: runConsolidateMission}
 }
 
 func designStatusCmd() *cli.Command {
@@ -60,7 +60,7 @@ func designContextCmd() *cli.Command {
 		Flags: []*cli.Flag{str("mission", "Mission handle; omitted before creation", false),
 			{Name: "stage", Kind: cli.String, Metavar: "<str>", Default: "specify", Help: "specify | plan | tasks"},
 			str("mission-type", "Activated mission type before creation", false)},
-		Run: notYet("design-context")}
+		Run: runDesignContext}
 }
 
 func interviewRecordCmd() *cli.Command {
@@ -68,7 +68,7 @@ func interviewRecordCmd() *cli.Command {
 		Flags: []*cli.Flag{str("mission", "Mission handle", true), str("stage", "specify | plan", true),
 			str("answers", "JSON mapping of canonical question IDs to nonempty answers", true), str("actor", helpActor, true),
 			str("policy", "Required orchestrator policy JSON", false)},
-		Run: notYet("interview-record")}
+		Run: runInterviewRecord}
 }
 
 func nextCmd() *cli.Command {
@@ -76,7 +76,7 @@ func nextCmd() *cli.Command {
 		Flags: []*cli.Flag{str("mission", "Mission handle", true), str("agent", "Agent required for advancement", false),
 			str("result", "Prior result; omit for read-only query", false), str("answer", "Native pending decision answer", false),
 			str("decision-id", "Native decision identity", false), str("policy", "Policy JSON required for advancement", false)},
-		Run: notYet("next")}
+		Run: runNext}
 }
 
 func answerDecisionCmd() *cli.Command {
@@ -87,5 +87,5 @@ func answerDecisionCmd() *cli.Command {
 			str("result", "Outcome of the current issuance: success | failed | blocked (required alongside --answer)", false),
 			str("decision-id", "Run-snapshot pending decision id to answer (auto-resolved when omitted and exactly one decision is pending)", false),
 			str("policy", helpPolicy, false)},
-		Run: notYet("answer-decision")}
+		Run: runAnswerDecision}
 }

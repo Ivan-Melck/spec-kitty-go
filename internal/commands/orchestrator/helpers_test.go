@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -69,7 +70,16 @@ func execStdin(t *testing.T, s *testkit.Sandbox, exe, stdin string, args ...stri
 // status for comparison.
 func gitState(s *testkit.Sandbox) string {
 	var b strings.Builder
-	b.WriteString(s.Git("log", "--all", "--topo-order", "--format=%s%n%b--", "--name-status"))
+	// Per-branch first-parent histories are deterministic; --all
+	// --topo-order reorders same-second commits on independent branches.
+	for _, ref := range strings.Fields(s.Git("for-each-ref", "--format=%(refname)", "refs/heads")) {
+		b.WriteString("## " + ref + "\n")
+		b.WriteString(s.Git("log", "--first-parent", "--format=%s%n%b--", "--name-status", ref))
+		b.WriteString("\n")
+	}
+	all := strings.Split(s.Git("log", "--all", "--format=%s"), "\n")
+	sort.Strings(all)
+	b.WriteString("## all subjects\n" + strings.Join(all, "\n"))
 	b.WriteString("\n## branches\n")
 	b.WriteString(s.Git("branch", "-a", "--format=%(refname)"))
 	b.WriteString("\n## refs\n")
