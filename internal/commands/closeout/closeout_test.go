@@ -158,7 +158,9 @@ func TestDiffConsolidate(t *testing.T) {
 			} {
 				comparePair(t, p, c...)
 			}
-			p.Both(func(s *testkit.Sandbox) { s.WriteFile("pyproject.toml", "[project]\nname = \"x\"\nversion = \"1.2.0a3\"\n") })
+			p.Both(func(s *testkit.Sandbox) {
+				s.WriteFile("pyproject.toml", "[project]\nname = \"x\"\nversion = \"1.2.0a3\"\n")
+			})
 			comparePair(t, p, "agent", "release", "prep", "--channel", "beta", "--json")
 			comparePair(t, p, "agent", "release", "prep", "--channel", "stable")
 			compareGit(t, p)
