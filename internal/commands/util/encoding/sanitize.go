@@ -362,3 +362,7 @@ func SanitizeDirectory(dir string, backup, dryRun bool) []Result {
 	}
 	return res
 }
+
+// PyOSError renders an OS error like str(OSError) ("[Errno 2] No such file
+// or directory: 'path'"); other errors render as err.Error().
+func PyOSError(err error) string { return pyOSError(err) }

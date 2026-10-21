@@ -69,3 +69,14 @@ func TestSafeLoadRoundTrip(t *testing.T) {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, exp)
 	}
 }
+
+// A line split right after an escape sequence (start > end in PyYAML's
+// write_double_quoted) must not panic and must match PyYAML.
+func TestDumpDoubleQuotedSplitAfterEscape(t *testing.T) {
+	s := strings.Repeat("x", 76) + "\t" + strings.Repeat("y", 20) + strings.Repeat("\tz ", 3)
+	got := Dump(jsonx.NewObject("activity", s), Options{AllowUnicode: true})
+	exp := "activity: \"" + strings.Repeat("x", 76) + "\\t\\\n  " + strings.Repeat("y", 20) + "\\tz \\tz \\tz \"\n"
+	if got != exp {
+		t.Fatalf("got  %q\nwant %q", got, exp)
+	}
+}

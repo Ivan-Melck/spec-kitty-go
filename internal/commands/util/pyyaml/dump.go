@@ -500,7 +500,10 @@ func (e *emitter) writeDoubleQuoted(text []rune, split bool) {
 			}
 		}
 		if end > 0 && end < len(text)-1 && (ch == ' ' || start >= end) && e.column+(end-start) > bestWidth && split {
-			data := string(text[start:end]) + "\\"
+			data := "\\"
+			if start < end { // Python slicing: text[start:end] is empty when start > end
+				data = string(text[start:end]) + data
+			}
 			if start < end {
 				start = end
 			}

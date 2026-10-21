@@ -86,8 +86,7 @@ func listContexts(repoRoot string) []workspaceContext {
 	return out
 }
 
-// reduceLanes approximates the canonical status reducer: the latest
-// transition (by at, then event_id) per work package wins.
+// reduceLanes is the canonical status reducer's per-WP lane.
 func reduceLanes(missionDir string, warn io.Writer) (map[string]string, error) {
 	if _, err := os.Stat(status.EventsPath(missionDir)); err != nil {
 		slug := filepath.Base(missionDir)
@@ -109,16 +108,10 @@ func reduceLanes(missionDir string, warn io.Writer) (map[string]string, error) {
 			uconsole.LogWarning(warn, fmt.Sprintf("No meta.json found for mission_slug %s (orphaned event); mission_id will be None for these events", pyjson.ReprString(e.MissionSlug)))
 		}
 	}
-	evs := append([]*status.Event{}, st.Transitions...)
-	sort.SliceStable(evs, func(i, j int) bool {
-		if evs[i].At != evs[j].At {
-			return evs[i].At < evs[j].At
-		}
-		return evs[i].EventID < evs[j].EventID
-	})
+	snap := status.Reduce(st.Transitions, st.Annotations, false)
 	lanes := map[string]string{}
-	for _, e := range evs {
-		lanes[e.WPID] = string(e.To)
+	for _, kv := range snap.WorkPackages.Pairs() {
+		lanes[kv.Key] = string(snap.Lane(kv.Key))
 	}
 	return lanes, nil
 }
