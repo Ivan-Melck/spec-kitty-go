@@ -9,5 +9,6 @@ func init() {
 	app.Register(func(root *cli.Command) {
 		root.Add(newMaterializeCmd())
 		registerMigrate(root)
+		registerDoctor(root)
 	})
 }
