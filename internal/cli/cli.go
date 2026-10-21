@@ -56,6 +56,10 @@ type Arg struct {
 	Default  string
 	Metavar  string
 	Choices  []string
+	// ErrorHint, when set, names the argument in "Missing argument" errors
+	// instead of the metavar (typer shows "{name}" in the usage line but the
+	// bare name in the error).
+	ErrorHint string
 }
 
 // Command is a node in the command tree.
@@ -672,7 +676,11 @@ func finalize(ctx *Context, cmd *Command) error {
 			if a.Variadic {
 				return Usage(cmd, "Missing argument '%s...'.", argMeta(a))
 			}
-			return Usage(cmd, "Missing argument '%s'.", argMeta(a))
+			hint := argMeta(a)
+			if a.ErrorHint != "" {
+				hint = a.ErrorHint
+			}
+			return Usage(cmd, "Missing argument '%s'.", hint)
 		}
 	}
 	return nil
