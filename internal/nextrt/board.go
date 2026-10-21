@@ -35,7 +35,7 @@ func newMissionCtx(root, slug string) *missionCtx {
 		mt = "software-dev"
 	}
 	return &missionCtx{Root: root, Slug: slug, Primary: s.PrimaryDir, StatusDir: s.StatusDir(), Meta: s.Meta,
-		MissionType: mt, MissionID: s.MissionID, Surface: s, MissionNumber: mission.MissionNumberString(s.Meta, slug)}
+		MissionType: mt, MissionID: s.MissionID, Surface: s, MissionNumber: mission.MissionNumberString(nil, slug)}
 }
 
 var wpStemRe = regexp.MustCompile(`^(WP\d+)`)

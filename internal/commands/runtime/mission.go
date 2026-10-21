@@ -355,10 +355,9 @@ func runMissionFollowUp(ctx *cli.Context) error {
 		prV = ctx.Int("pr")
 		dedup.Set("pr_number", ctx.Int("pr"))
 	}
-	puuid, pslug := mission.ProjectIdentity(root)
 	payload := jsonx.NewObject("mission_id", mid, "mission_slug", slug, "follow_up_type", typ, "commit_sha", commitV,
 		"pr_number", prV, "recorded_by", detectActor(), "recorded_at", clock.NowUTCISO())
-	ev, err := lifecycle.Persist(dir, "FollowUpRecorded", payload, mid, "Mission", nilStr(puuid), nilStr(pslug), dedup)
+	ev, err := lifecycle.Persist(dir, "FollowUpRecorded", payload, mid, "Mission", nil, nil, dedup)
 	if err != nil {
 		missionError(ctx, "Error: "+err.Error(), "follow_up_failed", jsonMode)
 		return cli.Exit(1)
@@ -449,10 +448,9 @@ func runMissionReopen(ctx *cli.Context) error {
 	if cleared.Len() > 0 {
 		cm = cleared
 	}
-	puuid, pslug := mission.ProjectIdentity(root)
 	payload := jsonx.NewObject("mission_id", mid, "mission_slug", slug, "reason", reason, "reopened_by", detectActor(),
 		"reopened_at", clock.NowUTCISO(), "cleared_merge", cm)
-	ev, err := lifecycle.Persist(dir, "MissionReopened", payload, mid, "Mission", nilStr(puuid), nilStr(pslug), nil)
+	ev, err := lifecycle.Persist(dir, "MissionReopened", payload, mid, "Mission", nil, nil, nil)
 	if err != nil {
 		missionError(ctx, "Error: "+err.Error(), "mission_reopen_failed", jsonMode)
 		return cli.Exit(1)
