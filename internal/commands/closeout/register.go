@@ -129,3 +129,5 @@ func joinSorted(xs []string) string {
 	sort.Strings(c)
 	return strings.Join(c, ", ")
 }
+
+func projectSpecs(root, slug string) string { return project.Specs(root, slug) }
