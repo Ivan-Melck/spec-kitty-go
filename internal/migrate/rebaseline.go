@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -41,12 +42,12 @@ func RecordedSnapshotFiles(root string) []string {
 }
 
 // RebaselineSnapshots is rebaseline_recorded_snapshots(root, dry_run).
+// Canonical ("sha256:") snapshots are left untouched; any other recorded
+// hash is replaced by a fresh snapshot of the current source tree.
 //
-// Deviation: re-indexing a non-canonical snapshot through the dossier
-// indexer is not ported; such snapshots are reported with
-// error "reindex_failed: dossier re-index is not supported by this build"
-// and left untouched (canonical "sha256:" snapshots are a no-op as upstream).
-func RebaselineSnapshots(root string, dryRun bool) []RebaselineOutcome {
+// A recorded snapshot that is valid JSON but not an object crashes upstream
+// (AttributeError on data.get); that surfaces as an *UncaughtError.
+func RebaselineSnapshots(root string, dryRun bool) ([]RebaselineOutcome, error) {
 	var out []RebaselineOutcome
 	for _, p := range RecordedSnapshotFiles(root) {
 		slug := filepath.Base(filepath.Dir(p))
@@ -59,14 +60,15 @@ func RebaselineSnapshots(root string, dryRun bool) []RebaselineOutcome {
 				var v any
 				v, err = pyjson.Loads(text)
 				if err == nil {
-					data, _ = v.(*jsonx.Object)
+					var isObj bool
+					if data, isObj = v.(*jsonx.Object); !isObj {
+						return out, &UncaughtError{Type: "AttributeError", Msg: fmt.Sprintf("'%s' object has no attribute 'get'", pyjson.TypeName(v))}
+					}
 				}
 			}
 		}
-		if err != nil || data == nil {
-			if err != nil {
-				warnf("Cannot read recorded snapshot %s: %v", p, err)
-			}
+		if err != nil {
+			warnf("Cannot read recorded snapshot %s: %v", p, err)
 			out = append(out, RebaselineOutcome{SnapshotPath: p, MissionSlug: slug, Error: strPtr("unreadable_snapshot")})
 			continue
 		}
@@ -87,9 +89,16 @@ func RebaselineSnapshots(root string, dryRun bool) []RebaselineOutcome {
 			out = append(out, RebaselineOutcome{SnapshotPath: p, MissionSlug: slug, OldHash: old, NewHash: old, Error: strPtr("source_missing")})
 			continue
 		}
-		msg := "dossier re-index is not supported by this build"
-		warnf("Re-index failed for %s: %s", featureDir, msg)
-		out = append(out, RebaselineOutcome{SnapshotPath: p, MissionSlug: slug, OldHash: old, NewHash: old, Error: strPtr("reindex_failed: " + msg)})
+		snap, newHash, err := reindexSnapshot(featureDir)
+		if err != nil {
+			warnf("Re-index failed for %s: %s", featureDir, err)
+			out = append(out, RebaselineOutcome{SnapshotPath: p, MissionSlug: slug, OldHash: old, NewHash: old, Error: strPtr("reindex_failed: " + err.Error())})
+			continue
+		}
+		if !dryRun {
+			os.WriteFile(p, []byte(jsonx.Dumps(snap, jsonx.Pretty)), 0o644)
+		}
+		out = append(out, RebaselineOutcome{SnapshotPath: p, MissionSlug: slug, OldHash: old, NewHash: newHash, Changed: true})
 	}
-	return out
+	return out, nil
 }
