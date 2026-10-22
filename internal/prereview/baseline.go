@@ -33,9 +33,9 @@ func (f Failure) object() *jsonx.Object {
 // sentinel, never persisted).
 type Baseline struct {
 	WPID, CapturedAt, BaseBranch, BaseCommit, TestRunner string
-	Total, Passed, Failed, Skipped                      int
-	Failures                                            []Failure
-	SourceIdentity                                      string
+	Total, Passed, Failed, Skipped                       int
+	Failures                                             []Failure
+	SourceIdentity                                       string
 }
 
 // Object is to_dict().
@@ -60,7 +60,9 @@ func (b *Baseline) Save(path string) error {
 // ReadError is ReviewBaselineReadError (malformed baseline JSON).
 type ReadError struct{ Path, Reason string }
 
-func (e *ReadError) Error() string { return fmt.Sprintf("Malformed baseline JSON at %s: %s", e.Path, e.Reason) }
+func (e *ReadError) Error() string {
+	return fmt.Sprintf("Malformed baseline JSON at %s: %s", e.Path, e.Reason)
+}
 
 // LoadBaseline is BaselineTestResult.load: nil when the artifact is absent.
 func LoadBaseline(path string) (*Baseline, error) {
