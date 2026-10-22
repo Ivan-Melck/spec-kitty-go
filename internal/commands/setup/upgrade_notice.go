@@ -22,6 +22,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // refreshUpgradeCacheEnv re-enters the binary as session_presence.
@@ -115,8 +116,10 @@ func renderNagIfNeeded(ctx *cli.Context, argv []string) {
 	if p.Decision != DecisionAllowWithNag {
 		return
 	}
+	// CliConsole(stderr=True, color_system="auto" on a TTY).print(message):
+	// markup, repr highlighting and wrapping at the console width.
 	if msg := strings.TrimRight(p.Human, " \t\r\n"); msg != "" {
-		fmt.Fprintln(ctx.Stderr, msg)
+		rich.Print(ctx.Stderr, msg)
 	}
 	markNagShown(p.CLI)
 }

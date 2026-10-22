@@ -2,8 +2,8 @@ package setup
 
 // The interactive agent picker (cli/ui.multi_select_with_arrows): a Rich
 // Live panel redrawn on every key, read in raw mode from the terminal
-// (readchar). Colours are not emitted (the Go console renders no SGR
-// styling anywhere); the layout, keys and cancellation behaviour match.
+// (readchar). The layout, segment styles (SGR on a colour terminal), keys
+// and cancellation behaviour match.
 
 import (
 	"errors"
@@ -65,46 +65,72 @@ func readPickerKey(r io.Reader) (string, error) {
 }
 
 // pickerFrame renders the selection panel (Panel(Table.grid(padding=(0,2)),
-// title=prompt, padding=(1,2))) at width.
-func pickerFrame(keys []string, labels map[string]string, selected map[int]bool, cursor int, prompt string, width int) []string {
+// title=[bold]prompt, border_style="cyan", padding=(1,2))) at width, with
+// the segment styles rich writes under sys (NoColor: plain text).
+func pickerFrame(keys []string, labels map[string]string, selected map[int]bool, cursor int, prompt string, width int, sys rich.ColorSystem) []string {
 	help := "Use ↑/↓ to move, Space to toggle, Enter to confirm, Esc to cancel"
-	type row struct{ c1, c2 string }
+	seg := func(t, st string) rich.Segment { return rich.Segment{Text: t, Style: st} }
+	type row struct {
+		ptr  string
+		cell []rich.Segment
+	}
 	var rows []row
 	for i, k := range keys {
-		ind := "☐"
-		if selected[i] {
-			ind = "☑"
-		}
 		ptr := " "
 		if i == cursor {
 			ptr = "▶"
 		}
-		rows = append(rows, row{ptr, ind + " " + k + " (" + labels[k] + ")"})
+		var cell []rich.Segment
+		if selected[i] {
+			cell = []rich.Segment{seg("☑ ", "cyan"), seg(k, "cyan"), seg(" ", "cyan"), seg("("+labels[k]+")", "dim cyan")}
+		} else {
+			cell = []rich.Segment{seg("☐ ", "bright_black"), seg(k, "cyan"), seg(" ", "bright_black"), seg("("+labels[k]+")", "dim bright_black")}
+		}
+		rows = append(rows, row{ptr, cell})
 	}
-	rows = append(rows, row{"", ""}, row{"", help})
+	rows = append(rows, row{"", nil}, row{"", []rich.Segment{seg(help, "dim white")}})
+	cellLen := func(c []rich.Segment) int {
+		n := 0
+		for _, s := range c {
+			n += rich.CellLen(s.Text)
+		}
+		return n
+	}
 	c2w := 0
 	for _, r := range rows {
-		if n := rich.CellLen(r.c2); n > c2w {
+		if n := cellLen(r.cell); n > c2w {
 			c2w = n
 		}
 	}
 	inner := width - 2
 	content := inner - 4
+	render := func(segs ...rich.Segment) string { return rich.RenderSegments(segs, sys) }
 	var lines []string
-	title := " " + prompt + " "
-	dashes := inner - rich.CellLen(title)
+	title := prompt
+	dashes := inner - rich.CellLen(" "+title+" ")
 	if dashes < 0 {
 		dashes = 0
 	}
-	lines = append(lines, "╭"+strings.Repeat("─", dashes/2)+title+strings.Repeat("─", dashes-dashes/2)+"╮")
-	blank := "│" + strings.Repeat(" ", inner) + "│"
+	left, right := dashes/2, dashes-dashes/2
+	lines = append(lines, render(seg("╭─", "cyan"), seg(strings.Repeat("─", left-1), "cyan"), seg(" ", "cyan"), seg(title, "bold cyan"), seg(" ", "cyan"),
+		seg(strings.Repeat("─", right-1), "cyan"), seg("─╮", "cyan")))
+	blank := render(seg("│", "cyan"), seg(strings.Repeat(" ", inner), ""), seg("│", "cyan"))
 	lines = append(lines, blank)
 	for _, r := range rows {
-		cell := padCells(r.c1, 3) + "  " + padCells(r.c2, c2w)
-		lines = append(lines, "│  "+padCells(cell, content)+"  │")
+		segs := []rich.Segment{seg("│", "cyan"), seg("  ", ""), seg(padCells(r.ptr, 3), "cyan"), seg("  ", "cyan")}
+		segs = append(segs, r.cell...)
+		if pad := c2w - cellLen(r.cell); pad > 0 {
+			segs = append(segs, seg(strings.Repeat(" ", pad), "white"))
+		}
+		rest := content - (3 + 2 + c2w)
+		if rest < 0 {
+			rest = 0
+		}
+		segs = append(segs, seg(strings.Repeat(" ", rest+2), ""), seg("│", "cyan"))
+		lines = append(lines, render(segs...))
 	}
 	lines = append(lines, blank)
-	lines = append(lines, "╰"+strings.Repeat("─", inner)+"╯")
+	lines = append(lines, render(seg("╰"+strings.Repeat("─", inner)+"╯", "cyan")))
 	return lines
 }
 
@@ -136,9 +162,10 @@ func multiSelectWithArrows(w io.Writer, readKey func() (string, error), keys []s
 		}
 	}
 	width := cli.Width()
+	sys := rich.ColorSystemOf(w)
 	fmt.Fprint(w, "\n")
 	draw := func(first bool) int {
-		lines := pickerFrame(keys, labels, selected, cursor, prompt, width)
+		lines := pickerFrame(keys, labels, selected, cursor, prompt, width, sys)
 		if !first {
 			fmt.Fprintf(w, "\r\x1b[%dA", len(lines)-1)
 		}
