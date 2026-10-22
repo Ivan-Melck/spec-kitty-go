@@ -479,6 +479,7 @@ func (b *commandBatch) finish() (*Assessment, error) {
 // CommandOptions narrows PrepareCommands.
 type CommandOptions struct {
 	Prune        bool
+	Overwrite    []string // ApplyConsent.overwrite_paths (consulted only off the DERIVED surface)
 	RemoveAgents []string
 	Provisioning *Provisioning
 	Now          string
@@ -583,4 +584,110 @@ func isCanonicalRelPath(rel string) bool {
 		}
 	}
 	return false
+}
+
+// ApplyCommands is command_installer.apply_commands for a fresh assessment.
+func ApplyCommands(a *Assessment) ApplyResult {
+	payload, _ := a.Prepared.(*PreparedCommands)
+	if !a.Complete || payload == nil {
+		return ApplyResult{Owner: "command_skills", Skipped: a.EffectIDs(), Outcome: "precondition_changed",
+			Diagnostics: []Diagnostic{Diag("incomplete_assessment", "command_skills", "error", "Command preparation is incomplete")}}
+	}
+	effects := append([]Effect(nil), a.Effects...)
+	rank := func(e Effect) int {
+		switch {
+		case e.Path == commandManifestRel:
+			return 3
+		case e.After.Kind == "absent" && e.Before.Kind == "directory":
+			return 2
+		case e.After.Kind == "directory":
+			return 0
+		}
+		return 1
+	}
+	sort.SliceStable(effects, func(i, j int) bool {
+		ri, rj := rank(effects[i]), rank(effects[j])
+		if ri != rj {
+			return ri < rj
+		}
+		di, dj := len(strings.Split(effects[i].Path, "/")), len(strings.Split(effects[j].Path, "/"))
+		if di != dj {
+			return di < dj
+		}
+		return effects[i].Path < effects[j].Path
+	})
+	var succeeded []string
+	for idx, e := range effects {
+		if err := applyCommandEffect(e, payload); err != nil {
+			var rest []string
+			for _, x := range effects[idx+1:] {
+				rest = append(rest, x.ID())
+			}
+			out := "failed"
+			if len(succeeded) > 0 {
+				out = "partial"
+			}
+			return ApplyResult{Owner: "command_skills", Succeeded: succeeded, Failed: []string{e.ID()}, Skipped: rest, Outcome: out,
+				Diagnostics: []Diagnostic{Diag("command_apply_failed", "command_skills", "error", err.Error())}}
+		}
+		succeeded = append(succeeded, e.ID())
+	}
+	return ApplyResult{Owner: "command_skills", Succeeded: succeeded, Outcome: "applied"}
+}
+
+func applyCommandEffect(e Effect, payload *PreparedCommands) error {
+	dest := e.Destination()
+	mode := os.FileMode(0o644)
+	if e.After.Mode >= 0 {
+		mode = os.FileMode(e.After.Mode)
+	}
+	switch {
+	case e.After.Kind == "directory":
+		if e.Before.Kind == "symlink" {
+			if err := os.Remove(dest); err != nil {
+				return err
+			}
+		}
+		if err := os.Mkdir(dest, 0o755); err != nil {
+			return err
+		}
+		return os.Chmod(dest, 0o755)
+	case e.After.Kind == "absent":
+		return os.Remove(dest)
+	case e.Path == commandManifestRel:
+		return writeFileAtomic(dest, payload.ManifestBytes, mode)
+	}
+	for _, c := range payload.Commands {
+		if c.Path == e.Path && c.Content != nil {
+			return writeFileAtomic(dest, c.Content, mode)
+		}
+	}
+	return fmt.Errorf("no prepared content for %s", e.Path)
+}
+
+// writeFileAtomic writes data via a sibling temporary file and rename.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }

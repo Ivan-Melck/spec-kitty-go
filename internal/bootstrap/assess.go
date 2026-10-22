@@ -105,6 +105,36 @@ func uniqueSortedKeys(in []string) []string {
 // explicit GlobalSkillSelection: the built-in skills for agentKeys only,
 // without the version stamp, and custom or retired entries preserved.
 func AssessSkillsFamily(agentKeys []string) Family {
+	p, sel, anchor, err := assessSkillsSelection(agentKeys)
+	if err != nil {
+		return failedFamily("global_skills", anchor, err)
+	}
+	return p.family(func(path string) []string {
+		var owners []string
+		for _, a := range sel {
+			r := agents.GlobalSkillRoot(a)
+			if r == path || strings.HasPrefix(path, r+string(filepath.Separator)) {
+				owners = append(owners, a)
+			}
+		}
+		if len(owners) == 0 {
+			return sel
+		}
+		return owners
+	})
+}
+
+// EnsureSkillsSelection assesses and applies the global skill selection for
+// agentKeys (the coordinated global half of a managed-skill repair).
+func EnsureSkillsSelection(agentKeys []string) error {
+	p, _, _, err := assessSkillsSelection(agentKeys)
+	if err != nil {
+		return err
+	}
+	return p.apply()
+}
+
+func assessSkillsSelection(agentKeys []string) (*prep, []string, string, error) {
 	home := KittifyHome()
 	var sel []string
 	for _, a := range agentKeys {
@@ -124,7 +154,7 @@ func AssessSkillsFamily(agentKeys []string) Family {
 	anchor := anchorFor(append([]string{home}, roots...)...)
 	p, err := newPrep("global_skills", anchor, filepath.Join(home, "cache"), ".agent-skills.lock")
 	if err != nil {
-		return failedFamily("global_skills", anchor, err)
+		return nil, sel, anchor, err
 	}
 	skills := append([]agents.Skill(nil), agents.Skills()...)
 	sort.SliceStable(skills, func(i, j int) bool { return skills[i].Name < skills[j].Name })
@@ -162,19 +192,7 @@ func AssessSkillsFamily(agentKeys []string) Family {
 		return p.finish("", app.Version)
 	}()
 	if err != nil {
-		return failedFamily("global_skills", anchor, err)
+		return nil, sel, anchor, err
 	}
-	return p.family(func(path string) []string {
-		var owners []string
-		for _, a := range sel {
-			r := agents.GlobalSkillRoot(a)
-			if r == path || strings.HasPrefix(path, r+string(filepath.Separator)) {
-				owners = append(owners, a)
-			}
-		}
-		if len(owners) == 0 {
-			return sel
-		}
-		return owners
-	})
+	return p, sel, anchor, nil
 }

@@ -3,9 +3,7 @@ package agents
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
-	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 )
@@ -87,69 +85,3 @@ func SaveCommandSkillsManifest(root string, entries map[string]*CommandSkillEntr
 // VibeSkillPath is the shared skills root vibe must discover.
 const VibeSkillPath = ".agents/skills"
 
-var reSkillPathsLine = regexp.MustCompile(`(?m)^skill_paths\s*=`)
-
-// VibeSkillPathConfigured is vibe_config.skill_path_configured (approximate
-// TOML read: a top-level skill_paths naming ".agents/skills").
-func VibeSkillPathConfigured(root string) bool {
-	b, err := os.ReadFile(filepath.Join(root, ".vibe", "config.toml"))
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(b), "\n") {
-		t := strings.TrimSpace(line)
-		if strings.HasPrefix(t, "[") {
-			return false
-		}
-		if strings.HasPrefix(t, "skill_paths") && strings.Contains(t, `"`+VibeSkillPath+`"`) {
-			return true
-		}
-	}
-	return false
-}
-
-// EnsureVibeSkillPath writes/extends .vibe/config.toml so vibe discovers
-// .agents/skills.
-func EnsureVibeSkillPath(root string) error {
-	if VibeSkillPathConfigured(root) {
-		return nil
-	}
-	p := filepath.Join(root, ".vibe", "config.toml")
-	b, err := os.ReadFile(p)
-	line := `skill_paths = [".agents/skills"]` + "\n"
-	var out string
-	switch {
-	case err != nil:
-		out = line
-	case reSkillPathsLine.Match(b):
-		loc := reSkillPathsLine.FindIndex(b)
-		rest := string(b[loc[1]:])
-		end := strings.IndexByte(rest, '\n')
-		val := strings.TrimSpace(rest)
-		if end >= 0 {
-			val = strings.TrimSpace(rest[:end])
-		}
-		var nv string
-		if strings.HasPrefix(val, "[") && strings.HasSuffix(val, "]") {
-			inner := strings.TrimSpace(val[1 : len(val)-1])
-			if inner == "" {
-				nv = `[".agents/skills"]`
-			} else {
-				nv = "[" + strings.TrimRight(inner, ", ") + `, ".agents/skills"]`
-			}
-		} else {
-			nv = "[" + val + `, ".agents/skills"]`
-		}
-		tail := ""
-		if end >= 0 {
-			tail = rest[end:]
-		}
-		out = string(b[:loc[0]]) + "skill_paths = " + nv + tail
-	default:
-		out = line + string(b)
-	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
-	}
-	return writePresenceFile(p, []byte(out))
-}

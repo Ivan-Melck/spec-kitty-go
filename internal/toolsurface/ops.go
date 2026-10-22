@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 )
 
@@ -362,3 +363,13 @@ func parentsOf(rel string) []string {
 	}
 	return out
 }
+
+// ApplyResult is operations.OwnerApplyResult.
+type ApplyResult struct {
+	Owner                      string
+	Succeeded, Failed, Skipped []string
+	Diagnostics                []Diagnostic
+	Outcome                    string // applied, partial, failed, skipped, precondition_changed
+}
+
+func nowISO() string { return clock.NowUTCISO() }
