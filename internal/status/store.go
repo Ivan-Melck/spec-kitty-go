@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
@@ -237,18 +236,6 @@ func ReadStream(dir string, missionID string) (*Stream, error) {
 		return nil, err
 	}
 	logSlugWarnings(dir, rows)
-	if os.Getenv("SWEEP_TRACE_READS") != "" {
-		var names []string
-		for i := 2; i < 9; i++ {
-			pc, _, line, ok := runtime.Caller(i)
-			if !ok {
-				break
-			}
-			n := runtime.FuncForPC(pc).Name()
-			names = append(names, fmt.Sprintf("%s:%d", n[strings.LastIndex(n, "/")+1:], line))
-		}
-		fmt.Fprintln(os.Stderr, "GOREAD "+strings.Join(names, " < "))
-	}
 	return partition(rows, lineNos, missionID)
 }
 

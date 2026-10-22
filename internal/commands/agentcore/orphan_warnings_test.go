@@ -1,22 +1,21 @@
 package agentcore_test
 
 import (
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
 
-// TestExploreOrphanWarningCounts (KITTY_EXPLORE=1) reports, per human
-// command, how many "(orphaned event)" warnings each side logs.
-func TestExploreOrphanWarningCounts(t *testing.T) {
-	if os.Getenv("KITTY_EXPLORE") == "" {
-		t.Skip("exploration only")
-	}
+// TestDiffOrphanedEventWarningsAcrossCommands: every human command that
+// reads the event log logs the _SlugResolver "(orphaned event)" warning
+// once per upstream read_events pass (move-task, add-history, mark-status,
+// status emit, action implement/review, next, materialize, tasks status,
+// list-dependents, validate-workflow, accept, orchestrator-api, ...); the
+// count matches the oracle for each command along a WP lifecycle.
+func TestDiffOrphanedEventWarningsAcrossCommands(t *testing.T) {
 	p := newOraclePair(t)
 	g, o := oracleCalcMission(t, p)
-	p.Go.Env = append(p.Go.Env, "SWEEP_TRACE_READS=1")
 	p.Both(func(s *testkit.Sandbox) {
 		slug := missionSlug(t, s)
 		f := ".worktrees/" + slug + "-coord/kitty-specs/" + slug + "/status.events.jsonl"
@@ -99,17 +98,8 @@ func TestExploreOrphanWarningCounts(t *testing.T) {
 	for _, c := range cmds {
 		gr := p.Go.Run(subst(c, g)...)
 		or := p.Oracle.RunOracle(subst(c, o)...)
-		mark := ""
-		if count(gr.Stderr+gr.Stdout) != count(or.Stderr+or.Stdout) {
-			mark = "   <<<< DIFF"
-		}
-		t.Logf("%-60s oracle=%d(rc %d) go=%d(rc %d)%s", strings.Join(c, " "), count(or.Stderr+or.Stdout), or.Code, count(gr.Stderr+gr.Stdout), gr.Code, mark)
-		if mark != "" {
-			for _, l := range strings.Split(or.Stderr+gr.Stderr, "\n") {
-				if strings.HasPrefix(l, "READPASS") || strings.HasPrefix(l, "GOREAD") {
-					t.Log("    " + l)
-				}
-			}
+		if gc, oc := count(gr.Stderr+gr.Stdout), count(or.Stderr+or.Stdout); gc != oc || gr.Code != or.Code {
+			t.Errorf("%s: orphaned-event warnings oracle=%d (exit %d) go=%d (exit %d)", strings.Join(c, " "), oc, or.Code, gc, gr.Code)
 		}
 	}
 }
