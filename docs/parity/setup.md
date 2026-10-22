@@ -15,7 +15,7 @@ every `*WithoutOracle` test runs in plain `go test ./...`.
 | *(root callback)* schema gate | done | `TestUpgradeStaleAndLegacyMatchOracle`, `TestUpgradeWithoutOracle` | No PyPI query: the upgrade nag (`ALLOW_WITH_NAG`) never fires. |
 | *(startup)* `.kitty.env` operator env loading | done | `TestDoctorSetupLeavesMatchOracle` (env-file tiers) | A `SPEC_KITTY_HOME=` line is dropped silently (upstream also emits a `UserWarning`). |
 | `init` | done | `TestInitMatchesOracle` (8 `--ai` selections, project + HOME trees + `.git/config`), `TestInitErrorsMatchOracle`, `TestInitNamedDirAndNoGit`, `TestInitWithoutOracle` | `metadata.yaml` `python_version`/`platform_version` carry Go runtime values. Interactive agent picker is a plain numbered prompt, not the arrow-key UI. |
-| `agent config` (group) | done | `TestAgentConfigOrphansMatchOracle` (bare group exit 2) | Help box layout comes from the shared `internal/cli` renderer. |
+| `agent config` (group) | done | `TestAgentConfigOrphansMatchOracle` (bare group exit 2) | none (help byte-identical: `go test ./internal/helpparity`) |
 | `agent config list` | done | `TestAgentConfigMatchesOracle` | |
 | `agent config add` | done | `TestAgentConfigMatchesOracle`, `TestAgentConfigWithoutOracle` | |
 | `agent config remove` | done | `TestAgentConfigMatchesOracle`, `TestAgentConfigOrphansMatchOracle` | |

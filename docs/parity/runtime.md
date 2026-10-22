@@ -38,7 +38,7 @@ timestamps, prompt hashes). `TestLocalRuntimeLoop` runs without the oracle.
 | `mission reopen` | done | `TestDiffRuntimeMisc`, `TestDiffPostMerge` | — |
 | `agent tests stale-check` (Python AST port: `internal/pyast` + `internal/staleassert`) | done | `TestDiffRuntimeMisc`, `TestDiffStaleCheck` | stderr compares the last line only (the oracle prints interpreter `UserWarning`s with site-packages paths first) |
 | `reconcile` (dossier projection: every non-hidden file of the feature dir, WP static-projection hash, fail-closed schema-invalid WPs, all three divergence kinds) | done | `TestDiffRuntimeMisc` (no snapshot), `TestDiffReconcileDossier` (snapshot recorded by the upstream indexer; parity, runtime-field churn immunity, missing_in_projection / content_mismatch / missing_in_source) | snapshot-load and indexing exception texts are Go's |
-| help pages of all of the above | done | `TestDiffRuntimeHelp` | exit codes and usage lines match; box layout is the shared `internal/cli` renderer |
+| help pages of all of the above | done | `TestDiffRuntimeHelp` | none (help byte-identical: `go test ./internal/helpparity`) |
 
 Other deviations: the charter preflight warning (stderr, consumers
 `implement` / `next`) checks charter presence only.
