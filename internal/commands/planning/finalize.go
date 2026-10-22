@@ -110,6 +110,8 @@ type finalizeRun struct {
 	refsOrder     []string // non-nil: dict order of refs (manifest-only outline)
 	diagnostics   *jsonx.Object
 	manifest      *orch.WpsManifest
+	scope         *writeScope
+	commitLanded  bool
 	concernWarns  []string
 	tasksMDStale  bool
 	preexisting   map[string]bool
@@ -193,6 +195,24 @@ func runFinalizeTasks(ctx *cli.Context) error {
 	f.slug = filepath.Base(dir)
 	f.dir = project.Specs(f.root, f.slug)
 	f.missionType = missionart.MissionTypeFor(f.dir)
+	restamp, err := f.enterAPIAuthoredScope()
+	if err != nil {
+		return err
+	}
+	if !f.validateOnly {
+		f.scope = snapshotWriteScope(f.dir)
+	}
+	err = f.run()
+	if err != nil && f.scope != nil && !f.commitLanded {
+		f.scope.restore(f.persisted)
+	}
+	if err == nil && restamp != nil {
+		restamp()
+	}
+	return err
+}
+
+func (f *finalizeRun) run() error {
 	if err := f.resolveBranches(); err != nil {
 		return err
 	}
@@ -994,8 +1014,17 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 		walk(id, s)
 		reach[id] = s
 	}
+	// validate_all iterates the manifests in WP-file (scandir) order.
+	var fileOrder []string
+	for _, p := range f.wpFiles {
+		if m := wpFilePrefix.FindStringSubmatch(filepath.Base(p)); m != nil {
+			if _, ok := man[m[1]]; ok {
+				fileOrder = append(fileOrder, m[1])
+			}
+		}
+	}
 	narrow := []string{}
-	for _, id := range f.wpIDs {
+	for _, id := range fileOrder {
 		if m, ok := man[id]; ok && m.scope != "codebase-wide" {
 			narrow = append(narrow, id)
 		}
@@ -1015,7 +1044,7 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 			}
 		}
 	}
-	for _, id := range f.wpIDs {
+	for _, id := range fileOrder {
 		m, ok := man[id]
 		if !ok || m.scope == "codebase-wide" {
 			continue
@@ -1496,6 +1525,7 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 		switch r.Status {
 		case safecommit.StatusCommitted:
 			commitCreated = true
+			f.commitLanded = true
 			commitHash = r.CommitHash
 			filesCommitted = rels
 			for _, h := range r.CommitHashes {
