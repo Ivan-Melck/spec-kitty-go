@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
@@ -163,15 +164,24 @@ func runCharterActivate(ctx *cli.Context) error {
 			return cli.Exit(1)
 		}
 	}
+	reg, err := charter.PlanProjectRegistration(root, app.Version)
+	if err != nil {
+		cprint(w, "[red]Error:[/red] %s", err.Error())
+		return cli.Exit(1)
+	}
 	res, err := charter.Activate(root, kind, id)
 	if err != nil {
+		cprint(w, "[red]Error:[/red] %s", err.Error())
+		return cli.Exit(1)
+	}
+	if err := charter.CommitProjectRegistration(reg); err != nil {
 		cprint(w, "[red]Error:[/red] %s", err.Error())
 		return cli.Exit(1)
 	}
 	for _, a := range res.Activated {
 		cprint(w, "[green]Activated[/green]: %s", a)
 	}
-	for _, m := range res.Warnings {
+	for _, m := range append(append([]string{}, reg.Warnings...), res.Warnings...) {
 		cprint(w, "[yellow]Warning[/yellow]: %s", m)
 	}
 	if src := charter.SourceURN(root, kind, id); src != "" {

@@ -38,6 +38,12 @@ func currentBranch(root string) string {
 // commitOpRecord is _commit_op_record for an agent close: a best-effort
 // safe_commit of kitty-ops/<id>.jsonl onto the current branch.
 func commitOpRecord(root, id string, started *jsonx.Object) *CommitOutcome {
+	return commitOp(root, id, started, false)
+}
+
+// commitOp is _commit_op_record; a doctor-sweep close commits only the
+// op-closures spine.
+func commitOp(root, id string, started *jsonx.Object, sweep bool) *CommitOutcome {
 	profile := started.GetString("profile_id")
 	if profile == "" {
 		profile = "unknown"
@@ -52,6 +58,10 @@ func commitOpRecord(root, id string, started *jsonx.Object) *CommitOutcome {
 	}
 	msg := fmt.Sprintf("op(%s): %s [%s]", profile, action, short)
 	rel := EventsDir + "/" + id + ".jsonl"
+	if sweep {
+		msg += " (doctor sweep)"
+		rel = ClosureSpine
+	}
 	branch := currentBranch(root)
 	if branch == "" {
 		return &CommitOutcome{Refusal: "not a git worktree"}
