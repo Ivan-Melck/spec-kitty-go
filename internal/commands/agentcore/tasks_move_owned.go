@@ -7,11 +7,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
+	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -201,5 +203,45 @@ func emitOwnedError(st *moveState, e *ownedcheckout.Error) {
 		return
 	}
 	ownedcheckout.Emit(st.ctx.Stdout, st.ctx.Stderr, e, false, nil)
+}
+
+// msFailurePayload is _ms_failure_payload: the owned mark-status failure
+// envelope (the Typer-edge refusal and the in-command recovery share it).
+func msFailurePayload(code, msg string, eventIDs, appliedWPs []string, destinationRef, eventsPath, snapshotPath string, dirty *bool) *jsonx.Object {
+	opt := func(s string) any {
+		if s == "" {
+			return nil
+		}
+		return s
+	}
+	var d any
+	if dirty != nil {
+		d = *dirty
+	}
+	return jsonx.NewObject("result", "error", "error_code", code, "error", msg, "state_applied", len(eventIDs) > 0,
+		"event_ids", strList(eventIDs), "applied_wps", strList(appliedWPs), "destination_ref", opt(destinationRef),
+		"status_events_path", opt(eventsPath), "status_snapshot_path", opt(snapshotPath), "dirty", d)
+}
+
+// reportOwnedMarkFailure is _ms_report_owned_failure.
+func reportOwnedMarkFailure(ctx *cli.Context, jsonMode bool, owned *ownedcheckout.Fact, code, msg, statusDir string, eventIDs, appliedWPs []string) {
+	dir := statusDir
+	if dir == "" {
+		dir = owned.MissionDir
+	}
+	snapshot := ""
+	if statusDir != "" {
+		snapshot = filepath.Join(statusDir, status.SnapshotFile)
+	}
+	var dirty *bool
+	if es, err := safecommit.StatusEntries(owned.OwnedRoot, ""); err == nil {
+		d := len(es) > 0
+		dirty = &d
+	}
+	if jsonMode {
+		fmt.Fprintln(ctx.Stdout, jsonx.Dumps(msFailurePayload(code, msg, eventIDs, appliedWPs, owned.WriteBranch, filepath.Join(dir, status.EventsFile), snapshot, dirty), jsonx.Pretty))
+		return
+	}
+	ownedcheckout.Emit(ctx.Stdout, ctx.Stderr, &ownedcheckout.Error{Code: code, Message: msg}, false, nil)
 }
 
