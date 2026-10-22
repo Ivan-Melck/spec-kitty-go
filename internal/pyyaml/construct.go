@@ -35,7 +35,11 @@ type seqBox struct{ items []any }
 type mapBox struct {
 	keys []string
 	vals map[string]any
+	set  bool
 }
+
+// Set is a !!set value (its members' key strings, in document order).
+type Set []string
 
 type constructor struct {
 	dialect     Dialect
@@ -74,6 +78,9 @@ func unbox(v any, memo map[any]any) any {
 	case *mapBox:
 		if r, ok := memo[b]; ok {
 			return r
+		}
+		if b.set {
+			return Set(append([]string(nil), b.keys...))
 		}
 		o := &jsonx.Object{}
 		memo[b] = o
@@ -143,7 +150,15 @@ func (c *constructor) byTag(n *Node) any {
 	case TagStr:
 		return c.scalarValue(n)
 	case TagBinary:
-		return c.scalarValue(n)
+		v := c.scalarValue(n)
+		if err := asciiCheck(v); err != "" {
+			c.err("", nil, "failed to convert base64 data into ascii: "+err, n.Start)
+		}
+		b, err := a2bBase64(v)
+		if err != "" {
+			c.err("", nil, "failed to decode base64 data: "+err, n.Start)
+		}
+		return b
 	case TagSeq:
 		box := &seqBox{}
 		c.pending = append(c.pending, func() {
@@ -155,8 +170,12 @@ func (c *constructor) byTag(n *Node) any {
 			}
 		})
 		return box
-	case TagMap, tagPrefix + "set":
+	case TagMap:
 		box := &mapBox{vals: map[string]any{}}
+		c.pending = append(c.pending, func() { c.fillMapping(n, box) })
+		return box
+	case tagPrefix + "set":
+		box := &mapBox{vals: map[string]any{}, set: true}
 		c.pending = append(c.pending, func() { c.fillMapping(n, box) })
 		return box
 	case tagPrefix + "omap", tagPrefix + "pairs":
@@ -250,6 +269,74 @@ func (c *constructor) fillMapping(n *Node, box *mapBox) {
 }
 
 // ---------------------------------------------------------------- scalars
+
+// asciiCheck is str.encode('ascii')'s UnicodeEncodeError text ("" = ok).
+func asciiCheck(s string) string {
+	r := []rune(s)
+	for i := 0; i < len(r); i++ {
+		if r[i] < 0x80 {
+			continue
+		}
+		j := i
+		for j+1 < len(r) && r[j+1] >= 0x80 {
+			j++
+		}
+		if j == i {
+			return fmt.Sprintf("'ascii' codec can't encode character %s in position %d: ordinal not in range(128)", pyjson.ReprString(string(r[i])), i)
+		}
+		return fmt.Sprintf("'ascii' codec can't encode characters in position %d-%d: ordinal not in range(128)", i, j)
+	}
+	return ""
+}
+
+// a2bBase64 is binascii.a2b_base64(strict_mode=False) ("" = ok).
+func a2bBase64(s string) ([]byte, string) {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	out := []byte{}
+	quad, pads := 0, 0
+	var left byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '=' {
+			if quad >= 2 {
+				pads++
+			}
+			continue
+		}
+		v := strings.IndexByte(alphabet, c)
+		if v < 0 {
+			continue
+		}
+		pads = 0
+		b := byte(v)
+		switch quad {
+		case 0:
+			quad, left = 1, b
+		case 1:
+			quad = 2
+			out = append(out, left<<2|b>>4)
+			left = b & 0x0f
+		case 2:
+			quad = 3
+			out = append(out, left<<4|b>>2)
+			left = b & 0x03
+		case 3:
+			quad = 0
+			out = append(out, left<<6|b)
+			left = 0
+		}
+	}
+	switch quad {
+	case 0:
+		return out, ""
+	case 1:
+		return nil, fmt.Sprintf("Invalid base64-encoded string: number of data characters (%d) cannot be 1 more than a multiple of 4", len(out)/3*4+1)
+	}
+	if quad+pads >= 4 {
+		return out, ""
+	}
+	return nil, "Incorrect padding"
+}
 
 func pyStrip(s string) string { return strings.TrimFunc(s, unicode.IsSpace) }
 

@@ -3,7 +3,13 @@ package pyyaml
 // A port of PyYAML 6's parser.py and composer.py: a lazy event state
 // machine over the scanner, composed into a node graph.
 
-import "github.com/spec-kitty/go-kitty3/internal/pyjson"
+import (
+	"strconv"
+	"strings"
+
+	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+)
 
 type eventKind int
 
@@ -122,12 +128,22 @@ func (p *parser) parseDocumentStart() *event {
 		p.getToken()
 	}
 	if !p.checkToken(tStreamEnd) {
-		start := p.peekToken().start
+		var start *Mark
+		if !p.dialect.ruamel() {
+			start = p.peekToken().start
+		}
 		p.processDirectives()
 		if !p.checkToken(tDocumentStart) {
-			p.perr("", nil, "expected '<document start>', but found "+reprS(p.peekToken().id()), p.peekToken().start)
+			found := reprS(p.peekToken().id())
+			if p.dialect.ruamel() {
+				found = "(" + found + ",)"
+			}
+			p.perr("", nil, "expected '<document start>', but found "+found, p.peekToken().start)
 		}
 		t := p.getToken()
+		if p.dialect.ruamel() {
+			start = t.start
+		}
 		p.states = append(p.states, p.parseDocumentEnd)
 		p.state = p.parseDocumentContent
 		return &event{kind: eDocumentStart, start: start, end: t.end, explicit: true}
@@ -143,10 +159,19 @@ func (p *parser) parseDocumentEnd() *event {
 	explicit := false
 	if p.checkToken(tDocumentEnd) {
 		t = p.getToken()
+		if p.dialect.ruamel() {
+			pt := p.peekToken()
+			if pt.kind != tStreamEnd && t.end.Line == pt.start.Line {
+				p.perr("", nil, "found non-comment content after document end marker, ("+reprS(p.peekToken().id())+",)", p.peekToken().start)
+			}
+		}
 		end = t.end
 		explicit = true
 	}
 	p.state = p.parseDocumentStart
+	if p.dialect.ruamel() && !p.v11() && explicit {
+		p.state = p.parseImplicitDocumentStart
+	}
 	return &event{kind: eDocumentEnd, start: start, end: end, explicit: explicit}
 }
 
@@ -161,6 +186,7 @@ func (p *parser) parseDocumentContent() *event {
 
 func (p *parser) processDirectives() {
 	hasVersion := false
+	minor := 0
 	p.tagHandles = map[string]string{}
 	for p.checkToken(tDirective) {
 		t := p.getToken()
@@ -173,12 +199,17 @@ func (p *parser) processDirectives() {
 				p.perr("", nil, "found incompatible YAML document (version 1.* is required)", t.start)
 			}
 			hasVersion = true
+			minor = t.minor
 		case "TAG":
 			if _, ok := p.tagHandles[t.tagHandle]; ok {
 				p.perr("", nil, "duplicate tag handle "+reprS(t.tagHandle), t.start)
 			}
 			p.tagHandles[t.tagHandle] = t.tagPrefix
 		}
+	}
+	if p.dialect.ruamel() && hasVersion && minor != 1 && minor != 2 {
+		// the YAML.version setter's assertion (loader.version = yaml_version)
+		panic(&PyError{"AssertionError", fmt.Sprintf("version minor part can only be 2 or 1, got (1, %d)", minor)})
 	}
 	for k, v := range defaultTags {
 		if _, ok := p.tagHandles[k]; !ok {
@@ -219,6 +250,9 @@ func (p *parser) parseNode(block, indentlessSequence bool) *event {
 		tagT = t
 		if p.checkToken(tAnchor) {
 			t := p.getToken()
+			if p.dialect.ruamel() {
+				start, tagMark = t.start, t.start
+			}
 			end = t.end
 			anchor, hasAnchor = t.value, true
 		}
@@ -230,9 +264,9 @@ func (p *parser) parseNode(block, indentlessSequence bool) *event {
 			if !ok {
 				p.perr("while parsing a node", start, "found undefined tag handle "+reprS(tagT.tagHandle), tagMark)
 			}
-			tag = prefix + tagT.suffix
+			tag = prefix + p.decodeSuffix(tagT.suffix)
 		} else {
-			tag = tagT.suffix
+			tag = p.decodeSuffix(tagT.suffix)
 		}
 	}
 	if start == nil {
@@ -359,6 +393,10 @@ func (p *parser) parseBlockMappingKey() *event {
 		p.state = p.parseBlockMappingValue
 		return p.processEmptyScalar(t.end)
 	}
+	if p.dialect.ruamel() && p.versionAbove11() && p.checkToken(tValue) {
+		p.state = p.parseBlockMappingValue
+		return p.processEmptyScalar(p.peekToken().start)
+	}
 	if !p.checkToken(tBlockEnd) {
 		t := p.peekToken()
 		p.perr("while parsing a block mapping", p.marks[len(p.marks)-1], "expected <block end>, but found "+reprS(t.id()), t.start)
@@ -472,6 +510,9 @@ func (p *parser) parseFlowMappingKey(first bool) *event {
 			}
 			p.state = p.parseFlowMappingValue
 			return p.processEmptyScalar(t.end)
+		} else if p.dialect.ruamel() && p.versionAbove11() && p.checkToken(tValue) {
+			p.state = p.parseFlowMappingValue
+			return p.processEmptyScalar(p.peekToken().end)
 		} else if !p.checkToken(tFlowMappingEnd) {
 			p.states = append(p.states, p.parseFlowMappingEmptyValue)
 			return p.parseFlowNode()
@@ -504,6 +545,31 @@ func (p *parser) parseFlowMappingEmptyValue() *event {
 
 func (p *parser) processEmptyScalar(m *Mark) *event {
 	return &event{kind: eScalar, implicit: [2]bool{true, false}, start: m, end: m}
+}
+
+// decodeSuffix is ruamel's Tag.uri_decoded_suffix (each %XX becomes
+// chr(XX)); PyYAML's scanner already decoded the escapes.
+func (p *parser) decodeSuffix(s string) string {
+	if !p.dialect.ruamel() || !strings.Contains(s, "%") {
+		return s
+	}
+	var b strings.Builder
+	r := []rune(s)
+	for i := 0; i < len(r); {
+		if r[i] != '%' {
+			b.WriteRune(r[i])
+			i++
+			continue
+		}
+		end := min(i+3, len(r))
+		v, err := strconv.ParseUint(string(r[i+1:end]), 16, 32)
+		if err != nil {
+			panic(valueError("invalid literal for int() with base 16: %s", reprS(string(r[i+1:end]))))
+		}
+		b.WriteRune(rune(v))
+		i = end
+	}
+	return b.String()
 }
 
 func reprS(s string) string { return pyjson.ReprString(s) }

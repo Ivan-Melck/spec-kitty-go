@@ -1,9 +1,10 @@
 package pyyaml
 
-// A line-by-line port of PyYAML 6's reader.py and scanner.py (string input),
-// so that parse errors carry the exact MarkedYAMLError text and are raised
-// at the same point of the token stream. Errors are raised by panicking
-// with *MarkedYAMLError / *ReaderError and recovered by the public API.
+// A line-by-line port of the PyYAML 6 reader/scanner (string input) and of
+// the ruamel.yaml 0.19 Scanner / RoundTripScanner, so that parse errors
+// carry the exact MarkedYAMLError text and are raised at the same point of
+// the token stream. Errors are raised by panicking with *MarkedYAMLError /
+// *ReaderError / *PyError and recovered by the public API.
 
 import (
 	"strconv"
@@ -35,6 +36,7 @@ const (
 	tAnchor
 	tTag
 	tScalar
+	tComment
 )
 
 var tokenIDs = map[tokenKind]string{
@@ -44,20 +46,20 @@ var tokenIDs = map[tokenKind]string{
 	tBlockEnd: "<block end>", tFlowSequenceStart: "[", tFlowMappingStart: "{",
 	tFlowSequenceEnd: "]", tFlowMappingEnd: "}", tKey: "?", tValue: ":", tBlockEntry: "-",
 	tFlowEntry: ",", tAlias: "<alias>", tAnchor: "<anchor>", tTag: "<tag>", tScalar: "<scalar>",
+	tComment: "<comment>",
 }
 
 type token struct {
 	kind       tokenKind
 	start, end *Mark
-	value      string // scalar / alias / anchor value; directive name
+	value      string // scalar / alias / anchor / comment value; directive name
 	plain      bool
 	style      rune // 0 (plain), '\'', '"', '|', '>'
 	// directives
 	major, minor int
-	hasVersion   bool
 	tagHandle    string
 	tagPrefix    string
-	// tags: handle ("" with hasHandle=false is None)
+	// tags: handle (hasHandle=false is None) and suffix
 	hasHandle bool
 	suffix    string
 }
@@ -84,6 +86,7 @@ type scanner struct {
 
 	done           bool
 	flowLevel      int
+	flowContext    []rune // ruamel: '[' / '{' per open flow collection
 	tokens         []*token
 	tokensTaken    int
 	indent         int
@@ -92,6 +95,9 @@ type scanner struct {
 	// possibleSimpleKeys keeps Python dict semantics (insertion order).
 	possibleSimpleKeys map[int]*simpleKey
 	keyOrder           []int
+	// ruamel: the %YAML version seen by the scanner (processing version).
+	yamlVersion [2]int
+	hasVersion  bool
 }
 
 func newScanner(src string, d Dialect) *scanner {
@@ -111,6 +117,23 @@ func (s *scanner) fail(context string, contextMark *Mark, problem string, proble
 }
 
 func repr(r rune) string { return pyjson.ReprString(string(r)) }
+
+func (s *scanner) rt() bool { return s.dialect == Ruamel }
+
+// version is ruamel's scanner_processing_version ((1, 2) by default).
+func (s *scanner) version() [2]int {
+	if s.hasVersion {
+		return s.yamlVersion
+	}
+	return [2]int{1, 2}
+}
+
+func (s *scanner) v11() bool { return s.version() == [2]int{1, 1} }
+
+func (s *scanner) versionAbove11() bool {
+	v := s.version()
+	return v[0] > 1 || (v[0] == 1 && v[1] > 1)
+}
 
 // ---------------------------------------------------------------- reader
 
@@ -144,7 +167,13 @@ func (s *scanner) forward(n int) {
 		ch := s.buffer[s.pointer]
 		s.pointer++
 		s.index++
-		if ch == '\n' || ch == 0x85 || ch == 0x2028 || ch == 0x2029 || (ch == '\r' && s.peek(0) != '\n') {
+		var isBreak bool
+		if s.dialect.ruamel() {
+			isBreak = ch == '\n' || (ch == '\r' && s.peek(0) != '\n')
+		} else {
+			isBreak = ch == '\n' || ch == 0x85 || ch == 0x2028 || ch == 0x2029 || (ch == '\r' && s.peek(0) != '\n')
+		}
+		if isBreak {
 			s.line++
 			s.column = 0
 		} else if ch != 0xFEFF {
@@ -157,7 +186,7 @@ func (s *scanner) getMark() *Mark {
 	return &Mark{Name: s.name, Index: s.index, Line: s.line, Column: s.column, Buffer: s.buffer, Pointer: s.pointer, dialect: s.dialect}
 }
 
-// in reports whether r is one of the runes in set.
+// in reports whether r is one of the runes in set (NUL included).
 func in(r rune, set string) bool { return strings.ContainsRune(set, r) }
 
 const (
@@ -167,10 +196,18 @@ const (
 	breaks      = "\r\n\u0085  "
 )
 
-// in0 is `ch in set` where set contains NUL: Go strings.ContainsRune
-// handles 0 as a rune fine, kept for readability.
 func isAlnumDash(ch rune) bool {
 	return ('0' <= ch && ch <= '9') || ('A' <= ch && ch <= 'Z') || ('a' <= ch && ch <= 'z') || ch == '-' || ch == '_'
+}
+
+// checkNamespaceChar / checkAnchornameChar are ruamel.yaml.compat's.
+func checkNamespaceChar(ch rune) bool {
+	return (0x21 <= ch && ch <= 0x7E) || (0xA0 <= ch && ch <= 0xD7FF) ||
+		(0xE000 <= ch && ch <= 0xFFFD && ch != 0xFEFF) || (0x10000 <= ch && ch <= 0x10FFFF)
+}
+
+func checkAnchornameChar(ch rune) bool {
+	return !in(ch, ",[]{}") && checkNamespaceChar(ch)
 }
 
 // ---------------------------------------------------------------- public token API
@@ -178,6 +215,9 @@ func isAlnumDash(ch rune) bool {
 func (s *scanner) checkToken(kinds ...tokenKind) bool {
 	for s.needMoreTokens() {
 		s.fetchMoreTokens()
+	}
+	if s.rt() {
+		s.gatherComments()
 	}
 	if len(s.tokens) > 0 {
 		if len(kinds) == 0 {
@@ -196,23 +236,73 @@ func (s *scanner) peekToken() *token {
 	for s.needMoreTokens() {
 		s.fetchMoreTokens()
 	}
+	if s.rt() {
+		s.gatherComments()
+	}
 	if len(s.tokens) > 0 {
 		return s.tokens[0]
 	}
 	return nil
 }
 
+func (s *scanner) popToken(i int) *token {
+	t := s.tokens[i]
+	s.tokens = append(s.tokens[:i:i], s.tokens[i+1:]...)
+	return t
+}
+
 func (s *scanner) getToken() *token {
 	for s.needMoreTokens() {
 		s.fetchMoreTokens()
 	}
-	if len(s.tokens) > 0 {
-		s.tokensTaken++
-		t := s.tokens[0]
-		s.tokens = s.tokens[1:]
-		return t
+	if s.rt() {
+		s.gatherComments()
 	}
-	return nil
+	if len(s.tokens) == 0 {
+		return nil
+	}
+	if s.rt() && len(s.tokens) > 1 && s.tokens[1].kind == tComment {
+		t0, t1 := s.tokens[0], s.tokens[1]
+		sameLine := t0.end.Line == t1.start.Line
+		postKinds := t0.kind == tScalar || t0.kind == tValue || t0.kind == tFlowSequenceEnd || t0.kind == tFlowMappingEnd
+		if (postKinds && sameLine) || (t0.kind == tScalar && !sameLine) {
+			s.tokensTaken++
+			s.popToken(1)
+			s.fetchMoreTokens()
+			for len(s.tokens) > 1 && s.tokens[1].kind == tComment {
+				s.tokensTaken++
+				s.popToken(1)
+				s.fetchMoreTokens()
+			}
+		}
+	}
+	s.tokensTaken++
+	return s.popToken(0)
+}
+
+// gatherComments is RoundTripScanner._gather_comments (comment tokens are
+// consumed; their attachment does not matter here).
+func (s *scanner) gatherComments() {
+	if len(s.tokens) == 0 {
+		return
+	}
+	if s.tokens[0].kind == tComment {
+		s.popToken(0)
+		s.tokensTaken++
+	}
+	for s.needMoreTokens() {
+		s.fetchMoreTokens()
+		if len(s.tokens) == 0 {
+			return
+		}
+		if s.tokens[0].kind == tComment {
+			s.tokensTaken++
+			s.popToken(0)
+		}
+	}
+	if !s.done && len(s.tokens) < 2 {
+		s.fetchMoreTokens()
+	}
 }
 
 func (s *scanner) needMoreTokens() bool {
@@ -222,14 +312,18 @@ func (s *scanner) needMoreTokens() bool {
 	if len(s.tokens) == 0 {
 		return true
 	}
-	s.staleePossibleSimpleKeys()
+	s.stalePossibleSimpleKeys()
 	n, ok := s.nextPossibleSimpleKey()
 	return ok && n == s.tokensTaken
 }
 
 func (s *scanner) fetchMoreTokens() {
-	s.scanToNextToken()
-	s.staleePossibleSimpleKeys()
+	if c := s.scanToNextToken(); c != nil {
+		// RoundTripScanner.fetch_comment
+		s.tokens = append(s.tokens, c)
+		return
+	}
+	s.stalePossibleSimpleKeys()
 	s.unwindIndent(s.column)
 	ch := s.peek(0)
 	switch {
@@ -246,10 +340,10 @@ func (s *scanner) fetchMoreTokens() {
 		s.fetchDocumentIndicator(tDocumentEnd)
 		return
 	case ch == '[':
-		s.fetchFlowCollectionStart(tFlowSequenceStart)
+		s.fetchFlowCollectionStart(tFlowSequenceStart, '[')
 		return
 	case ch == '{':
-		s.fetchFlowCollectionStart(tFlowMappingStart)
+		s.fetchFlowCollectionStart(tFlowMappingStart, '{')
 		return
 	case ch == ']':
 		s.fetchFlowCollectionEnd(tFlowSequenceEnd)
@@ -326,7 +420,7 @@ func (s *scanner) delKey(level int) {
 	}
 }
 
-func (s *scanner) staleePossibleSimpleKeys() {
+func (s *scanner) stalePossibleSimpleKeys() {
 	for _, level := range append([]int(nil), s.keyOrder...) {
 		k := s.possibleSimpleKeys[level]
 		if k.line != s.line || s.index-k.index > 1024 {
@@ -361,7 +455,7 @@ func (s *scanner) removePossibleSimpleKey() {
 // ---------------------------------------------------------------- indentation
 
 func (s *scanner) unwindIndent(column int) {
-	if s.flowLevel > 0 {
+	if s.flowLevel != 0 {
 		return
 	}
 	for s.indent > column {
@@ -415,9 +509,14 @@ func (s *scanner) fetchDocumentIndicator(kind tokenKind) {
 	s.tokens = append(s.tokens, &token{kind: kind, start: start, end: s.getMark()})
 }
 
-func (s *scanner) fetchFlowCollectionStart(kind tokenKind) {
+func (s *scanner) fetchFlowCollectionStart(kind tokenKind, push rune) {
 	s.saveSimpleKey()
-	s.flowLevel++
+	if s.dialect.ruamel() {
+		s.flowContext = append(s.flowContext, push)
+		s.flowLevel = len(s.flowContext)
+	} else {
+		s.flowLevel++
+	}
 	s.allowSimpleKey = true
 	start := s.getMark()
 	s.forward(1)
@@ -426,7 +525,14 @@ func (s *scanner) fetchFlowCollectionStart(kind tokenKind) {
 
 func (s *scanner) fetchFlowCollectionEnd(kind tokenKind) {
 	s.removePossibleSimpleKey()
-	s.flowLevel--
+	if s.dialect.ruamel() {
+		if len(s.flowContext) > 0 {
+			s.flowContext = s.flowContext[:len(s.flowContext)-1]
+		}
+		s.flowLevel = len(s.flowContext)
+	} else {
+		s.flowLevel--
+	}
 	s.allowSimpleKey = false
 	start := s.getMark()
 	s.forward(1)
@@ -537,25 +643,111 @@ func (s *scanner) checkDocumentEnd() bool {
 
 func (s *scanner) checkBlockEntry() bool { return in(s.peek(1), blankBreakZ) }
 
-func (s *scanner) checkKey() bool { return s.flowLevel > 0 || in(s.peek(1), blankBreakZ) }
+func (s *scanner) checkKey() bool { return s.flowLevel != 0 || in(s.peek(1), blankBreakZ) }
 
-func (s *scanner) checkValue() bool { return s.flowLevel > 0 || in(s.peek(1), blankBreakZ) }
+func (s *scanner) checkValue() bool {
+	if !s.dialect.ruamel() || s.v11() {
+		return s.flowLevel != 0 || in(s.peek(1), blankBreakZ)
+	}
+	if s.flowLevel != 0 {
+		if s.flowContext[len(s.flowContext)-1] == '[' {
+			if !in(s.peek(1), blankBreakZ) {
+				return false
+			}
+		} else if len(s.tokens) > 0 && s.tokens[len(s.tokens)-1].kind == tValue {
+			if !in(s.peek(1), blankBreakZ) {
+				return false
+			}
+		}
+		return true
+	}
+	return in(s.peek(1), blankBreakZ)
+}
+
+const plainIndicators = "\x00 \t\r\n\u0085  -?:,[]{}#&*!|>'\"%@`"
 
 func (s *scanner) checkPlain() bool {
 	ch := s.peek(0)
-	return !in(ch, "\x00 \t\r\n\u0085  -?:,[]{}#&*!|>'\"%@`") ||
-		(!in(s.peek(1), blankBreakZ) && (ch == '-' || (s.flowLevel == 0 && in(ch, "?:"))))
+	if !s.dialect.ruamel() || s.v11() {
+		return !in(ch, plainIndicators) ||
+			(!in(s.peek(1), blankBreakZ) && (ch == '-' || (s.flowLevel == 0 && in(ch, "?:"))))
+	}
+	if !in(ch, plainIndicators) {
+		return true
+	}
+	ch1 := s.peek(1)
+	if ch == '-' && !in(ch1, blankBreakZ) {
+		return true
+	}
+	if ch == ':' && s.flowLevel != 0 && !in(ch1, " \t") {
+		return true
+	}
+	return !in(s.peek(1), blankBreakZ) && (ch == '-' || (s.flowLevel == 0 && in(ch, "?:")))
 }
 
 // ---------------------------------------------------------------- scanners
 
-func (s *scanner) scanToNextToken() {
+// scanToNextToken skips whitespace, comments and line breaks. The round
+// trip scanner returns a comment token instead of skipping comments and
+// empty lines (nil otherwise).
+func (s *scanner) scanToNextToken() *token {
 	if s.index == 0 && s.peek(0) == 0xFEFF {
 		s.forward(1)
 	}
+	white := " "
+	if s.dialect.ruamel() && s.flowLevel > 0 {
+		white = " \t"
+	}
 	for {
-		for s.peek(0) == ' ' {
+		for in(s.peek(0), white) && s.peek(0) != 0 {
 			s.forward(1)
+		}
+		if s.rt() {
+			ch := s.peek(0)
+			if ch == '#' {
+				start := s.getMark()
+				comment := string(ch)
+				s.forward(1)
+				for !in(ch, "\n\x00\r\u0085  ") {
+					ch = s.peek(0)
+					if ch == 0 {
+						comment += "\n"
+						break
+					}
+					comment += string(ch)
+					s.forward(1)
+				}
+				for lb := s.scanLineBreakRT(false); lb != ""; lb = s.scanLineBreakRT(false) {
+					comment += lb
+				}
+				end := s.getMark()
+				if s.flowLevel == 0 {
+					s.allowSimpleKey = true
+				}
+				return &token{kind: tComment, value: strings.TrimRight(comment, " "), start: start, end: end}
+			}
+			if s.scanLineBreakRT(false) != "" {
+				start := s.getMark()
+				if s.flowLevel == 0 {
+					s.allowSimpleKey = true
+				}
+				if s.peek(0) == '\n' {
+					start = s.getMark()
+					comment := ""
+					for lb := "x"; lb != ""; {
+						lb = s.scanLineBreakRT(true)
+						comment += lb
+					}
+					if s.peek(0) == '#' {
+						if i := strings.LastIndex(comment, "\n"); i >= 0 {
+							comment = comment[:i] + "\n"
+						}
+					}
+					return &token{kind: tComment, value: strings.TrimRight(comment, " "), start: start, end: s.getMark()}
+				}
+				continue
+			}
+			return nil
 		}
 		if s.peek(0) == '#' {
 			for !in(s.peek(0), breakZ) {
@@ -567,7 +759,7 @@ func (s *scanner) scanToNextToken() {
 				s.allowSimpleKey = true
 			}
 		} else {
-			return
+			return nil
 		}
 	}
 }
@@ -580,7 +772,6 @@ func (s *scanner) scanDirective() *token {
 	switch name {
 	case "YAML":
 		t.major, t.minor = s.scanYAMLDirectiveValue(start)
-		t.hasVersion = true
 		t.end = s.getMark()
 	case "TAG":
 		t.tagHandle, t.tagPrefix = s.scanTagDirectiveValue(start)
@@ -598,7 +789,7 @@ func (s *scanner) scanDirective() *token {
 func (s *scanner) scanDirectiveName(start *Mark) string {
 	length := 0
 	ch := s.peek(length)
-	for isAlnumDash(ch) {
+	for isAlnumDash(ch) || (s.dialect.ruamel() && (ch == ':' || ch == '.')) {
 		length++
 		ch = s.peek(length)
 	}
@@ -625,7 +816,13 @@ func (s *scanner) scanYAMLDirectiveValue(start *Mark) (int, int) {
 	s.forward(1)
 	minor := s.scanYAMLDirectiveNumber(start)
 	if !in(s.peek(0), spaceBreakZ) {
+		if s.dialect.ruamel() {
+			s.fail("while scanning a directive", start, "expected a digit or '.', but found "+repr(s.peek(0)), s.getMark())
+		}
 		s.fail("while scanning a directive", start, "expected a digit or ' ', but found "+repr(s.peek(0)), s.getMark())
+	}
+	if s.dialect.ruamel() {
+		s.yamlVersion, s.hasVersion = [2]int{major, minor}, true
 	}
 	return major, minor
 }
@@ -686,12 +883,8 @@ func (s *scanner) scanAnchor(kind tokenKind) *token {
 	s.forward(1)
 	length := 0
 	ch := s.peek(length)
-	if s.dialect == Ruamel {
-		// ruamel accepts any non-space, non-flow-indicator character.
-		for !in(ch, "\x00 \t\r\n\u0085  ,[]{}%@`") {
-			if ch == ':' && in(s.peek(length+1), blankBreakZ+",[]{}") {
-				break
-			}
+	if s.dialect.ruamel() {
+		for checkAnchornameChar(ch) {
 			length++
 			ch = s.peek(length)
 		}
@@ -706,8 +899,13 @@ func (s *scanner) scanAnchor(kind tokenKind) *token {
 	}
 	value := s.prefix(length)
 	s.forward(length)
-	ch = s.peek(0)
-	if !in(ch, "\x00 \t\r\n\u0085  ?:,]}%@`") {
+	end := "\x00 \t\r\n\u0085  ?:,]}%@`"
+	if s.dialect.ruamel() {
+		end = "\x00 \t\r\n\u0085  ?:,[]{}%@`"
+	} else {
+		ch = s.peek(0)
+	}
+	if !in(ch, end) {
 		s.fail("while scanning an "+name, start, "expected alphabetic or numeric character, but found "+repr(ch), s.getMark())
 	}
 	return &token{kind: kind, value: value, start: start, end: s.getMark()}
@@ -717,16 +915,25 @@ func (s *scanner) scanTag() *token {
 	start := s.getMark()
 	ch := s.peek(1)
 	t := &token{kind: tTag, start: start}
+	shortHandle := "!"
+	if s.dialect.ruamel() && ch == '!' {
+		shortHandle = "!!"
+		s.forward(1)
+		ch = s.peek(1)
+	}
 	switch {
 	case ch == '<':
 		s.forward(2)
 		t.suffix = s.scanTagURI("tag", start)
 		if s.peek(0) != '>' {
+			if s.dialect.ruamel() {
+				s.fail("while parsing a tag", start, "expected '>' but found "+repr(s.peek(0)), s.getMark())
+			}
 			s.fail("while parsing a tag", start, "expected '>', but found "+repr(s.peek(0)), s.getMark())
 		}
 		s.forward(1)
 	case in(ch, blankBreakZ):
-		t.suffix = "!"
+		t.suffix = shortHandle
 		s.forward(1)
 	default:
 		length := 1
@@ -743,7 +950,7 @@ func (s *scanner) scanTag() *token {
 		if useHandle {
 			t.tagHandle = s.scanTagHandle("tag", start)
 		} else {
-			t.tagHandle = "!"
+			t.tagHandle = shortHandle
 			s.forward(1)
 		}
 		t.suffix = s.scanTagURI("tag", start)
@@ -763,17 +970,20 @@ func (s *scanner) scanBlockScalar(style rune) *token {
 	chomping, increment := s.scanBlockScalarIndicators(start)
 	s.scanBlockScalarIgnoredLine(start)
 	minIndent := s.indent + 1
-	if minIndent < 1 {
-		minIndent = 1
-	}
 	var brks []string
 	var end *Mark
 	var indent int
 	if increment == 0 {
+		if !s.dialect.ruamel() && minIndent < 1 {
+			minIndent = 1
+		}
 		var maxIndent int
 		brks, maxIndent, end = s.scanBlockScalarIndentation()
 		indent = max(minIndent, maxIndent)
 	} else {
+		if minIndent < 1 {
+			minIndent = 1
+		}
 		indent = minIndent + increment - 1
 		brks, end = s.scanBlockScalarBreaks(indent)
 	}
@@ -791,7 +1001,13 @@ func (s *scanner) scanBlockScalar(style rune) *token {
 		s.forward(length)
 		lineBreak = s.scanLineBreak()
 		brks, end = s.scanBlockScalarBreaks(indent)
+		if s.dialect.ruamel() && minIndent == 0 && (s.checkDocumentStart() || s.checkDocumentEnd()) {
+			break
+		}
 		if s.column == indent && s.peek(0) != 0 {
+			if s.rt() && folded && lineBreak == "\n" {
+				chunks.WriteString("\a")
+			}
 			if folded && lineBreak == "\n" && leadingNonSpace && !in(s.peek(0), " \t") {
 				if len(brks) == 0 {
 					chunks.WriteString(" ")
@@ -806,12 +1022,22 @@ func (s *scanner) scanBlockScalar(style rune) *token {
 	if chomping != 'F' {
 		chunks.WriteString(lineBreak)
 	}
+	trailing := false
 	if chomping == 'T' {
 		for _, b := range brks {
 			chunks.WriteString(b)
 		}
+	} else {
+		trailing = len(brks) > 0
 	}
-	return &token{kind: tScalar, value: chunks.String(), style: style, start: start, end: end}
+	tok := &token{kind: tScalar, value: chunks.String(), style: style, start: start, end: end}
+	if s.dialect.ruamel() && trailing {
+		// ruamel scans on to the next token, collecting comments into the
+		// scalar's post comment.
+		for s.scanToNextToken() != nil {
+		}
+	}
+	return tok
 }
 
 // scanBlockScalarIndicators returns chomping ('T' keep, 'F' strip, 0 clip)
@@ -821,9 +1047,6 @@ func (s *scanner) scanBlockScalarIndicators(start *Mark) (rune, int) {
 	increment := 0
 	ch := s.peek(0)
 	zero := func() {
-		if s.dialect == Ruamel {
-			s.fail("while scanning a block scalar", start, "expected indentation indicator in the range 1-9, but found 0", s.getMark())
-		}
 		s.fail("while scanning a block scalar", start, "expected indentation indicator in the range 1-9, but found 0", s.getMark())
 	}
 	if ch == '+' || ch == '-' {
@@ -878,10 +1101,14 @@ func (s *scanner) scanBlockScalarIgnoredLine(start *Mark) {
 
 func (s *scanner) scanBlockScalarIndentation() ([]string, int, *Mark) {
 	var chunks []string
+	firstIndent := -1
 	maxIndent := 0
 	end := s.getMark()
-	for in(s.peek(0), " \r\n\u0085  ") {
+	for in(s.peek(0), " \r\n\u0085  ") && s.peek(0) != 0 {
 		if s.peek(0) != ' ' {
+			if firstIndent < 0 {
+				firstIndent = s.column
+			}
 			chunks = append(chunks, s.scanLineBreak())
 			end = s.getMark()
 		} else {
@@ -890,6 +1117,9 @@ func (s *scanner) scanBlockScalarIndentation() ([]string, int, *Mark) {
 				maxIndent = s.column
 			}
 		}
+	}
+	if s.dialect.ruamel() && firstIndent > 0 && maxIndent > firstIndent {
+		s.fail("more indented follow up line than first in a block scalar", s.getMark(), "", nil)
 	}
 	return chunks, maxIndent, end
 }
@@ -900,7 +1130,7 @@ func (s *scanner) scanBlockScalarBreaks(indent int) ([]string, *Mark) {
 	for s.column < indent && s.peek(0) == ' ' {
 		s.forward(1)
 	}
-	for in(s.peek(0), breaks) {
+	for in(s.peek(0), breaks) && s.peek(0) != 0 {
 		chunks = append(chunks, s.scanLineBreak())
 		end = s.getMark()
 		for s.column < indent && s.peek(0) == ' ' {
@@ -952,7 +1182,7 @@ func (s *scanner) scanFlowScalarNonSpaces(chunks *strings.Builder, double bool, 
 		case !double && ch == '\'' && s.peek(1) == '\'':
 			chunks.WriteString("'")
 			s.forward(2)
-		case (double && ch == '\'') || (!double && in(ch, "\"\\")):
+		case (double && ch == '\'') || (!double && (ch == '"' || ch == '\\')):
 			chunks.WriteRune(ch)
 			s.forward(1)
 		case double && ch == '\\':
@@ -965,12 +1195,12 @@ func (s *scanner) scanFlowScalarNonSpaces(chunks *strings.Builder, double bool, 
 				s.forward(1)
 				for k := 0; k < n; k++ {
 					if !isHex(s.peek(k)) {
-						if s.dialect == Ruamel {
-							s.fail("while scanning a double-quoted scalar", start,
-								"expected escape sequence of "+strconv.Itoa(n)+" hexdecimal numbers, but found "+repr(s.peek(k)), s.getMark())
+						word := "hexadecimal"
+						if s.dialect.ruamel() {
+							word = "hexdecimal"
 						}
 						s.fail("while scanning a double-quoted scalar", start,
-							"expected escape sequence of "+strconv.Itoa(n)+" hexadecimal numbers, but found "+repr(s.peek(k)), s.getMark())
+							"expected escape sequence of "+strconv.Itoa(n)+" "+word+" numbers, but found "+repr(s.peek(k)), s.getMark())
 					}
 				}
 				code, _ := strconv.ParseInt(s.prefix(n), 16, 64)
@@ -979,7 +1209,7 @@ func (s *scanner) scanFlowScalarNonSpaces(chunks *strings.Builder, double bool, 
 				}
 				chunks.WriteRune(rune(code))
 				s.forward(n)
-			} else if in(ch, breaks) {
+			} else if in(ch, breaks) && ch != 0 {
 				s.scanLineBreak()
 				for _, b := range s.scanFlowScalarBreaks(double, start) {
 					chunks.WriteString(b)
@@ -995,7 +1225,7 @@ func (s *scanner) scanFlowScalarNonSpaces(chunks *strings.Builder, double bool, 
 
 func (s *scanner) scanFlowScalarSpaces(chunks *strings.Builder, double bool, start *Mark) {
 	length := 0
-	for in(s.peek(length), " \t") {
+	for in(s.peek(length), " \t") && s.peek(length) != 0 {
 		length++
 	}
 	whitespaces := s.prefix(length)
@@ -1027,10 +1257,10 @@ func (s *scanner) scanFlowScalarBreaks(double bool, start *Mark) []string {
 		if (p == "---" || p == "...") && in(s.peek(3), blankBreakZ) {
 			s.fail("while scanning a quoted scalar", start, "found unexpected document separator", s.getMark())
 		}
-		for in(s.peek(0), " \t") {
+		for s.peek(0) == ' ' || s.peek(0) == '\t' {
 			s.forward(1)
 		}
-		if in(s.peek(0), breaks) {
+		if in(s.peek(0), breaks) && s.peek(0) != 0 {
 			chunks = append(chunks, s.scanLineBreak())
 		} else {
 			return chunks
@@ -1049,16 +1279,31 @@ func (s *scanner) scanPlain() *token {
 		if s.peek(0) == '#' {
 			break
 		}
-		for {
-			ch := s.peek(length)
-			stop := blankBreakZ
-			if s.flowLevel > 0 {
-				stop += ",[]{}"
+		if s.dialect.ruamel() {
+			for {
+				ch := s.peek(length)
+				if ch == ':' && !in(s.peek(length+1), blankBreakZ) {
+					// part of the scalar
+				} else if ch == '?' && !s.v11() {
+					// part of the scalar
+				} else if in(ch, blankBreakZ) || (s.flowLevel == 0 && ch == ':' && in(s.peek(length+1), blankBreakZ)) ||
+					(s.flowLevel != 0 && in(ch, ",:?[]{}")) {
+					break
+				}
+				length++
 			}
-			if in(ch, blankBreakZ) || (ch == ':' && in(s.peek(length+1), stop)) || (s.flowLevel > 0 && in(ch, ",?[]{}")) {
-				break
+		} else {
+			for {
+				ch := s.peek(length)
+				stop := blankBreakZ
+				if s.flowLevel != 0 {
+					stop += ",[]{}"
+				}
+				if in(ch, blankBreakZ) || (ch == ':' && in(s.peek(length+1), stop)) || (s.flowLevel != 0 && in(ch, ",?[]{}")) {
+					break
+				}
+				length++
 			}
-			length++
 		}
 		if length == 0 {
 			break
@@ -1089,7 +1334,7 @@ func (s *scanner) scanPlainSpaces(indent int, start *Mark) ([]string, bool) {
 	whitespaces := s.prefix(length)
 	s.forward(length)
 	ch := s.peek(0)
-	if in(ch, breaks) {
+	if in(ch, breaks) && ch != 0 {
 		lineBreak := s.scanLineBreak()
 		s.allowSimpleKey = true
 		p := s.prefix(3)
@@ -1097,7 +1342,7 @@ func (s *scanner) scanPlainSpaces(indent int, start *Mark) ([]string, bool) {
 			return nil, false
 		}
 		var brks []string
-		for in(s.peek(0), " \r\n\u0085  ") {
+		for in(s.peek(0), " \r\n\u0085  ") && s.peek(0) != 0 {
 			if s.peek(0) == ' ' {
 				s.forward(1)
 			} else {
@@ -1120,10 +1365,18 @@ func (s *scanner) scanPlainSpaces(indent int, start *Mark) ([]string, bool) {
 	return chunks, true
 }
 
+// article is "a" for PyYAML and "an" for ruamel ("while scanning an tag").
+func (s *scanner) article() string {
+	if s.dialect.ruamel() {
+		return "an "
+	}
+	return "a "
+}
+
 func (s *scanner) scanTagHandle(name string, start *Mark) string {
 	ch := s.peek(0)
 	if ch != '!' {
-		s.fail("while scanning a "+name, start, "expected '!', but found "+repr(ch), s.getMark())
+		s.fail("while scanning "+s.article()+name, start, "expected '!', but found "+repr(ch), s.getMark())
 	}
 	length := 1
 	ch = s.peek(length)
@@ -1134,6 +1387,9 @@ func (s *scanner) scanTagHandle(name string, start *Mark) string {
 		}
 		if ch != '!' {
 			s.forward(length)
+			if s.dialect.ruamel() {
+				s.fail("while scanning an "+name, start, "expected '!' but found "+repr(ch), s.getMark())
+			}
 			s.fail("while scanning a "+name, start, "expected '!', but found "+repr(ch), s.getMark())
 		}
 		length++
@@ -1147,7 +1403,8 @@ func (s *scanner) scanTagURI(name string, start *Mark) string {
 	var chunks []string
 	length := 0
 	ch := s.peek(length)
-	for ('0' <= ch && ch <= '9') || ('A' <= ch && ch <= 'Z') || ('a' <= ch && ch <= 'z') || in(ch, "-;/?:@&=+$,_.!~*'()[]%") {
+	for ('0' <= ch && ch <= '9') || ('A' <= ch && ch <= 'Z') || ('a' <= ch && ch <= 'z') ||
+		in(ch, "-;/?:@&=+$,_.!~*'()[]%") || (s.dialect.ruamel() && ch == '#' && s.versionAbove11()) {
 		if ch == '%' {
 			chunks = append(chunks, s.prefix(length))
 			s.forward(length)
@@ -1163,39 +1420,48 @@ func (s *scanner) scanTagURI(name string, start *Mark) string {
 		s.forward(length)
 	}
 	if len(chunks) == 0 {
-		s.fail("while parsing a "+name, start, "expected URI, but found "+repr(ch), s.getMark())
+		s.fail("while parsing "+s.article()+name, start, "expected URI, but found "+repr(ch), s.getMark())
 	}
 	return strings.Join(chunks, "")
 }
 
 func (s *scanner) scanURIEscapes(name string, start *Mark) string {
 	var codes []byte
+	raw := ""
 	mark := s.getMark()
 	for s.peek(0) == '%' {
+		raw += "%"
 		s.forward(1)
 		for k := 0; k < 2; k++ {
 			if !isHex(s.peek(k)) {
 				msg := "expected URI escape sequence of 2 hexadecimal numbers, but found "
-				if s.dialect == Ruamel {
+				if s.dialect.ruamel() {
 					msg = "expected URI escape sequence of 2 hexdecimal numbers, but found "
 				}
-				s.fail("while scanning a "+name, start, msg+repr(s.peek(k)), s.getMark())
+				s.fail("while scanning "+s.article()+name, start, msg+repr(s.peek(k)), s.getMark())
 			}
 		}
 		v, _ := strconv.ParseUint(s.prefix(2), 16, 8)
 		codes = append(codes, byte(v))
+		raw += s.prefix(2)
 		s.forward(2)
 	}
 	str, err := pyjson.DecodeUTF8(codes)
 	if err != nil {
-		s.fail("while scanning a "+name, start, err.Error(), mark)
+		s.fail("while scanning "+s.article()+name, start, err.Error(), mark)
+	}
+	if s.rt() {
+		return raw // the round-trip scanner keeps the escapes
 	}
 	return str
 }
 
 func (s *scanner) scanLineBreak() string {
+	if s.rt() {
+		return s.scanLineBreakRT(false)
+	}
 	ch := s.peek(0)
-	if in(ch, "\r\n\u0085") && ch != 0 {
+	if ch == '\r' || ch == '\n' || ch == 0x85 {
 		if s.prefix(2) == "\r\n" {
 			s.forward(2)
 		} else {
@@ -1203,6 +1469,26 @@ func (s *scanner) scanLineBreak() string {
 		}
 		return "\n"
 	} else if ch == 0x2028 || ch == 0x2029 {
+		s.forward(1)
+		return string(ch)
+	}
+	return ""
+}
+
+// scanLineBreakRT is RoundTripScanner.scan_line_break(empty_line).
+func (s *scanner) scanLineBreakRT(emptyLine bool) string {
+	ch := s.peek(0)
+	if ch == '\r' || ch == '\n' || ch == 0x85 {
+		if s.prefix(2) == "\r\n" {
+			s.forward(2)
+		} else {
+			s.forward(1)
+		}
+		return "\n"
+	} else if ch == 0x2028 || ch == 0x2029 {
+		s.forward(1)
+		return string(ch)
+	} else if emptyLine && (ch == '\t' || ch == ' ') {
 		s.forward(1)
 		return string(ch)
 	}

@@ -11,12 +11,17 @@ type Dialect int
 const (
 	// PyYAML is PyYAML 6 (yaml.safe_load and friends).
 	PyYAML Dialect = iota
-	// Ruamel is ruamel.yaml 0.19 (YAML(typ="safe") / YAML(typ="rt")): the
-	// same scanner/parser messages with ruamel's wording changes, a
+	// Ruamel is ruamel.yaml 0.19 YAML() / YAML(typ="rt"): RoundTripScanner
+	// (comment tokens) and RoundTripParser. Compared to PyYAML: YAML 1.2
+	// scanning rules unless %YAML 1.1, ruamel's wording changes, a
 	// "^ (line: N)" caret, duplicate anchors allowed (warning only) and
 	// duplicate mapping keys refused.
 	Ruamel
+	// RuamelSafe is ruamel.yaml 0.19 YAML(typ="safe") (pure Scanner/Parser).
+	RuamelSafe
 )
+
+func (d Dialect) ruamel() bool { return d != PyYAML }
 
 // Mark is yaml.error.Mark / ruamel's StringMark (FileMark when Buffer is
 // nil): a position in the input, rendered with a source snippet.
@@ -61,7 +66,7 @@ func (m *Mark) snippet() (string, bool) {
 		}
 	}
 	caret := "^"
-	if m.dialect == Ruamel {
+	if m.dialect.ruamel() {
 		caret = fmt.Sprintf("^ (line: %d)", m.Line+1)
 	}
 	snip := ""
@@ -111,7 +116,7 @@ func (e *MarkedYAMLError) Error() string {
 		lines = append(lines, e.ProblemMark.String())
 	}
 	if e.Note != "" {
-		if e.dialect == Ruamel {
+		if e.dialect.ruamel() {
 			lines = append(lines, dedent(e.Note))
 		} else {
 			lines = append(lines, e.Note)

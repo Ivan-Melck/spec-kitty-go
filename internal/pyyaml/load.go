@@ -158,7 +158,11 @@ func constructTimestamp(v string) any {
 			if m[11] != "" {
 				tm, _ = strconv.Atoi(m[11])
 			}
-			out += fmt.Sprintf("%s%02d:%02d", m[9], th, tm)
+			sign := m[9]
+			if th == 0 && tm == 0 {
+				sign = "+"
+			}
+			out += fmt.Sprintf("%s%02d:%02d", sign, th, tm)
 		}
 	}
 	return Timestamp{Repr: out}
