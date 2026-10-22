@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
-	"github.com/spec-kitty/go-kitty3/internal/fm"
+	"github.com/spec-kitty/go-kitty3/internal/dossier"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
@@ -43,24 +42,6 @@ type SelectorRejectedError struct{ Msg string }
 
 func (e *SelectorRejectedError) Error() string { return e.Msg }
 
-var wpMetadataFields = map[string]bool{}
-
-func init() {
-	for _, f := range strings.Fields(`work_package_id title dependencies base_branch base_commit created_at planning_base_branch
-		merge_target_branch branch_strategy requirement_refs tracker_refs priority execution_mode owned_files create_intent
-		authoritative_surface scope task_type subtasks phase phases assignee agent model agent_profile role shell_pid
-		shell_pid_created_at history lane feature_slug activity_log review_status reviewed_by approved_by reviewer
-		reviewer_agent reviewer_shell_pid review_feedback review_feedback_file subtitle description estimated_duration tags
-		mission_id mission_number mission_slug status wp_code work_package_title`) {
-		wpMetadataFields[f] = true
-	}
-}
-
-var (
-	wpIDRe    = regexp.MustCompile(`^WP\d{2,}$`)
-	baseSHARe = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
-)
-
 // wpTaskFiles is status.wp_task_files.
 func wpTaskFiles(tasks string) []string {
 	entries, err := os.ReadDir(tasks)
@@ -77,34 +58,16 @@ func wpTaskFiles(tasks string) []string {
 	return out
 }
 
-// authoredWPID approximates read_authored_wp_frontmatter (WPMetadata strict
+// authoredWPID is read_authored_wp_frontmatter (strict WPMetadata
 // validation): the work_package_id, or ok=false for a malformed file.
 func authoredWPID(path string) (string, bool) {
-	d, err := fm.Read(path)
-	if err != nil || d.Meta == nil {
+	proj, ok := dossier.ReadAuthoredWP(path)
+	if !ok {
 		return "", false
 	}
-	for _, k := range d.Meta.Keys() {
-		if !wpMetadataFields[k] {
-			return "", false
-		}
-	}
-	id, ok := d.Meta.Get("work_package_id")
-	s, isStr := id.(string)
-	if !ok || !isStr || !wpIDRe.MatchString(s) {
-		return "", false
-	}
-	if t, ok := d.Meta.Get("title"); ok && t != nil {
-		if ts, isStr := t.(string); !isStr || strings.TrimSpace(ts) == "" {
-			return "", false
-		}
-	}
-	if b, ok := d.Meta.Get("base_commit"); ok && b != nil {
-		if bs, isStr := b.(string); !isStr || (bs != "unknown" && !baseSHARe.MatchString(bs)) {
-			return "", false
-		}
-	}
-	return s, true
+	id, _ := proj.Get("work_package_id")
+	s, _ := id.(string)
+	return s, s != ""
 }
 
 func seedTimestamp(meta *jsonx.Object) string {
