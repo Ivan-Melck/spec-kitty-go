@@ -81,7 +81,7 @@ func removedCommand(msg string) func(*cli.Context) error {
 		if jsonMode {
 			printJSON(ctx.Stdout, jsonx.NewObject("error", msg))
 		} else {
-			consolePrint(ctx.Stdout, "Removed: "+msg)
+			consolePrint(ctx.Stdout, "[red]Removed:[/red] "+msg)
 		}
 		return cli.Exit(1)
 	}
@@ -91,7 +91,7 @@ func removedCommand(msg string) func(*cli.Context) error {
 func statusSurface(ctx *cli.Context, jsonMode bool) (*missionCtx, error) {
 	root := project.Locate("")
 	if root == "" {
-		consolePrint(ctx.Stdout, "Error: Could not locate project root")
+		consolePrint(ctx.Stdout, "[red]Error:[/red] Could not locate project root")
 		return nil, cli.Exit(1)
 	}
 	slug, err := resolveTasksMission(ctx, root, ctx.String("mission"), jsonMode)
@@ -145,18 +145,19 @@ func runStatusLifecycle(ctx *cli.Context) error {
 		{"Review WPs", str("review_wp_count")}, {"Blocked WPs", str("blocked_wp_count")}, {"Terminal WPs", str("terminal_wp_count")},
 		{"Event Log", logState}, {"Age", age}, {"Last Activity", last},
 	}
-	w0, w1 := 0, 0
+	t := rich.NewTable()
+	t.ShowHeader, t.Box = false, nil
+	t.AddColumn("Key", rich.Column{Style: "dim"})
+	t.AddColumn("Value", rich.Column{})
 	for _, r := range rows {
-		w0, w1 = max(w0, rich.CellLen(r[0])), max(w1, rich.CellLen(r[1]))
+		t.AddRow(r[0], r[1])
 	}
 	fmt.Fprintln(ctx.Stdout)
-	consolePrint(ctx.Stdout, "Mission Lifecycle: "+m.Slug)
-	for _, r := range rows {
-		fmt.Fprintln(ctx.Stdout, " "+padRight(r[0], w0)+"  "+padRight(r[1], w1)+" ")
-	}
+	consolePrint(ctx.Stdout, "[bold]Mission Lifecycle: "+m.Slug+"[/bold]")
+	rich.PrintTo(ctx.Stdout, t)
 	if lines := status.FormatPostMissionEvents(lc.GetList("post_mission_events")); len(lines) > 0 {
 		fmt.Fprintln(ctx.Stdout)
-		consolePrint(ctx.Stdout, "Post-mission History")
+		consolePrint(ctx.Stdout, "[bold]Post-mission History[/bold]")
 		for _, l := range lines {
 			richPrint(ctx.Stdout, "  • "+l)
 		}
@@ -193,36 +194,36 @@ func runStatusValidate(ctx *cli.Context) error {
 		if jsonMode {
 			printJSON(ctx.Stdout, payload())
 		} else {
-			consolePrint(ctx.Stdout, "Status Validation: "+slug)
+			consolePrint(ctx.Stdout, "[green]Status Validation: "+slug+"[/green]")
 			consolePrint(ctx.Stdout, "No events to validate.")
-			consolePrint(ctx.Stdout, "Result: PASS")
+			consolePrint(ctx.Stdout, "[green]Result: PASS[/green]")
 		}
 		return nil
 	}
 	if jsonMode {
 		printJSON(ctx.Stdout, payload())
 	} else {
-		consolePrint(ctx.Stdout, "\nStatus Validation: "+slug)
+		consolePrint(ctx.Stdout, "\n[bold]Status Validation: "+slug+"[/bold]")
 		consolePrint(ctx.Stdout, strings.Repeat("-", 50))
 		if len(res.Errors) > 0 {
-			consolePrint(ctx.Stdout, fmt.Sprintf("Errors: %d", len(res.Errors)))
+			consolePrint(ctx.Stdout, fmt.Sprintf("[red]Errors: %d[/red]", len(res.Errors)))
 			for _, e := range res.Errors {
 				consolePrint(ctx.Stdout, "  - "+e)
 			}
 		}
 		if len(res.Warnings) > 0 {
-			consolePrint(ctx.Stdout, fmt.Sprintf("Warnings: %d", len(res.Warnings)))
+			consolePrint(ctx.Stdout, fmt.Sprintf("[yellow]Warnings: %d[/yellow]", len(res.Warnings)))
 			for _, w := range res.Warnings {
 				consolePrint(ctx.Stdout, "  - "+w)
 			}
 		}
 		switch {
 		case res.Passed() && len(res.Warnings) > 0:
-			consolePrint(ctx.Stdout, fmt.Sprintf("\nResult: PASS (%d warning(s))", len(res.Warnings)))
+			consolePrint(ctx.Stdout, fmt.Sprintf("\n[green]Result: PASS[/green] (%d warning(s))", len(res.Warnings)))
 		case res.Passed():
-			consolePrint(ctx.Stdout, "\nResult: PASS")
+			consolePrint(ctx.Stdout, "\n[green]Result: PASS[/green]")
 		default:
-			consolePrint(ctx.Stdout, "\nResult: FAIL")
+			consolePrint(ctx.Stdout, "\n[red]Result: FAIL[/red]")
 		}
 	}
 	if !res.Passed() {

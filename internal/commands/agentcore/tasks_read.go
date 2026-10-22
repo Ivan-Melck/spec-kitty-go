@@ -101,7 +101,7 @@ func runMaterialize(ctx *cli.Context) error {
 		printJSON(ctx.Stdout, snap.ToObject())
 		return nil
 	}
-	consolePrint(ctx.Stdout, fmt.Sprintf("Materialized %s: %d events -> %d WPs", slug, snap.EventCount, snap.WorkPackages.Len()))
+	consolePrint(ctx.Stdout, fmt.Sprintf("[green]Materialized[/green] %s: %d events -> %d WPs", slug, snap.EventCount, snap.WorkPackages.Len()))
 	var parts []string
 	keys := snap.Summary.Keys()
 	sort.Strings(keys)
@@ -224,7 +224,7 @@ func statusError(ctx *cli.Context, jsonMode bool, msg string) error {
 	if jsonMode {
 		printJSONPretty(ctx.Stdout, jsonx.NewObject("ok", false, "error", jsonx.NewObject("code", "status_failed", "message", msg)))
 	} else {
-		consolePrint(ctx.Stdout, "Error: "+msg)
+		consolePrint(ctx.Stdout, "[red]Error:[/red] "+msg)
 	}
 	return cli.Exit(1)
 }
@@ -286,7 +286,7 @@ func runTasksStatus(ctx *cli.Context) error {
 		if jsonMode {
 			return statusSelectorError(ctx, "mission_required", msg, 1, nil)
 		}
-		consolePrint(ctx.Stdout, "Error: "+msg)
+		consolePrint(ctx.Stdout, "[red]Error:[/red] "+msg)
 		return cli.Exit(1)
 	}
 	slug, err := mission.ResolveHandle(root, handle)
@@ -551,162 +551,132 @@ func workspaceFor(w *wp.WP, manifest *lanes.Manifest, id string) (string, string
 	return mode, "lane_workspace"
 }
 
-func boxLine(left, fill, mid, right string, widths []int) string {
-	var b strings.Builder
-	b.WriteString(left)
-	for i, w := range widths {
-		if i > 0 {
-			b.WriteString(mid)
-		}
-		b.WriteString(strings.Repeat(fill, w+2))
-	}
-	b.WriteString(right)
-	return b.String()
-}
-
-func boxRow(sep string, cells []string, widths []int) string {
-	var b strings.Builder
-	b.WriteString(sep)
-	for i, c := range cells {
-		b.WriteString(" " + padRight(c, widths[i]) + " " + sep)
-	}
-	return b.String()
-}
-
-func panelLines(width int, title string, body []string) []string {
-	inner := width - 2
-	top := "╭" + strings.Repeat("─", inner) + "╮"
-	if title != "" {
-		t := " " + title + " "
-		left := (inner - rich.CellLen(t)) / 2
-		top = "╭" + strings.Repeat("─", left) + t + strings.Repeat("─", inner-left-rich.CellLen(t)) + "╮"
-	}
-	out := []string{top}
-	for _, l := range body {
-		out = append(out, "│ "+padRight(l, inner-2)+" │")
-	}
-	return append(out, "╰"+strings.Repeat("─", inner)+"╯")
-}
-
 func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][]*boardRow, done, total int, donePct float64, pctText string, pct float64, autoCommit bool) {
-	width := cli.Width()
-	fmt.Fprintln(w)
-	for _, l := range panelLines(width, "", []string{"📊 Work Package Status: " + slug}) {
-		fmt.Fprintln(w, l)
-	}
-	fmt.Fprintf(w, "Done progress: %d/%d (%s%%)\n", done, total, pyFloat(donePct))
-	fmt.Fprintf(w, "Weighted readiness: %s%%\n", pctText)
+	human := func(r any) { rich.PrintTo(w, r) }
+	// _st_render_overview
+	human("")
+	title := rich.NewText("")
+	title.Append("📊 Work Package Status: ", "bold cyan")
+	title.Append(slug, "bold white")
+	human(&rich.RichPanel{R: title, BorderStyle: "cyan"})
+	prog := rich.NewText("")
+	prog.Append("Done progress: ", "bold")
+	prog.Append(fmt.Sprintf("%d/%d", done, total), "bold green")
+	prog.Append(fmt.Sprintf(" (%s%%)", pyFloat(donePct)), "dim")
+	prog.Append("\nWeighted readiness: ", "bold")
+	prog.Append(pctText+"%", "bold cyan")
 	filled := floorInt(40 * pct / 100)
-	fmt.Fprintln(w, strings.Repeat("█", filled)+strings.Repeat("░", 40-filled))
-	fmt.Fprintln(w)
+	prog.Append("\n"+strings.Repeat("█", filled)+strings.Repeat("░", 40-filled), "green")
+	human(prog)
+	human("")
 
-	cell := func(r *boardRow, suffix string) []string {
+	// _st_render_board
+	cell := func(r *boardRow, kind string) string {
 		t := r.title
 		if len([]rune(t)) > 22 {
 			t = truncateRunes(t, 22) + "..."
 		}
-		if r.stale {
-			return []string{"⚠ " + r.disp(), t}
+		switch {
+		case r.stale:
+			return "[yellow]⚠ " + r.disp() + "[/yellow]\n" + t
+		case r.lane == string(status.InProgress) && r.staleRes != nil && r.staleRes.isStale():
+			return "[red]⚠️ " + r.disp() + "[/red]\n" + t
+		case r.stallLabel != "":
+			return "[yellow]⚠ " + r.disp() + " (review)[/yellow]\n" + t
+		case kind == "claimed":
+			return "[blue]" + r.disp() + " (claimed)[/blue]\n" + t
+		case kind == "review":
+			return "[bright_cyan]" + r.disp() + " (review)[/bright_cyan]\n" + t
 		}
-		if r.lane == string(status.InProgress) && r.staleRes != nil && r.staleRes.isStale() {
-			return []string{"⚠️ " + r.disp(), t}
-		}
-		if r.stallLabel != "" {
-			return []string{"⚠ " + r.disp() + " (review)", t}
-		}
-		return []string{r.disp() + suffix, t}
+		return r.disp() + "\n" + t
 	}
-	type col struct{ cells [][]string }
-	cols := make([]col, 5)
+	cols := make([][]string, 5)
 	for _, r := range byLane["planned"] {
-		cols[0].cells = append(cols[0].cells, cell(r, ""))
+		cols[0] = append(cols[0], cell(r, ""))
 	}
 	doing := 0
 	for _, r := range byLane["claimed"] {
-		cols[1].cells = append(cols[1].cells, cell(r, " (claimed)"))
+		cols[1] = append(cols[1], cell(r, "claimed"))
 		doing++
 	}
 	for _, r := range byLane["in_progress"] {
-		cols[1].cells = append(cols[1].cells, cell(r, ""))
+		cols[1] = append(cols[1], cell(r, ""))
 		doing++
 	}
 	for _, r := range byLane["in_review"] {
-		cols[1].cells = append(cols[1].cells, cell(r, " (review)"))
+		cols[1] = append(cols[1], cell(r, "review"))
 		doing++
 	}
 	for _, r := range byLane["for_review"] {
-		cols[2].cells = append(cols[2].cells, cell(r, ""))
+		cols[2] = append(cols[2], cell(r, ""))
 	}
 	for _, r := range byLane["approved"] {
-		cols[3].cells = append(cols[3].cells, cell(r, ""))
+		cols[3] = append(cols[3], cell(r, ""))
 	}
 	for _, r := range byLane["done"] {
-		cols[4].cells = append(cols[4].cells, cell(r, ""))
+		cols[4] = append(cols[4], cell(r, ""))
 	}
-	widths := []int{25, 25, 25, 25, 25}
-	tableWidth := 5*27 + 6
-	fmt.Fprintln(w, center("Kanban Board", tableWidth))
-	fmt.Fprintln(w, boxLine("┏", "━", "┳", "┓", widths))
-	fmt.Fprintln(w, boxRow("┃", []string{"📋 Planned", "🔄 Doing", "👀 For Review", "👍 Approved", "✅ Done"}, widths))
-	fmt.Fprintln(w, boxLine("┡", "━", "╇", "┩", widths))
+	t := rich.NewTable()
+	t.Title, t.HeaderStyle, t.BorderStyle = "Kanban Board", "bold magenta", "dim"
+	for i, h := range []string{"📋 Planned", "🔄 Doing", "👀 For Review", "👍 Approved", "✅ Done"} {
+		t.AddColumn(h, rich.Column{Style: []string{"yellow", "blue", "cyan", "magenta", "green"}[i], Width: rich.IntP(25)})
+	}
 	maxRows := 0
 	for _, c := range cols {
-		if len(c.cells) > maxRows {
-			maxRows = len(c.cells)
-		}
+		maxRows = max(maxRows, len(c))
 	}
 	for i := 0; i < maxRows; i++ {
-		for line := 0; line < 2; line++ {
-			var cells []string
-			for _, c := range cols {
-				if i < len(c.cells) {
-					cells = append(cells, c.cells[i][line])
-				} else {
-					cells = append(cells, "")
-				}
+		var cells []any
+		for _, c := range cols {
+			if i < len(c) {
+				cells = append(cells, c[i])
+			} else {
+				cells = append(cells, "")
 			}
-			fmt.Fprintln(w, boxRow("│", cells, widths))
 		}
+		t.AddRow(cells...)
 	}
-	fmt.Fprintln(w, boxRow("│", []string{
-		fmt.Sprintf("%d WPs", len(byLane["planned"])), fmt.Sprintf("%d WPs", doing),
-		fmt.Sprintf("%d WPs", len(byLane["for_review"])), fmt.Sprintf("%d WPs", len(byLane["approved"])),
-		fmt.Sprintf("%d WPs", len(byLane["done"]))}, widths))
-	fmt.Fprintln(w, boxLine("└", "─", "┴", "┘", widths))
-	fmt.Fprintln(w)
+	t.AddRowStyled("dim", false,
+		fmt.Sprintf("[bold]%d WPs[/bold]", len(byLane["planned"])), fmt.Sprintf("[bold]%d WPs[/bold]", doing),
+		fmt.Sprintf("[bold]%d WPs[/bold]", len(byLane["for_review"])), fmt.Sprintf("[bold]%d WPs[/bold]", len(byLane["approved"])),
+		fmt.Sprintf("[bold]%d WPs[/bold]", len(byLane["done"])))
+	human(t)
+	human("")
 
+	// _st_render_arbiter
 	bullet := func(r *boardRow) string { return fmt.Sprintf("  • %s - %s", r.disp(), r.title) }
 	var arbiterLines []string
 	for _, r := range rows {
 		if r.arbiterCat != "" {
-			arbiterLines = append(arbiterLines, fmt.Sprintf("  • %s Cycle 1: rejected → overridden (%s)", r.id, r.arbiterCat))
+			arbiterLines = append(arbiterLines, fmt.Sprintf("  • %s Cycle 1: rejected → [yellow]overridden[/yellow] (%s)", r.id, r.arbiterCat))
 		}
 	}
 	if len(arbiterLines) > 0 {
-		fmt.Fprintln(w, "⚖️  Arbiter Override History:")
+		human("[bold yellow]⚖️  Arbiter Override History:[/bold yellow]")
 		for _, l := range arbiterLines {
-			consolePrint(w, l)
+			human(l)
 		}
-		fmt.Fprintln(w)
+		human("")
 	}
+	// _st_render_review_queues
 	if l := byLane["for_review"]; len(l) > 0 {
-		fmt.Fprintln(w, "👀 Ready for Review:")
+		human("[bold cyan]👀 Ready for Review:[/bold cyan]")
 		for _, r := range l {
-			consolePrint(w, bullet(r))
+			human(bullet(r))
 		}
-		fmt.Fprintln(w)
+		human("")
 	}
 	if l := byLane["approved"]; len(l) > 0 {
-		fmt.Fprintln(w, "👍 Approved (merge when all WPs approved):")
+		human("[bold magenta]👍 Approved (merge when all WPs approved):[/bold magenta]")
 		for _, r := range l {
 			line := bullet(r)
 			if r.stale {
-				line += "  ⚠ review artifact: verdict=rejected"
+				line += "  [bold yellow]⚠ review artifact: verdict=rejected[/bold yellow]"
 			}
-			consolePrint(w, line)
+			human(line)
 		}
-		fmt.Fprintln(w, "   Approved WPs stay here until feature merge. Dependents can start immediately.")
-		fmt.Fprintln(w)
+		human("[dim]   Approved WPs stay here until feature merge. Dependents can start immediately.[/dim]")
+		human("")
 	}
 	var doneStale []*boardRow
 	for _, r := range byLane["done"] {
@@ -715,91 +685,95 @@ func renderBoard(w io.Writer, slug string, rows []*boardRow, byLane map[string][
 		}
 	}
 	if len(doneStale) > 0 {
-		fmt.Fprintln(w, "✅ Done (with stale verdict warnings):")
+		human("[bold green]✅ Done (with stale verdict warnings):[/bold green]")
 		for _, r := range doneStale {
-			consolePrint(w, bullet(r)+"  ⚠ review artifact: verdict=rejected")
+			human(bullet(r) + "  [bold yellow]⚠ review artifact: verdict=rejected[/bold yellow]")
 		}
-		fmt.Fprintln(w)
+		human("")
 	}
+	// _st_render_active
 	if l := byLane["claimed"]; len(l) > 0 {
-		fmt.Fprintln(w, "🔄 Claimed (shown in Doing column):")
+		human("[bold blue]🔄 Claimed (shown in Doing column):[/bold blue]")
 		for _, r := range l {
-			agent, _ := r.obj.Get("agent")
-			consolePrint(w, fmt.Sprintf("%s (agent: %v)", bullet(r), agent))
+			agent, ok := r.obj.Get("agent")
+			if !ok {
+				agent = "unknown"
+			}
+			human(fmt.Sprintf("%s [dim](agent: %v)[/dim]", bullet(r), status.PyStr(agent)))
 		}
-		fmt.Fprintln(w)
+		human("")
 	}
 	if l := byLane["in_progress"]; len(l) > 0 {
-		fmt.Fprintln(w, "🔄 In Progress:")
+		human("[bold blue]🔄 In Progress:[/bold blue]")
 		staleN := 0
 		for _, r := range l {
-			agent, _ := r.obj.Get("agent")
+			agent, ok := r.obj.Get("agent")
+			if !ok {
+				agent = "unknown"
+			}
 			label := r.staleRes.label()
 			switch {
 			case r.staleRes != nil && r.staleRes.isStale():
-				consolePrint(w, fmt.Sprintf("  • ⚠️ %s - %s (%s, agent: %v)", r.disp(), r.title, label, agent))
+				human(fmt.Sprintf("  • [red]⚠️ %s[/red] - %s [dim](%s, agent: %v)[/dim]", r.disp(), r.title, label, status.PyStr(agent)))
 				staleN++
 			case label != "":
-				consolePrint(w, fmt.Sprintf("%s (%s, agent: %v)", bullet(r), label, agent))
+				human(fmt.Sprintf("%s [dim](%s, agent: %v)[/dim]", bullet(r), label, status.PyStr(agent)))
 			default:
-				consolePrint(w, bullet(r))
+				human(bullet(r))
 			}
 		}
-		fmt.Fprintln(w)
+		human("")
 		if staleN > 0 {
-			fmt.Fprintf(w, "⚠️  %d stale WP(s) detected - agents may have stopped without transitioning\n", staleN)
-			fmt.Fprintln(w, "   Run: spec-kitty agent tasks move-task <WP_ID> --to for_review")
-			fmt.Fprintln(w)
+			human(fmt.Sprintf("[yellow]⚠️  %d stale WP(s) detected - agents may have stopped without transitioning[/yellow]", staleN))
+			human("[dim]   Run: spec-kitty agent tasks move-task <WP_ID> --to for_review[/dim]")
+			human("")
 		}
 	}
 	if l := byLane["in_review"]; len(l) > 0 {
-		fmt.Fprintln(w, "🔍 In Review (shown in Doing column):")
+		human("[bold bright_cyan]🔍 In Review (shown in Doing column):[/bold bright_cyan]")
 		for _, r := range l {
 			line := bullet(r)
 			if r.stallLabel != "" {
-				line += "  ⚠ " + r.stallLabel
+				line += "  [bold yellow]⚠ " + r.stallLabel + "[/bold yellow]"
 			}
-			consolePrint(w, line)
+			human(line)
 		}
-		fmt.Fprintln(w)
+		human("")
 	}
+	// _st_render_planned
 	if l := byLane["planned"]; len(l) > 0 {
-		fmt.Fprintln(w, "📋 Next Up (Planned):")
+		human("[bold yellow]📋 Next Up (Planned):[/bold yellow]")
 		for i, r := range l {
 			if i >= 3 {
 				break
 			}
-			consolePrint(w, bullet(r))
+			human(bullet(r))
 		}
 		if len(l) > 3 {
-			fmt.Fprintf(w, "  ... and %d more\n", len(l)-3)
+			human(fmt.Sprintf("  [dim]... and %d more[/dim]", len(l)-3))
 		}
-		fmt.Fprintln(w)
+		human("")
 	}
+	// _st_render_summary
 	inProg := len(byLane["claimed"]) + len(byLane["in_progress"]) + len(byLane["in_review"]) + len(byLane["for_review"])
-	ac := "disabled"
+	ac := "[yellow]disabled[/yellow]"
 	if autoCommit {
-		ac = "enabled"
+		ac = "[green]enabled[/green]"
 	}
-	grid := [][2]string{
-		{"Total WPs:", fmt.Sprint(total)},
-		{"Completed:", fmt.Sprintf("%d (%s%%)", done, pyFloat(donePct))},
-		{"Weighted readiness:", pctText + "%"},
-		{"In Progress:", fmt.Sprint(inProg)},
-		{"Planned:", fmt.Sprint(len(byLane["planned"]))},
-		{"Auto-commit:", ac},
-	}
-	var body []string
-	for _, g := range grid {
-		body = append(body, padRight(g[0], 21)+g[1])
-	}
-	for _, l := range panelLines(width, "Summary", body) {
-		fmt.Fprintln(w, l)
-	}
-	fmt.Fprintln(w, "▶ Next action:")
-	consolePrint(w, "  spec-kitty next --agent <your-name> --mission "+slug)
-	fmt.Fprintln(w, "  This command tells you exactly what to do next based on the dependency graph.")
-	fmt.Fprintln(w)
+	g := rich.NewGrid(0, 2)
+	g.AddColumn("", rich.Column{Style: "bold"})
+	g.AddColumn("", rich.Column{})
+	g.AddRow("Total WPs:", fmt.Sprint(total))
+	g.AddRow("Completed:", fmt.Sprintf("[green]%d[/green] (%s%%)", done, pyFloat(donePct)))
+	g.AddRow("Weighted readiness:", "[cyan]"+pctText+"%[/cyan]")
+	g.AddRow("In Progress:", fmt.Sprintf("[blue]%d[/blue]", inProg))
+	g.AddRow("Planned:", fmt.Sprintf("[yellow]%d[/yellow]", len(byLane["planned"])))
+	g.AddRow("Auto-commit:", ac)
+	human(&rich.RichPanel{R: g, Title: "[bold]Summary[/bold]", BorderStyle: "dim"})
+	human("[bold]▶ Next action:[/bold]")
+	human("  [cyan]spec-kitty next --agent <your-name> --mission " + slug + "[/cyan]")
+	human("[dim]  This command tells you exactly what to do next based on the dependency graph.[/dim]")
+	human("")
 }
 
 // reviewVerdictFlag is _apply_wp_review_verdict_flag: annotate an

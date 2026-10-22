@@ -166,7 +166,7 @@ func statusOutputError(ctx *cli.Context, jsonMode bool, msg string, diag *jsonx.
 		printJSON(ctx.Stdout, diag)
 		return
 	}
-	consolePrint(ctx.Stdout, "Error: "+msg)
+	consolePrint(ctx.Stdout, "[red]Error:[/red] "+msg)
 }
 
 func runStatusEmit(ctx *cli.Context) error {

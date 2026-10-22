@@ -344,7 +344,7 @@ func printSummary(ctx *cli.Context, sum *acceptance.Summary) {
 		}
 		rows = append(rows, []string{l, fmt.Sprint(len(items)), disp})
 	}
-	simpleTable(ctx.Stdout, "Work Packages by Lane", []string{"Lane", "Count", "Work Packages"}, rows, map[int]bool{1: true})
+	simpleTable(ctx.Stdout, "Work Packages by Lane", []string{"Lane", "Count", "Work Packages"}, rows, map[int]bool{1: true}, "cyan")
 	out := sum.Outstanding()
 	if len(out) > 0 {
 		say(ctx.Stdout, "\n[bold red]Outstanding items[/bold red]")

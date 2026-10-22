@@ -124,7 +124,7 @@ func runStatusDoctor(ctx *cli.Context) error {
 		if jsonMode {
 			printJSON(ctx.Stdout, jsonx.NewObject("error", err.Error(), "healthy", false))
 		} else {
-			consolePrint(ctx.Stdout, "Error: "+err.Error())
+			consolePrint(ctx.Stdout, "[red]Error:[/red] "+err.Error())
 		}
 		return cli.Exit(1)
 	}
@@ -140,31 +140,40 @@ func runStatusDoctor(ctx *cli.Context) error {
 		}
 		printJSON(ctx.Stdout, jsonx.NewObject("mission_slug", m.Slug, "healthy", healthy, "global_runtime", gr, "findings", fs))
 	} else {
-		consolePrint(ctx.Stdout, "\nGlobal Runtime:")
+		consolePrint(ctx.Stdout, "\n[bold]Global Runtime:[/bold]")
 		for _, c := range checks {
-			icon := "✓"
+			icon, color := "✓", "green"
 			if !c.passed {
-				icon = "✗"
+				icon, color = "✗", "red"
 				if c.severity == "warning" {
-					icon = "⚠"
+					icon, color = "⚠", "yellow"
 				}
 			}
-			consolePrint(ctx.Stdout, "  "+icon+" "+c.message)
+			consolePrint(ctx.Stdout, "  ["+color+"]"+icon+"[/"+color+"] "+c.message)
 		}
-		consolePrint(ctx.Stdout, "\nMission Status: "+m.Slug)
+		consolePrint(ctx.Stdout, "\n[bold]Mission Status: "+m.Slug+"[/bold]")
 		if len(findings) == 0 {
-			consolePrint(ctx.Stdout, "  Healthy")
+			consolePrint(ctx.Stdout, "  [green]Healthy[/green]")
 		} else {
-			consolePrint(ctx.Stdout, "  Issues found")
-			rows := [][]string{}
+			consolePrint(ctx.Stdout, "  [yellow]Issues found[/yellow]")
+			t := rich.NewTable()
+			t.Title = "Doctor Findings"
+			t.AddColumn("Severity", rich.Column{Style: "bold"})
+			for _, h := range []string{"Category", "WP", "Message", "Action"} {
+				t.AddColumn(h, rich.Column{})
+			}
 			for _, f := range findings {
 				wpID := f.WPID
 				if wpID == "" {
 					wpID = "-"
 				}
-				rows = append(rows, []string{f.Severity, f.Category, wpID, f.Message, f.Action})
+				sev := "yellow"
+				if f.Severity == "error" {
+					sev = "red"
+				}
+				t.AddRow("["+sev+"]"+f.Severity+"[/"+sev+"]", f.Category, wpID, f.Message, f.Action)
 			}
-			rich.TableWidth(ctx.Stdout, "Doctor Findings", []string{"Severity", "Category", "WP", "Message", "Action"}, rows, cli.Width())
+			rich.PrintTo(ctx.Stdout, t)
 		}
 	}
 	if !healthy {

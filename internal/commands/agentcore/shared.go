@@ -67,7 +67,7 @@ func outputError(ctx *cli.Context, jsonMode bool, msg string) {
 	if jsonMode {
 		printJSON(ctx.Stdout, jsonx.NewObject("error", msg))
 	} else {
-		consolePrint(ctx.Stdout, "Error: "+msg)
+		consolePrint(ctx.Stdout, "[red]Error:[/red] "+msg)
 	}
 }
 

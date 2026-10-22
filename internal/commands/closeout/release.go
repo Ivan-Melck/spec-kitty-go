@@ -13,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func init() {
@@ -184,48 +185,6 @@ func changelogBlock(root string) (string, []string) {
 	return strings.TrimRight(strings.Join(lines, "\n"), " \t\n") + "\n", slugs
 }
 
-// gridRows renders a box=None, padding (0, 2) table.
-func gridRows(header []string, rows [][]string) string {
-	n := len(rows[0])
-	widths := make([]int, n)
-	all := rows
-	if header != nil {
-		all = append([][]string{header}, rows...)
-	}
-	for _, r := range all {
-		for i, c := range r {
-			for _, l := range strings.Split(c, "\n") {
-				if runeLen(l) > widths[i] {
-					widths[i] = runeLen(l)
-				}
-			}
-		}
-	}
-	var out []string
-	for _, r := range all {
-		cells := make([][]string, n)
-		h := 1
-		for i, c := range r {
-			cells[i] = strings.Split(c, "\n")
-			if len(cells[i]) > h {
-				h = len(cells[i])
-			}
-		}
-		for li := 0; li < h; li++ {
-			var b strings.Builder
-			for i := range r {
-				v := ""
-				if li < len(cells[i]) {
-					v = cells[i][li]
-				}
-				b.WriteString("  " + v + strings.Repeat(" ", widths[i]-runeLen(v)) + "  ")
-			}
-			out = append(out, b.String())
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
 func runReleasePrep(ctx *cli.Context) error {
 	switch ctx.String("channel") {
 	case "alpha", "beta", "stable":
@@ -274,24 +233,37 @@ func runReleasePrep(ctx *cli.Context) error {
 		return nil
 	}
 	w := ctx.Stdout
-	fitPanelRaw(w, gridRows(nil, [][]string{{"Channel", channel}, {"Current version", cur}, {"Proposed version", next},
-		{"Target branch", "main"}, {"Tag name", tag}}), "Version Bump")
+	vt := rich.NewTable()
+	vt.ShowHeader, vt.Box = false, nil
+	vt.SetPadding(0, 2)
+	vt.AddColumn("Label", rich.Column{Style: "bold"})
+	vt.AddColumn("Value", rich.Column{})
+	vt.AddRow("Channel", channel)
+	vt.AddRow("Current version", cur)
+	vt.AddRow("Proposed version", rich.NewStyledText(next, "green bold"))
+	vt.AddRow("Target branch", "main")
+	vt.AddRow("Tag name", tag)
+	rich.PrintTo(w, &rich.RichPanel{R: vt, Title: "Version Bump", Fit: true})
 	if strings.TrimSpace(block) != "" {
-		fitPanelRaw(w, strings.TrimRight(block, " \t\n"), "Draft Changelog Block")
+		rich.PrintTo(w, &rich.RichPanel{R: strings.TrimRight(block, " \t\n\r\v\f"), Title: "Draft Changelog Block", Fit: true})
 	} else {
 		say(w, "[yellow]No accepted missions found for changelog block.[/yellow]")
 	}
-	var rows [][]string
+	it := rich.NewTable()
+	it.Box = nil
+	it.SetPadding(0, 2)
+	it.AddColumn("Input", rich.Column{Style: "bold"})
+	it.AddColumn("Value", rich.Column{})
 	for _, kv := range inputs.Pairs() {
 		v := kv.Value.(string)
 		if kv.Key == "release_notes_body" && len([]rune(v)) > 60 {
 			v = string([]rune(v)[:60]) + "..."
 		}
-		rows = append(rows, []string{kv.Key, v})
+		it.AddRow(kv.Key, v)
 	}
-	fitPanelRaw(w, gridRows([]string{"Input", "Value"}, rows), "Structured Inputs")
-	notice := fmt.Sprintf("Still-manual steps (not automated by this command):\n  1. PR creation:  gh pr create --title \"Release %[1]s\" --body \"<changelog_block>\"\n"+
-		"  2. Tag push:     git tag -a %[1]s -m \"Release %[1]s\" && git push origin %[1]s\n  3. Monitoring:   gh run watch\n\nIf you need these steps automated, please file a follow-up issue.", tag)
-	fitPanelRaw(w, notice, "Next Steps (Manual)")
+	rich.PrintTo(w, &rich.RichPanel{R: it, Title: "Structured Inputs", Fit: true})
+	notice := fmt.Sprintf("[bold]Still-manual steps[/bold] (not automated by this command):\n  1. PR creation:  [cyan]gh pr create --title \"Release %[1]s\" --body \"<changelog_block>\"[/cyan]\n"+
+		"  2. Tag push:     [cyan]git tag -a %[1]s -m \"Release %[1]s\" && git push origin %[1]s[/cyan]\n  3. Monitoring:   [cyan]gh run watch[/cyan]\n\nIf you need these steps automated, please file a follow-up issue.", tag)
+	rich.PrintTo(w, &rich.RichPanel{R: notice, Title: "Next Steps (Manual)", Fit: true})
 	return nil
 }

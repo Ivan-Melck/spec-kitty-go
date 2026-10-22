@@ -197,7 +197,7 @@ func runBranchContext(ctx *cli.Context) error {
 		if jsonMode {
 			emitJSON(ctx.Stdout, jsonx.NewObject("error", msg))
 		} else {
-			consolePrint(ctx.Stdout, "Error: "+msg)
+			consolePrint(ctx.Stdout, "[red]Error:[/red] "+msg)
 		}
 		return cli.Exit(1)
 	}
@@ -238,14 +238,14 @@ func runBranchContext(ctx *cli.Context) error {
 		}
 		return "False"
 	}
-	consolePrint(ctx.Stdout, "Current branch: "+e.GetString("current_branch"))
-	consolePrint(ctx.Stdout, "Planning/base branch: "+e.GetString("planning_base_branch"))
-	consolePrint(ctx.Stdout, "Merge target: "+e.GetString("merge_target_branch"))
-	consolePrint(ctx.Stdout, "Matches target: "+pb(e.GetBool("branch_matches_target")))
-	consolePrint(ctx.Stdout, "Primary branch: "+e.GetString("primary_branch"))
-	consolePrint(ctx.Stdout, "On primary branch: "+pb(e.GetBool("current_is_primary")))
-	consolePrint(ctx.Stdout, "Recommended strategy: "+e.GetString("recommended_strategy"))
-	consolePrint(ctx.Stdout, e.GetString("branch_recommendation_reason"))
+	consolePrint(ctx.Stdout, "[bold cyan]Current branch:[/bold cyan] "+e.GetString("current_branch"))
+	consolePrint(ctx.Stdout, "[bold cyan]Planning/base branch:[/bold cyan] "+e.GetString("planning_base_branch"))
+	consolePrint(ctx.Stdout, "[bold cyan]Merge target:[/bold cyan] "+e.GetString("merge_target_branch"))
+	consolePrint(ctx.Stdout, "[bold cyan]Matches target:[/bold cyan] "+pb(e.GetBool("branch_matches_target")))
+	consolePrint(ctx.Stdout, "[bold cyan]Primary branch:[/bold cyan] "+e.GetString("primary_branch"))
+	consolePrint(ctx.Stdout, "[bold cyan]On primary branch:[/bold cyan] "+pb(e.GetBool("current_is_primary")))
+	consolePrint(ctx.Stdout, "[bold cyan]Recommended strategy:[/bold cyan] "+e.GetString("recommended_strategy"))
+	consolePrint(ctx.Stdout, "[dim]"+e.GetString("branch_recommendation_reason")+"[/dim]")
 	return nil
 }
 
@@ -342,7 +342,7 @@ func runCreate(ctx *cli.Context) error {
 	}
 	if ctx.IsSet("owned-checkout") {
 		msg := "--owned-checkout is not supported by this build."
-		return errOut(jsonx.NewObject("error", msg), "Error: "+msg)
+		return errOut(jsonx.NewObject("error", msg), "[bold red]Error:[/bold red] "+msg)
 	}
 	var rb *startRollback
 	if ctx.IsSet("start-branch") {
@@ -357,10 +357,10 @@ func runCreate(ctx *cli.Context) error {
 		tb := strings.TrimSpace(ctx.String("target-branch"))
 		if tb != "" && tb != strings.TrimSpace(start) {
 			return failed(errOut(jsonx.NewObject("error_code", "START_BRANCH_TARGET_MISMATCH", "error", startTargetMismatch,
-				"start_branch", start, "target_branch", ctx.String("target-branch")), "Error: "+startTargetMismatch))
+				"start_branch", start, "target_branch", ctx.String("target-branch")), "[bold red]Error:[/bold red] "+startTargetMismatch))
 		}
 		if err := switchToStartBranch(root, start); err != nil {
-			return failed(errOut(jsonx.NewObject("error_code", "START_BRANCH_FAILED", "error", err.Error(), "start_branch", start), "Error: "+err.Error()))
+			return failed(errOut(jsonx.NewObject("error_code", "START_BRANCH_FAILED", "error", err.Error(), "start_branch", start), "[bold red]Error:[/bold red] "+err.Error()))
 		}
 	}
 	missionType := ctx.String("mission-type")
@@ -368,7 +368,7 @@ func runCreate(ctx *cli.Context) error {
 		alias := ctx.String("mission")
 		if ctx.IsSet("mission-type") && missionType != alias {
 			msg := fmt.Sprintf("Conflicting values: --mission-type=%s and --mission=%s. Use --mission-type <name>.", missionType, alias)
-			return failed(errOut(jsonx.NewObject("error", msg), "Error: "+msg))
+			return failed(errOut(jsonx.NewObject("error", msg), "[bold red]Error:[/bold red] "+msg))
 		}
 		missionType = alias
 	}
@@ -401,7 +401,7 @@ func runCreate(ctx *cli.Context) error {
 		fmt.Fprintf(ctx.Stdout, "You are on '%s', which is the mission's merge target. PR-bound missions usually live on a topic branch. Proceed anyway? [y/N]: ", current)
 		if !readYes(ctx) {
 			fmt.Fprintln(ctx.Stdout)
-			consolePrint(ctx.Stdout, "Aborted: Mission creation aborted by operator at branch-strategy gate. Switch to a topic branch or pass `--branch-strategy already-confirmed`.")
+			consolePrint(ctx.Stdout, "[yellow]Aborted:[/yellow] Mission creation aborted by operator at branch-strategy gate. Switch to a topic branch or pass `--branch-strategy already-confirmed`.")
 			return failed(cli.Exit(1))
 		}
 	}
@@ -471,7 +471,7 @@ func renderCreateError(ctx *cli.Context, err error, jsonMode bool, slug string) 
 			}
 			emitJSON(ctx.Stdout, p)
 		} else {
-			consolePrint(ctx.Stdout, "Error: "+e.Error())
+			consolePrint(ctx.Stdout, "[bold red]Error:[/bold red] "+e.Error())
 		}
 	case *create.Error:
 		if jsonMode {
@@ -481,10 +481,10 @@ func renderCreateError(ctx *cli.Context, err error, jsonMode bool, slug string) 
 			}
 			emitJSON(ctx.Stdout, p)
 		} else {
-			consolePrint(ctx.Stdout, "Error: "+e.Msg)
+			consolePrint(ctx.Stdout, "[bold red]Error:[/bold red] "+e.Msg)
 			if strings.Contains(strings.ToLower(e.Msg), "worktree") {
 				if main := project.Locate(""); main != "" {
-					consolePrint(ctx.Stdout, "\nRun from the main repository instead:")
+					consolePrint(ctx.Stdout, "\n[cyan]Run from the main repository instead:[/cyan]")
 					consolePrint(ctx.Stdout, "  cd "+main)
 					consolePrint(ctx.Stdout, "  spec-kitty agent mission create "+slug)
 				}
@@ -494,7 +494,7 @@ func renderCreateError(ctx *cli.Context, err error, jsonMode bool, slug string) 
 		if jsonMode {
 			emitJSON(ctx.Stdout, jsonx.NewObject("error", err.Error()))
 		} else {
-			consolePrint(ctx.Stdout, "Error: "+err.Error())
+			consolePrint(ctx.Stdout, "[red]Error:[/red] "+err.Error())
 		}
 	}
 	return cli.Exit(1)
@@ -511,11 +511,11 @@ func strList(l []string) []any {
 func emitCreateResult(ctx *cli.Context, r *create.Result, missionType string, jsonMode bool) error {
 	meta := r.Meta
 	if !jsonMode {
-		consolePrint(ctx.Stdout, fmt.Sprintf("Branch: %s (target for this mission)", r.TargetBranch))
+		consolePrint(ctx.Stdout, fmt.Sprintf("[bold cyan]Branch:[/bold cyan] %s (target for this mission)", r.TargetBranch))
 		if missionType == "documentation" {
-			consolePrint(ctx.Stdout, "→ Documentation state initialized in meta.json")
+			consolePrint(ctx.Stdout, "[cyan]→ Documentation state initialized in meta.json[/cyan]")
 		}
-		consolePrint(ctx.Stdout, "✓ Mission created: "+r.MissionSlug)
+		consolePrint(ctx.Stdout, "[green]✓[/green] Mission created: "+r.MissionSlug)
 		consolePrint(ctx.Stdout, "   Title: "+meta.GetString("friendly_name"))
 		consolePrint(ctx.Stdout, "   TLDR: "+meta.GetString("purpose_tldr"))
 		consolePrint(ctx.Stdout, "   Context: "+meta.GetString("purpose_context"))
@@ -530,10 +530,10 @@ func emitCreateResult(ctx *cli.Context, r *create.Result, missionType string, js
 		if committed {
 			consolePrint(ctx.Stdout, "   Meta committed to "+r.TargetBranch+"; spec.md scaffold left untracked")
 		} else {
-			consolePrint(ctx.Stdout, fmt.Sprintf("   Meta not committed: the scaffold commit to %s was refused (protected or unavailable target branch); kitty-specs/%s/ is left on disk, untracked", r.TargetBranch, r.MissionSlug))
+			consolePrint(ctx.Stdout, fmt.Sprintf("   [yellow]Meta not committed:[/yellow] the scaffold commit to %s was refused (protected or unavailable target branch); kitty-specs/%s/ is left on disk, untracked", r.TargetBranch, r.MissionSlug))
 			consolePrint(ctx.Stdout, "   Planning artifacts must land on a topic branch, or land via the mission lane worktree — switch to a topic branch first, or re-run 'agent mission create --start-branch <topic-branch>'.")
 		}
-		consolePrint(ctx.Stdout, "   Scaffold only: run /spec-kitty.specify <intent> in your agent, or edit and commit spec.md before planning.")
+		consolePrint(ctx.Stdout, "   [yellow]Scaffold only:[/yellow] run [cyan]/spec-kitty.specify <intent>[/cyan] in your agent, or edit and commit spec.md before planning.")
 		return nil
 	}
 	spec := filepath.Join(r.FeatureDir, "spec.md")
