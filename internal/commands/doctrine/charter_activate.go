@@ -170,9 +170,11 @@ func runCharterActivate(ctx *cli.Context) error {
 	}
 	reg, err := charter.PlanProjectRegistration(root, app.Version)
 	if err != nil {
-		var ve *dct.DRGValidationError
-		if errors.As(err, &ve) {
-			return pyCrash(ctx, "DRGValidationError", ve.Error())
+		// activate_cmd catches (ValueError, DRGLoadError) only.
+		if charter.IsUnexpectedError(err) {
+			if _, isLoad := err.(*charter.DRGLoadError); !isLoad {
+				return pyCrash(ctx, charter.PyExceptionClass(err), err.Error())
+			}
 		}
 		cprint(w, "[red]Error:[/red] %s", err.Error())
 		return cli.Exit(1)

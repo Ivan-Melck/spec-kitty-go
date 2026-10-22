@@ -28,7 +28,6 @@ func charterStatusCmd() *cli.Command {
 func runCharterStatus(ctx *cli.Context) error {
 	w := ctx.Stdout
 	jsonMode := ctx.Bool("json")
-	installCharterLog(ctx)
 	root := repoRoot()
 	fail := func(msg string) error {
 		emitCharterError(w, jsonMode, msg, "", nil)

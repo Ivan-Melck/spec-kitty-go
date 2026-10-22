@@ -20,7 +20,6 @@ func doctorCharterPacksCmd() *cli.Command {
 
 func runDoctorCharterPacks(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
-	installCharterLog(ctx)
 	root, err := doctorRoot(ctx, jsonMode, 1)
 	if err != nil {
 		return err

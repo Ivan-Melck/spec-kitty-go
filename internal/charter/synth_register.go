@@ -226,7 +226,7 @@ func PlanProjectRegistration(root, version string) (*RegistrationPlan, error) {
 	}
 	// The validated base graph is loaded before the no-op early return
 	// (load_validated_graph raises DRGValidationError on an invalid merge).
-	if _, err := dct.LoadValidatedGraph(root, ResolvePackChain(root)); err != nil {
+	if _, err := LoadOrgValidatedGraph(root, GraphOptions{}); err != nil {
 		return nil, err
 	}
 	live := map[string]bool{}

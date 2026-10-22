@@ -63,7 +63,6 @@ const repoRootMissing = "Unable to locate repository root (missing .git or .kitt
 func runCharterLint(ctx *cli.Context) error {
 	w := ctx.Stdout
 	jsonMode := ctx.Bool("json")
-	installCharterLog(ctx)
 	root := findRepoRootStrict()
 	if root == "" {
 		emitCharterError(w, jsonMode, repoRootMissing, "", nil)

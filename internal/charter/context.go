@@ -11,6 +11,7 @@ package charter
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,18 +151,16 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 		return nil, err
 	}
 	norm := strings.ToLower(strings.TrimSpace(action))
-	st := prepareState(root, norm, opt.Depth)
-	if !BootstrapActions[norm] && !actionNodeDeclared(root, opt.MissionType, norm) {
-		d := 1
-		if opt.Depth != nil {
-			d = *opt.Depth
+	diag := MissingPackDiagnostic(root)
+	augment := func(t string) string {
+		if diag != "" {
+			return diag + "\n\n" + t
 		}
-		return &Result{Action: norm, Mode: "compact", FirstLoad: false, Depth: d,
-			Text: RenderCompact(root, CompactInput{Action: norm, Profile: opt.Profile, SuppressResolver: opt.SuppressResolver})}, nil
+		return t
 	}
-	if !Present(root) {
-		return &Result{Action: norm, Mode: "missing", FirstLoad: st.firstLoad, Text: MissingText, Depth: st.depth}, nil
-	}
+	st := prepareState(root, norm, opt.Depth)
+	// The governance bundle resolves before any mode decision (a broken DRG
+	// fails the call whatever the mode).
 	b := ResolveActionBundle(root, norm, opt.MissionType, st.depth)
 	if b.Err != nil {
 		return nil, b.Err
@@ -170,21 +169,53 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 	if b.Warning != "" {
 		warns = append(warns, b.Warning)
 	}
+	declared := b.Merged != nil && b.Merged.NodeURNs()["action:"+b.Mission+"/"+norm]
+	if !BootstrapActions[norm] && !declared {
+		d := 1
+		if opt.Depth != nil {
+			d = *opt.Depth
+		}
+		return &Result{Action: norm, Mode: "compact", FirstLoad: false, Depth: d,
+			Text: augment(RenderCompact(root, CompactInput{Action: norm, Profile: opt.Profile, SuppressResolver: opt.SuppressResolver})), Warnings: warns}, nil
+	}
+	if !Present(root) {
+		return &Result{Action: norm, Mode: "missing", FirstLoad: st.firstLoad, Text: augment(MissingText), Depth: st.depth, Warnings: warns}, nil
+	}
 	if st.depth < minEffectiveDepth {
 		if opt.MarkLoaded && st.firstLoad {
 			st.markLoaded(norm)
 		}
 		in := CompactInput{Action: norm, Profile: opt.Profile, SuppressResolver: opt.SuppressResolver}
-		if b != nil {
-			in.Directives, in.Tactics, in.Styleguides, in.Toolguides, in.Procedures, in.Assets =
-				b.IDs[dct.Directive], b.IDs[dct.Tactic], b.IDs[dct.Styleguide], b.IDs[dct.Toolguide], b.IDs[dct.Procedure], b.IDs[dct.Asset]
-		}
-		return &Result{Action: norm, Mode: "compact", FirstLoad: st.firstLoad, Depth: st.depth, Text: RenderCompact(root, in), Warnings: warns}, nil
+		in.Directives, in.Tactics, in.Styleguides, in.Toolguides, in.Procedures, in.Assets =
+			b.IDs[dct.Directive], b.IDs[dct.Tactic], b.IDs[dct.Styleguide], b.IDs[dct.Toolguide], b.IDs[dct.Procedure], b.IDs[dct.Asset]
+		return &Result{Action: norm, Mode: "compact", FirstLoad: st.firstLoad, Depth: st.depth, Text: augment(RenderCompact(root, in)), Warnings: warns}, nil
 	}
 	refs := LoadReferences(root)
 	text := renderBootstrap(root, norm, b, refs, opt.Profile)
 	if opt.MarkLoaded && st.firstLoad {
 		st.markLoaded(norm)
 	}
-	return &Result{Action: norm, Mode: "bootstrap", FirstLoad: st.firstLoad, Text: text, ReferencesCount: len(refs), Depth: st.depth, Warnings: warns}, nil
+	return &Result{Action: norm, Mode: "bootstrap", FirstLoad: st.firstLoad, Text: augment(text), ReferencesCount: len(refs), Depth: st.depth, Warnings: warns}, nil
+}
+
+// MissingPackDiagnostic is org_pack_discovery._missing_pack_diagnostic: a
+// loud context-time error when a configured org pack is not on disk.
+func MissingPackDiagnostic(root string) string {
+	var lines []string
+	for _, p := range LoadPackRegistry(root).Packs {
+		r, err := p.EffectiveRoot(root)
+		if err != nil {
+			return ""
+		}
+		if _, err := os.Stat(r); err != nil {
+			lines = append(lines, fmt.Sprintf("    - pack `%s`: local_path `%s` does not exist", p.Name, r))
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	out := []string{"Charter Context Error:", "  - Charter Pack(s) referenced in .kittify/config.yaml do NOT exist on disk:"}
+	out = append(out, lines...)
+	out = append(out, "  - Run `spec-kitty charter fetch --pack <name>` to populate the pack, or remove the entry from .kittify/config.yaml.")
+	return strings.Join(out, "\n")
 }

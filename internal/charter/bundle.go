@@ -3,8 +3,6 @@ package charter
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
@@ -54,16 +52,18 @@ func ResolveActionBundle(root, action, missionType string, depth int) *ActionBun
 	if missionType == "" {
 		return b
 	}
-	g, err := dct.LoadValidatedGraph(root, orgRoots)
+	g, err := LoadOrgValidatedGraph(root, GraphOptions{ProjectDegrade: true})
 	if err != nil {
 		// load_validated_graph(project_degrade=True): a load error or a
 		// validation error introduced only by the project overlay degrades
-		// to an empty bundle with a warning; any other validation error
-		// propagates.
-		var ve *dct.DRGValidationError
-		if errors.As(err, &ve) && !projectOnlyErrors(root, orgRoots, ve) {
-			b.Err = err
-			return b
+		// to an empty bundle with a warning; anything else propagates.
+		var pe *DRGProjectValidationError
+		switch err.(type) {
+		case *dct.DRGValidationError, *OrgConflictError, *OrgPackSchemaError, *OrgPackParseError, *UnknownRelationError, *DuplicateURNError:
+			if !errors.As(err, &pe) {
+				b.Err = err
+				return b
+			}
 		}
 		b.Warning = fmt.Sprintf("DRG action resolution skipped for %s/%s: %v. Charter-level selections still render.", missionType, action, err)
 		return b
@@ -331,27 +331,4 @@ func (b *ActionBundle) disclosure(includeAll bool) *jsonx.Object {
 	}
 	out.Set("references", refs)
 	return out
-}
-
-// projectOnlyErrors reports whether ve is a DRGProjectValidationError: the
-// project overlay exists and none of its errors occur without it.
-func projectOnlyErrors(root string, orgRoots []string, ve *dct.DRGValidationError) bool {
-	pd := filepath.Join(root, filepath.FromSlash(dct.ProjectPackRoot))
-	if st, err := os.Stat(pd); err != nil || !st.IsDir() || !dct.HasGraphFiles(pd) {
-		return false
-	}
-	base, err := dct.LoadGraph("", orgRoots)
-	if err != nil {
-		return false
-	}
-	baseErrs := map[string]bool{}
-	for _, e := range dct.ValidateGraph(base) {
-		baseErrs[e] = true
-	}
-	for _, e := range ve.Errors {
-		if baseErrs[e] {
-			return false
-		}
-	}
-	return true
 }

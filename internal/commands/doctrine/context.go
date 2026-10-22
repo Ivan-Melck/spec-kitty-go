@@ -85,9 +85,15 @@ func runCharterContext(ctx *cli.Context) error {
 	mt := ctx.String("mission-type")
 	res, err := charter.BuildContext(root, ctx.String("action"), charter.Options{MarkLoaded: ctx.Bool("mark-loaded"), MissionType: mt})
 	if err != nil {
-		var ve *dct.DRGValidationError
-		if errors.As(err, &ve) {
-			return pyCrash(ctx, "DRGValidationError", ve.Error())
+		var ce *dct.ConfigError
+		if !errors.As(err, &ce) && charter.IsUnexpectedError(err) {
+			// A non-ValueError exception: `except Exception` -> "Unexpected error".
+			if jsonMode {
+				emitCharterError(ctx.Stdout, true, err.Error(), "", nil)
+			} else {
+				cprint(ctx.Stdout, "[red]Unexpected error:[/red] %s", uconsoleEscape(err.Error()))
+			}
+			return cli.Exit(1)
 		}
 		return charterErr(ctx, jsonMode, err)
 	}

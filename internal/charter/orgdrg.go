@@ -642,6 +642,8 @@ type MergedEdge struct {
 	Source, Target, Relation string
 	Reason                   *string
 	Provenance               string
+	// When is the built-in/project edge's `when` (org edges carry none).
+	When *string
 }
 
 // MergedGraph is the merge_three_layers result.
@@ -902,7 +904,7 @@ func GraphFromDoctrine(g *dct.Graph, provenance string) *MergedGraph {
 		mg.Nodes = append(mg.Nodes, MergedNode{URN: n.URN, Kind: n.Kind, Label: label, Provenance: provenance})
 	}
 	for _, e := range g.Edges {
-		mg.Edges = append(mg.Edges, MergedEdge{Source: e.Source, Target: e.Target, Relation: e.Relation, Reason: e.Reason, Provenance: provenance})
+		mg.Edges = append(mg.Edges, MergedEdge{Source: e.Source, Target: e.Target, Relation: e.Relation, Reason: e.Reason, Provenance: provenance, When: e.When})
 	}
 	return mg
 }

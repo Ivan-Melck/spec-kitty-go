@@ -58,7 +58,7 @@ func preflightResynthesis(root, kind, id string, scope *cascadeScope) error {
 	include(kind, id)
 	if scope != nil && kind != dct.MissionTypeToken {
 		if src := charter.SourceURN(root, kind, id); src != "" {
-			if g, err := dct.LoadGraph(root, dct.OrgRoots(root)); err == nil {
+			if g, err := charter.LoadOrgValidatedGraph(root, charter.GraphOptions{}); err == nil {
 				act, _ := charter.CascadeRefs(g, src)
 				ix := charter.NewConfigIDIndex(root)
 				for k, ids := range act {
@@ -117,11 +117,10 @@ func renderTensionWarnings(ctx *cli.Context, root string) {
 // DRGValidationError is not caught upstream (an uncaught traceback); a load
 // failure skips the cascade render (nil graph, nil error).
 func loadCascadeGraph(ctx *cli.Context, root string) (*dct.Graph, error) {
-	g, err := dct.LoadValidatedGraph(root, dct.OrgRoots(root))
+	g, err := charter.LoadOrgValidatedGraph(root, charter.GraphOptions{})
 	if err != nil {
-		var ve *dct.DRGValidationError
-		if errors.As(err, &ve) {
-			return nil, pyCrash(ctx, "DRGValidationError", ve.Error())
+		if charter.IsUnexpectedError(err) {
+			return nil, pyCrash(ctx, charter.PyExceptionClass(err), err.Error())
 		}
 		return nil, nil
 	}
