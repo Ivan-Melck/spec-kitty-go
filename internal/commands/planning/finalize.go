@@ -98,26 +98,30 @@ type finalizeRun struct {
 	override     string
 	missionType  string
 
-	wpFiles       []string // sorted
-	wpIDs         []string
-	specIDs       reqmap.SpecIDs
-	declared      map[string]bool
-	functional    map[string]bool
-	extractWarns  []string
-	specContent   string
-	deps          map[string][]string
-	depOrder      []string
-	refs          map[string][]string
-	refsOrder     []string // non-nil: dict order of refs (manifest-only outline)
-	diagnostics   *jsonx.Object
-	manifest      *orch.WpsManifest
-	scope         *writeScope
-	commitLanded  bool
-	concernWarns  []string
-	tasksMDStale  bool
-	preexisting   map[string]bool
-	persisted     bool
-	previousValue string
+	wpFiles         []string // sorted
+	wpIDs           []string
+	specIDs         reqmap.SpecIDs
+	declared        map[string]bool
+	functional      map[string]bool
+	extractWarns    []string
+	specContent     string
+	deps            map[string][]string
+	depOrder        []string
+	refs            map[string][]string
+	refsOrder       []string // non-nil: dict order of refs (manifest-only outline)
+	diagnostics     *jsonx.Object
+	manifest        *orch.WpsManifest
+	refresh         bool
+	allowOrphaned   bool
+	pin             *planningPin
+	refreshFindings []string
+	scope           *writeScope
+	commitLanded    bool
+	concernWarns    []string
+	tasksMDStale    bool
+	preexisting     map[string]bool
+	persisted       bool
+	previousValue   string
 
 	// bootstrap state
 	workPackages  []*jsonx.Object
@@ -160,10 +164,8 @@ func (f *finalizeRun) human(s string) {
 var wpFilePrefix = regexp.MustCompile(`^(WP\d{2})(?:[-_.]|$)`)
 
 func runFinalizeTasks(ctx *cli.Context) error {
-	f := &finalizeRun{ctx: ctx, json: ctx.Bool("json"), validateOnly: ctx.Bool("validate-only"), override: strings.TrimSpace(ctx.String("target-branch"))}
-	if ctx.Bool("refresh-planning-commit") {
-		return f.emitErr("--refresh-planning-commit is not supported by this build")
-	}
+	f := &finalizeRun{ctx: ctx, json: ctx.Bool("json"), validateOnly: ctx.Bool("validate-only"), override: strings.TrimSpace(ctx.String("target-branch")),
+		refresh: ctx.Bool("refresh-planning-commit"), allowOrphaned: ctx.Bool("allow-orphaned")}
 	f.root = project.Locate("")
 	if f.root == "" {
 		return f.emitErr("Could not locate project root")
@@ -196,11 +198,13 @@ func runFinalizeTasks(ctx *cli.Context) error {
 	f.slug = filepath.Base(dir)
 	f.dir = project.Specs(f.root, f.slug)
 	f.missionType = missionart.MissionTypeFor(f.dir)
-	restamp, err := f.enterAPIAuthoredScope()
-	if err != nil {
-		return err
+	var restamp func()
+	if !f.refresh {
+		if restamp, err = f.enterAPIAuthoredScope(); err != nil {
+			return err
+		}
 	}
-	if !f.validateOnly {
+	if !f.validateOnly && !f.refresh {
 		f.scope = snapshotWriteScope(f.dir)
 	}
 	err = f.run()
@@ -213,9 +217,31 @@ func runFinalizeTasks(ctx *cli.Context) error {
 	return err
 }
 
+// noWrite: --validate-only, or a --refresh-planning-commit run (a
+// primary-only lanes.json pin write: every other writer runs in its
+// zero-mutation mode).
+func (f *finalizeRun) noWrite() bool { return f.validateOnly || f.refresh }
+
 func (f *finalizeRun) run() error {
 	if err := f.resolveBranches(); err != nil {
 		return err
+	}
+	if f.refresh {
+		pin, err := f.refreshPin()
+		if err != nil {
+			return err
+		}
+		f.pin = pin
+		if !f.validateOnly {
+			if err := f.preflightRefresh(); err != nil {
+				return err
+			}
+			if _, seeded, _, _ := f.bootstrapCounts(); seeded > 0 {
+				return f.refusePinRefresh("canonical coordination status would need bootstrap writes")
+			}
+		} else {
+			f.refreshFindings = f.refreshStatusFindings()
+		}
 	}
 	if err := f.validationGates(); err != nil {
 		return err
@@ -226,7 +252,7 @@ func (f *finalizeRun) run() error {
 	if err := f.bootstrapLoop(); err != nil {
 		return err
 	}
-	if !f.validateOnly {
+	if !f.noWrite() {
 		if err := f.flushWrites(); err != nil {
 			return f.emitErr(err.Error())
 		}
@@ -238,11 +264,14 @@ func (f *finalizeRun) run() error {
 	if err != nil {
 		return err
 	}
-	if !f.validateOnly {
+	if !f.noWrite() {
 		lifecycle.EmitArtifactPhase(statusWriteDir(f.root, f.slug), lifecycle.PhaseInput{EventType: lifecycle.TasksStarted, MissionSlug: f.slug, Actor: finalizeCmd})
 	}
 	if f.validateOnly {
 		return f.validateOnlyReport(manifests)
+	}
+	if f.refresh {
+		return f.commitPinRefresh(f.pin)
 	}
 	return f.commitPipeline(manifests)
 }
@@ -285,7 +314,7 @@ func (f *finalizeRun) resolveBranches() error {
 		}
 	}
 	f.human(fmt.Sprintf("[bold cyan]Branch:[/bold cyan] %s (target for this mission)", f.target))
-	if !f.validateOnly && f.override != "" && merr == nil {
+	if !f.validateOnly && !f.refresh && f.override != "" && merr == nil {
 		prev := meta.GetString("target_branch")
 		f.previousValue = prev
 		if prev != f.target {
@@ -359,7 +388,7 @@ func (f *finalizeRun) validationGates() error {
 		}
 		return nil
 	})
-	if !f.validateOnly {
+	if !f.validateOnly && !f.refresh {
 		f.scaffoldIssueMatrix()
 	}
 	f.lintIssueMatrix()
@@ -429,7 +458,7 @@ func (f *finalizeRun) regenerateTasksMD() error {
 	}
 	generated := orch.GenerateTasksMD(f.manifest, f.slug, f.deps)
 	path := filepath.Join(f.dir, "tasks.md")
-	if f.validateOnly {
+	if f.noWrite() {
 		b, err := os.ReadFile(path)
 		f.tasksMDStale = err != nil || string(b) != generated
 		if f.tasksMDStale {
@@ -921,7 +950,7 @@ func (f *finalizeRun) bootstrapLoop() error {
 			f.postIntegWarn = append(f.postIntegWarn, id+": "+warn)
 		}
 		if changes.Len() > 0 {
-			if !f.validateOnly {
+			if !f.noWrite() {
 				f.pending = append(f.pending, pendingWrite{w: w, delta: changes})
 			} else {
 				f.wouldModify = append(f.wouldModify, jsonx.NewObject("wp_id", id, "changes", changes))
@@ -1387,16 +1416,44 @@ func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
 		}
 		lm = m
 	}
+	wouldModify := append([]any{}, f.wouldModify...)
+	var pinPrev string
+	pinChanged := false
+	if f.pin != nil {
+		var prev any
+		if m, _ := lanes.Read(f.dir); m != nil && m.PlanningCommitSHA != nil {
+			prev = *m.PlanningCommitSHA
+			pinPrev = *m.PlanningCommitSHA
+		}
+		if pinPrev != f.pin.sha || prev == nil && f.pin.sha != "" {
+			pinChanged = true
+			wouldModify = append(wouldModify, jsonx.NewObject("artifact", "lanes.json", "changes",
+				jsonx.NewObject("planning_commit_sha", jsonx.NewObject("from", prev, "to", optAny(f.pin.sha)))))
+		}
+	}
+	message := "All validations passed. Run without --validate-only to commit."
+	if f.pin != nil {
+		if len(f.refreshFindings) > 0 {
+			message = "All validations passed. A mutating refresh would refuse on the listed status preflight findings."
+		} else {
+			message = "All validations passed. This is a planning-pin preview; a mutating refresh repeats its safety preflight."
+		}
+	}
 	if f.json {
 		r := jsonx.NewObject("result", "validation_passed", "mission_slug", f.slug, "wp_count", len(f.workPackages), "validate_only", true,
-			"would_modify", f.wouldModify, "would_preserve", strList(f.preserved), "unchanged", strList(f.unchanged), "updated_wp_count", f.updated,
+			"would_modify", wouldModify, "would_preserve", strList(f.preserved), "unchanged", strList(f.unchanged), "updated_wp_count", f.updated,
 			"tasks_md_stale", f.tasksMDStale, "ownership_warnings", strList(f.ownershipWarn), "requirement_extraction_warnings", strList(nonNil(f.extractWarns)),
 			"post_integration_acceptance_warnings", strList(f.postIntegWarn),
 			"validation", jsonx.NewObject("bootstrap_preview", jsonx.NewObject("total_wps", total, "newly_seeded", seeded, "already_initialized", existing),
 				"lanes_preview", f.lanesStats(lm)),
-			"message", "All validations passed. Run without --validate-only to commit.")
+			"message", message)
 		for _, kv := range f.diagnostics.Pairs() {
 			r.Set(kv.Key, kv.Value)
+		}
+		if f.pin != nil {
+			r.Set("planning_commit", jsonx.NewObject("sha", optAny(f.pin.sha), "action", f.pin.action, "previous_sha", optAny(f.pin.previous), "branch_tip", optAny(f.pin.tip)))
+			r.Set("planning_refresh_preflight", jsonx.NewObject("mutating_refresh_would_refuse_for_status_preflight", len(f.refreshFindings) > 0,
+				"status_findings", strList(nonNil(f.refreshFindings))))
 		}
 		emitJSON(f.ctx.Stdout, r)
 		return nil
@@ -1406,6 +1463,26 @@ func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
 	say(out, "  Mission: "+f.slug)
 	say(out, fmt.Sprintf("  WPs validated: %d", len(f.workPackages)))
 	say(out, fmt.Sprintf("  Would modify: %d WP(s), preserve: %d, unchanged: %d", len(f.wouldModify), len(f.preserved), len(f.unchanged)))
+	if f.pin != nil {
+		if pinChanged {
+			prev, next := f.pin.previous, f.pin.sha
+			if prev == "" {
+				prev = "<unset>"
+			}
+			if next == "" {
+				next = "<unset>"
+			}
+			say(out, fmt.Sprintf("  Would refresh planning_commit_sha in lanes.json: %s -> %s", prev, next))
+		}
+		if len(f.refreshFindings) > 0 {
+			say(out, "[yellow]⚠[/yellow] Mutating refresh would refuse on status preflight findings:")
+			for _, fd := range f.refreshFindings {
+				say(out, "  - "+fd)
+			}
+		} else {
+			say(out, "  Mutating refresh status preflight: no pending primary or coordination changes")
+		}
+	}
 	say(out, fmt.Sprintf("  Bootstrap: %d WPs would be seeded, %d already initialized", seeded, existing))
 	if lm != nil {
 		say(out, fmt.Sprintf("  Lanes: %d lane(s) would be computed", len(lm.Lanes)))
@@ -1419,15 +1496,16 @@ func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
 // planningPin is _preserve_or_capture_planning_commit_sha (non-refresh).
 type planningPin struct {
 	sha, action, previous, tip, pinClass, reason string
+	refresh                                      bool
 }
 
 func (f *finalizeRun) executionHasBegun() bool {
 	s := coord.Resolve(f.root, f.slug)
 	snap, err := status.ReduceDir(s.StatusDir())
-	if err != nil || snap == nil {
+	if err != nil || snap == nil || snap.WorkPackages == nil {
 		return false
 	}
-	for _, id := range f.wpIDs {
+	for _, id := range snap.WorkPackages.Keys() {
 		if l := snap.Lane(id); l != "" && l != "planned" {
 			return true
 		}
@@ -1726,7 +1804,7 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 			"commit_hash", commitHash, "commit_hashes", commitHashes, "commit_surfaces", commitSurfaces, "files_committed", strList(filesCommitted),
 			"dependencies_parsed", depsObj, "requirement_refs_parsed", refsObj,
 			"bootstrap", jsonx.NewObject("total_wps", total, "newly_seeded", seeded, "already_initialized", existing),
-			"lanes", f.lanesStats(lm), "ownership_warnings", strList(f.ownershipWarn), "requirement_extraction_warnings", strList(nonNil(f.extractWarns)),
+			"lanes", f.lanesStatsFull(lm), "ownership_warnings", strList(f.ownershipWarn), "requirement_extraction_warnings", strList(nonNil(f.extractWarns)),
 			"post_integration_acceptance_warnings", strList(f.postIntegWarn),
 			"target_branch_override", jsonx.NewObject("requested", override, "persisted", f.persisted, "committed", f.persisted && metaCommitted, "previous_value", prevVal, "persist_error", nil),
 			"planning_commit", pinObj, "planning_commit_refresh", refresh)
