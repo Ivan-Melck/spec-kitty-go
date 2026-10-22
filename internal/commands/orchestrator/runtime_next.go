@@ -175,8 +175,29 @@ func runAnswerDecision(ctx *cli.Context) error {
 				jsonx.NewObject("decision_id", resolved))
 		}
 	}
-	// Persisting a runtime decision answer is not ported (native `next
-	// --answer` is unsupported by this build).
-	return v.fail("RUNTIME_NEXT_FAILED", "decision answers are not supported by this build",
-		jsonx.NewObject("mission_slug", m.Slug, "decision_id", resolved, "reason", "UNSUPPORTED"))
+	// The five-step composite is native `next --answer` (persist, pair the
+	// previous issuance, decide, MissionNextInvoked, new issuance record);
+	// its payload minus the echoed answer, plus answered_decision_id.
+	raw, code := delegate(ctx, []string{"next"}, "--agent", ctx.String("agent"), "--result", *result, "--mission", m.Slug,
+		"--json", "--answer", ctx.String("answer"), "--decision-id", resolved)
+	pv, perr := pyjson.Loads(strings.TrimSpace(raw))
+	payload, isObj := pv.(*jsonx.Object)
+	if code != 0 || perr != nil || !isObj || payload.Has("error") {
+		msg := "decision answers are not supported by this build"
+		if isObj {
+			if e := payload.GetString("error"); e != "" {
+				msg = e
+			}
+		}
+		return v.fail("RUNTIME_NEXT_FAILED", msg, jsonx.NewObject("mission_slug", m.Slug, "decision_id", resolved, "reason", "RUNTIME_NEXT_FAILED"))
+	}
+	warnings, hasWarnings := payload.Get("warnings")
+	payload.Delete("answered")
+	payload.Delete("answer")
+	payload.Delete("warnings")
+	payload.Set("answered_decision_id", resolved)
+	if hasWarnings && pyjson.Truthy(warnings) {
+		payload.Set("warnings", warnings)
+	}
+	return v.ok(payload)
 }

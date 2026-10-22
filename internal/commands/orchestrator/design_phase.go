@@ -16,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
 
 // ── specify ───────────────────────────────────────────────────────────────
@@ -386,7 +387,12 @@ func runRecordAnalysis(ctx *cli.Context) error {
 		data := identity(m.StatusDir, "path", path, "verdict", *verdict, "generated_at", *generatedAt)
 		if out != nil {
 			if s, ok := out.Get("surfaces"); ok {
-				data.Set("commit_surfaces", s)
+				if l, ok := s.([]any); ok && len(l) > 0 {
+					data.Set("commit_surfaces", s)
+					if w := surfaceWarnings(l); w != nil {
+						data.Set("warnings", strList(w))
+					}
+				}
 			}
 		}
 		return v.ok(data)
@@ -411,6 +417,46 @@ func runRecordAnalysis(ctx *cli.Context) error {
 		}
 	}
 	return v.fail(ec, msg, data)
+}
+
+// surfaceWarnings is render_commit_outcome(result) when some surface is
+// neither committed nor unchanged (nil otherwise), rebuilt from the
+// commit_outcome_payload surfaces.
+func surfaceWarnings(surfaces []any) []string {
+	r := &safecommit.RouterResult{}
+	warn := false
+	fates := func(v any) []safecommit.PathFate {
+		var out []safecommit.PathFate
+		l, _ := v.([]any)
+		for _, x := range l {
+			if o, ok := x.(*jsonx.Object); ok {
+				out = append(out, safecommit.PathFate{Path: o.GetString("path"), Reason: o.GetString("reason"), OwningPath: o.GetString("owning_path")})
+			}
+		}
+		return out
+	}
+	for _, x := range surfaces {
+		o, ok := x.(*jsonx.Object)
+		if !ok {
+			continue
+		}
+		so := safecommit.SurfaceOutcome{Surface: o.GetString("surface"), Branch: o.GetString("branch"), Status: o.GetString("status"),
+			CommitHash: o.GetString("commit_hash"), Skipped: fates(mustGet(o, "skipped")), Refused: fates(mustGet(o, "refused")),
+			Diagnostic: o.GetString("diagnostic")}
+		if l, ok := mustGet(o, "committed").([]any); ok {
+			for _, c := range l {
+				so.Committed = append(so.Committed, pyStr(c))
+			}
+		}
+		if so.Status != safecommit.StatusCommitted && so.Status != safecommit.StatusUnchanged {
+			warn = true
+		}
+		r.Surfaces = append(r.Surfaces, so)
+	}
+	if !warn {
+		return nil
+	}
+	return r.Render()
 }
 
 func optRepr(s *string) string {
