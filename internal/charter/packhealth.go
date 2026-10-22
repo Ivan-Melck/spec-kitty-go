@@ -762,6 +762,14 @@ func LoadOrgCharterPolicy(packRoot string) (*jsonx.Object, error) {
 	if !ok {
 		return nil, nil
 	}
+	if errs := orgCharterSchemaErrors(o); len(errs) > 0 {
+		return nil, fmt.Errorf("%s", formatPydErrors("OrgCharterPolicy", errs))
+	}
+	return o, nil
+}
+
+// orgCharterSchemaErrors validates an org-charter mapping (OrgCharterPolicy).
+func orgCharterSchemaErrors(o *jsonx.Object) []pydErr {
 	var errs []pydErr
 	for _, kv := range o.Pairs() {
 		typ, known := orgCharterFields[kv.Key]
@@ -806,10 +814,7 @@ func LoadOrgCharterPolicy(packRoot string) (*jsonx.Object, error) {
 			}
 		}
 	}
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("%s", formatPydErrors("OrgCharterPolicy", errs))
-	}
-	return o, nil
+	return errs
 }
 
 // MergedOrgRequired is load_org_charter_policies' required_<kind> union.
