@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -386,4 +387,24 @@ func inferActivationKind(id string, off *dct.Offering) string {
 		}
 	}
 	return ""
+}
+
+// OrgRequiredIDs is org_pack_discovery.read_org_required_ids: the union of
+// every org pack's required_<plural> (stripped, non-empty, first-seen
+// order); a non-list value is skipped.
+func OrgRequiredIDs(root, plural string) []string {
+	var out []string
+	for _, d := range orgCharterDocs(root) {
+		l, ok := mustGetAny(d[1].(*jsonx.Object), "required_"+plural).([]any)
+		if !ok {
+			continue
+		}
+		for _, x := range l {
+			t := strings.TrimSpace(pyStrValue(x))
+			if t != "" && !slices.Contains(out, t) {
+				out = append(out, t)
+			}
+		}
+	}
+	return out
 }

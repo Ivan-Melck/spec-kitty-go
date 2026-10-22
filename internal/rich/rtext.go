@@ -617,7 +617,7 @@ func (t *Text) styleAt(c *Console, offset int) *Style {
 }
 
 // RichRender is Text.__rich_console__.
-func (t *Text) RichRender(c *Console, o Options) []Segment {
+func (t *Text) RichRender(c *Console, o Options) []Seg {
 	tab := t.TabSize
 	if tab == 0 {
 		tab = c.tabSize()
@@ -651,12 +651,12 @@ func (t *Text) RichMeasure(c *Console, o Options) Measurement {
 }
 
 // render is Text.render.
-func (t *Text) render(c *Console, end string) []Segment {
+func (t *Text) render(c *Console, end string) []Seg {
 	text := string(t.plain)
 	if len(t.Spans) == 0 {
-		out := []Segment{{Text: text}}
+		out := []Seg{{Text: text}}
 		if end != "" {
-			out = append(out, Segment{Text: end})
+			out = append(out, Seg{Text: end})
 		}
 		return out
 	}
@@ -686,7 +686,7 @@ func (t *Text) render(c *Console, end string) []Segment {
 		return !evs[i].leave && evs[j].leave
 	})
 	var stack []int
-	var out []Segment
+	var out []Seg
 	for k := 0; k+1 < len(evs); k++ {
 		e := evs[k]
 		if e.leave {
@@ -719,11 +719,11 @@ func (t *Text) render(c *Console, end string) []Segment {
 			if a < b {
 				s = string(t.plain[a:b])
 			}
-			out = append(out, Segment{s, cur})
+			out = append(out, Seg{s, cur})
 		}
 	}
 	if end != "" {
-		out = append(out, Segment{Text: end})
+		out = append(out, Seg{Text: end})
 	}
 	return out
 }

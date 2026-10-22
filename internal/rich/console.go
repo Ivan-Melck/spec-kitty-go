@@ -30,7 +30,7 @@ func (o Options) withWidth(w int) Options {
 
 // Renderable is anything with __rich_console__.
 type Renderable interface {
-	RichRender(c *Console, o Options) []Segment
+	RichRender(c *Console, o Options) []Seg
 }
 
 // Measurable is anything with __rich_measure__.
@@ -196,11 +196,11 @@ var reUnsafeControl = regexp.MustCompile("[\x00-\x08\x0b-\x1f\x7f\u009b\u009d]")
 
 // Render is Console.render: r is a string (console markup), a *Text or a
 // Renderable.
-func (c *Console) Render(r any, o Options) []Segment {
+func (c *Console) Render(r any, o Options) []Seg {
 	if o.MaxWidth < 1 || r == nil {
 		return nil
 	}
-	var segs []Segment
+	var segs []Seg
 	switch x := r.(type) {
 	case string:
 		segs = c.RenderStr(x, StrOptions{Highlight: o.Highlight, Markup: o.Markup}).RichRender(c, o)
@@ -212,7 +212,7 @@ func (c *Console) Render(r any, o Options) []Segment {
 	if c.Sanitize {
 		for i, s := range segs {
 			if s.Text != "" && reUnsafeControl.MatchString(s.Text) {
-				segs[i] = Segment{SanitizeTerminalText(s.Text), s.Style}
+				segs[i] = Seg{SanitizeTerminalText(s.Text), s.Style}
 			}
 		}
 	}
@@ -220,7 +220,7 @@ func (c *Console) Render(r any, o Options) []Segment {
 }
 
 // RenderLines is Console.render_lines.
-func (c *Console) RenderLines(r any, o Options, style *Style, pad, newLines bool) [][]Segment {
+func (c *Console) RenderLines(r any, o Options, style *Style, pad, newLines bool) [][]Seg {
 	segs := c.Render(r, o)
 	if style.truthy() {
 		segs = applyStyle(segs, style, nil)
@@ -232,7 +232,7 @@ func (c *Console) RenderLines(r any, o Options, style *Style, pad, newLines bool
 			lines = lines[:h]
 		}
 		for len(lines) < *o.Height {
-			l := []Segment{{strings.Repeat(" ", o.MaxWidth), style}}
+			l := []Seg{{strings.Repeat(" ", o.MaxWidth), style}}
 			if newLines {
 				l = append(l, newLineSegment)
 			}
@@ -316,7 +316,7 @@ type PrintOptions struct {
 }
 
 // Segments is Console.print rendered to segments (what print writes).
-func (c *Console) Segments(objs []any, po PrintOptions) []Segment {
+func (c *Console) Segments(objs []any, po PrintOptions) []Seg {
 	end, sep := "\n", " "
 	if po.End != nil {
 		end = *po.End
@@ -353,7 +353,7 @@ func (c *Console) Segments(objs []any, po PrintOptions) []Segment {
 	}
 	o.Height = nil
 	o.NoWrap, o.Markup, o.Highlight = noWrap, po.Markup, po.Highlight
-	var segs []Segment
+	var segs []Seg
 	if !styleTruthy(po.Style) {
 		for _, r := range renderables {
 			segs = append(segs, c.Render(r, o)...)
@@ -370,7 +370,7 @@ func (c *Console) Segments(objs []any, po PrintOptions) []Segment {
 		}
 	}
 	if crop {
-		var out []Segment
+		var out []Seg
 		for _, l := range splitAndCropLines(segs, c.Width, nil, false, true) {
 			out = append(out, l...)
 		}
@@ -381,7 +381,7 @@ func (c *Console) Segments(objs []any, po PrintOptions) []Segment {
 
 type newLineRenderable struct{}
 
-func (newLineRenderable) RichRender(*Console, Options) []Segment { return []Segment{newLineSegment} }
+func (newLineRenderable) RichRender(*Console, Options) []Seg { return []Seg{newLineSegment} }
 
 // collect is Console._collect_renderables.
 func (c *Console) collect(objs []any, sep, end string, po PrintOptions) []any {
@@ -419,7 +419,7 @@ func (c *Console) collect(objs []any, sep, end string, po PrintOptions) []any {
 }
 
 // Output is Console._render_buffer: segments to the string written.
-func (c *Console) Output(segs []Segment) string {
+func (c *Console) Output(segs []Seg) string {
 	var b strings.Builder
 	sys := c.Color
 	for _, s := range segs {
@@ -444,4 +444,21 @@ func (c *Console) Print(w io.Writer, objs ...any) {
 // PrintWith is Console.print(*objs, **po) written to w.
 func (c *Console) PrintWith(w io.Writer, po PrintOptions, objs ...any) {
 	io.WriteString(w, c.Output(c.Segments(objs, po)))
+}
+
+// HighlightText is Highlighter.__call__ for a Text: a highlighted copy.
+func HighlightText(h Highlighter, t *Text) *Text { return highlightCopy(h, t) }
+
+var reEscapable = regexp.MustCompile(`(\\*)(\[[a-z#/@][^\[]*?\])`)
+
+// EscapeMarkup is rich.markup.escape.
+func EscapeMarkup(s string) string {
+	s = reEscapable.ReplaceAllStringFunc(s, func(m string) string {
+		sub := reEscapable.FindStringSubmatch(m)
+		return sub[1] + sub[1] + `\` + sub[2]
+	})
+	if strings.HasSuffix(s, `\`) && !strings.HasSuffix(s, `\\`) {
+		s += `\`
+	}
+	return s
 }

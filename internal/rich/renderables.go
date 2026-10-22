@@ -18,8 +18,8 @@ type Group []any
 func (g Group) RichMeasure(c *Console, o Options) Measurement { return c.measureAll(o, g) }
 
 // RichRender renders the members one after another.
-func (g Group) RichRender(c *Console, o Options) []Segment {
-	var out []Segment
+func (g Group) RichRender(c *Console, o Options) []Seg {
+	var out []Seg
 	for _, r := range g {
 		out = append(out, c.Render(r, o)...)
 	}
@@ -66,7 +66,7 @@ func (p *Padding) RichMeasure(c *Console, o Options) Measurement {
 }
 
 // RichRender is Padding.__rich_console__.
-func (p *Padding) RichRender(c *Console, o Options) []Segment {
+func (p *Padding) RichRender(c *Console, o Options) []Seg {
 	st := p.Style
 	if st == nil {
 		st = "none"
@@ -82,18 +82,18 @@ func (p *Padding) RichRender(c *Console, o Options) []Segment {
 		ro.Height = &h
 	}
 	lines := c.RenderLines(p.R, ro, style, true, false)
-	var out []Segment
-	blank := Segment{strings.Repeat(" ", width) + "\n", style}
+	var out []Seg
+	blank := Seg{strings.Repeat(" ", width) + "\n", style}
 	for i := 0; i < p.Top; i++ {
 		out = append(out, blank)
 	}
 	for _, l := range lines {
 		if p.Left > 0 {
-			out = append(out, Segment{strings.Repeat(" ", p.Left), style})
+			out = append(out, Seg{strings.Repeat(" ", p.Left), style})
 		}
 		out = append(out, l...)
 		if p.Right > 0 {
-			out = append(out, Segment{strings.Repeat(" ", p.Right), style})
+			out = append(out, Seg{strings.Repeat(" ", p.Right), style})
 		}
 		out = append(out, newLineSegment)
 	}
@@ -112,7 +112,7 @@ type Constrain struct {
 }
 
 // RichRender renders R at min(Width, max width).
-func (k *Constrain) RichRender(c *Console, o Options) []Segment {
+func (k *Constrain) RichRender(c *Console, o Options) []Seg {
 	if k.Width <= 0 {
 		return c.Render(k.R, o)
 	}
@@ -136,7 +136,7 @@ type Styled struct {
 }
 
 // RichRender applies Style to every segment of R.
-func (s *Styled) RichRender(c *Console, o Options) []Segment {
+func (s *Styled) RichRender(c *Console, o Options) []Seg {
 	return applyStyle(c.Render(s.R, o), c.GetStyle(s.Style), nil)
 }
 
@@ -161,7 +161,7 @@ func AlignLeft(r any) *Align { return &Align{R: r, Align: "left"} }
 func (a *Align) RichMeasure(c *Console, o Options) Measurement { return c.Measure(a.R, o) }
 
 // RichRender is Align.__rich_console__.
-func (a *Align) RichRender(c *Console, o Options) []Segment {
+func (a *Align) RichRender(c *Console, o Options) []Seg {
 	width := c.Measure(a.R, o).Max
 	if a.Width > 0 {
 		width = min(width, a.Width)
@@ -177,7 +177,7 @@ func (a *Align) RichRender(c *Console, o Options) []Segment {
 	if a.Style != nil {
 		style = c.GetStyle(a.Style)
 	}
-	var out []Segment
+	var out []Seg
 	for _, l := range lines {
 		switch {
 		case excess <= 0:
@@ -185,19 +185,19 @@ func (a *Align) RichRender(c *Console, o Options) []Segment {
 		case a.Align == "center":
 			left := excess / 2
 			if left > 0 {
-				out = append(out, Segment{strings.Repeat(" ", left), style})
+				out = append(out, Seg{strings.Repeat(" ", left), style})
 			}
 			out = append(out, l...)
 			if a.Pad {
-				out = append(out, Segment{strings.Repeat(" ", excess-left), style})
+				out = append(out, Seg{strings.Repeat(" ", excess-left), style})
 			}
 		case a.Align == "right":
-			out = append(out, Segment{strings.Repeat(" ", excess), style})
+			out = append(out, Seg{strings.Repeat(" ", excess), style})
 			out = append(out, l...)
 		default:
 			out = append(out, l...)
 			if a.Pad {
-				out = append(out, Segment{strings.Repeat(" ", excess), style})
+				out = append(out, Seg{strings.Repeat(" ", excess), style})
 			}
 		}
 		out = append(out, newLineSegment)
@@ -219,7 +219,7 @@ type Columns struct {
 }
 
 // RichRender is Columns.__rich_console__.
-func (cl *Columns) RichRender(c *Console, o Options) []Segment {
+func (cl *Columns) RichRender(c *Console, o Options) []Seg {
 	var items []any
 	for _, r := range cl.Items {
 		if s, ok := r.(string); ok {
@@ -675,9 +675,9 @@ func (t *RichTable) columnWidths(c *Console, o Options) []int {
 }
 
 // RichRender is Table.__rich_console__.
-func (t *RichTable) RichRender(c *Console, o Options) []Segment {
+func (t *RichTable) RichRender(c *Console, o Options) []Seg {
 	if len(t.Columns) == 0 {
-		return []Segment{newLineSegment}
+		return []Seg{newLineSegment}
 	}
 	maxWidth := o.MaxWidth
 	if t.Width != nil {
@@ -689,7 +689,7 @@ func (t *RichTable) RichRender(c *Console, o Options) []Segment {
 	ro := o.withWidth(tableWidth)
 	ro.Highlight = boolp(t.Highlight)
 	ro.Height = nil
-	annotation := func(text any, style any, justify string) []Segment {
+	annotation := func(text any, style any, justify string) []Seg {
 		var r any = text
 		if s, ok := text.(string); ok {
 			r = c.RenderStr(s, StrOptions{Style: style, Highlight: boolp(false)})
@@ -698,7 +698,7 @@ func (t *RichTable) RichRender(c *Console, o Options) []Segment {
 		ao.Justify = justify
 		return c.Render(r, ao)
 	}
-	var out []Segment
+	var out []Seg
 	if annotationTruthy(t.Title) {
 		out = append(out, annotation(t.Title, pickFirst(t.TitleStyle, "table.title"), t.TitleJustify)...)
 	}
@@ -731,7 +731,7 @@ func pickFirst(vals ...any) any {
 	return nil
 }
 
-func (t *RichTable) render(c *Console, o Options, widths []int) []Segment {
+func (t *RichTable) render(c *Console, o Options, widths []int) []Seg {
 	tableStyle := c.GetStyle(orEmpty(t.Style))
 	borderStyle := tableStyle.Add(c.GetStyle(orEmpty(t.BorderStyle)))
 	colCells := make([][]tcell, len(t.Columns))
@@ -746,8 +746,8 @@ func (t *RichTable) render(c *Console, o Options, widths []int) []Segment {
 	if box != nil && !t.ShowHeader {
 		box = box.plainHeaded()
 	}
-	var out []Segment
-	seg := func(s string, st *Style) { out = append(out, Segment{s, st}) }
+	var out []Seg
+	seg := func(s string, st *Style) { out = append(out, Seg{s, st}) }
 	if box != nil && t.ShowEdge {
 		seg(box.getTop(widths), borderStyle)
 		out = append(out, newLineSegment)
@@ -775,7 +775,7 @@ func (t *RichTable) render(c *Console, o Options, widths []int) []Segment {
 			}
 			rowStyle = t.rowStyle(c, ri)
 		}
-		cells := make([][][]Segment, len(t.Columns))
+		cells := make([][][]Seg, len(t.Columns))
 		for ci, col := range t.Columns {
 			cell := colCells[ci][index]
 			co := o.withWidth(widths[ci])
@@ -798,7 +798,7 @@ func (t *RichTable) render(c *Console, o Options, widths []int) []Segment {
 			} else if footerRow {
 				vertical = "top"
 			}
-			var aligned [][]Segment
+			var aligned [][]Seg
 			switch vertical {
 			case "top":
 				aligned = alignTop(cells[ci], widths[ci], rowHeight, st)
@@ -823,9 +823,9 @@ func (t *RichTable) render(c *Console, o Options, widths []int) []Segment {
 			default:
 				left, right, div = box.midLeft, box.midRight, box.midVertical
 			}
-			divider := Segment{div, borderStyle}
+			divider := Seg{div, borderStyle}
 			if strings.TrimSpace(div) == "" {
-				divider = Segment{div, rowStyle.backgroundStyle().Add(borderStyle)}
+				divider = Seg{div, rowStyle.backgroundStyle().Add(borderStyle)}
 			}
 			for line := 0; line < maxHeight; line++ {
 				if t.ShowEdge {
@@ -962,7 +962,7 @@ func (p *RichPanel) RichMeasure(c *Console, o Options) Measurement {
 }
 
 // RichRender is Panel.__rich_console__.
-func (p *RichPanel) RichRender(c *Console, o Options) []Segment {
+func (p *RichPanel) RichRender(c *Console, o Options) []Seg {
 	top, right, bottom, left := p.pad()
 	var r any = p.R
 	if top != 0 || right != 0 || bottom != 0 || left != 0 {
@@ -1022,21 +1022,21 @@ func (p *RichPanel) RichRender(c *Console, o Options) []Segment {
 	co := o.withWidth(childWidth)
 	co.Height, co.Highlight = childHeight, boolp(p.Highlight)
 	lines := c.RenderLines(r, co, style, true, false)
-	var out []Segment
+	var out []Seg
 	if title == nil || width <= 4 {
-		out = append(out, Segment{box.getTop([]int{width - 2}), borderStyle})
+		out = append(out, Seg{box.getTop([]int{width - 2}), borderStyle})
 	} else {
 		ta := firstNonEmpty(p.TitleAlign, "center")
 		title = alignText(title, width-4, ta, box.top, borderStyle)
-		out = append(out, Segment{box.topLeft + box.top, borderStyle})
+		out = append(out, Seg{box.topLeft + box.top, borderStyle})
 		out = append(out, c.Render(title, co.withWidth(width-4))...)
-		out = append(out, Segment{box.top + box.topRight, borderStyle})
+		out = append(out, Seg{box.top + box.topRight, borderStyle})
 	}
 	out = append(out, newLineSegment)
 	for _, l := range lines {
-		out = append(out, Segment{box.midLeft, borderStyle})
+		out = append(out, Seg{box.midLeft, borderStyle})
 		out = append(out, l...)
-		out = append(out, Segment{box.midRight, borderStyle})
+		out = append(out, Seg{box.midRight, borderStyle})
 		out = append(out, newLineSegment)
 	}
 	sub := panelTitle(p.Subtitle)
@@ -1044,13 +1044,13 @@ func (p *RichPanel) RichRender(c *Console, o Options) []Segment {
 		sub.StylizeBefore(borderStyle, 0, nil)
 	}
 	if sub == nil || width <= 4 {
-		out = append(out, Segment{box.getBottom([]int{width - 2}), borderStyle})
+		out = append(out, Seg{box.getBottom([]int{width - 2}), borderStyle})
 	} else {
 		sa := firstNonEmpty(p.SubAlign, "center")
 		sub = alignText(sub, width-4, sa, box.bottom, borderStyle)
-		out = append(out, Segment{box.bottomLeft + box.bottom, borderStyle})
+		out = append(out, Seg{box.bottomLeft + box.bottom, borderStyle})
 		out = append(out, c.Render(sub, co.withWidth(width-4))...)
-		out = append(out, Segment{box.bottom + box.bottomRight, borderStyle})
+		out = append(out, Seg{box.bottom + box.bottomRight, borderStyle})
 	}
 	out = append(out, newLineSegment)
 	return out
@@ -1110,14 +1110,14 @@ const (
 	gEnd
 )
 
-func makeGuide(index int, st *Style) Segment {
+func makeGuide(index int, st *Style) Seg {
 	g := 0
 	if st.hasAttr(0) { // bold
 		g = 1
 	} else if st.hasAttr(9) { // underline2
 		g = 2
 	}
-	return Segment{treeGuides[g][index], st}
+	return Seg{treeGuides[g][index], st}
 }
 
 func (s *Style) hasAttr(bit int) bool {
@@ -1130,24 +1130,24 @@ type treeIter struct {
 }
 
 // RichRender is Tree.__rich_console__.
-func (t *Tree) RichRender(c *Console, o Options) []Segment {
+func (t *Tree) RichRender(c *Console, o Options) []Seg {
 	null := NullStyle()
 	guideStyle := c.GetStyle(t.guideStyle())
 	if !guideStyle.truthy() {
 		guideStyle = null
 	}
-	levels := []Segment{makeGuide(gContinue, guideStyle)}
+	levels := []Seg{makeGuide(gContinue, guideStyle)}
 	stack := []*treeIter{{nodes: []*Tree{t}}}
 	guideStack := []*Style{c.GetStyle(t.guideStyle())}
 	styleStack := []*Style{c.GetStyle(t.style())}
 	remove := &Style{set: 1<<0 | 1<<9}
-	segStyle := func(s Segment) *Style {
+	segStyle := func(s Seg) *Style {
 		if s.Style.truthy() {
 			return s.Style
 		}
 		return null
 	}
-	var out []Segment
+	var out []Seg
 	depth := 0
 	for len(stack) > 0 {
 		it := stack[len(stack)-1]
@@ -1175,7 +1175,7 @@ func (t *Tree) RichRender(c *Console, o Options) []Segment {
 		if t.HideRoot {
 			skip = 2
 		}
-		var prefix []Segment
+		var prefix []Seg
 		if len(levels) > skip {
 			prefix = append(prefix, levels[skip:]...)
 		}

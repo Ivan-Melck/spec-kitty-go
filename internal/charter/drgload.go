@@ -33,6 +33,11 @@ func LoadOrgDRGLenient(repoRoot string) ([]*OrgFragment, error) {
 		if err != nil {
 			return nil, err
 		}
+		// strict=False skips a fragment-less pack before load_org_pack runs
+		// (so its pack-level check warns nothing).
+		if _, err := os.Stat(filepath.Join(root, "drg", "fragment.yaml")); err != nil {
+			continue
+		}
 		f, err := LoadOrgPack(p.Name, root, i+1)
 		if err != nil {
 			if _, missing := err.(*OrgPackMissingError); missing {

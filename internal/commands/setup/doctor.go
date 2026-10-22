@@ -17,6 +17,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
+	"github.com/spec-kitty/go-kitty3/internal/toolsurface"
 )
 
 func init() {
@@ -420,35 +422,12 @@ func CommandFileIssues(root string) []map[string]string {
 
 // plainTable renders a rich Table(box=None, padding=(0, 2), show_edge=False)
 // with per-column minimum widths and justification.
+// plainTable is Table(box=None, padding=(0, 2), show_edge=False) with a
+// cyan first column and the bold table.header row, at the console width.
 func plainTable(w io.Writer, headers []string, minWidth []int, justify []byte, rows [][]string) {
-	widths := make([]int, len(headers))
-	for i, h := range headers {
-		widths[i] = runeLen(h)
-		if i < len(minWidth) && minWidth[i] > widths[i] {
-			widths[i] = minWidth[i]
-		}
-	}
-	for _, r := range rows {
-		for i, c := range r {
-			if runeLen(c) > widths[i] {
-				widths[i] = runeLen(c)
-			}
-		}
-	}
-	line := func(vals []string) {
-		var b strings.Builder
-		for i, wd := range widths {
-			j := byte('l')
-			if i < len(justify) {
-				j = justify[i]
-			}
-			b.WriteString("  " + alignText(vals[i], wd, j) + "  ")
-		}
-		fmt.Fprintln(w, b.String())
-	}
-	line(headers)
-	for _, r := range rows {
-		line(r)
+	t := rich.PaddedTable{Headers: headers, MinWidths: minWidth, Justify: justify, Styles: []string{"cyan"}, HeaderStyle: "bold", Rows: rows}
+	for _, l := range t.Lines(rich.Width(), rich.ColorSystemOf(w)) {
+		fmt.Fprintln(w, l)
 	}
 }
 
@@ -645,6 +624,10 @@ func runDoctorSkills(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	if !jsonOut {
+		toolsurface.LogWriter = ctx.Stderr
+		defer func() { toolsurface.LogWriter = nil }()
+	}
 	st, err := loadSkillsState(root)
 	if err != nil {
 		if jsonOut {
@@ -726,8 +709,29 @@ func runDoctorSkills(ctx *cli.Context) error {
 		configuredSlash, slashGaps = slashCommandState(root)
 	}
 	slashOK := len(slashGaps) == 0
+	packFindings := toolsurface.FindPackSkillFindings(root)
+	repairedPaths := []string{}
+	if fix {
+		missing := false
+		for _, f := range packFindings {
+			missing = missing || f.Kind == toolsurface.PackKindMissing
+		}
+		if missing {
+			changed, err := toolsurface.ProjectPackSkills(root)
+			if err != nil {
+				repairErrors = append(repairErrors, "pack skill projection failed: "+err.Error())
+			} else {
+				repairedPaths = append(repairedPaths, changed...)
+			}
+			packFindings = toolsurface.FindPackSkillFindings(root)
+		}
+	}
+	packList := []any{}
+	for _, f := range packFindings {
+		packList = append(packList, f.JSON())
+	}
 	toolFolders := toolFolderFindings(root)
-	ok := cmdOK && slashOK && len(toolFolders) == 0
+	ok := cmdOK && slashOK && len(packFindings) == 0 && len(toolFolders) == 0
 	if jsonOut {
 		gaps := []any{}
 		for _, g := range slashGaps {
@@ -737,10 +741,10 @@ func runDoctorSkills(ctx *cli.Context) error {
 			"configured_agents", strList(st.configured), "manifest_agents", strList(st.manifestAgents), "entries", st.entries,
 			"canonical_commands", len(agents.CommandSkillCommands), "drift", strList(r.drift), "gaps", strList(r.gaps),
 			"orphans", strList(r.orphans), "stale", strList(r.stale), "unsafe", strList(r.unsafe), "uninstalled_agents", strList(st.uninstalled),
-			"vibe_config_missing", st.vibeMissing, "repaired_agents", strList(repaired), "repaired_paths", []any{}, "pruned", strList(pruned),
+			"vibe_config_missing", st.vibeMissing, "repaired_agents", strList(repaired), "repaired_paths", strList(repairedPaths), "pruned", strList(pruned),
 			"repaired_vibe_config", repairedVibe, "repair_errors", strList(repairErrors), "ok", ok,
 			"slash_commands", jsonx.NewObject("configured_agents", strList(configuredSlash), "gaps", gaps, "repaired", strList(slashRepaired), "errors", []any{}, "ok", slashOK),
-			"pack_skills", []any{}, "tool_folders", toolFolders))
+			"pack_skills", packList, "tool_folders", toolFolders))
 		if ok {
 			return nil
 		}
@@ -827,6 +831,12 @@ func runDoctorSkills(ctx *cli.Context) error {
 		}
 		if fix && len(slashRepaired) > 0 {
 			out(w, fmt.Sprintf("\n[green]Repaired:[/green] %d slash command file(s)", len(slashRepaired)))
+		}
+	}
+	if len(packFindings) > 0 {
+		out(w, "\n[bold yellow]Pack skills[/bold yellow]")
+		for _, f := range packFindings {
+			plain(w, fmt.Sprintf("  ! [%s] %s", f.Kind, f.Message()))
 		}
 	}
 	for _, f := range toolFolders {

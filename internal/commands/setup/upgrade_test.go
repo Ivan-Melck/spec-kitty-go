@@ -37,24 +37,11 @@ func compareMasked(t *testing.T, p *testkit.Pair, args ...string) (testkit.Resul
 	return g, o
 }
 
-// comparePlan compares a ready --plan-json document up to its effect
-// inventory (the Go port does not enumerate per-asset dispositions).
+// comparePlan compares a --plan-json document (effect inventory included,
+// run-specific content digests masked).
 func comparePlan(t *testing.T, p *testkit.Pair, args ...string) {
 	t.Helper()
-	g, o := p.Run(args...)
-	if g.Code != o.Code {
-		t.Errorf("%s: exit go=%d oracle=%d", strings.Join(args, " "), g.Code, o.Code)
-	}
-	cut := func(s string) string {
-		if i := strings.Index(s, `"effects"`); i >= 0 {
-			return s[:i]
-		}
-		return s
-	}
-	gs, os_ := cut(maskCompat(p.Go.Normalize(g.Stdout))), cut(maskCompat(p.Oracle.Normalize(o.Stdout)))
-	if gs != os_ {
-		t.Errorf("%s: stdout differs\n%s", strings.Join(args, " "), testkit.Diff(os_, gs))
-	}
+	compareHashed(t, p, args...)
 }
 
 func lastCommit(s *testkit.Sandbox) string {

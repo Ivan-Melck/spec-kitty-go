@@ -8,7 +8,7 @@ import "strings"
 // segment, no merging), while plain output is the concatenated text.
 
 // Segment is rich.segment.Segment (control segments are not used).
-type Segment struct {
+type Seg struct {
 	Text  string
 	Style *Style // nil = no style
 }
@@ -16,12 +16,12 @@ type Segment struct {
 // truthy is Python's `if style:` for an optional Style.
 func (s *Style) truthy() bool { return s != nil && !s.null }
 
-func (s Segment) cellLen() int { return CellLen(s.Text) }
+func (s Seg) cellLen() int { return CellLen(s.Text) }
 
-var newLineSegment = Segment{Text: "\n"}
+var newLineSegment = Seg{Text: "\n"}
 
 // lineLen is Segment.get_line_length.
-func lineLen(line []Segment) int {
+func lineLen(line []Seg) int {
 	n := 0
 	for _, s := range line {
 		n += s.cellLen()
@@ -30,11 +30,11 @@ func lineLen(line []Segment) int {
 }
 
 // applyStyle is Segment.apply_style: style + segment.style + post.
-func applyStyle(segs []Segment, style, post *Style) []Segment {
+func applyStyle(segs []Seg, style, post *Style) []Seg {
 	if !style.truthy() && !post.truthy() {
 		return segs
 	}
-	out := make([]Segment, len(segs))
+	out := make([]Seg, len(segs))
 	for i, s := range segs {
 		st := s.Style
 		if style.truthy() {
@@ -47,22 +47,22 @@ func applyStyle(segs []Segment, style, post *Style) []Segment {
 				st = post
 			}
 		}
-		out[i] = Segment{s.Text, st}
+		out[i] = Seg{s.Text, st}
 	}
 	return out
 }
 
 // splitLines is Segment.split_lines (a trailing empty line is dropped).
-func splitLines(segs []Segment) [][]Segment {
-	var lines [][]Segment
-	var line []Segment
+func splitLines(segs []Seg) [][]Seg {
+	var lines [][]Seg
+	var line []Seg
 	for _, s := range segs {
 		if strings.Contains(s.Text, "\n") {
 			text := s.Text
 			for text != "" {
 				part, rest, nl := strings.Cut(text, "\n")
 				if part != "" {
-					line = append(line, Segment{part, s.Style})
+					line = append(line, Seg{part, s.Style})
 				}
 				if nl {
 					lines = append(lines, line)
@@ -81,21 +81,21 @@ func splitLines(segs []Segment) [][]Segment {
 }
 
 type termLine struct {
-	segs    []Segment
+	segs    []Seg
 	newLine bool
 }
 
 // splitLinesTerminator is Segment.split_lines_terminator.
-func splitLinesTerminator(segs []Segment) []termLine {
+func splitLinesTerminator(segs []Seg) []termLine {
 	var out []termLine
-	var line []Segment
+	var line []Seg
 	for _, s := range segs {
 		if strings.Contains(s.Text, "\n") {
 			text := s.Text
 			for text != "" {
 				part, rest, nl := strings.Cut(text, "\n")
 				if part != "" {
-					line = append(line, Segment{part, s.Style})
+					line = append(line, Seg{part, s.Style})
 				}
 				if nl {
 					out = append(out, termLine{line, true})
@@ -114,16 +114,16 @@ func splitLinesTerminator(segs []Segment) []termLine {
 }
 
 // splitAndCropLines is Segment.split_and_crop_lines.
-func splitAndCropLines(segs []Segment, length int, style *Style, pad, includeNewLines bool) [][]Segment {
-	var out [][]Segment
-	var line []Segment
+func splitAndCropLines(segs []Seg, length int, style *Style, pad, includeNewLines bool) [][]Seg {
+	var out [][]Seg
+	var line []Seg
 	for _, s := range segs {
 		if strings.Contains(s.Text, "\n") {
 			text := s.Text
 			for text != "" {
 				part, rest, nl := strings.Cut(text, "\n")
 				if part != "" {
-					line = append(line, Segment{part, s.Style})
+					line = append(line, Seg{part, s.Style})
 				}
 				if nl {
 					cropped := adjustLineLength(line, length, style, pad)
@@ -146,17 +146,17 @@ func splitAndCropLines(segs []Segment, length int, style *Style, pad, includeNew
 }
 
 // adjustLineLength is Segment.adjust_line_length.
-func adjustLineLength(line []Segment, length int, style *Style, pad bool) []Segment {
+func adjustLineLength(line []Seg, length int, style *Style, pad bool) []Seg {
 	n := lineLen(line)
 	switch {
 	case n < length:
-		out := append([]Segment(nil), line...)
+		out := append([]Seg(nil), line...)
 		if pad {
-			out = append(out, Segment{strings.Repeat(" ", length-n), style})
+			out = append(out, Seg{strings.Repeat(" ", length-n), style})
 		}
 		return out
 	case n > length:
-		var out []Segment
+		var out []Seg
 		n = 0
 		for _, s := range line {
 			sl := s.cellLen()
@@ -165,16 +165,16 @@ func adjustLineLength(line []Segment, length int, style *Style, pad bool) []Segm
 				n += sl
 				continue
 			}
-			out = append(out, Segment{SetCellSize(s.Text, length-n), s.Style})
+			out = append(out, Seg{SetCellSize(s.Text, length-n), s.Style})
 			break
 		}
 		return out
 	}
-	return append([]Segment(nil), line...)
+	return append([]Seg(nil), line...)
 }
 
 // shape is Segment.get_shape.
-func shape(lines [][]Segment) (int, int) {
+func shape(lines [][]Seg) (int, int) {
 	w := 0
 	for _, l := range lines {
 		w = max(w, lineLen(l))
@@ -183,51 +183,51 @@ func shape(lines [][]Segment) (int, int) {
 }
 
 // setShape is Segment.set_shape (height <= 0: unchanged).
-func setShape(lines [][]Segment, width, height int, style *Style) [][]Segment {
+func setShape(lines [][]Seg, width, height int, style *Style) [][]Seg {
 	if height <= 0 {
 		height = len(lines)
 	}
-	out := make([][]Segment, 0, max(height, len(lines)))
+	out := make([][]Seg, 0, max(height, len(lines)))
 	for _, l := range lines {
 		out = append(out, adjustLineLength(l, width, style, true))
 	}
 	for len(out) < height {
-		out = append(out, []Segment{{strings.Repeat(" ", width), style}})
+		out = append(out, []Seg{{strings.Repeat(" ", width), style}})
 	}
 	return out
 }
 
-func blankLines(n, width int, style *Style) [][]Segment {
-	out := make([][]Segment, n)
+func blankLines(n, width int, style *Style) [][]Seg {
+	out := make([][]Seg, n)
 	for i := range out {
-		out[i] = []Segment{{strings.Repeat(" ", width), style}}
+		out[i] = []Seg{{strings.Repeat(" ", width), style}}
 	}
 	return out
 }
 
 // alignTop / alignBottom / alignMiddle are Segment.align_*.
-func alignTop(lines [][]Segment, width, height int, style *Style) [][]Segment {
+func alignTop(lines [][]Seg, width, height int, style *Style) [][]Seg {
 	extra := height - len(lines)
 	if extra == 0 {
-		return append([][]Segment(nil), lines...)
+		return append([][]Seg(nil), lines...)
 	}
 	lines = lines[:min(height, len(lines))]
-	return append(append([][]Segment(nil), lines...), blankLines(max(0, extra), width, style)...)
+	return append(append([][]Seg(nil), lines...), blankLines(max(0, extra), width, style)...)
 }
 
-func alignBottom(lines [][]Segment, width, height int, style *Style) [][]Segment {
+func alignBottom(lines [][]Seg, width, height int, style *Style) [][]Seg {
 	extra := height - len(lines)
 	if extra == 0 {
-		return append([][]Segment(nil), lines...)
+		return append([][]Seg(nil), lines...)
 	}
 	lines = lines[:min(height, len(lines))]
 	return append(blankLines(max(0, extra), width, style), lines...)
 }
 
-func alignMiddle(lines [][]Segment, width, height int, style *Style) [][]Segment {
+func alignMiddle(lines [][]Seg, width, height int, style *Style) [][]Seg {
 	extra := height - len(lines)
 	if extra == 0 {
-		return append([][]Segment(nil), lines...)
+		return append([][]Seg(nil), lines...)
 	}
 	lines = lines[:min(height, len(lines))]
 	top := max(0, extra) / 2
@@ -238,8 +238,8 @@ func alignMiddle(lines [][]Segment, width, height int, style *Style) [][]Segment
 }
 
 // joinLines flattens lines, appending a newline segment after each.
-func joinLines(lines [][]Segment) []Segment {
-	var out []Segment
+func joinLines(lines [][]Seg) []Seg {
+	var out []Seg
 	for _, l := range lines {
 		out = append(out, l...)
 		out = append(out, newLineSegment)
@@ -248,7 +248,7 @@ func joinLines(lines [][]Segment) []Segment {
 }
 
 // plainText concatenates segment texts.
-func plainText(segs []Segment) string {
+func plainText(segs []Seg) string {
 	var b strings.Builder
 	for _, s := range segs {
 		b.WriteString(s.Text)

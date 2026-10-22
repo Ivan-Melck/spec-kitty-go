@@ -1,8 +1,8 @@
 # Area B parity: project setup & agent integration
 
 Upstream: `spec-kitty-cli` 4.0.0rc8. Packages: `internal/kittify`,
-`internal/agents`, `internal/bootstrap`, `internal/commands/setup`
-(registered via `cmd/spec-kitty/imports_setup.go`).
+`internal/agents`, `internal/bootstrap`, `internal/toolsurface`,
+`internal/commands/setup` (registered via `cmd/spec-kitty/imports_setup.go`).
 
 Differential tests run with `SPEC_KITTY_ORACLE=$REF/oracle-bin/spec-kitty`;
 every `*WithoutOracle` test and every test that only drives the Go binary
@@ -15,17 +15,17 @@ test: `testkit` points its PyPI lookups at a closed local port (see
 | Command path | Status | Tests (internal/commands/setup) | Known deviations |
 |---|---|---|---|
 | *(root callback)* startup bootstrap | done | `bootstrap_test.go`, all oracle tests compare `$HOME` trees | Freshness-lock signature (irreducible, see below). |
-| *(root callback)* schema gate + upgrade nag | done | `TestUpgradeStaleAndLegacyMatchOracle`, `TestUpgradeWithoutOracle`, `TestUpgradeCLIQueriesFakeIndex` | Nag and "no upgrade available" notices are TTY-only (as upstream); no SGR colours. |
+| *(root callback)* schema gate + upgrade nag | done | `TestUpgradeStaleAndLegacyMatchOracle`, `TestUpgradeWithoutOracle`, `TestUpgradeCLIQueriesFakeIndex`, `TestNagColourMatchesOracle` (PTY), `TestSafetyModes` | |
 | *(startup)* `.kitty.env` operator env loading | done | `TestDoctorSetupLeavesMatchOracle`, `TestKittyEnvHomeLineWarnsLikeOracle` | The `UserWarning` names `<spec-kitty>/specify_cli/__init__.py:34` instead of the site-packages path. |
-| `init` | done | `TestInitMatchesOracle`, `TestInitErrorsMatchOracle`, `TestInitNamedDirAndNoGit`, `TestInitWithoutOracle`, `TestInitArrowKeyPicker*` (PTY) | `metadata.yaml` `python_version` (irreducible). Arrow-key picker matches frame text; colours not emitted. With a non-terminal stdin and `SPEC_KITTY_FORCE_INTERACTIVE` a line prompt is used (upstream's readchar crashes there). |
+| `init` | done | `TestInitMatchesOracle`, `TestInitErrorsMatchOracle`, `TestInitNamedDirAndNoGit`, `TestInitWithoutOracle`, `TestInitArrowKeyPicker*` and `TestInitColourOutputMatchesOracle` (PTY, SGR compared) | `metadata.yaml` `python_version` and the transient progress frames (irreducible, below). With a non-terminal stdin and `SPEC_KITTY_FORCE_INTERACTIVE` a line prompt is used (upstream's readchar crashes there). |
 | `agent config` (group + list/add/remove/status/sync/set) | done | `TestAgentConfigMatchesOracle`, `TestAgentConfigOrphansMatchOracle`, `TestAgentConfigWithoutOracle` | `sync` orphan scan order (irreducible). |
 | `verify-setup` | done | `TestVerifySetupMatchesOracle` | |
 | `config` | done | `TestConfigAndSessionsMatchOracle`, `TestConfigShowOriginOrgPackTier` | `--show-origin` package-default paths name embedded assets (`packs/built-in/...`). |
 | `session-start` / `session-stop` | done | `TestConfigAndSessionsMatchOracle` | Session upgrade cache (`~/.kittify/last-cli-check.json`) refreshes in a re-exec of the Go binary instead of `python -m`. |
 | `upgrade` | done | see "Upgrade" | |
-| `doctor` (group), `command-files`, `state-roots`, `env-file`, `channel` | done | `TestDoctorSetupLeavesMatchOracle` | |
-| `doctor skills` | done | `TestDoctorSetupLeavesMatchOracle` | `pack_skills` always `[]` (Remaining work). |
-| `doctor tool-surfaces` | done | `TestDoctorToolSurfacesMatchOracle` | `--fix` `repair` block lists surface ids; plugin bundles reported, not staged (Remaining work). |
+| `doctor` (group), `command-files`, `state-roots`, `env-file`, `channel` | done | `TestDoctorSetupLeavesMatchOracle`, `TestDoctorColourTablesMatchOracle` (PTY, 80 columns, SGR compared) | |
+| `doctor skills` | done | `TestDoctorSetupLeavesMatchOracle`, `TestPackSkillsMatchOracle` | |
+| `doctor tool-surfaces` | done | `TestDoctorToolSurfacesMatchOracle`, `TestToolSurfaceFixMatchesOracle` | |
 | `doctor bytecode` | done (trivial) | — | Irreducible (no `.pyc` files). |
 | `regen` | done (refusal path) | — | Irreducible (Python maintainer tool). |
 | `materialize`, `migrate` (group + 12 leaves) | done | see maintenance.md | Owned by the maintenance area. |
@@ -66,12 +66,65 @@ test: `testkit` points its PyPI lookups at a closed local port (see
   Go-only test seam: `SPEC_KITTY_GO_PYPI_JSON_URL` (a URL template with one
   `%s` for the package) replaces `https://pypi.org/pypi/%s/json`; upstream
   hardcodes the URL, so these paths are tested Go-only against a fake index
-  (`compat_latest_test.go`); install method is always `unknown`.
-* `--plan-json`: compared up to `migrations`; `effects` / `dispositions`
-  are emitted empty (Remaining work).
+  (`compat_latest_test.go`); install method is always `unknown`
+  (irreducible, below). `compat.safety_modes` is ported: doctor
+  subcommands and `orchestrator-api` verbs are classified by their
+  mutating flags, so read-only doctor leaves nag and pass the schema gate.
+* **Tool-surface engine** (`internal/toolsurface`): the owner assessments
+  of `upgrade/assessment.py` and `tool_surface/*` — `global_assets`,
+  `managed_skills` (+ skills manifest, backups, prune), `command_skills`,
+  `provisioning`, `agent_profiles`, `native_config`, `session_presence`,
+  `plugin_bundle` — produce coalesced `PhysicalEffect`s (upstream effect
+  ids), dispositions, diagnostics and rechecks. `--plan-json` emits the
+  full `effects` / `dispositions` / `diagnostics` / roots / artifacts;
+  `--dry-run` counts them and flags incomplete previews; the real run
+  applies the prepared owner batches with upstream rechecks (input-root
+  changes become `surface_repair_failed`), `repair_preparation_failed`,
+  `drift_unresolved` (exit 1) and absolute repaired/regenerated paths.
+  Tested by `TestUpgradePlanEffectsMatchOracle` (two agent mixes, fresh and
+  drifted, `--plan-json` / `--dry-run` / `--json` / commit / trees) and
+  `TestUpgradeCurrentProjectMatchesOracle` (full plan comparison).
+* **Pack skills** (MAINT-11): org/project charter-pack skill catalogs
+  (`org-charter.yaml` `required_skills` / `skill_namespace`,
+  `activated_skills`), rendered `<ns>-<id>` skills with upstream
+  `source_hash`, staging under `.kittify/runtime/pack-skills`, drift /
+  stale / orphaned / missing / unresolvable findings, `doctor skills --fix`
+  projection and the graphless-org-pack rich WARNING lines.
+* **config.yaml writers** keep comments and styles (rtyaml round trip):
+  provisioning (`mission_type_activations`), charter seeding and the
+  identity writer (`TestCommentedConfigMatchesOracle`).
 
 ## Library API added in wave 5
 
+* `toolsurface` (new): effect model — `FileState` (`Absent`, `FileOf`,
+  `DirOf`), `Root`, `Proof`, `Action`, `Effect` (`NewEffect`, `ID`,
+  `Destination`), `Coalesce` / `MustCoalesce`, `Phases`, `Disposition`
+  (`NewDisposition`), `Diagnostic` (`Diag`), `Artifact`, `Assessment`
+  (`Incomplete`, `HasErrors`, `EffectIDs`), `ApplyResult`, `Digest`;
+  owners — `AssessGlobalAssets`, `CatalogSkill` / `BuiltinCatalog` /
+  `ProjectSkillCatalog`, `AssessProjectSkills` (`SkillAssessOptions`),
+  `AssessSkillInstallation` / `ApplyProjectSkills`, `PrepareCommands` /
+  `ApplyCommands` (`CommandOptions`, `CommandEntry`, `LoadCommandManifest`,
+  `SerializeCommandManifest`), `VerifyCommandSkills`, `PrepareProvisioning`
+  (`Provisioning.Effects`, `IsConfigError`), `LocalPresenceContent`;
+  surfaces — `RunToolSurfaces` (`Outcome`, `Report`, `Finding`, `Status`,
+  `RepairResult`), `CountSurfaces`, `AllKinds`, `KindTokens`,
+  `KindFromToken`; upgrade — `PrepareUpgradeRepairs` → `UpgradeRepairs`
+  (`Owners`, `Complete`, `Effects`, `Plan*JSON`, `PreservedCount`,
+  `ErrorMessages`, `ApplyProvisioning`, `Apply` → `UpgradeApplyReport`);
+  pack skills — `PreparePackSkills`, `FindPackSkillFindings`
+  (`PackSkillFinding`), `ProjectPackSkills`, `PackSkillCatalogError`;
+  init drift policy — `RunSurfaceRepair` (`DriftPolicySummary`);
+  `LogWriter` (rich WARNING sink, set by commands in non-JSON modes).
+* `bootstrap`: `Family` / `FamilyEffect`, `AssessRuntimeFamily`,
+  `AssessCommandsFamily`, `AssessSkillsFamily`, `EnsureSkillsSelection`,
+  `ApplySelectedFamilies`; prepared writes carry ownership proofs.
+* `agents`: `RenderSkillsManifest`, `SkillEntry.Provenance` /
+  `WithProvenance`, `SameEntry`; `VibeSkillPathConfigured` /
+  `PrepareVibeSkillPath` / `EnsureVibeSkillPath` read `.vibe/config.toml`
+  with `pytoml` (MAINT-15, `TestVibeSkillPathMatchesUpstream`).
+* `kittify`: `RenderConfigUpdate` (comment-preserving config render);
+  `EnsureIdentity` keeps comments.
 * `kittify`: `VersionStamp` (`CaptureVersionStamp`, `Restore`, `Version`),
   `Metadata.NormalizeAndSaveLegacyIDs`, `LegacyMigrationID`,
   `CanonicalSchemaCapabilities`; `StampSchemaVersion` writes like
@@ -85,6 +138,25 @@ test: `testkit` points its PyPI lookups at a closed local port (see
   `dependencies: []` and keeps flow sequences (FrontmatterManager.read);
   `rich` table cells keep whitespace runs when wrapping; `testkit`
   environment sets the PyPI seam.
+* Additive extensions in wave 5 TSE: `rich.Segment`, `rich.RenderSegments`,
+  `rich.RenderStyled`, `rich.ColorSystemOf`, `rich.StyledPanelLines`
+  (`PanelSpec`), `rich.StyledMarkupLines` (`MarkupLine`) — styled
+  segments / panels / markup lines under the detected colour system (used
+  by the init picker, banner, panels, step tree); `rich.PaddedTable`
+  (rich `Table(box=None, padding=(0, 2), show_edge=False)`: min widths,
+  collapse, ellipsis, crop, markup cells, styles — the doctor tables);
+  `rich.PrintNoMarkup` (`console.print(markup=False)`, highlighted on a
+  TTY); `missionstate.WriteRefusal` is called (not changed) for the
+  foreign-checkout `--fix` refusal.
+* Changes in area DOC packages for skill reprojection: `charter activate` /
+  `charter deactivate` (`internal/commands/doctrine/charter_activate.go`)
+  end with `reproject_pack_skills` (`toolsurface.ReprojectPackSkills`:
+  `Skill file synced` / `Skill file preserved` lines, refusal exit 1);
+  `charter.Activate` materializes an absent `activated_skills` from the org
+  packs' `required_skills` (new `charter.OrgRequiredIDs`, PackContext
+  absent-key default); `charter.LoadOrgDRGLenient` skips a fragment-less
+  pack before `load_org_pack` (no spurious `PACK_LEVEL_MISSING`
+  UserWarning). Test: `TestCharterSkillReprojectionMatchesOracle`.
 
 ## Irreducible differences
 
@@ -98,18 +170,22 @@ test: `testkit` points its PyPI lookups at a closed local port (see
   hash-randomised set; Go sorts.
 * `doctor bytecode` / `regen` (MAINT-14): no bytecode exists; fixture
   regeneration is a Python maintainer tool.
-* Install-method detection: the Go binary is not installed by pip/pipx/uv,
-  so `install_method` is always `unknown`.
-* Terminal styling: the Go console emits no SGR colours on a TTY (picker,
-  nag, notices).
+* Install-method detection: upstream inspects the Python interpreter
+  (`sys.executable` under uv/pipx/Homebrew prefixes, a source checkout,
+  the distribution's `INSTALLER` record). A standalone Go binary has none
+  of these, so `install_method` is always `unknown` — the same answer
+  upstream gives for an install outside those channels (the oracle venv
+  install also reports `unknown`).
+* `init` progress tree on a TTY: upstream drives a rich `Live` display
+  whose transient redraw frames depend on wall-clock refresh timing (8/s)
+  and step durations; Go prints only the final coloured tree, so the
+  visible end state matches (`TestInitColourOutputMatchesOracle` compares
+  everything before and after the transient region).
 
 ## Remaining work
 
-* MAINT-03 / MAINT-11 / MAINT-12 / MAINT-13: the tool-surface assessment
-  engine (`upgrade/assessment.py`, `tool_surface/*`, `skills/installer.py`,
-  `skills/command_installer.py`, about 7k upstream lines) is not ported:
-  `--plan-json` `effects`/`dispositions` stay empty, `doctor skills`
-  `pack_skills` is `[]`, `doctor tool-surfaces --fix` lists surface ids
-  instead of effect ids, and plugin bundles are not staged.
-* MAINT-15: `agents.VibeSkillPathConfigured` still uses a regex TOML read;
-  `internal/pytoml` (PYF-03) has not landed on functional-parity yet.
+* Cross-area: upstream `core.agent_config.load_agent_config` logs a rich
+  `WARNING Config file not found: <root>/.kittify/config.yaml` on every
+  call when `.kittify/` exists without `config.yaml` (e.g. four lines for
+  `doctor skills`); `kittify.LoadAgentConfig` is silent. Matching it needs
+  per-command call counts across areas.
