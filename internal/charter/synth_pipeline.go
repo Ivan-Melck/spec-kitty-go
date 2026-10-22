@@ -807,11 +807,11 @@ func (a *SynthAdapter) generate(req *SynthesisRequest, t SynthTarget, snap *json
 // ProvEntry is synthesize_pipeline.ProvenanceEntry.
 type ProvEntry struct {
 	URN, Kind, Slug, ContentHash, InputsHash, AdapterID, AdapterVersion string
-	SynthesizerVersion                                                 string
-	SourceSection                                                      *string
-	SourceURNs, SourceInputIDs                                         []string
-	GeneratedAt, ProducedAt, CorpusSnapshotID, RunID                   string
-	EvidenceHash, Notes                                                *string
+	SynthesizerVersion                                                  string
+	SourceSection                                                       *string
+	SourceURNs, SourceInputIDs                                          []string
+	GeneratedAt, ProducedAt, CorpusSnapshotID, RunID                    string
+	EvidenceHash, Notes                                                 *string
 }
 
 // Object is model_dump(mode="python") (field order).

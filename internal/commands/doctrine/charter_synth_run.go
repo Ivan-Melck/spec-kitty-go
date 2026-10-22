@@ -238,7 +238,7 @@ func synthHandleError(ctx *cli.Context, jsonMode bool, adapter string, warnings 
 		if jsonMode {
 			synthFailureEnvelope(w, adapter, append(warnings, detail))
 		} else {
-			cprint(ctx.Stderr, "%s", "[red]Error:[/red] "+uconsoleEscape(detail))
+			cprint(ctx.Stderr, "%s", "[red]Error:[/red] "+detail)
 		}
 	case errors.As(err, &se) && se.Type == "NeutralityGateViolation":
 		synthPanel(ctx.Stderr, se.Msg, se.Type)

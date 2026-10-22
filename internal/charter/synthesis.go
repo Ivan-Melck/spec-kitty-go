@@ -96,12 +96,6 @@ func CatalogIsEstablished(root string) bool {
 	return prior && ReadInterview(InterviewPath(root)) != nil
 }
 
-// HasProjectArtifacts approximates scan_project_artifacts: any doctrine
-// artifact file under the project pack root.
-func HasProjectArtifacts(root string) bool {
-	return liveArtifactCount(root) > 0 || countRGlob(filepath.Join(root, filepath.FromSlash(dct.ProjectPackRoot), "toolguides"), ".toolguide.yaml") > 0 ||
-		countRGlob(filepath.Join(root, filepath.FromSlash(dct.ProjectPackRoot), "paradigms"), ".paradigm.yaml") > 0
-}
 
 // PlannedFreshPaths / PlannedFreshDeletes are _planned_fresh_project_layer_*.
 func PlannedFreshPaths() []string {

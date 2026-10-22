@@ -1,7 +1,6 @@
 package doctrine
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,10 +28,6 @@ func init() {
 
 const adapterHelp = "Adapter to use. 'generated' (default) validates agent-authored YAML under .kittify/charter/generated/. 'fixture' is offline/testing only."
 
-// errPipelineNotPorted is reported when synthesis would run the agent
-// artifact pipeline (staging, neutrality gate, project DRG emission),
-// which this build does not implement.
-var errPipelineNotPorted = errors.New("Synthesis of agent-generated doctrine artifacts (the --adapter generated/fixture pipeline) is not supported by this build of spec-kitty. Run the synthesis with the Python spec-kitty CLI.")
 
 // writeRootError is resolve_charter_write_root's LinkedWorktreeCharterWriteError.
 func writeRootError() error {
@@ -114,8 +109,26 @@ func runCharterSynthesize(ctx *cli.Context) error {
 	}
 	root := repoRoot()
 	fresh := adapter == "generated" && !charter.HasGeneratedArtifacts(root) && !ctx.Bool("dry-run-evidence") && fileExists(charter.Path(root, charter.CharterYAML))
-	if fresh && charter.HasProjectArtifacts(root) {
-		return synthFailure(ctx, jsonMode, adapter, warnings, "Unexpected error: "+errPipelineNotPorted.Error())
+	if fresh {
+		res, err := charter.SynthesizeProjectLayer(root, app.Version, dryRun)
+		if err != nil {
+			return synthHandleError(ctx, jsonMode, adapter, warnings, err)
+		}
+		if res != nil {
+			if jsonMode {
+				jsonOut(w, res, jsonx.SortedPretty)
+				return nil
+			}
+			op := "preserved"
+			if dryRun {
+				op = "would preserve"
+			}
+			cprint(w, "%s", "[green]Charter synthesis[/green]: "+op+" project doctrine and provenance.")
+			for _, x := range res.GetList("warnings") {
+				cprint(w, "%s", "[yellow]Warning[/yellow]: "+fmt.Sprint(x))
+			}
+			return nil
+		}
 	}
 	if fresh && !charter.CatalogIsEstablished(root) {
 		if dryRun {

@@ -675,6 +675,10 @@ func LoadSynthManifest(p string) (*SynthManifest, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseSynthManifest(b)
+}
+
+func parseSynthManifest(b []byte) (*SynthManifest, error) {
 	o, err := yamlx.ParseObject(b)
 	if err != nil {
 		return nil, err
