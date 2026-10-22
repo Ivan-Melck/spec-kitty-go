@@ -72,7 +72,7 @@ func (d *Doc) Apply(after *jsonx.Object, s *Snapshot) {
 func mergeMap(m *Map, before, after *jsonx.Object, s *Snapshot) {
 	// keys removed by the writer (string keys only: jsonx keys are text)
 	for _, k := range m.Keys() {
-		ks, ok := keyText(k)
+		ks, ok := m.keyText(k)
 		if ok && !after.Has(ks) {
 			m.Delete(k)
 		}
@@ -125,7 +125,12 @@ func mergeValue(rv, bv any, hasB bool, av any, s *Snapshot) (any, bool) {
 	}
 }
 
-func keyText(k any) (string, bool) {
+// keyText is the yamlx key of a round-trip key: the scalar key's source
+// text, else the string itself.
+func (m *Map) keyText(k any) (string, bool) {
+	if t, ok := m.texts[hashKey(k)]; ok {
+		return t, true
+	}
 	switch x := k.(type) {
 	case string:
 		return x, true
@@ -136,11 +141,9 @@ func keyText(k any) (string, bool) {
 }
 
 func findKey(m *Map, key string) (any, bool) {
-	if m.Has(key) {
-		for _, k := range m.Keys() {
-			if ks, ok := keyText(k); ok && ks == key {
-				return k, true
-			}
+	for _, k := range m.Keys() {
+		if ks, ok := m.keyText(k); ok && ks == key {
+			return k, true
 		}
 	}
 	return nil, false
@@ -156,7 +159,7 @@ func reorder(m *Map, after *jsonx.Object) {
 	var slots []int
 	var keyed []entry
 	for i, e := range m.entries {
-		if ks, ok := keyText(e.key); ok {
+		if ks, ok := m.keyText(e.key); ok {
 			if _, in := pos[ks]; in {
 				slots = append(slots, i)
 				keyed = append(keyed, e)
@@ -167,8 +170,8 @@ func reorder(m *Map, after *jsonx.Object) {
 	copy(sorted, keyed)
 	for i := 1; i < len(sorted); i++ {
 		for j := i; j > 0; j-- {
-			a, _ := keyText(sorted[j-1].key)
-			b, _ := keyText(sorted[j].key)
+			a, _ := m.keyText(sorted[j-1].key)
+			b, _ := m.keyText(sorted[j].key)
 			if pos[a] <= pos[b] {
 				break
 			}

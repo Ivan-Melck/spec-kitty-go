@@ -182,6 +182,7 @@ func (c *constructor) mapping(n *pyyaml.Node, m *Map) {
 			valueCommentExtend(m.ca(), k, vn.Comment)
 		}
 		m.Set(key, val)
+		m.setText(key, kn)
 		lastKey, lastValueIsNone, first = key, val == nil, false
 	}
 	if merge != nil {

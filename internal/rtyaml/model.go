@@ -54,9 +54,21 @@ type Map struct {
 	Flow    *bool // fa._flow_style
 	Tag     *Tag  // a tag kept from loading (unknown tags)
 	Merge   *Merge
-	IsSet   bool // CommentedSet
-	Ordered bool // CommentedOrderedMap (!!omap)
-	keyMap  bool // CommentedKeyMap
+	IsSet   bool              // CommentedSet
+	Ordered bool              // CommentedOrderedMap (!!omap)
+	keyMap  bool              // CommentedKeyMap
+	texts   map[string]string // source text of scalar keys (the yamlx key)
+}
+
+// setText records the source text of a scalar key node.
+func (m *Map) setText(key any, kn *pyyaml.Node) {
+	if kn.Kind != pyyaml.ScalarNode {
+		return
+	}
+	if m.texts == nil {
+		m.texts = map[string]string{}
+	}
+	m.texts[hashKey(key)] = kn.Value
 }
 
 type entry struct {
@@ -177,6 +189,12 @@ func (m *Map) addMerge(mv *Merge) {
 			}
 			m.index[e.hk] = len(m.entries)
 			m.entries = append(m.entries, entry{e.key, e.hk, e.val})
+			if t, ok := v.texts[e.hk]; ok {
+				if m.texts == nil {
+					m.texts = map[string]string{}
+				}
+				m.texts[e.hk] = t
+			}
 		}
 	}
 }
