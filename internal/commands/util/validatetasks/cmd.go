@@ -217,6 +217,9 @@ func RepairLaneMismatch(path, agent, shellPID string, warn io.Writer) (bool, str
 	if err != nil || !mm {
 		return false, "", err
 	}
+	// The read, the repair and the write are one hold of the Mission write lock.
+	release := missionWriteLock(missionDirOf(path))
+	defer release()
 	content, err := readUTF8Sig(path)
 	if err != nil {
 		return false, "Failed to parse frontmatter: " + err.Error(), nil

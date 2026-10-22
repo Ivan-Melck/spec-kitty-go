@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"fmt"
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
 
@@ -62,6 +63,29 @@ dependencies: []
 # WP03
 `
 
+// compareLocks compares the Mission write-lock files a repair leaves under
+// the git common dir (.git/spec-kitty-locks/<key>.status.lock, mode 0600,
+// empty; the holder sidecar removed).
+func compareLocks(t *testing.T, p *testkit.Pair) {
+	t.Helper()
+	list := func(s *testkit.Sandbox) string {
+		var out []string
+		dir := filepath.Join(s.Dir, ".git", "spec-kitty-locks")
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if e.Name() == "__project__.status.lock" {
+				continue // written by the oracle's init, not by validate-tasks
+			}
+			info, _ := e.Info()
+			out = append(out, fmt.Sprintf("%s %v %d", e.Name(), info.Mode(), info.Size()))
+		}
+		return strings.Join(out, "\n")
+	}
+	if g, o := list(p.Go), list(p.Oracle); g != o {
+		t.Errorf("lock files differ\n%s", testkit.Diff(o, g))
+	}
+}
+
 func legacyFixtures(s *testkit.Sandbox) {
 	s.WriteFile(".kittify/config.yaml", "agents:\n  available: [claude]\n")
 	s.WriteFile("kitty-specs/001-legacy/spec.md", "# spec\n")
@@ -90,6 +114,7 @@ func TestValidateTasksParity(t *testing.T) {
 	p.CompareTree("kitty-specs", true)
 	p.Compare(true, "validate-tasks", "--mission", "001-legacy", "--fix", "--agent", "codex", "--shell-pid", "4242")
 	p.CompareTree("kitty-specs", true)
+	compareLocks(t, p)
 	p.Compare(true, "validate-tasks", "--mission", "001-legacy")
 
 	p.Both(legacyFixtures)
@@ -99,6 +124,7 @@ func TestValidateTasksParity(t *testing.T) {
 	p.Compare(true, "validate-tasks", "--all", "--fix", "--agent", "codex", "--shell-pid", "7")
 	p.CompareTree("kitty-specs", true)
 	p.CompareTree(".worktrees", true)
+	compareLocks(t, p)
 	p.Compare(true, "validate-tasks", "--all")
 
 	// A narrow console collapses and wraps the table and summary panel.
