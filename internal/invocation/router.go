@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 )
 
@@ -19,6 +20,14 @@ type Registry struct {
 func NewRegistry(root string) *Registry {
 	r := &Registry{merged: map[string]*dct.Profile{}}
 	off := dct.NewOffering(root, dct.OrgRoots(root))
+	// build_active_charter_service: language-scope filter with
+	// active_languages=infer_repo_languages(repo_root) (None admits all).
+	if langs, known := charter.InferRepoLanguages(root, nil, false); known {
+		off.Languages = langs
+		if off.Languages == nil {
+			off.Languages = []string{}
+		}
+	}
 	act, _ := dct.ActivatedProfiles(root)
 	for _, a := range off.Repo(dct.AgentProfile).List() {
 		if act != nil && !act[a.ID] {
