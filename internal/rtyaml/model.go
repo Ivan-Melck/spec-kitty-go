@@ -31,7 +31,7 @@ type Tag struct {
 
 // CommentAttr is ruamel.yaml.comments.Comment (version 0 comments).
 type CommentAttr struct {
-	Comment *pyyaml.PyList          // [post, pre-list] of the container
+	Comment *pyyaml.PyList            // [post, pre-list] of the container
 	Items   map[string]*pyyaml.PyList // per key / index: [key post, key pre, value post, value pre]
 	End     []*pyyaml.CommentToken    // end-of-document comments
 }
@@ -201,7 +201,7 @@ func (s *Seq) ca() *CommentAttr {
 // ---------------------------------------------------------------- scalars
 
 // Str is a ScalarString (LiteralScalarString '|', FoldedScalarString '>',
-// SingleQuotedScalarString '\'', DoubleQuotedScalarString '"',
+// SingleQuotedScalarString '\”, DoubleQuotedScalarString '"',
 // PlainScalarString 'p').
 type Str struct {
 	V       string

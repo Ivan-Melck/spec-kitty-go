@@ -153,7 +153,9 @@ func (r *representer) str(x *Str) *dnode {
 	return r.scalar(pyyaml.TagStr, x.V, 0, x.Anchor)
 }
 
-func isSpace(r rune) bool { return strings.ContainsRune(" \t\n\r\v\f\u0085   ", r) || r == 0x1c || r == 0x1d || r == 0x1e || r == 0x1f }
+func isSpace(r rune) bool {
+	return strings.ContainsRune(" \t\n\r\v\f\u0085   ", r) || r == 0x1c || r == 0x1d || r == 0x1e || r == 0x1f
+}
 
 func (r *representer) boolNode(v bool, anchor *Anchor) *dnode {
 	s := "false"
