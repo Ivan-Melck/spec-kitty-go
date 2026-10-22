@@ -54,8 +54,11 @@ type (
 		t   Timestamp
 		src string
 	}
-	pyTagged struct{ value, tag string; style rune } // ruamel TaggedScalar
-	pyBytes  struct {
+	pyTagged struct {
+		value, tag string
+		style      rune
+	} // ruamel TaggedScalar
+	pyBytes struct {
 		b   []byte
 		src string
 	}
