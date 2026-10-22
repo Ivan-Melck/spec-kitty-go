@@ -65,6 +65,27 @@ func maskDur(s string) string {
 // compareMasked compares exit code and stdout/stderr with duration masking.
 func compareMasked(t *testing.T, p *testkit.Pair, stderr bool, args ...string) (testkit.Result, testkit.Result) {
 	t.Helper()
+	return compareMaskedWith(t, p, stderr, nil, args...)
+}
+
+// reReflogMinute matches the minute-resolution reflog time `ops log` prints.
+var reReflogMinute = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2} \d{2}:\d{2}\b`)
+
+// maskReflogMinute masks `ops log` reflog times (same width, so the table
+// layout is still compared): the two sandboxes' commits may straddle a
+// minute boundary.
+func maskReflogMinute(s string) string {
+	return reReflogMinute.ReplaceAllString(s, "YYYY-MM-DD hh:mm")
+}
+
+// compareMaskedWith is compareMasked with an extra mask applied to both
+// sides after the standard normalisation.
+func compareMaskedWith(t *testing.T, p *testkit.Pair, stderr bool, extra func(string) string, args ...string) (testkit.Result, testkit.Result) {
+	t.Helper()
+	if extra == nil {
+		extra = func(s string) string { return s }
+	}
+	maskDur := func(s string) string { return extra(maskDur(s)) }
 	g, o := p.Run(args...)
 	if g.Code != o.Code {
 		t.Errorf("%s: exit go=%d oracle=%d\n--- go:\n%s%s\n--- oracle:\n%s%s", strings.Join(args, " "), g.Code, o.Code, g.Stdout, g.Stderr, o.Stdout, o.Stderr)
