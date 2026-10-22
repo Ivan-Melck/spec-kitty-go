@@ -1,7 +1,6 @@
 package doctrine
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,11 +27,6 @@ func init() {
 }
 
 const adapterHelp = "Adapter to use. 'generated' (default) validates agent-authored YAML under .kittify/charter/generated/. 'fixture' is offline/testing only."
-
-// errPipelineNotPorted is reported when synthesis would run the agent
-// artifact pipeline (staging, neutrality gate, project DRG emission),
-// which this build does not implement.
-var errPipelineNotPorted = errors.New("Synthesis of agent-generated doctrine artifacts (the --adapter generated/fixture pipeline) is not supported by this build of spec-kitty. Run the synthesis with the Python spec-kitty CLI.")
 
 // writeRootError is resolve_charter_write_root's LinkedWorktreeCharterWriteError.
 func writeRootError() error {
@@ -114,8 +108,26 @@ func runCharterSynthesize(ctx *cli.Context) error {
 	}
 	root := repoRoot()
 	fresh := adapter == "generated" && !charter.HasGeneratedArtifacts(root) && !ctx.Bool("dry-run-evidence") && fileExists(charter.Path(root, charter.CharterYAML))
-	if fresh && charter.HasProjectArtifacts(root) {
-		return synthFailure(ctx, jsonMode, adapter, warnings, "Unexpected error: "+errPipelineNotPorted.Error())
+	if fresh {
+		res, err := charter.SynthesizeProjectLayer(root, app.Version, dryRun)
+		if err != nil {
+			return synthHandleError(ctx, jsonMode, adapter, warnings, err)
+		}
+		if res != nil {
+			if jsonMode {
+				jsonOut(w, res, jsonx.SortedPretty)
+				return nil
+			}
+			op := "preserved"
+			if dryRun {
+				op = "would preserve"
+			}
+			cprint(w, "%s", "[green]Charter synthesis[/green]: "+op+" project doctrine and provenance.")
+			for _, x := range res.GetList("warnings") {
+				cprint(w, "%s", "[yellow]Warning[/yellow]: "+fmt.Sprint(x))
+			}
+			return nil
+		}
 	}
 	if fresh && !charter.CatalogIsEstablished(root) {
 		if dryRun {
@@ -154,70 +166,7 @@ func runCharterSynthesize(ctx *cli.Context) error {
 		printSynthesisCommitReminder(w, root)
 		return nil
 	}
-	urls, err := charter.LoadURLListFromConfig(root)
-	if err != nil {
-		return synthFailure(ctx, jsonMode, adapter, warnings, err.Error())
-	}
-	var cs *charter.CodeSignals
-	if !ctx.Bool("skip-code-evidence") {
-		s := charter.CollectCodeSignals(root)
-		cs = &s
-	}
-	var corpusID string
-	var corpusN int
-	haveCorpus := false
-	if !ctx.Bool("skip-corpus") {
-		key := "generic"
-		if cs != nil {
-			key = cs.StackID
-		}
-		if id, n, ok := charter.LoadCorpus(key); ok {
-			corpusID, corpusN, haveCorpus = id, n, true
-		} else {
-			warnings = append(warnings, "No corpus found for profile '"+key+"' or 'generic'; synthesis proceeds without corpus evidence.")
-		}
-	}
-	if !jsonMode {
-		for _, x := range warnings {
-			cprint(w, "%s", "[yellow]⚠ "+fmt.Sprint(x)+"[/yellow]")
-		}
-	}
-	if ctx.Bool("dry-run-evidence") {
-		if jsonMode {
-			var code, corpus any
-			if cs != nil {
-				code = jsonx.NewObject("stack_id", cs.StackID, "primary_language", cs.PrimaryLanguage, "representative_files_count", len(cs.Representative))
-			}
-			if haveCorpus {
-				corpus = jsonx.NewObject("snapshot_id", corpusID, "entries_count", corpusN)
-			}
-			jsonOut(w, jsonx.NewObject("result", "success", "adapter", jsonx.NewObject("id", adapter, "version", "evidence-dry-run"),
-				"written_artifacts", []any{}, "warnings", warnings, "mode", "evidence_dry_run",
-				"evidence", jsonx.NewObject("code_signals", code, "url_list_count", len(urls), "corpus", corpus)), jsonx.SortedPretty)
-			return cli.Exit(0)
-		}
-		cprint(w, "[bold]Evidence dry-run summary:[/bold]")
-		if cs != nil {
-			cprintRaw(w, fmt.Sprintf("  Code signals: stack=%s, lang=%s", cs.StackID, cs.PrimaryLanguage))
-			cprintRaw(w, fmt.Sprintf("  Representative files: %d found", len(cs.Representative)))
-		} else {
-			cprintRaw(w, "  Code signals: none (skipped or not detected)")
-		}
-		cprintRaw(w, fmt.Sprintf("  URL list: %d URL(s) configured", len(urls)))
-		if haveCorpus {
-			cprintRaw(w, fmt.Sprintf("  Corpus: %s (%d entries)", corpusID, corpusN))
-		} else {
-			cprintRaw(w, "  Corpus: none")
-		}
-		for _, x := range warnings {
-			cprint(w, "%s", "  [yellow]Warning: "+fmt.Sprint(x)+"[/yellow]")
-		}
-		return cli.Exit(0)
-	}
-	if _, err := charter.BuildSynthesisRequest(root, adapter); err != nil {
-		return synthFailure(ctx, jsonMode, adapter, warnings, err.Error())
-	}
-	return synthFailure(ctx, jsonMode, adapter, warnings, "Unexpected error: "+errPipelineNotPorted.Error())
+	return synthesizeMain(ctx, root, adapter)
 }
 
 func printSynthesisCommitReminder(w interface{ Write([]byte) (int, error) }, root string) {
@@ -244,83 +193,6 @@ func charterResynthesizeCmd() *cli.Command {
 		},
 		Run: runCharterResynthesize,
 	}
-}
-
-func runCharterResynthesize(ctx *cli.Context) error {
-	w := ctx.Stdout
-	jsonMode := ctx.Bool("json")
-	fail := func(msg string) error {
-		emitCharterError(w, jsonMode, msg, "", nil)
-		return cli.Exit(1)
-	}
-	if err := writeRootError(); err != nil {
-		return fail(err.Error())
-	}
-	root := repoRoot()
-	if fileExists(charter.Path(root, charter.CharterYAML)) {
-		if err := charter.AssertBundleCompatible(root); err != nil {
-			return fail(err.Error())
-		}
-	}
-	warnings := []any{}
-	if _, err := charter.LoadURLListFromConfig(root); err != nil {
-		return fail(err.Error())
-	}
-	if !ctx.Bool("skip-corpus") {
-		key := "generic"
-		if !ctx.Bool("skip-code-evidence") {
-			key = charter.CollectCodeSignals(root).StackID
-		}
-		if _, _, ok := charter.LoadCorpus(key); !ok {
-			warnings = append(warnings, "No corpus found for profile '"+key+"' or 'generic'; synthesis proceeds without corpus evidence.")
-		}
-	}
-	if !jsonMode {
-		for _, x := range warnings {
-			cprint(w, "%s", "[yellow]⚠ "+fmt.Sprint(x)+"[/yellow]")
-		}
-	}
-	req, err := charter.BuildSynthesisRequest(root, ctx.String("adapter"))
-	if err != nil {
-		return fail(err.Error())
-	}
-	if ctx.Bool("list-topics") {
-		topics := charter.ResynthesisTopics(root, req)
-		if jsonMode {
-			jsonOut(w, jsonx.NewObject("result", "success", "topics", topics, "warnings", warnings), jsonx.Pretty)
-			return nil
-		}
-		pa, du, is := topics.GetList("project_artifacts"), topics.GetList("drg_urns"), topics.GetList("interview_sections")
-		if len(pa)+len(du)+len(is) == 0 {
-			cprint(w, "[yellow]No topic selectors available yet.[/yellow]")
-			return nil
-		}
-		if len(pa) > 0 {
-			cprint(w, "[bold]Project artifact selectors[/bold]")
-			for _, s := range pa {
-				cprintRaw(w, "  "+fmt.Sprint(s))
-			}
-		}
-		if len(du) > 0 {
-			cprint(w, "[bold]DRG URNs[/bold]")
-			for _, s := range du {
-				cprintRaw(w, "  "+fmt.Sprint(s))
-			}
-		}
-		if len(is) > 0 {
-			cprint(w, "[bold]Interview sections[/bold]")
-			for _, s := range is {
-				sel := fmt.Sprint(s)
-				cprintRaw(w, "  "+sel+"  (alias: "+strings.ReplaceAll(sel, "_", "-")+")")
-			}
-		}
-		return nil
-	}
-	if !ctx.IsSet("topic") {
-		return fail("Pass --topic <selector> or use --list-topics.")
-	}
-	emitCharterError(w, jsonMode, errPipelineNotPorted.Error(), "", nil)
-	return cli.Exit(1)
 }
 
 // ------------------------------------------------------------- preflight
