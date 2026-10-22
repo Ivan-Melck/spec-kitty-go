@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -121,6 +122,33 @@ func TestDiffReconcileSnapshotLoadErrors(t *testing.T) {
 		})
 		steps(t, p, false, []string{"reconcile", "--mission", "$M", "--json"}, []string{"reconcile", "--mission", "$M"})
 	}
+}
+
+// gitConfigState renders the repository-local git config (sorted) and the
+// info/attributes file, the merge-driver activation's observable surface.
+func gitConfigState(s *testkit.Sandbox) string {
+	lines := strings.Split(strings.TrimSpace(s.Exec("", "git", "config", "--local", "--list").Stdout), "\n")
+	sort.Strings(lines)
+	attrs := s.Exec("", "sh", "-c", "cat \"$(git rev-parse --git-common-dir)/info/attributes\" 2>/dev/null || echo '<no info/attributes>'").Stdout
+	return s.Normalize(strings.Join(lines, "\n") + "\n--\n" + attrs)
+}
+
+// TestDiffMergeDriverActivation covers CORE-10: merging an approved
+// dependency lane tip into a dependent lane runs under the ephemeral
+// merge-driver activation (driver git-config definitions persisted,
+// info/attributes seeding torn down).
+func TestDiffMergeDriverActivation(t *testing.T) {
+	p := newAnalyzedPair(t)
+	steps(t, p, false, []string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M"})
+	laneCommit(t, p, "lane-a", "feat(WP01): subtract", map[string]string{
+		"src/calc.py": "def add(a, b):\n    return a + b\n\n\ndef subtract(a, b):\n    return a - b\n",
+	})
+	oracleBoth(t, p, "agent", "status", "emit", "WP01", "--to", "approved", "--actor", "rev", "--force", "--reason", "ok", "--mission", "$M")
+	steps(t, p, false, []string{"agent", "action", "implement", "WP02", "--agent", "claude", "--mission", "$M"})
+	if g, o := gitConfigState(p.Go), gitConfigState(p.Oracle); g != o {
+		t.Errorf("git config differs:\n%s", testkit.Diff(o, g))
+	}
+	compareGit(t, p)
 }
 
 // TestDiffMissionCloseMerged covers CORE-15: closing a merged mission
