@@ -14,12 +14,21 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/fm"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
 
 // migrationStdout receives what a migration prints (the research CSV
 // report); upgrade points it at the command's stdout.
 var migrationStdout io.Writer = io.Discard
+
+// migrationStderr receives migration notices printed to stderr.
+var migrationStderr io.Writer = io.Discard
+
+// panelStderr prints a rich Panel to the migration stderr stream.
+func panelStderr(content, title string) {
+	rich.Panel(migrationStderr, content, title)
+}
 
 func ok() (bool, string) { return true, "" }
 

@@ -2,6 +2,7 @@ package kittify
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -33,6 +34,29 @@ func (m *Metadata) NormalizeAndSaveLegacyIDs(root string) []string {
 	}
 	m.Save(root)
 	return []string{"Normalized legacy constitution-era migration IDs to charter-era IDs"}
+}
+
+// LegacyMigrationID maps a constitution-era migration id to its charter-era id.
+func LegacyMigrationID(id string) (string, bool) {
+	n, ok := legacyMigrationIDs[id]
+	return n, ok
+}
+
+// CanonicalSchemaCapabilities is metadata.canonical_schema_capabilities: an
+// existing map is kept, a legacy list is merged into the canonical map, and
+// anything else becomes the canonical map.
+func CanonicalSchemaCapabilities(existing any) any {
+	switch t := existing.(type) {
+	case *jsonx.Object:
+		return t
+	case []any:
+		caps := capabilitiesObject()
+		for _, n := range t {
+			caps.Set(fmt.Sprint(n), true)
+		}
+		return caps
+	}
+	return capabilitiesObject()
 }
 
 // VersionStamp is metadata.VersionStamp: the whole metadata.yaml captured

@@ -554,6 +554,7 @@ func strList(s []string) []any {
 func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions) error {
 	w := ctx.Stdout
 	migrationStdout = w
+	migrationStderr = ctx.Stderr
 	baseline := captureGitBaseline(root)
 	current := detectProjectVersion(root)
 	if verr := validateUpgradeTarget(current, target); verr != "" {
