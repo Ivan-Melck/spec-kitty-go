@@ -213,8 +213,19 @@ func writeLegacyV2(s *testkit.Sandbox) {
 	s.WriteFile(f+"spec.md", "# Spec\n")
 }
 
+// writeLegacySpecify is a pre-0.2 spec-kit layout (.specify/, specs/).
+func writeLegacySpecify(s *testkit.Sandbox) {
+	s.WriteFile(".specify/memory/constitution.md", "# Constitution\n\nOld.\n")
+	s.WriteFile(".specify/templates/spec-template.md", "# Template\n")
+	s.WriteFile(".specify/scripts/bash/create-new-feature.sh", "#!/bin/bash\necho hi\n")
+	s.WriteFile("specs/001-old/spec.md", "# Old spec\n")
+	s.WriteFile("specs/001-old/tasks/WP01-old.md", "---\nwork_package_id: WP01\ntitle: Old\nlane: done\n---\n# WP01\n")
+	s.WriteFile(".claude/commands/specify.md", "---\ndescription: specify\n---\n# specify (spec-kit)\n")
+}
+
 func TestUpgradeLegacyLayoutCorporaMatchOracle(t *testing.T) {
 	for _, c := range []corpus{
+		{name: "v0.1-specify", ai: "claude", version: "0.1.0", noStamp: true, mutate: writeLegacySpecify},
 		{name: "v3.0-charter", ai: "claude", version: "3.0.3", mutate: writeLegacyV3},
 		{name: "v2.0", ai: "claude,codex", version: "2.0.0", noStamp: true, mutate: writeLegacyV2},
 		{name: "v0.9-claude", ai: "claude", version: "0.9.0", noStamp: true, mutate: writeLegacy09},
