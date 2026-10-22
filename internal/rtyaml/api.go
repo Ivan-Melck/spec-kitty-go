@@ -38,16 +38,22 @@ func Load(in pyyaml.Input) (*Doc, error) {
 func LoadString(src string) (*Doc, error) { return Load(pyyaml.StringInput(src)) }
 
 // Dump is `yaml.dump(d.Root, stream)` on the instance that loaded d.
-func (d *Doc) Dump() (string, error) { return dump(d.Root, d.Info) }
+func (d *Doc) Dump() (string, error) { return dump(d.Root, d.Info, 0) }
+
+// DumpWidth is Dump with `yaml.width = width`.
+func (d *Doc) DumpWidth(width int) (string, error) { return dump(d.Root, d.Info, width) }
+
+// DumpWidth is Dump with `yaml.width = width` on a fresh instance.
+func DumpWidth(data any, width int) (string, error) { return dump(data, pyyaml.DocInfo{}, width) }
 
 // Dump is `yaml.dump(data, stream)` with a fresh YAML() instance: the
 // round-trip representer, serializer and emitter (block style, indent 2,
 // width 80, allow_unicode). data is what Load returns, possibly edited,
 // with plain Go values (string, bool, int, int64, *big.Int, float64, nil,
 // []any, *jsonx.Object) standing for Python's plain types.
-func Dump(data any) (string, error) { return dump(data, pyyaml.DocInfo{}) }
+func Dump(data any) (string, error) { return dump(data, pyyaml.DocInfo{}, 0) }
 
-func dump(data any, info pyyaml.DocInfo) (out string, err error) {
+func dump(data any, info pyyaml.DocInfo, width int) (out string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			ee, ok := r.(*EmitterError)
@@ -60,6 +66,9 @@ func dump(data any, info pyyaml.DocInfo) (out string, err error) {
 	v11 := info.Version != nil && *info.Version == [2]int{1, 1}
 	em := newEmitter()
 	em.v11 = v11
+	if width > em.bestSequenceIndent*2 {
+		em.bestWidth = width
+	}
 	s := &serializer{em: em, nodes: map[*dnode]bool{}, anchors: map[*dnode]*string{}, v11: v11,
 		version: info.Version, tags: info.Tags}
 	rep := &representer{objects: map[any]*dnode{}, v11: v11}
