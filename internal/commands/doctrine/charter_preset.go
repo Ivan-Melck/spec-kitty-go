@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // renderCodedError is _coded_errors.render_coded_error.
@@ -63,6 +64,15 @@ func runApplyPreset(ctx *cli.Context, preset string) error {
 		err = charter.ApplyPresetPlan(root, plan, ctx.Bool("force"))
 	}
 	if err != nil {
+		var ue *charter.PresetUnexpectedError
+		if errors.As(err, &ue) {
+			// Not caught by _plan_and_apply_preset: an uncaught traceback.
+			return pyCrash(ctx, charter.PyExceptionClass(ue.Err), ue.Err.Error(),
+				rich.Frame{Name: "activate_cmd", Line: 909}, rich.Frame{Name: "_activate_preset", Line: 832},
+				rich.Frame{Name: "_plan_and_apply_preset", Line: 806}, rich.Frame{Name: "plan_preset_application", Line: 547},
+				rich.Frame{Name: "_resolve_preset_ids", Line: 428}, rich.Frame{Name: "_check_artifact_ids", Line: 369},
+				rich.Frame{Name: "_check_anti_patterns", Line: 355}, rich.Frame{Name: "_load_anti_pattern_ids", Line: 300})
+		}
 		renderCharterErr(w, err, jsonMode)
 		return cli.Exit(1)
 	}
