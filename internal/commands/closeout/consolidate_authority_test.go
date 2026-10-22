@@ -76,6 +76,26 @@ func TestDiffConsolidateRollbackAuthority(t *testing.T) {
 	p.CompareTree(".kittify/runtime", true)
 }
 
+// TestDiffConsolidateResumeLaneDiverged covers the resume anchor guard (H3):
+// a lane branch rewritten after the interrupted attempt diverges from its
+// persisted pre-interrupt tip and the resume refuses.
+func TestDiffConsolidateResumeLaneDiverged(t *testing.T) {
+	p := acceptedPair(t)
+	teammateCommit(t, p, map[string]string{"src/teammate.py": "T = 1\n"}, "teammate: new file")
+	comparePair(t, p, "consolidate", "--mission", "$M", "--yes")
+	p.Both(func(s *testkit.Sandbox) {
+		wt := filepath.Join(".worktrees", slugOf(t, s)+"-lane-b")
+		s.Exec(wt, "git", "reset", "-q", "--hard", "HEAD~1")
+		s.WriteFile(filepath.Join(wt, "src", "rewritten.py"), "R = 1\n")
+		s.Exec(wt, "git", "add", "src/rewritten.py")
+		if r := s.Exec(wt, "git", "commit", "-q", "-m", "rewritten lane"); r.Code != 0 {
+			t.Fatalf("commit: %s", r.Stderr)
+		}
+	})
+	comparePair(t, p, "consolidate", "--mission", "$M", "--resume")
+	compareGit(t, p)
+}
+
 var reLaneHead = regexp.MustCompile(`"lane_head": "[0-9a-f]{40}"(, )?`)
 
 // TestDiffConsolidateAttestApproved covers APPROVAL_STAMP_MISSING at claim

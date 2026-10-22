@@ -69,6 +69,9 @@ func (r *run) captureClaim(st *MergeState) error {
 	if sha := revParse(r.root, r.coordRef()); sha != "" {
 		r.checkpoint = &coordCheckpoint{r.coordRef(), sha}
 	}
+	if err := r.enforceResumeAnchors(st); err != nil {
+		return err
+	}
 	coordBase := ""
 	if st != nil && st.PreCoord != "" {
 		coordBase = st.PreCoord
@@ -102,6 +105,66 @@ func (r *run) captureClaim(st *MergeState) error {
 	}
 	if refusal := c.claimIntegrityRefusal(); refusal != "" && !r.verifiedLanding {
 		return r.refuseClaim(refusal, st)
+	}
+	return nil
+}
+
+const abortAndRestartHint = "Run `" + consolidateAbortCommand + "` and start the consolidation fresh."
+
+// enforceResumeAnchors is _enforce_resume_anchor_integrity (H4, H5, H3).
+func (r *run) enforceResumeAnchors(st *MergeState) error {
+	if st == nil {
+		return nil
+	}
+	coordTopology := r.checkpoint != nil
+	listsWPs := false
+	for _, l := range r.m.Lanes {
+		if len(l.WPIDs) > 0 {
+			listsWPs = true
+		}
+	}
+	if coordTopology && listsWPs && len(st.CompletedWPs) > 0 && st.PreCoord == "" {
+		say(r.w, "\n[red]Error:[/red] cannot resume this merge: a prior attempt already "+
+			"consolidated work but the pre-mutation coordination base was not "+
+			"persisted, so the reconciliation claim cannot be anchored to the true "+
+			"pre-interrupt tip. "+abortAndRestartHint)
+		return exit(1)
+	}
+	if coordTopology && st.PreCoord != "" {
+		var missing []string
+		for _, l := range r.m.Lanes {
+			if isPlanningLane(l) || laneFullyCanceled(l, r.excluded) {
+				continue
+			}
+			b := laneBranchFor(r.m, l.LaneID)
+			if _, ok := st.LaneTips.get(b); !ok {
+				missing = append(missing, pyRepr(b))
+			}
+		}
+		if len(missing) > 0 {
+			sortStrings(missing)
+			say(r.w, "\n[red]Error:[/red] cannot resume this merge: the persisted "+
+				"pre-interrupt lane-tip record has no anchor for lane "+
+				"branch(es) "+strings.Join(missing, ", ")+" (the record is empty, partial, or was written by an "+
+				"older release under a different name). Resuming without "+
+				"an anchor would disarm the resume guard. "+abortAndRestartHint)
+			return exit(1)
+		}
+	}
+	for _, p := range st.LaneTips {
+		branch, sha := p[0], p[1]
+		ok := sha != "" && git(r.root, "cat-file", "-e", sha+"^{commit}").Code == 0
+		if ok {
+			if live := liveTip(r.root, branch); live != "" {
+				ok = shaReachableFrom(r.root, sha, live) || shaReachableFrom(r.root, live, sha)
+			}
+		}
+		if !ok {
+			say(r.w, "\n[red]Error:[/red] cannot resume this merge: lane branch "+
+				fmt.Sprintf("%s diverged from its persisted pre-interrupt tip %s (neither equal, ancestor, nor descendant). ", pyRepr(branch), short(sha, 10))+
+				"Resuming would drop or resurrect work. "+abortAndRestartHint)
+			return exit(1)
+		}
 	}
 	return nil
 }
