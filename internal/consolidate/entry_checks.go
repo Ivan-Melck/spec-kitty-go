@@ -44,6 +44,32 @@ func SparseCheckoutRefusal(root, command string) string {
 		"this override is logged at WARNING level."
 }
 
+// SparseOverrideWarning is the WARNING record require_no_sparse_checkout logs
+// when --allow-sparse-checkout overrides active sparse state ("" when none).
+func SparseOverrideWarning(root, command, slug, missionID, actor string) string {
+	rep := healthcheck.ScanSparse(root)
+	if !rep.AnyBlocking() {
+		return ""
+	}
+	var affected []string
+	if rep.Primary.Blocking() {
+		affected = append(affected, rep.Primary.Path)
+	}
+	for _, w := range rep.Worktrees {
+		if w.Blocking() {
+			affected = append(affected, w.Path)
+		}
+	}
+	or := func(s, d string) string {
+		if s == "" {
+			return d
+		}
+		return s
+	}
+	return fmt.Sprintf("spec_kitty.override.sparse_checkout command=%s mission_slug=%s mission_id=%s actor=%s repo=%s affected=%s",
+		command, or(slug, "<none>"), or(missionID, "<none>"), or(actor, "<unknown>"), root, strings.Join(affected, ","))
+}
+
 // PolicyRefusal is a workflow-mutation-policy Refused verdict.
 type PolicyRefusal struct{ Code, Message, NextStep string }
 

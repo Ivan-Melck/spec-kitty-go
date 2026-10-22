@@ -42,13 +42,14 @@ type Options struct {
 	Push, DryRun   bool
 	JSON, Yes      bool
 	Resume         bool
-	OriginCheck    *string  // --origin-check (nil = environment/default)
-	SkipLanes      bool     // --skip-lanes: synthesize a no-lane manifest when lanes.json is absent
-	DryRunNotes    []string // "--attest-* is not applied with --dry-run" notices
-	AllowSparse    bool     // --allow-sparse-checkout
-	AttestCanceled []string // --attest-canceled-superseded
-	AttestApproved []string // --attest-approved-reviewed
-	AttestReason   string   // --attest-reason
+	OriginCheck    *string   // --origin-check (nil = environment/default)
+	SkipLanes      bool      // --skip-lanes: synthesize a no-lane manifest when lanes.json is absent
+	DryRunNotes    []string  // "--attest-* is not applied with --dry-run" notices
+	AllowSparse    bool      // --allow-sparse-checkout
+	AttestCanceled []string  // --attest-canceled-superseded
+	AttestApproved []string  // --attest-approved-reviewed
+	AttestReason   string    // --attest-reason
+	Stderr         io.Writer // logging records (RichHandler on stderr)
 }
 
 // synthesizeNoLaneManifest is _synthesize_no_lane_manifest: one planning
@@ -487,6 +488,10 @@ func (r *run) execute() error {
 		if msg := SparseCheckoutRefusal(r.root, "spec-kitty consolidate"); msg != "" {
 			sayErr(r.w, msg)
 			return exit(1)
+		}
+	} else if r.opts.Stderr != nil {
+		if msg := SparseOverrideWarning(r.root, "spec-kitty consolidate", r.slug, missionIDOf(r.root, r.slug), mergeActor(r.root)); msg != "" {
+			rich.LogWarning(r.opts.Stderr, msg)
 		}
 	}
 	m, msg := requireLanes(r.sf.PrimaryDir)
