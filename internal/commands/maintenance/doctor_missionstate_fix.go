@@ -19,16 +19,18 @@ import (
 func softPrint(w io.Writer, s string) { fmt.Fprintln(w, rich.Strip(s)) }
 
 // runMissionStateFix is _run_mission_repair (doctor mission-state --fix).
-func runMissionStateFix(ctx *cli.Context, root string, jsonOut bool) error {
+func runMissionStateFix(ctx *cli.Context, root, fixtureDir string, jsonOut bool) error {
 	out := ctx.Stdout
 	cwd, _ := os.Getwd()
-	if msg := missionstate.WriteRefusal(cwd, root); msg != "" {
-		cprint(out, "[red]Refusing --fix:[/red] "+msg)
-		return cli.Exit(1)
+	if fixtureDir == "" {
+		if msg := missionstate.WriteRefusal(cwd, root); msg != "" {
+			cprint(out, "[red]Refusing --fix:[/red] "+msg)
+			return cli.Exit(1)
+		}
 	}
 	argv := append([]string(nil), os.Args[1:]...)
 	allowDirty := ctx.Bool("allow-dirty")
-	healed, err := missionstate.RepairDuplicateKeys(root, allowDirty, argv, app.Version)
+	healed, err := missionstate.RepairDuplicateKeysIn(root, fixtureDir, allowDirty, argv, app.Version)
 	if err != nil {
 		if jsonOut {
 			fmt.Fprintln(out, jsonx.Dumps(jsonx.NewObject("error", "DUPLICATE_KEY_REPAIR_FAILED", "message", err.Error()), compactJSON))
@@ -46,7 +48,7 @@ func runMissionStateFix(ctx *cli.Context, root string, jsonOut bool) error {
 	}
 	rep, err := missionstate.RepairRepo(root, missionstate.Options{
 		Mission: optString(ctx, "mission"), ManifestPath: ctx.String("manifest-path"), AllowDirty: allowDirty,
-		Argv: argv, CLIVersion: app.Version,
+		Argv: argv, CLIVersion: app.Version, ScanRoot: fixtureDir,
 	})
 	if err != nil {
 		if jsonOut {
@@ -112,9 +114,9 @@ func runMissionStateFix(ctx *cli.Context, root string, jsonOut bool) error {
 }
 
 // runTeamspaceDryRun is _run_teamspace_dry_run_mode.
-func runTeamspaceDryRun(ctx *cli.Context, root string, jsonOut bool) error {
+func runTeamspaceDryRun(ctx *cli.Context, root, fixtureDir string, jsonOut bool) error {
 	out := ctx.Stdout
-	rep, err := missionstate.TeamspaceDryRun(root, optString(ctx, "mission"))
+	rep, err := missionstate.TeamspaceDryRunIn(root, fixtureDir, optString(ctx, "mission"))
 	if err != nil {
 		// upstream only catches MissionStateDryRunError; a selection error
 		// (MissionStateRepairError) escapes as an uncaught exception.

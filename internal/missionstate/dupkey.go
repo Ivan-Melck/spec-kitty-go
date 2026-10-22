@@ -193,7 +193,15 @@ func dupKeyMissionSlug(scanDir, path string) string {
 // RepairDuplicateKeys is repair_duplicate_key_artifacts: batch-atomic
 // keep-last-non-empty heal of kitty-specs/**/*.md, run before --fix.
 func RepairDuplicateKeys(root string, allowDirty bool, argv []string, cliVersion string) (*RepairReport, error) {
+	return RepairDuplicateKeysIn(root, "", allowDirty, argv, cliVersion)
+}
+
+// RepairDuplicateKeysIn is repair_duplicate_key_artifacts(scan_root=...).
+func RepairDuplicateKeysIn(root, scanRoot string, allowDirty bool, argv []string, cliVersion string) (*RepairReport, error) {
 	scanDir := absResolved(filepath.Join(root, "kitty-specs"))
+	if scanRoot != "" {
+		scanDir = absResolved(scanRoot)
+	}
 	var plans []*dupPlan
 	for _, p := range detectDupKeyArtifacts(scanDir) {
 		b, err := os.ReadFile(p)

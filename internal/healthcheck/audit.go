@@ -543,20 +543,66 @@ func isMissionDir(dir, name string, tracked map[string]bool) bool {
 func fileExistsHC(p string) bool { _, err := os.Stat(p); return err == nil }
 
 // RunAudit is audit.run_audit over kitty-specs/ (optionally one dir name).
-func RunAudit(root string, only *string) *AuditReport {
+func RunAudit(root string, only *string) *AuditReport { return RunAuditIn(root, "", only) }
+
+// scanDirNames lists the directories (symlinks followed) directly under
+// scanRoot, sorted by name.
+func scanDirNames(scanRoot string) []string {
+	entries, err := os.ReadDir(scanRoot)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if st, err := os.Stat(filepath.Join(scanRoot, e.Name())); err == nil && st.IsDir() {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func resolvedAbs(p string) string {
+	a, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	if r, err := filepath.EvalSymlinks(a); err == nil {
+		return r
+	}
+	return a
+}
+
+// RunAuditIn is run_audit(AuditOptions(repo_root, scan_root)): scanRoot ""
+// is kitty-specs/ (with residue detection); a custom scan root (audit
+// fixtures) treats every directory as a Mission. Identity findings always
+// come from root's kitty-specs/. only filters by directory name.
+func RunAuditIn(root, scanRoot string, only *string) *AuditReport {
 	states := AuditRepo(root)
 	byslug := map[string]IdentityState{}
 	for _, s := range states {
 		byslug[s.Slug] = s
 	}
-	tracked := trackedSpecs(root)
+	var names []string
+	defaultScan := true
+	if scanRoot == "" {
+		scanRoot = project.Specs(root)
+		names = migrate.MissionDirs(root)
+	} else {
+		defaultScan = resolvedAbs(scanRoot) == resolvedAbs(project.Specs(root))
+		names = scanDirNames(scanRoot)
+	}
+	var tracked map[string]bool
+	if defaultScan {
+		tracked = trackedSpecs(root)
+	}
 	var results []*MissionAudit
-	for _, n := range migrate.MissionDirs(root) {
+	for _, n := range names {
 		if only != nil && n != *only {
 			continue
 		}
-		dir := project.Specs(root, n)
-		if !isMissionDir(dir, n, tracked) {
+		dir := filepath.Join(scanRoot, n)
+		if defaultScan && !isMissionDir(dir, n, tracked) {
 			results = append(results, &MissionAudit{Slug: n, Dir: dir, Findings: []Finding{fnd("RESIDUE_DIRECTORY", "info", ".", "directory holds no tracked spec.md or meta.json and no mission_id; not a Mission. If this is a Mission created before identity existed, run `spec-kitty migrate backfill-identity` (or commit its spec.md)")}})
 			continue
 		}
@@ -647,6 +693,24 @@ func RunAudit(root string, only *string) *AuditReport {
 	return &AuditReport{Missions: results}
 }
 
+// stableMissionDir is _stable_mission_dir_for_json: relative paths verbatim,
+// kitty-specs/<name> for a mission under kitty-specs/, else the slug.
+func stableMissionDir(dir, slug string) string {
+	if dir == "" {
+		return "kitty-specs/" + slug
+	}
+	if !filepath.IsAbs(dir) {
+		return filepath.ToSlash(filepath.Clean(dir))
+	}
+	if filepath.Base(filepath.Dir(dir)) == "kitty-specs" {
+		return "kitty-specs/" + filepath.Base(dir)
+	}
+	if slug != "" {
+		return slug
+	}
+	return filepath.Base(dir)
+}
+
 func others(all []string, me string) string {
 	var o []string
 	for _, s := range all {
@@ -696,7 +760,7 @@ func (r *AuditReport) ToObject() *jsonx.Object {
 			counter[f.Code]++
 		}
 		ms = append(ms, jsonx.NewObject("finding_count", len(m.Findings), "findings", fs, "has_errors", m.has("error"),
-			"has_teamspace_blockers", m.blockers(), "mission_dir", "kitty-specs/"+m.Slug, "mission_slug", m.Slug))
+			"has_teamspace_blockers", m.blockers(), "mission_dir", stableMissionDir(m.Dir, m.Slug), "mission_slug", m.Slug))
 	}
 	sc := &jsonx.Object{}
 	var keys []string

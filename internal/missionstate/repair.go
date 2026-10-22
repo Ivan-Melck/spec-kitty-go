@@ -25,6 +25,9 @@ type Options struct {
 	AllowDirty   bool
 	Argv         []string // sys.argv[1:] (scrubbed into command_args)
 	CLIVersion   string
+	// ScanRoot overrides the kitty-specs/ discovery root (--fixture-dir /
+	// --include-fixtures); every directory under it is a Mission.
+	ScanRoot string
 }
 
 // rawRow is one non-blank status.events.jsonl line.
@@ -79,11 +82,36 @@ func readJSONLRows(path string) ([]rawRow, error) {
 
 // SelectMissionDirs is _select_mission_dirs (default kitty-specs/ scan).
 func SelectMissionDirs(root string, handle *string) (dirs, residue []string, err error) {
+	return SelectMissionDirsIn(root, "", handle)
+}
+
+// SelectMissionDirsIn is _select_mission_dirs(repo_root, scan_root=...): a
+// non-empty scanRoot keeps every directory under it.
+func SelectMissionDirsIn(root, scanRoot string, handle *string) (dirs, residue []string, err error) {
 	specs := absResolved(filepath.Join(root, "kitty-specs"))
+	if scanRoot != "" {
+		specs = absResolved(scanRoot)
+	}
 	if _, err := os.Stat(specs); err != nil {
 		return nil, nil, nil
 	}
-	names := migrate.MissionDirs(root)
+	var names []string
+	if scanRoot == "" {
+		names = migrate.MissionDirs(root)
+	} else if entries, err := os.ReadDir(specs); err == nil {
+		for _, e := range entries {
+			if st, err := os.Stat(filepath.Join(specs, e.Name())); err == nil && st.IsDir() {
+				names = append(names, e.Name())
+			}
+		}
+		sort.Strings(names)
+	}
+	if handle == nil && scanRoot != "" {
+		for _, n := range names {
+			dirs = append(dirs, filepath.Join(specs, n))
+		}
+		return dirs, nil, nil
+	}
 	if handle == nil {
 		tracked := healthcheck.TrackedSpecs(root)
 		for _, n := range names {
@@ -178,7 +206,7 @@ func computeRunID(root string, dirs []string) string {
 // and write the manifest. root must already be the primary checkout.
 func RepairRepo(root string, o Options) (*RepairReport, error) {
 	root = absResolved(root)
-	dirs, residue, err := SelectMissionDirs(root, o.Mission)
+	dirs, residue, err := SelectMissionDirsIn(root, o.ScanRoot, o.Mission)
 	if err != nil {
 		return nil, err
 	}

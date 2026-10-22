@@ -216,8 +216,8 @@ func isOutOfScopeSideLogPath(p string) bool {
 }
 
 // teamspaceAuditBlockers is _teamspace_audit_blockers.
-func teamspaceAuditBlockers(root string, dirs []string) []*jsonx.Object {
-	rep := healthcheck.RunAudit(root, nil)
+func teamspaceAuditBlockers(root, scanRoot string, dirs []string) []*jsonx.Object {
+	rep := healthcheck.RunAuditIn(root, scanRoot, nil)
 	selected := map[string]bool{}
 	for _, d := range dirs {
 		selected[filepath.Base(d)] = true
@@ -263,12 +263,17 @@ func teamspaceAuditBlockers(root string, dirs []string) []*jsonx.Object {
 // TeamspaceDryRun is teamspace_dry_run: synthesize TeamSpace envelopes from
 // the local status logs and validate them against the event contract.
 func TeamspaceDryRun(root string, handle *string) (*DryRunReport, error) {
+	return TeamspaceDryRunIn(root, "", handle)
+}
+
+// TeamspaceDryRunIn is teamspace_dry_run(scan_root=...).
+func TeamspaceDryRunIn(root, scanRoot string, handle *string) (*DryRunReport, error) {
 	root = absResolved(root)
-	dirs, _, err := SelectMissionDirs(root, handle)
+	dirs, _, err := SelectMissionDirsIn(root, scanRoot, handle)
 	if err != nil {
 		return nil, err
 	}
-	if blockers := teamspaceAuditBlockers(root, dirs); len(blockers) > 0 {
+	if blockers := teamspaceAuditBlockers(root, scanRoot, dirs); len(blockers) > 0 {
 		rep := &DryRunReport{Errors: blockers}
 		for _, d := range dirs {
 			rep.SideLogs = append(rep.SideLogs, classifySideLogs(root, d)...)
