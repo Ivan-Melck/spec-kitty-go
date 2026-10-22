@@ -205,7 +205,9 @@ func TestParityCharterSynthesizeDirectWrite(t *testing.T) {
 	}
 	compareSynth(t, p, true, "charter", "synthesize")
 	compareSynth(t, p, true, "charter", "synthesize", "--json")
-	p.Both(func(s *testkit.Sandbox) { s.WriteFile(".kittify/charter-packs/directive/bad.directive.yaml", "id: BAD\n") })
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile(".kittify/charter-packs/directive/bad.directive.yaml", "id: BAD\n")
+	})
 	compareSynth(t, p, true, "charter", "synthesize", "--json")
 }
 
