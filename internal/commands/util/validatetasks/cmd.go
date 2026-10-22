@@ -155,14 +155,9 @@ func scan(featureDir string, warn io.Writer) ([]mismatch, error) {
 		if _, err := os.Stat(laneDir); err != nil {
 			continue
 		}
-		var files []string
-		filepath.WalkDir(laneDir, func(p string, d os.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && strings.HasPrefix(d.Name(), "WP") && strings.HasSuffix(d.Name(), ".md") {
-				files = append(files, p)
-			}
-			return nil
+		files := rglob(laneDir, func(name string) bool {
+			return strings.HasPrefix(name, "WP") && strings.HasSuffix(name, ".md")
 		})
-		sort.Strings(files)
 		for _, f := range files {
 			mm, exp, act, err := DetectLaneMismatch(f, warn)
 			if err != nil {
@@ -258,7 +253,7 @@ func run(ctx *cli.Context) error {
 		if ctx.Bool("all") {
 			var dirs []string
 			add := func(specs string) {
-				names, _ := os.ReadDir(specs)
+				names := scandir(specs)
 				for _, n := range names {
 					if st, err := os.Stat(filepath.Join(specs, n.Name())); err == nil && st.IsDir() {
 						dirs = append(dirs, filepath.Join(specs, n.Name()))
@@ -266,7 +261,7 @@ func run(ctx *cli.Context) error {
 				}
 			}
 			add(project.Specs(repoRoot))
-			wts, _ := os.ReadDir(filepath.Join(repoRoot, ".worktrees"))
+			wts := scandir(filepath.Join(repoRoot, ".worktrees"))
 			for _, wt := range wts {
 				if st, err := os.Stat(filepath.Join(repoRoot, ".worktrees", wt.Name())); err == nil && st.IsDir() {
 					add(filepath.Join(repoRoot, ".worktrees", wt.Name(), "kitty-specs"))
@@ -326,7 +321,7 @@ func run(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}()
 	if c, ok := err.(*crash); ok {
-		fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\n%s\n", c.msg)
+		rich.PrintTraceback(ctx.Stderr, rich.ParseException(c.msg, rich.Frame{Name: "validate_tasks", Line: 131}))
 		return cli.Exit(1)
 	}
 	return err

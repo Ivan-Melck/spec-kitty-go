@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/mergedriver"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // Upstream docstrings (the commands' --help text).
@@ -71,7 +72,7 @@ func init() {
 					{Name: "theirs", Metavar: "THEIRS", Required: true},
 				},
 				Run: func(ctx *cli.Context) error {
-					return run(ctx, mergedriver.CLIBody(name))
+					return run(ctx, name, mergedriver.CLIBody(name))
 				},
 			})
 		}
@@ -92,7 +93,7 @@ func firstLine(s string) string {
 // verbatim (exit 1); a notice is echoed to stdout (exit 0). An upstream
 // uncaught exception (*mergedriver.Crash) also exits 1, with the final
 // traceback line on stderr.
-func run(ctx *cli.Context, body mergedriver.Body) error {
+func run(ctx *cli.Context, name string, body mergedriver.Body) error {
 	out, err := body(ctx.Arg("base"), ctx.Arg("ours"), ctx.Arg("theirs"))
 	if err != nil {
 		var de *mergedriver.Error
@@ -102,7 +103,7 @@ func run(ctx *cli.Context, body mergedriver.Body) error {
 		}
 		var crash *mergedriver.Crash
 		if errors.As(err, &crash) {
-			fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\n%s\n", crash.Error())
+			rich.Traceback(ctx.Stderr, crash.Type, crash.Msg, commandFrames[name], rich.Frame{Name: "_run", Line: 83})
 			return cli.Exit(1)
 		}
 		return err
@@ -111,6 +112,18 @@ func run(ctx *cli.Context, body mergedriver.Body) error {
 		fmt.Fprintln(ctx.Stdout, out.Notice)
 	}
 	return nil
+}
+
+// commandFrames are the upstream command-level traceback frames
+// (specify_cli/cli/commands/merge_driver.py) of each driver.
+var commandFrames = map[string]rich.Frame{
+	mergedriver.DriverEventLog:         {Name: "merge_driver_event_log", Line: 97},
+	mergedriver.DriverMeta:             {Name: "merge_driver_meta", Line: 111},
+	mergedriver.DriverTraces:           {Name: "merge_driver_traces", Line: 129},
+	mergedriver.DriverIssueMatrix:      {Name: "merge_driver_issue_matrix", Line: 138},
+	mergedriver.DriverAcceptanceMatrix: {Name: "merge_driver_acceptance_matrix", Line: 147},
+	mergedriver.DriverReviewCycle:      {Name: "merge_driver_review_cycle", Line: 176},
+	mergedriver.DriverDecisionIndex:    {Name: "merge_driver_decision_index", Line: 193},
 }
 
 // mergeStub is the hidden, deprecated `merge` command (renamed to

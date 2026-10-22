@@ -17,6 +17,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 	"gopkg.in/yaml.v3"
 )
@@ -59,7 +60,24 @@ func errorf(format string, a ...any) error { return &Error{Msg: fmt.Sprintf(form
 
 // Crash is an exception upstream does not catch (sqlite3.IntegrityError,
 // spec_kitty_tracker errors): the CLI prints a traceback and exits 1.
-type Crash struct{ Type, Msg string }
+type Crash struct {
+	Type, Msg string
+	// Cause is the exception this one was raised from ("raise ... from
+	// exc"), rendered first in the traceback; Frames are its upstream
+	// frames (spec_kitty_tracker raise sites).
+	Cause  *Crash
+	Frames []rich.Frame
+}
+
+// Exception converts the crash (and its cause chain) for rich.PrintTraceback;
+// frames are the caller's command-level frames.
+func (e *Crash) Exception(frames ...rich.Frame) *rich.Exception {
+	x := &rich.Exception{Type: e.Type, Value: e.Msg, Frames: append(append([]rich.Frame(nil), frames...), e.Frames...)}
+	if e.Cause != nil {
+		x.Cause = e.Cause.Exception()
+	}
+	return x
+}
 
 func (e *Crash) Error() string {
 	if e.Msg == "" {

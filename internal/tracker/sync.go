@@ -15,6 +15,9 @@ type TrackerError struct {
 	Class        string // ConnectorRequestError, CapabilityNotSupportedError, IssuePayloadContractError, IssueNotFoundError
 	Msg          string
 	FailureClass string // ConnectorRequestError only
+	// Cause is the exception it was raised from (CalledProcessError,
+	// TimeoutExpired, JSONDecodeError), shown in an uncaught traceback.
+	Cause *Crash
 }
 
 func (e *TrackerError) Error() string { return e.Msg }
@@ -38,7 +41,7 @@ func payloadError(msg string) error {
 // AsCrash converts an uncaught tracker exception into a traceback crash.
 func AsCrash(err error) error {
 	if te, ok := err.(*TrackerError); ok {
-		return &Crash{Type: te.Class, Msg: te.Msg}
+		return &Crash{Type: te.Class, Msg: te.Msg, Cause: te.Cause}
 	}
 	return err
 }

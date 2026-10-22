@@ -123,20 +123,15 @@ func TestValidateTasksParityEdgeCases(t *testing.T) {
 	if !strings.HasPrefix(g.Stderr, warn) || !strings.HasPrefix(o.Stderr, warn) {
 		t.Errorf("warning: go=%q oracle=%q", g.Stderr, o.Stderr)
 	}
-	// A non-string lane is an uncaught AttributeError: compare the final
-	// exception line of the (Rich) traceback.
+	// A non-string lane is an uncaught AttributeError: compare the rich
+	// traceback (frames masked).
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile("kitty-specs/001-x/tasks/doing/WP02.md", "---\nlane: 5\n---\n")
 	})
 	g, o = p.Compare(false, "validate-tasks", "--mission", "001-x")
-	if gl, ol := lastLine(g.Stderr), lastLine(o.Stderr); gl != ol {
-		t.Errorf("exception: go=%q oracle=%q", gl, ol)
+	if gl, ol := testkit.MaskTracebackFrames(p.Go.Normalize(g.Stderr)), testkit.MaskTracebackFrames(p.Oracle.Normalize(o.Stderr)); gl != ol {
+		t.Errorf("traceback differs\n%s", testkit.Diff(ol, gl))
 	}
-}
-
-func lastLine(s string) string {
-	l := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	return strings.TrimSpace(l[len(l)-1])
 }
 
 func TestValidateTasksE2E(t *testing.T) {

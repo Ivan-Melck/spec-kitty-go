@@ -233,7 +233,7 @@ func runQuery(ctx *cli.Context) error {
 	}
 	text, err := pyjson.DecodeUTF8(b)
 	if err != nil {
-		fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\nUnicodeDecodeError: %s\n", err)
+		rich.Traceback(ctx.Stderr, "UnicodeDecodeError", err.Error(), rich.Frame{Name: "query_command", Line: 202}, rich.Frame{Name: "_load_store", Line: 92})
 		return cli.Exit(1)
 	}
 	entries, err := ParseIndex(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"))

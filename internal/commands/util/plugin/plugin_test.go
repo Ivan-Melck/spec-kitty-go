@@ -37,11 +37,6 @@ func compareModes(t *testing.T, p *testkit.Pair, rel string) {
 	}
 }
 
-func lastLine(s string) string {
-	l := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	return strings.TrimSpace(l[len(l)-1])
-}
-
 // fakeClaude puts a `claude` stub first on PATH that exits with code and
 // prints msg on stdout and stderr.
 func fakeClaude(code, msg string) func(s *testkit.Sandbox) {
@@ -83,8 +78,8 @@ func TestPluginBuildParity(t *testing.T) {
 		os.Remove(filepath.Join(s.Dir, "dist/spec-kitty-plugins/claude-code/agents/scribe-sally.md"))
 	})
 	g, o := p.Compare(false, "plugin", "build", "--target", "claude-code", "--skip-validate")
-	if gl, ol := lastLine(g.Stderr), lastLine(o.Stderr); gl != ol {
-		t.Errorf("exception: go=%q oracle=%q", gl, ol)
+	if gl, ol := testkit.MaskTracebackFrames(p.Go.Normalize(g.Stderr)), testkit.MaskTracebackFrames(p.Oracle.Normalize(o.Stderr)); gl != ol {
+		t.Errorf("traceback differs\n%s", testkit.Diff(ol, gl))
 	}
 	p.CompareTree("dist", true)
 	compareModes(t, p, "dist")
@@ -99,13 +94,13 @@ func TestPluginBuildParity(t *testing.T) {
 	compareModes(t, p, "hooked")
 	p.Both(func(s *testkit.Sandbox) { s.WriteFile("badhooks/claude-code/hooks/hooks.json", `[1]`) })
 	g, o = p.Compare(false, "plugin", "build", "--target", "claude-code", "--skip-validate", "--output-dir", "badhooks")
-	if gl, ol := lastLine(g.Stderr), lastLine(o.Stderr); gl != ol {
-		t.Errorf("exception: go=%q oracle=%q", gl, ol)
+	if gl, ol := testkit.MaskTracebackFrames(p.Go.Normalize(g.Stderr)), testkit.MaskTracebackFrames(p.Oracle.Normalize(o.Stderr)); gl != ol {
+		t.Errorf("traceback differs\n%s", testkit.Diff(ol, gl))
 	}
 	p.Both(func(s *testkit.Sandbox) { s.WriteFile("badledger/codex/.spec-kitty-bundle.json", `{"owner": "x"}`) })
 	g, o = p.Compare(false, "plugin", "build", "--target", "codex", "--output-dir", "badledger")
-	if gl, ol := lastLine(g.Stderr), lastLine(o.Stderr); gl != ol {
-		t.Errorf("exception: go=%q oracle=%q", gl, ol)
+	if gl, ol := testkit.MaskTracebackFrames(p.Go.Normalize(g.Stderr)), testkit.MaskTracebackFrames(p.Oracle.Normalize(o.Stderr)); gl != ol {
+		t.Errorf("traceback differs\n%s", testkit.Diff(ol, gl))
 	}
 }
 
