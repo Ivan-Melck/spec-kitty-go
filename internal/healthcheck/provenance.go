@@ -289,4 +289,3 @@ func checkoutTracksMission(root string, rel []string, initial []snapEntry) bool 
 	f := strings.Fields(head)
 	return len(f) == 3 && path == relPath && (f[0] == "100644" || f[0] == "100755") && f[2] == "0"
 }
-
