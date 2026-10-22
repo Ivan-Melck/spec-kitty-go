@@ -21,6 +21,7 @@ type corpus struct {
 	version string // metadata spec_kitty.version
 	noStamp bool   // drop spec_kitty.schema_version (pre-3.0 layout)
 	mutate  func(s *testkit.Sandbox)
+	pair    *testkit.Pair // optional pre-made pair (inspected by the caller afterwards)
 }
 
 var reDuration = regexp.MustCompile(`"duration_ms": \d+`)
@@ -41,7 +42,10 @@ func setVersion(s *testkit.Sandbox, version string, noStamp bool) {
 }
 
 func runCorpus(t *testing.T, c corpus) {
-	p := testkit.NewPair(t)
+	p := c.pair
+	if p == nil {
+		p = testkit.NewPair(t)
+	}
 	ai := c.ai
 	if ai == "" {
 		ai = "claude,codex"
@@ -178,6 +182,36 @@ func TestUpgradeLegacyLayoutCorporaMatchOracle(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			runCorpus(t, c)
+		})
+	}
+}
+
+// writeWorktrees adds a coding-lane worktree, a feature worktree with an
+// untracked file and an integrating (kitty/mission-*) worktree, which the
+// upgrade must skip.
+func writeWorktrees(s *testkit.Sandbox) {
+	s.Git("add", "-A")
+	s.Git("commit", "-qm", "legacy main", "--allow-empty")
+	s.Git("worktree", "add", "-q", ".worktrees/001-demo-lane-a", "-b", "kitty/001-demo-lane-a")
+	s.Git("worktree", "add", "-q", ".worktrees/002-other", "-b", "feature/other")
+	s.WriteFile(".worktrees/002-other/notes.txt", "x\n")
+	s.Git("worktree", "add", "-q", ".worktrees/003-int", "-b", "kitty/mission-003-int")
+}
+
+func TestUpgradeWorktreeFanOutMatchesOracle(t *testing.T) {
+	for _, v := range []string{"3.2.0", "4.0.0rc8"} {
+		v := v
+		t.Run(v, func(t *testing.T) {
+			t.Parallel()
+			p := testkit.NewPair(t)
+			runCorpus(t, corpus{name: "worktrees-" + v, ai: "claude", version: v, mutate: writeWorktrees, pair: p})
+			for _, wt := range []string{"001-demo-lane-a", "002-other", "003-int"} {
+				g := p.Go.Git("-C", ".worktrees/"+wt, "log", "-1", "--format=%s", "--name-status")
+				o := p.Oracle.Git("-C", ".worktrees/"+wt, "log", "-1", "--format=%s", "--name-status")
+				if g != o {
+					t.Errorf("worktree %s commit go=%q oracle=%q", wt, g, o)
+				}
+			}
 		})
 	}
 }

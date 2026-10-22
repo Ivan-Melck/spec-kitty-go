@@ -51,8 +51,10 @@ func StampSchemaVersion(root string) (bool, error) {
 	if string(text) == rendered {
 		return false, nil
 	}
-	mode := os.FileMode(0o644)
-	if st, err := os.Stat(path); err == nil {
+	// atomic_write: a mkstemp (0600) replacement; a read-only destination
+	// keeps its mode.
+	mode := os.FileMode(0o600)
+	if st, err := os.Lstat(path); err == nil && st.Mode()&os.ModeSymlink == 0 && st.Mode().Perm()&0o200 == 0 {
 		mode = st.Mode().Perm()
 	}
 	return true, writeAtomic(path, []byte(rendered), mode)
