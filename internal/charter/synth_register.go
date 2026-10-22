@@ -224,10 +224,6 @@ func PlanProjectRegistration(root, version string) (*RegistrationPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	base, err := dct.LoadGraph(root, ResolvePackChain(root))
-	if err != nil {
-		return nil, err
-	}
 	live := map[string]bool{}
 	for _, a := range arts {
 		live[a.Node.URN] = true
@@ -249,6 +245,10 @@ func PlanProjectRegistration(root, version string) (*RegistrationPlan, error) {
 	}
 	if len(arts) == 0 && len(stale) == 0 {
 		return &RegistrationPlan{}, nil
+	}
+	base, err := dct.LoadGraph(root, ResolvePackChain(root))
+	if err != nil {
+		return nil, err
 	}
 	staleURNs := map[string]bool{}
 	for _, s := range stale {

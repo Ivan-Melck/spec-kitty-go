@@ -224,6 +224,27 @@ func TestParityCharterSynthesizeDirectWrite(t *testing.T) {
 	compareSynth(t, p, true, "charter", "synthesize", "--json")
 }
 
+func TestParityCharterActivateRegistersDirectWrite(t *testing.T) {
+	t.Parallel()
+	p := newSynthPair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile(".kittify/charter-packs/directive/my-rule.directive.yaml", "id: MY_RULE\nschema_version: \"1.0\"\ntitle: My rule\nintent: Keep it simple.\nenforcement: advisory\n")
+		s.WriteFile(".kittify/charter-packs/agent_profiles/helper.agent.yaml", "profile-id: helper\nname: Helper\nroles: [implementer]\npurpose: Help out.\nspecialization:\n  primary-focus: helping\n"+
+			"directive-references:\n  - code: MY_RULE\n    name: My rule\n    rationale: because\ntactic-references:\n  - id: missing-tactic\n    rationale: nope\n")
+	})
+	compareSynth(t, p, true, "charter", "activate", "paradigm", "trunk-based")
+	for _, rel := range []string{".kittify/charter-packs/graph.yaml", ".kittify/charter/provenance/directive-my-rule.yaml",
+		".kittify/charter/provenance/agent_profile-helper.yaml", ".kittify/charter/synthesis-manifest.yaml"} {
+		compareSynthFile(t, p, rel)
+	}
+	p.Both(func(s *testkit.Sandbox) { s.Exec("", "rm", ".kittify/charter-packs/agent_profiles/helper.agent.yaml") })
+	compareSynth(t, p, true, "charter", "activate", "paradigm", "trunk-based")
+	compareSynthFile(t, p, ".kittify/charter/synthesis-manifest.yaml")
+	compareSynthFile(t, p, ".kittify/charter-packs/graph.yaml")
+	p.Both(func(s *testkit.Sandbox) { s.WriteFile(".kittify/charter-packs/directive/bad.directive.yaml", "id: 1\n") })
+	compareSynth(t, p, true, "charter", "activate", "paradigm", "trunk-based")
+}
+
 // TestCharterSynthesizeGoOnly exercises the pipeline without the oracle.
 func TestCharterSynthesizeGoOnly(t *testing.T) {
 	s := newProject(t)
