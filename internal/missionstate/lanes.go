@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
@@ -134,20 +135,66 @@ func rebuildLanesIfWedged(root, dir string, st *repairState, target string, snap
 	return LanesRebuiltAction, nil
 }
 
-// literalOwnedFileErrors is the compute_and_write_lanes literal-path
-// re-validation: a glob-free owned_files entry must name an existing path
-// unless the WP declares it in create_intent.
+// literalOwnedFileErrors is validate_glob_matches(...).errors (the
+// compute_and_write_lanes re-validation): a literal owned_files entry that
+// matches nothing is an error (with a nearest-match suggestion) unless the
+// WP declares it in create_intent; glob zero-matches are only warnings.
 func literalOwnedFileErrors(root string, own map[string]*lanes.Ownership, intent map[string]map[string]bool) []string {
+	ids := make([]string, 0, len(own))
+	for id := range own {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	var errs []string
-	for id, o := range own {
-		for _, pat := range o.OwnedFiles {
-			if strings.ContainsAny(pat, "*?[") || intent[id][pat] {
+	for _, id := range ids {
+		for _, pat := range own[id].OwnedFiles {
+			if strings.ContainsAny(pat, "*?[{") || intent[id][pat] {
 				continue
 			}
-			if _, err := os.Stat(filepath.Join(root, pat)); err != nil {
-				errs = append(errs, fmt.Sprintf("%s: owned_files path '%s' is a literal file path that matches zero files in the repository", id, pat))
+			if _, err := os.Lstat(filepath.Join(root, pat)); err == nil {
+				continue
 			}
+			msg := fmt.Sprintf("%s: owned_files path '%s' is a literal file path that matches zero files in the repository.", id, pat)
+			if sug := nearestMatchSuggestion(pat, root); sug != "" {
+				msg += " " + sug
+			}
+			msg += " If this file will be created during implementation, declare it in the WP frontmatter:\n  create_intent:\n    - " + pat
+			errs = append(errs, msg)
 		}
 	}
 	return errs
+}
+
+// nearestMatchSuggestion is ownership.validation._nearest_match_suggestion:
+// difflib.get_close_matches(pattern, <files beside it>, n=1, cutoff=0.5).
+func nearestMatchSuggestion(pattern, root string) string {
+	parentRel := filepath.Dir(filepath.Clean(pattern))
+	parent := filepath.Join(root, parentRel)
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return ""
+	}
+	best, bestScore := "", -1.0
+	for _, e := range entries {
+		full := filepath.Join(parent, e.Name())
+		if st, err := os.Stat(full); err != nil || !st.Mode().IsRegular() {
+			continue
+		}
+		rel, err := filepath.Rel(root, full)
+		if err != nil {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
+		r := seqRatio(rel, pattern)
+		if r < 0.5 {
+			continue
+		}
+		if r > bestScore || (r == bestScore && rel > best) {
+			best, bestScore = rel, r
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return fmt.Sprintf("Did you mean '%s'?", best)
 }

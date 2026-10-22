@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
-	"github.com/spec-kitty/go-kitty3/internal/fm"
+	"github.com/spec-kitty/go-kitty3/internal/dossier"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
@@ -32,6 +31,7 @@ const (
 // WPStatusResult is WpStatusBackfillResult.
 type WPStatusResult struct {
 	Slug                                            string
+	crash                                           error
 	Seeded, WouldSeed                               int
 	FilesOnly, SnapshotOnly, Malformed              []string
 	TerminalReason, RefreshError, SkipReason, Error *string
@@ -42,24 +42,6 @@ type WPStatusResult struct {
 type SelectorRejectedError struct{ Msg string }
 
 func (e *SelectorRejectedError) Error() string { return e.Msg }
-
-var wpMetadataFields = map[string]bool{}
-
-func init() {
-	for _, f := range strings.Fields(`work_package_id title dependencies base_branch base_commit created_at planning_base_branch
-		merge_target_branch branch_strategy requirement_refs tracker_refs priority execution_mode owned_files create_intent
-		authoritative_surface scope task_type subtasks phase phases assignee agent model agent_profile role shell_pid
-		shell_pid_created_at history lane feature_slug activity_log review_status reviewed_by approved_by reviewer
-		reviewer_agent reviewer_shell_pid review_feedback review_feedback_file subtitle description estimated_duration tags
-		mission_id mission_number mission_slug status wp_code work_package_title`) {
-		wpMetadataFields[f] = true
-	}
-}
-
-var (
-	wpIDRe    = regexp.MustCompile(`^WP\d{2,}$`)
-	baseSHARe = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
-)
 
 // wpTaskFiles is status.wp_task_files.
 func wpTaskFiles(tasks string) []string {
@@ -77,34 +59,19 @@ func wpTaskFiles(tasks string) []string {
 	return out
 }
 
-// authoredWPID approximates read_authored_wp_frontmatter (WPMetadata strict
+// authoredWPID is read_authored_wp_frontmatter (strict WPMetadata
 // validation): the work_package_id, or ok=false for a malformed file.
-func authoredWPID(path string) (string, bool) {
-	d, err := fm.Read(path)
-	if err != nil || d.Meta == nil {
-		return "", false
+func authoredWPID(path string) (string, bool, error) {
+	proj, ok, err := dossier.ReadAuthoredWP(path)
+	if err != nil {
+		return "", false, &UncaughtError{Type: "TypeError", Msg: err.Error()}
 	}
-	for _, k := range d.Meta.Keys() {
-		if !wpMetadataFields[k] {
-			return "", false
-		}
+	if !ok {
+		return "", false, nil
 	}
-	id, ok := d.Meta.Get("work_package_id")
-	s, isStr := id.(string)
-	if !ok || !isStr || !wpIDRe.MatchString(s) {
-		return "", false
-	}
-	if t, ok := d.Meta.Get("title"); ok && t != nil {
-		if ts, isStr := t.(string); !isStr || strings.TrimSpace(ts) == "" {
-			return "", false
-		}
-	}
-	if b, ok := d.Meta.Get("base_commit"); ok && b != nil {
-		if bs, isStr := b.(string); !isStr || (bs != "unknown" && !baseSHARe.MatchString(bs)) {
-			return "", false
-		}
-	}
-	return s, true
+	id, _ := proj.Get("work_package_id")
+	s, _ := id.(string)
+	return s, s != "", nil
 }
 
 func seedTimestamp(meta *jsonx.Object) string {
@@ -140,7 +107,10 @@ func planWPStatus(dir string, manifest map[string]string) (*wpPlan, error) {
 	files := map[string]bool{}
 	var malformed []string
 	for _, f := range wpTaskFiles(filepath.Join(dir, "tasks")) {
-		id, ok := authoredWPID(f)
+		id, ok, err := authoredWPID(f)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			warnf("Skipping %s: malformed frontmatter", filepath.Base(f))
 			malformed = append(malformed, filepath.Base(f))
@@ -250,7 +220,11 @@ func ApplyWPStatusBackfill(root, dir string, dryRun bool, manifest map[string]st
 		return WPStatusResult{Slug: slug, SkipReason: strPtr("no tasks/ directory")}
 	}
 	probed := false
-	if pre, err := planWPStatus(dir, nil); err == nil && len(pre.filesOnly) > 0 {
+	pre, err := planWPStatus(dir, nil)
+	if u, isCrash := err.(*UncaughtError); isCrash {
+		return WPStatusResult{Slug: slug, crash: u}
+	}
+	if err == nil && len(pre.filesOnly) > 0 {
 		probed = true
 		if CoordinationSurfaceIsLive(root, dir) {
 			return WPStatusResult{Slug: slug, SkipReason: strPtr(CoordSurfaceLive)}
@@ -318,7 +292,11 @@ func ApplyWPStatusBackfillRepo(root string, mission *string, dryRun bool, manife
 	}
 	var out []WPStatusResult
 	for _, n := range names {
-		out = append(out, ApplyWPStatusBackfill(root, project.Specs(root, n), dryRun, manifest))
+		r := ApplyWPStatusBackfill(root, project.Specs(root, n), dryRun, manifest)
+		if r.crash != nil {
+			return nil, r.crash
+		}
+		out = append(out, r)
 	}
 	return out, nil
 }

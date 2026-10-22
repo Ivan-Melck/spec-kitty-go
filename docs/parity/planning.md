@@ -1,4 +1,4 @@
-# Parity: planning and authoring (area E)
+# Parity: planning and authoring (areas E, wave-5 PLAN)
 
 Go implementation of the upstream `spec-kitty` 4.0.0rc8 planning/authoring
 surface (specify → plan → tasks → analysis, plus the commit helpers agents
@@ -7,60 +7,90 @@ call throughout phases 4–7).
 Code: `internal/commands/planning` (commands), registered through
 `cmd/spec-kitty/imports_planning.go`. Libraries: `internal/safecommit`,
 `internal/decision`, `internal/issuematrix`, `internal/reqmap`,
-`internal/missionart`, `internal/branchctx`.
+`internal/missionart`, `internal/branchctx`, `internal/assetpreserve`.
 
 Differential tests set up the precondition with the ORACLE in both sandboxes
-(`missionfx.NewOraclePair`, `RunOracle`), then run the Go binary on one side
-and the oracle on the other and compare exit code, normalized stdout/stderr,
-the `kitty-specs/` (and where relevant `.worktrees/`) trees and the git state
-(log with name-status over all refs, worktree list, status, branches):
+(`missionfx.NewOraclePair`, `OracleCalcMission`, `RunOracle`), then run the Go
+binary on one side and the oracle on the other and compare exit code,
+normalized stdout/stderr, the `kitty-specs/` (and where relevant `.worktrees/`)
+trees and the git state (log with name-status over all refs, worktree list,
+status, branches). All differential tests run in parallel:
 
-    SPEC_KITTY_ORACLE=$REF/oracle-bin/spec-kitty go test ./internal/commands/planning/...
+    SPEC_KITTY_ORACLE=$REF/oracle-bin/spec-kitty go test ./internal/commands/planning/... -timeout 0
 
-Go-only tests (`local_test.go`, `internal/reqmap`) run without the oracle.
+Go-only tests (`local_test.go`, `internal/reqmap`, `internal/assetpreserve`)
+run without the oracle.
 
 ## Commands
 
 | Command path | Status | Tests | Deviations |
 |---|---|---|---|
-| `safe-commit` (`-m` repeated, `--to-branch`, `--json`, mission-aware target, coord/lane worktrees) | done | `TestDiffSafeCommit`, `TestDiffSafeCommitMission`, `TestLocalSafeCommit` | the `POST_CONSOLIDATION_WRITE` guard capability for a published mission is not distinguished (STANDARD guard always) |
-| `spec-commit` (`--mission`, `-m/--message`, `--json`, directory expansion, router placement) | done | `TestDiffSafeCommitMission`, `TestLocalSafeCommit` | `--owned-checkout` refused ("not supported by this build") |
-| `agent mission check-prerequisites` (`--json`, `--paths-only`, `--include-tasks`, `--require-tasks`, `--resume-probe`) | done | `TestDiffCheckPrerequisites`, `TestLocalCheckPrerequisites` | `--owned-checkout` refused |
+| `safe-commit` (`-m` repeated, `--to-branch`, `--json`, mission-aware target, coord/lane worktrees, E2 published missions) | done | `TestDiffSafeCommit`, `TestDiffSafeCommitMission`, `TestDiffSafeCommitPublishedMission`, `TestLocalSafeCommit` | none known (the published-mission write resolves to the Primary Branch and asserts `POST_CONSOLIDATION_WRITE`; off-checkout refuses with `CONSOLIDATED_CONTENT_ABSENT`) |
+| `spec-commit` (`--mission`, `-m/--message`, `--json`, directory expansion, router placement) | done | `TestDiffSafeCommitMission`, `TestLocalSafeCommit` | `--owned-checkout` belongs to area OWN |
+| `agent mission check-prerequisites` (`--json`, `--paths-only`, `--include-tasks`, `--require-tasks`, `--resume-probe`) | done | `TestDiffCheckPrerequisites`, `TestLocalCheckPrerequisites` | `--owned-checkout` belongs to area OWN |
 | `agent check-prerequisites` (hidden alias) | done | `TestDiffCheckPrerequisites` | as above |
-| `agent decision open` / `resolve` / `defer` / `cancel` (incl. `--dry-run`, idempotent re-open, terminal conflicts) | done | `TestDiffDecisions`, `TestLocalDecisions` | `--owned-checkout` refused with `OWNED_OPTION_UNSUPPORTED` |
-| `agent decision verify` (`--fail-on-stale/--no-fail-on-stale`, marker scan) | done | `TestDiffDecisions` | `DECISION_LOG_FORKED` (primary vs coordination decision stream divergence) is not detected |
+| `agent decision open` / `resolve` / `defer` / `cancel` (incl. `--dry-run`, idempotent re-open, terminal conflicts) | done | `TestDiffDecisions`, `TestLocalDecisions` | `--owned-checkout` belongs to area OWN |
+| `agent decision verify` (`--fail-on-stale/--no-fail-on-stale`, marker scan, `DECISION_LOG_FORKED`) | done | `TestDiffDecisions`, `TestDiffDecisionVerifyFork` | none known (a forked PRIMARY/coordination decision-event stream is reported with its reconcile steps and always exits 1) |
 | `agent decision list` (`--status`) | done | `TestDiffDecisions` | none known |
-| `agent decision repair-runtime-lock` | partial | `TestDiffDecisions` (missing `--owned-checkout` usage error) | requires `--owned-checkout`, which is unsupported: always returns the `OWNED_OPTION_UNSUPPORTED` envelope |
-| `agent mission setup-plan` (spec gate, requirement-ID lint, scaffold mode, commit mode, lifecycle markers) | done | `TestDiffSetupPlan` | documentation missions' gap analysis / generator detection (`_run_documentation_wiring`) not ported; `--owned-checkout` refused |
-| `agent tasks map-requirements` (individual, `--batch`, `--replace`, `--tracker-ref`, stale gate, router auto-commit) | done | `TestDiffMapRequirements` | `--owned-checkout` refused |
-| `agent mission finalize-tasks` (`--validate-only`, gates, frontmatter normalisation, `lanes.json` via `lanes.Compute`, status bootstrap on the coord branch, acceptance matrix, issue-matrix scaffold) | done | `TestDiffFinalizeTasks`, `TestDiffFinalizeTasksHuman`, `TestDiffIssueMatrix` | the `wps.yaml` tasks-outline manifest flow is not ported; ownership inference (`infer_ownership`) for WPs missing `execution_mode`/`owned_files` is not ported; `--refresh-planning-commit` and `--owned-checkout` refused |
-| `agent tasks finalize-tasks` | done | `TestDiffTasksFinalizeTasks` | as above |
-| `agent mission record-analysis` (DIRTY_WORKTREE refusal, `--input-file`/stdin, findings carrier, router commit) | done | `TestDiffRecordAnalysis`, `TestLocalRecordAnalysisDirty` | `--report-only` report transaction not ported (refused); `--owned-checkout` refused |
+| `agent decision repair-runtime-lock` | partial | `TestDiffDecisions` | requires `--owned-checkout` (area OWN) |
+| `agent mission setup-plan` (spec gate, requirement-ID lint, scaffold mode, commit mode, lifecycle markers, documentation wiring) | done | `TestDiffSetupPlan`, `TestDiffSetupPlanDocumentationWiring` | none known (documentation missions run the Divio gap analysis for `gap_filling` / `mission_specific`, including upstream's complete-coverage failure, and JSDoc / Sphinx / rustdoc generator detection) |
+| `agent tasks map-requirements` (individual, `--batch`, `--replace`, `--tracker-ref`, stale gate, router auto-commit) | done | `TestDiffMapRequirements` | `--owned-checkout` belongs to area OWN |
+| `agent mission finalize-tasks` (`--validate-only`, gates, frontmatter normalisation, `lanes.json`, status bootstrap, acceptance matrix, issue-matrix scaffold) | done | `TestDiffFinalizeTasks`, `TestDiffFinalizeTasksHuman`, `TestDiffIssueMatrix` | none known |
+| finalize-tasks `wps.yaml` tasks-outline manifest flow (pydantic-faithful load errors, manifest dependencies + WP-frontmatter fallback, outline-only validation, tasks.md regeneration / stale report, concern-coverage warnings) | done | `TestDiffFinalizeWpsOutline`, `TestDiffFinalizeWps`, `TestDiffFinalizeWpsHuman`, orchestrator `TestDiffDesignTasksFromOutline` | YAML *syntax* errors in `wps.yaml` use the yaml.v3 text until PYF-02 lands |
+| finalize-tasks ownership inference (`infer_ownership`), code_change + `owned_files: []` contradiction, confined planning_artifact exemption, planning_artifact warning, post-integration acceptance warning, charter activation gate, nearest-match literal-path hint | done | `TestDiffFinalizeOwnershipInference` | none known |
+| finalize-tasks `--refresh-planning-commit` / `--allow-orphaned` | done | `TestDiffFinalizeRefreshPlanningCommit` | none known |
+| finalize-tasks lane eligibility (canceled WPs, `STALE_CANCELED_DEPENDENCIES`), frozen lane membership (`LANE_MEMBERSHIP_FROZEN`, #5573), parallelization risk report and block mode | done | `TestDiffFinalizeCanceledAndFrozenLanes`, `TestDiffFinalizeWpsHuman`, `TestDiffFinalizeRefusalRestoresStatusSurface` | import-coupling lines are listed in sorted module order (upstream iterates a hash-randomized set; see below) |
+| finalize-tasks refusal atomicity (FR-015 mission-directory restore, unpersisted `--target-branch` revert, status-surface guard #5641) | done | `TestDiffFinalizeRefusalRestoresStatusSurface`, `TestDiffDesignTasksFromOutline` | concurrent-writer "kept" reporting (another process changing files mid-run) is not reproduced |
+| finalize-tasks on an API-authored mission (`native_finalization_scope`, #5879: stage proof, authoring lock, receipt re-stamp) | done | orchestrator `TestDiffNativeFinalizeAPIAuthored`, `TestDiffDesignTasksFromOutline` | none known |
+| `agent tasks finalize-tasks` | done | `TestDiffTasksFinalizeTasks` | none known |
+| `agent mission record-analysis` (DIRTY_WORKTREE refusal, `--input-file`/stdin, findings carrier, router commit) | done | `TestDiffRecordAnalysis`, `TestLocalRecordAnalysisDirty` | `--owned-checkout` belongs to area OWN |
+| `agent mission record-analysis --report-only` (material-input closure, `DIRTY_ANALYSIS_INPUT`, receipts under the git dir, report-only commit, unchanged re-run, `console.print(dict)` output) | done | `TestDiffRecordAnalysisReportOnly` | `template-selection:*` digests embed the template's absolute path (irreducible, below) |
 | `agent issue-verdict` | done | `TestDiffIssueMatrix` | none known |
 | `issue-matrix migrate` | done | `TestDiffIssueMatrixMigrate` | none known |
 | issue-matrix approval blocker in `agent tasks move-task` (`--to approved/done`) | done | `TestDiffIssueMatrix` | none known |
 | `agent mission repair` | done | `TestDiffTracerAndRepair` | none known |
 | `agent tracer-append` | done | `TestDiffTracerAndRepair` | none known |
-| `intake` (path, `-`, handoff packet, `--show`, `--force`, `--auto`) | done | `TestDiffIntake` | the destructive-overwrite ownership proof is not ported: an existing brief is always protected unless `--force` |
+| `intake` (path, `-`, handoff packet, `--show`, `--force`, `--auto`, overwrite guard) | done | `TestDiffIntake`, `TestDiffIntakeOverwriteGuard` | none known (the brief gate routes through `assetpreserve` with no prover and no backup, exactly like upstream) |
 | `specify` (create + scaffold-only guidance, `--json` enrichment, `--mission` deprecated alias, `--topology`, widen interview) | done | `TestDiffLifecycle`, `TestDiffLifecycleInteractive`, `TestLocalLifecycleAndResearch` | none known |
-| `plan` (delegates to `setup-plan`, plan interview) | done | `TestDiffLifecycle`, `TestDiffLifecycleInteractive` | `--owned-checkout` forwarded to `setup-plan`, which refuses it |
+| `plan` (delegates to `setup-plan`, plan interview) | done | `TestDiffLifecycle`, `TestDiffLifecycleInteractive` | none known |
 | `tasks` (delegates to `agent mission finalize-tasks`) | done | `TestDiffLifecycle` | none known |
-| `research` (template scaffold behind the destructive-overwrite guard, `--force`, unfilled-plan gate) | done | `TestDiffLifecycle`, `TestLocalLifecycleAndResearch` | `--owned-checkout` refused; the overwrite guard has no package-ownership prover or backup, so an existing file is overwritten only with `--force` |
+| `research` (template scaffold behind the destructive-overwrite guard, `--force`, unfilled-plan gate) | done | `TestDiffLifecycle`, `TestLocalLifecycleAndResearch` | none known (asset writes route through `assetpreserve`, no prover / no backup, like upstream) |
 
 `agent context resolve` was left to area C (brief item 5).
 
-Help output: flag names, metavars, defaults and help text are copied from
-`inventory/help/*.txt`. The panel layout comes from `internal/cli` and
-differs from Rich/Typer in column padding, the Arguments type column
-(`TEXT` instead of `<str>`) and a `[a|b|c]` choices suffix on flags that have
-both a metavar and choices (e.g. `specify --topology`). These are foundation
-rendering differences shared by every area.
+Help output is byte-identical to `inventory/help` for every path
+(`go test ./internal/helpparity`).
 
 The interviews: in non-interactive mode (no TTY, or
 `SPEC_KITTY_NON_INTERACTIVE`) every widen question is opened and deferred;
 with `SPEC_KITTY_FORCE_INTERACTIVE=1` the prompts read stdin (`!cancel`
 cancels, blank defers, anything else resolves), matching
 `run_specify_interview` / `run_plan_interview`.
+
+## Irreducible differences
+
+* `record-analysis --report-only`: the `template-selection:<kind>` digests
+  hash the selected template's absolute path; upstream records its
+  site-packages path for packaged templates, the Go binary records the
+  in-binary asset address (`packs/built-in/missions/...`). The
+  `package:built-in` / `package:mission-assets` digests do match (the two
+  wheel-only `__init__.py` markers are folded in).
+* Parallelization risk report: `coupling:` lines for more than one coupled
+  module of a lane pair are printed in sorted module order; upstream iterates
+  a Python `set`, whose order is hash-randomized per process.
+* `analysis-findings` `issue_counts` key order: upstream iterates a
+  `frozenset` (hash-randomized); Go uses critical, high, medium, low, info.
+
+## Remaining work
+
+* `--owned-checkout` on `spec-commit`, `check-prerequisites`, `decision *`,
+  `setup-plan`, `map-requirements`, `finalize-tasks`, `record-analysis` and
+  `research` is area OWN's (still refused here).
+* The analysis-report freshness check (`internal/workflow.CheckAnalysisReport`,
+  area CORE) does not yet consult `report_transaction` receipts and the
+  material manifest that `--report-only` records
+  (`missionart.CollectMaterialInputs`, `planning.ReportIsQualified` are the
+  helpers it needs).
 
 ## Library API
 
@@ -70,16 +100,18 @@ cancels, blank defers, anything else resolves), matching
 
 * `Commit(repoRoot, worktreeRoot, ref, message string, paths []string, opts Options) (*Result, error)`:
   the guarded commit (HEAD/ref check, staged-unrelated preservation, path
-  fates). `Preflight` runs its checks without committing.
+  fates; `Options.PostConsolidation` is `GuardCapability.POST_CONSOLIDATION_WRITE`).
+  `Preflight` runs its checks without committing.
 * `CommitForMission(root, slug string, files []string, message, kind string, opts RouterOptions) *RouterResult`:
-  routes planning artifacts to the right surface (primary vs coordination
-  worktree) by artifact kind; `RouterResult` / `SurfaceOutcome` describe each
-  surface's outcome.
-* `Placement(root, slug, kind) string`, `IsPrimaryKind(kind)`,
-  `TargetBranch(root, slug)`, `PrimaryBranch(root)`,
-  `ResolveCommitPath(root, candidate)`, `IsWorktreeOf(repo, worktree)`.
+  routes planning artifacts to the right surface by artifact kind.
+* Placement: `Placement(root, slug, kind) string`, `ResolvePlacement(root, slug, kind) (string, error)`
+  (E2 published short-circuit, `CodeConsolidatedContentAbsent`),
+  `LifecyclePhase(root, slug)` (`Phase*`), `ContentPresentAtPrimaryTip`,
+  `IsPostConsolidationWriteTarget(root, slug, kind, ref)`, `PrimaryBranch`,
+  `PrimaryBranchNoBias`, `TargetBranch`, `IsPrimaryKind`,
+  `ResolveCommitPath`, `IsWorktreeOf`.
 * Git helpers: `StatusEntries`, `CachedChangedPaths`, `CommittedPaths`,
-  `IsTracked`; `Repr` (Python repr of a string).
+  `IsTracked`; `Repr`.
 * Errors: `*Error` with codes `Code*` (`IsCode(err, code)`); status
   constants `Status*`.
 
@@ -88,69 +120,75 @@ cancels, blank defers, anything else resolves), matching
 The Decision Moment ledger (`decisions/index.json`, per-decision artifacts,
 runtime lock).
 
-* `Context{Root, Slug, EntrySlug}` with `Open(OpenRequest) (*OpenResponse, error)`,
-  `Terminal(TerminalRequest) (*TerminalResponse, error)` (resolve / defer /
-  cancel by `Status`), `LedgerDir()`.
-* `Load(missionDir) (*Index, error)`, `Save(missionDir, *Index)`,
-  `FindByLogicalKey(idx, flow, stepID, slotKey, inputKey) *Entry`,
-  `Verify(missionDir) (*VerifyResult, error)` (deferred decisions vs
-  `[NEEDS CLARIFICATION]` markers).
-* Paths: `Dir`, `IndexPath`, `LockPath`, `ArtifactPath`;
-  `RenderArtifact(*Entry)`, `WriteArtifact(missionDir, *Entry)`.
+* `Context{Root, Slug, EntrySlug}` with `Open`, `Terminal`, `LedgerDir()`.
+* `Load`, `Save`, `FindByLogicalKey`, `Verify(missionDir)`.
+* Paths: `Dir`, `IndexPath`, `LockPath`, `ArtifactPath`; `RenderArtifact`,
+  `WriteArtifact`.
 * `Flows`, `AllStatuses`, `Status*`, error codes `Code*`, `NewError`;
-  time formatting `ISO`, `PydanticTime`.
+  `ISO`, `PydanticTime`.
 
 ### internal/issuematrix
 
-Structured `issue-matrix.json` (and legacy `issue-matrix.md`) reader,
-validator and scaffold.
-
-* `LoadRows(dir) *Rows`, `ParseDocument(*jsonx.Object) *Rows`,
-  `ParseStructuredRows(markdown) ([]Row, []Diagnostic)`, `RowsFromLegacy`.
-* `DetectReferences(path)` / `DiscoverReferences(dir)` find `#NNNN` issue
-  references in spec/plan/tasks; `ScaffoldRows(refs) *Rows`.
+* `LoadRows(dir) *Rows`, `ParseDocument`, `ParseStructuredRows`, `RowsFromLegacy`.
+* `DetectReferences`, `DiscoverReferences`, `ScaffoldRows`.
 * `Validate(path, content *string) *Result`; `ArtifactPresent(dir)`.
-* `ApprovalBlocker(featureDir, target, primaryDir) string`: the move-task
-  approval blocker message ("" = not blocked).
+* `ApprovalBlocker(featureDir, target, primaryDir) string`.
 * Constants `JSONFile`, `Verdicts`, `EntryFields`, diagnostic codes `Diag*`.
 
 ### internal/reqmap
 
-Requirement-ID grammar and requirement mapping.
-
-* `Parse(token, missionType) (ID, bool)`, `Canonical`, `Classify`,
-  `FindAll`; `ID.Canonical/IsFunctional/String`.
+* `Parse`, `Canonical`, `Classify`, `FindAll`; `ID.Canonical/IsFunctional/String`.
 * Spec scanning: `ParseSpecIDs`, `DeclaredIDs`, `DeclaredShapePatterns`,
   `FindUndeclaredRequirementCitations`, `FindBareProseRequirementIDs`,
-  `LintSpec` (`LintError`, `LintWarning`), `BlankHTMLComments`.
+  `LintSpec`, `BlankHTMLComments`.
 * Mapping: `TokenizeRefs`, `ReadAllWPRawRefs`, `TasksMDRefs`,
-  `TasksMDSections`, `ComputeCoverage` (`Coverage`), `BucketOrder`,
-  `FailingReasons`.
+  `TasksMDSections`, `ComputeCoverage`, `BucketOrder`, `FailingReasons`.
 
 ### internal/missionart
 
-Mission artifact helpers shared by setup-plan, finalize-tasks and research.
-
-* `ResolveTemplate(name, root, missionType) ([]byte, bool)`: project
-  overrides, project templates, global `~/.kittify`, then the embedded
-  built-in pack.
+* `ResolveTemplate(name, root, missionType) ([]byte, bool)` and the tiered
+  `ResolveAssetTier(name, subdir, root, mission) (*TemplateResolution, bool)`
+  (`Tier*`: mission-scoped / global override, legacy, org packs,
+  `~/.kittify` mission and global, packaged default).
+* `CollectMaterialInputs(featureDir, root) (*jsonx.Object, error)`
+  (analysis_inputs.collect_material_inputs; `*MaterialInputError`,
+  `*CharterConfigError`), `ArtifactHashEntry`, `NormalizeTasksMD`,
+  `HashInputNames`.
 * Substantive-content checks: `IsSubstantive`, `IsSubstantiveText`,
   `IsPlanSubstantive`, `HasSubstantiveFRRow`, `DescribeTechnicalContextGap`,
   `DescribePlanFieldRequirements`, `PlanTemplateName`.
-* `ValidateFeatureStructure(featureDir, checkTasks) *Structure`,
-  `WriterArtifacts`, `MissionTypeFor`, `MissionYAML`, `IsCommitted`,
-  `RepoTreePath`, `InventoryKey`.
+* `ValidateFeatureStructure`, `WriterArtifacts`, `MissionTypeFor`,
+  `MissionYAML`, `IsCommitted`, `RepoTreePath`, `InventoryKey`.
+
+### internal/assetpreserve (new)
+
+The prove-ownership-or-preserve guard (`specify_cli.asset_preservation`).
+
+* `GuardDestructiveOverwrite(dest, project, replacementSubstantive, authorized bool, prover Prover, backupParent string) (OverwriteVerdict, error)`.
+* `GuardDestructiveRemoval(path, project, prover, isTree, backupParent, dryRun) (OwnershipVerdict, error)`.
+* Provers: `Prover` interface, `ManifestProver`, `ManagedPathProver`,
+  `CanonicalContentProver` (`VersionMarker`), `AnyProver`; `Proof`.
+* Archiving: `ArchiveInto`, `BackupBeforeOverwrite`, `WriteFileVerbatim`,
+  `AllocateBackupDir`, `CompactStamp`.
 
 ### internal/branchctx
 
-* `Inject(payload, target, current, matchTarget, expectedCheckout) *jsonx.Object`:
-  the branch contract keys added to planning JSON payloads.
-* `CurrentBranch(dir)`, `FeatureTargetBranch(featureDir, repoRoot)`,
-  `UTCStamp()`.
+* `Inject(payload, target, current, matchTarget, expectedCheckout) *jsonx.Object`.
+* `CurrentBranch(dir)`, `FeatureTargetBranch(featureDir, repoRoot)`, `UTCStamp()`.
+
+### internal/commands/planning (exported for other areas)
+
+* `RecordAnalysisDirtyPreflight`, `ParseAnalysisVerdict` (orchestrator-api).
+* `APIAuthoredFinalizeScope`, `FinalizeScope`, `ScopeRefusal` (the
+  orchestrator package installs `native_finalization_scope`).
+* `ReportIsQualified(root, report, token)` (report-transaction receipts).
 
 ## Changes outside the area
 
-* `internal/commands/agentcore/tasks_move.go` (area A, allowed by the
-  brief): additive `issueMatrixBlocker` fact and an approved/done guard
-  using `issuematrix.ApprovalBlocker`.
-* No foundation (`internal/cli`, `app`, `jsonx`, `testkit`, `rich`) changes.
+* `internal/commands/agentcore/tasks_move.go` (area A, earlier wave):
+  additive `issueMatrixBlocker` fact and approved/done guard.
+* `internal/rich/pretty.go` (new file, PYF's package): `PrettyRepr`,
+  `PrintPretty`, `WithIndentGuides` — rich.pretty for `console.print(<dict>)`.
+* `internal/lanes/conflict_pairs.go` (new file, CORE's package):
+  `MembershipConflict.Pairs()`, `FrozenMembership.IsEmpty()`.
+* No foundation (`internal/cli`, `app`, `jsonx`, `testkit`) changes.

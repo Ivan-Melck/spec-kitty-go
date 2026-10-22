@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/healthcheck"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/project"
@@ -91,32 +92,12 @@ func runDoctorRunIndex(ctx *cli.Context) error {
 	return cli.Exit(1)
 }
 
-// isBuiltInPackPath approximates charter.provenance.is_built_in_pack_path
-// ("resolves under the installed built-in pack root"). The Go build embeds
-// its packs, so: under $SPEC_KITTY_PACKS_ROOT/built-in when that is set,
-// otherwise an existing file inside some `packs/built-in/` tree.
-func isBuiltInPackPath(p string) bool {
-	if v := os.Getenv("SPEC_KITTY_PACKS_ROOT"); v != "" {
-		base, err := filepath.Abs(filepath.Join(v, "built-in"))
-		if err != nil {
-			return false
-		}
-		rel, err := filepath.Rel(base, filepath.Clean(p))
-		return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
-	}
-	if !strings.Contains(filepath.ToSlash(p), "/packs/built-in/") {
-		return false
-	}
-	_, err := os.Stat(p)
-	return err == nil
-}
+// isBuiltInPackPath is charter.provenance.is_built_in_pack_path.
+func isBuiltInPackPath(p string) bool { return healthcheck.IsBuiltInPackPath(p) }
 
 // provenanceFindings is _provenance_doctor._collect_findings: describe_leaks
 // (non-template-set catalog refs + agent profile manifest), then the
-// template-set leaks and ambiguities of the 4.0.0rc5 heal. The built-in
-// pack classification is approximated by a `/packs/built-in/` path segment
-// (the Go build has no on-disk pack root), and former-checkout proof is not
-// attempted, so an unproven template-set path is reported as ambiguous.
+// template-set leaks and ambiguities of the 4.0.0rc5 heal.
 func provenanceFindings(root string) ([]string, []string) {
 	var leaks, unresolved, tsLeaks []string
 	cp := project.Kittify(root, "charter", "charter.yaml")
@@ -177,7 +158,8 @@ func refID(ref *jsonx.Object) string {
 // describe_template_set_ambiguities over catalog.references.
 func templateSetProvenance(cat *jsonx.Object) (leaks, ambiguous []string) {
 	mission, _ := valueGet(cat, "mission").(string)
-	if mission == "" || strings.ContainsAny(mission, `/\`) || mission == "." || mission == ".." {
+	suffix := healthcheck.MissionSuffix(mission)
+	if suffix == "" {
 		return nil, nil
 	}
 	set, _ := valueGet(cat, "template_set").(string)
@@ -185,24 +167,24 @@ func templateSetProvenance(cat *jsonx.Object) (leaks, ambiguous []string) {
 		return nil, nil
 	}
 	expectedID := "TEMPLATE_SET:" + set
-	suffix := []string{"built-in", "missions", mission, "mission.yaml"}
-	for _, r := range cat.GetList("references") {
+	refs, ok := valueGet(cat, "references").([]any)
+	if !ok {
+		return nil, nil
+	}
+	for _, r := range refs {
 		ref, ok := r.(*jsonx.Object)
 		if !ok || valueGet(ref, "kind") != "template_set" || valueGet(ref, "id") != expectedID {
 			continue
 		}
-		sp, _ := valueGet(ref, "source_path").(string)
-		if sp == "" || !filepath.IsAbs(sp) {
+		sp, isStr := valueGet(ref, "source_path").(string)
+		if !isStr {
 			continue
 		}
-		parts := strings.Split(strings.Trim(filepath.ToSlash(strings.ReplaceAll(sp, `\`, "/")), "/"), "/")
-		endsWith := len(parts) >= len(suffix) && strings.Join(parts[len(parts)-len(suffix):], "/") == strings.Join(suffix, "/")
-		canonical := endsWith && len(parts) > len(suffix) && parts[len(parts)-len(suffix)-1] == "packs"
-		if canonical && isBuiltInPackPath(sp) {
+		if healthcheck.MatchesMissionSource(sp, suffix) {
 			leaks = append(leaks, fmt.Sprintf("charter.yaml catalog[%s].source_path=%s", refID(ref), pyjson.ReprString(sp)))
 			continue
 		}
-		if endsWith {
+		if healthcheck.IsAbsolutePathAnyOS(sp) && healthcheck.SuffixMatches(sp, suffix) {
 			ambiguous = append(ambiguous, fmt.Sprintf("ambiguous template-set provenance (checkout identity cannot be verified; path not healed and left unchanged): charter.yaml catalog[%s].source_path=%s", expectedID, pyjson.ReprString(sp)))
 		}
 	}

@@ -10,6 +10,7 @@ import (
 // TestDiffMapRequirements covers TRACE 3.3 plus individual/replace/tracker
 // modes and every validation refusal.
 func TestDiffMapRequirements(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	g, o := oracleCreate(t, p)
 	p.Both(func(s *testkit.Sandbox) { missionfx.AuthorCalc(t, s, missionfx.MissionSlug(t, s)) })

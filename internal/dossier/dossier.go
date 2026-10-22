@@ -265,7 +265,7 @@ func validateWP(meta *jsonx.Object, timestamps map[string]bool) (*jsonx.Object, 
 				if _, err := strconv.ParseInt(strings.TrimSpace(strings.ReplaceAll(t, "_", "")), 10, 64); err != nil {
 					return nil, &ValidationError{field, "invalid literal for int()"}
 				}
-			case int64, bool:
+			case int, int64, bool:
 			case float64:
 			default:
 				return nil, &ValidationError{field, "Input should be a valid integer"}

@@ -363,10 +363,13 @@ func runIntake(ctx *cli.Context) error {
 		agent = tool
 	}
 	if fileExists(brief) && !ctx.Bool("force") {
-		// TODO: guard_destructive_overwrite ownership proof is not ported:
-		// an existing brief is always protected without --force.
-		say(errOut, "Brief already exists at .kittify/mission-brief.md. Use --force to overwrite.")
-		return cli.Exit(1)
+		// write_mission_brief's existence-alone gate (#4910/#4921): the
+		// shared guard with no prover and no backup parent, so an existing
+		// brief is only replaced under --force (never archived).
+		if v := guardDestructiveOverwrite(brief, root, true, false); !v.proceed {
+			say(errOut, "Brief already exists at .kittify/mission-brief.md. Use --force to overwrite.")
+			return cli.Exit(1)
+		}
 	}
 	if fileExists(brief) != fileExists(source) {
 		os.Remove(brief)

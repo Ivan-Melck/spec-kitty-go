@@ -11,6 +11,7 @@ import (
 // warning, unknown paths, directory expansion, HEAD mismatch, empty message,
 // paragraphs, unrelated staged content, .worktrees policy.
 func TestDiffSafeCommit(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	shellSteps(t, p, "", "",
 		`$SK safe-commit -m x`,
@@ -41,6 +42,7 @@ func TestDiffSafeCommit(t *testing.T) {
 // --to-branch), a commit inside the coordination worktree (TRACE 7.3) and
 // spec-commit (TRACE 1.9 / 2.5).
 func TestDiffSafeCommitMission(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	slugs := []string{}
 	p.Both(func(s *testkit.Sandbox) {

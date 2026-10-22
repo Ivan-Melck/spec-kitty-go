@@ -191,8 +191,18 @@ func TargetBranch(root, slug string) string {
 	return PrimaryBranch(root)
 }
 
-// Placement is resolve_placement_only(root, slug, kind=kind).ref.
+// Placement is resolve_placement_only(root, slug, kind=kind).ref (the E2
+// short-circuit applies when the checkout carries the consolidated content;
+// ResolvePlacement surfaces its refusal).
 func Placement(root, slug, kind string) string {
+	if ref, err := ResolvePlacement(root, slug, kind); err == nil {
+		return ref
+	}
+	return topologyPlacement(root, slug, kind)
+}
+
+// topologyPlacement is the pre-E2 kind/topology projection.
+func topologyPlacement(root, slug, kind string) string {
 	target := TargetBranch(root, slug)
 	if IsPrimaryKind(kind) {
 		return target
