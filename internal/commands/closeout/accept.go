@@ -7,6 +7,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/acceptance"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/migrate"
+	"github.com/spec-kitty/go-kitty3/internal/originfresh"
 )
 
 const originCheckHelp = "Refuse (enforce, the default) or only warn (warn) when the mission's status evidence is behind or unreachable on its remote; off contacts nothing and accepts stale evidence. Overrides SPEC_KITTY_ORIGIN_CHECK. --no-commit and --diagnose always warn."
@@ -38,6 +40,7 @@ func init() {
 					mission: ctx.String("mission"), mode: ctx.String("mode"), actor: ctx.String("actor"), tests: ctx.Strings("test"),
 					json: ctx.Bool("json"), lenient: ctx.Bool("lenient"), noCommit: ctx.Bool("no-commit"), diagnose: ctx.Bool("diagnose"),
 					allowFail: ctx.Bool("allow-fail"), owned: ctx.IsSet("owned-checkout"), mergeCommit: ctx.String("merge-commit"),
+					targetBranch: ctx.OptString("target-branch"), originCheck: ctx.OptString("origin-check"), attest: ctx.Bool("attest-first-landing-commit"),
 				})
 			},
 		})
@@ -62,6 +65,7 @@ func init() {
 				return runAccept(ctx, acceptOpts{
 					mission: ctx.String("mission"), mode: ctx.String("mode"), json: ctx.Bool("json"), lenient: ctx.Bool("lenient"),
 					noCommit: ctx.Bool("no-commit"), diagnose: ctx.Bool("diagnose"), mergeCommit: ctx.String("merge-commit"), agent: true,
+					targetBranch: ctx.OptString("target-branch"), attest: ctx.Bool("attest-first-landing-commit"),
 				})
 			},
 		})
@@ -73,12 +77,15 @@ type acceptOpts struct {
 	tests                                        []string
 	json, lenient, noCommit, diagnose, allowFail bool
 	owned, agent                                 bool
+	targetBranch, originCheck                    *string
+	attest                                       bool
 }
 
 type acceptRun struct {
-	ctx  *cli.Context
-	json bool
-	tr   *tracker
+	ctx        *cli.Context
+	json       bool
+	tr         *tracker
+	advisories []any
 }
 
 // fail is accept._fail: one error on the active output lane, then exit.
@@ -106,7 +113,7 @@ func (r *acceptRun) report(msg, step string, extra *jsonx.Object) {
 }
 
 func runAccept(ctx *cli.Context, o acceptOpts) error {
-	r := &acceptRun{ctx: ctx, json: o.json}
+	r := &acceptRun{ctx: ctx, json: o.json, advisories: []any{}}
 	root := locateRoot()
 	if root == "" {
 		return r.fail("Could not locate project root", 1, "", nil)
@@ -143,12 +150,41 @@ func runAccept(ctx *cli.Context, o acceptOpts) error {
 			r.tr.add("guide", "Share next steps")
 		}
 	}
+	var prEvidence *migrate.PrMergeEvidence
 	if o.mergeCommit != "" {
 		if mode != "pr" {
 			return r.fail(fmt.Sprintf("--merge-commit is only valid with --mode pr (resolved mode: %s). A %s acceptance records its baseline_merge_commit through `spec-kitty consolidate`, not here.", mode, mode), 2, "", nil)
 		}
-		return r.fail(fmt.Sprintf("Cannot record PR merge for %s: --merge-commit is not supported by this build", slug), 1, "", nil)
+		ev, err := migrate.VerifyPrMergeEvidence(root, slug, o.mergeCommit, o.targetBranch, o.attest)
+		if err != nil {
+			return r.fail(fmt.Sprintf("Cannot record PR merge for %s: %v", slug, err), 1, "", nil)
+		}
+		prEvidence = ev
 	}
+	setting := originfresh.ResolveMode(o.originCheck)
+	if o.noCommit || o.diagnose {
+		setting = originfresh.ReadOnly
+	}
+	originWarnings, refused := originfresh.Run(root, slug, setting, nil, false)
+	if refused != nil {
+		rows := []any{}
+		for _, v := range refused.Verdicts {
+			rows = append(rows, v.Payload())
+		}
+		codes := []any{}
+		for _, c := range refused.Codes {
+			codes = append(codes, c)
+		}
+		return r.fail(refused.Message, 1, "", jsonx.NewObject("error_code", refused.Code, "error_codes", codes, "origin_freshness", rows))
+	}
+	for _, w := range originWarnings {
+		fmt.Fprintln(ctx.Stderr, "Warning: "+w)
+	}
+	advisories := []any{}
+	for _, w := range originWarnings {
+		advisories = append(advisories, w)
+	}
+	r.advisories = advisories
 	if !o.json {
 		r.tr.start("verify")
 	}
@@ -168,7 +204,7 @@ func runAccept(ctx *cli.Context, o acceptOpts) error {
 			p := sum.ToObject()
 			sum.AddLaneDerivations(p)
 			p.Set("diagnose", true)
-			p.Set("advisories", []any{})
+			p.Set("advisories", r.advisories)
 			printJSONPretty(ctx.Stdout, p)
 			return nil
 		}
@@ -210,11 +246,19 @@ func runAccept(ctx *cli.Context, o acceptOpts) error {
 			r.tr.complete("commit", "no changes")
 		}
 	}
-	var stampErr error
+	var stampErr, prErr error
 	var residual *acceptance.Outcome
+	prRecorded := false
 	if commitRequired {
 		if perr == nil {
 			stampErr = acceptance.StampBirthCutover(sum.FeatureDir)
+			if prEvidence != nil {
+				if _, err := migrate.RecordPrMergeBaseline(root, slug, o.mergeCommit, o.targetBranch, o.attest); err != nil {
+					prErr = err
+				} else {
+					prRecorded = true
+				}
+			}
 		}
 		residual = acceptance.ResidualCommit(root, slug)
 	}
@@ -224,6 +268,9 @@ func runAccept(ctx *cli.Context, o acceptOpts) error {
 	if stampErr != nil {
 		return r.fail("Birth-cutover stamp refused: "+stampErr.Error(), 1, "", nil)
 	}
+	if prErr != nil {
+		return r.fail("PR merge recording failed: "+prErr.Error(), 1, "", nil)
+	}
 	if residual != nil && residual.ExitCode() != 0 {
 		step := ""
 		if commitRequired {
@@ -232,9 +279,17 @@ func runAccept(ctx *cli.Context, o acceptOpts) error {
 		msg := fmt.Sprintf("Residual artifact commit failed: Residual acceptance artifact commit failed for %s: %s", slug, acceptance.ResidualFailureDetail(residual))
 		return r.fail(msg, 1, step, jsonx.NewObject("residual_commit", jsonx.NewObject("surfaces", residual.SurfacesJSON())))
 	}
+	if prEvidence != nil {
+		if prRecorded {
+			res.Notes = append(res.Notes, fmt.Sprintf("PR merge recorded: baseline_merge_commit %s (PR merge commit %s; anchor evidence %s)",
+				prEvidence.BaselineMergeCommit, prEvidence.PrMergeCommit, prEvidence.AnchorEvidence))
+		} else {
+			res.Notes = append(res.Notes, "--merge-commit verified against this repository; re-run without --no-commit to record it as the review baseline")
+		}
+	}
 	if o.json {
 		p := res.ToObject()
-		p.Set("advisories", []any{})
+		p.Set("advisories", r.advisories)
 		if residual != nil {
 			p.Set("residual_commit", jsonx.NewObject("surfaces", residual.SurfacesJSON()))
 		}
@@ -260,7 +315,7 @@ func (r *acceptRun) reportSummary(sum *acceptance.Summary, raw bool) {
 		if !raw {
 			sum.AddLaneDerivations(p)
 		}
-		p.Set("advisories", []any{})
+		p.Set("advisories", r.advisories)
 		printJSONPretty(r.ctx.Stdout, p)
 		return
 	}

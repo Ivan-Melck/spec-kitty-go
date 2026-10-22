@@ -17,9 +17,11 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mergedriver"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/originfresh"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/retrospective"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
+	"github.com/spec-kitty/go-kitty3/internal/staleassert"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -39,6 +41,26 @@ type Options struct {
 	RemoveWorktree *bool
 	Push, DryRun   bool
 	JSON, Yes      bool
+	Resume         bool
+	OriginCheck    *string  // --origin-check (nil = environment/default)
+	SkipLanes      bool     // --skip-lanes: synthesize a no-lane manifest when lanes.json is absent
+	DryRunNotes    []string // "--attest-* is not applied with --dry-run" notices
+}
+
+// synthesizeNoLaneManifest is _synthesize_no_lane_manifest: one planning
+// lane carrying every WP of the status snapshot, landing directly on the
+// target branch.
+func (r *run) synthesizeNoLaneManifest() *lanes.Manifest {
+	target := r.target
+	var ids []string
+	if snap, err := status.ReduceDir(r.sf.StatusDir()); err == nil {
+		ids = snap.WorkPackages.Keys()
+		sort.Strings(ids)
+	}
+	mid := missionIDOf(r.root, r.slug)
+	return &lanes.Manifest{Version: 1, MissionSlug: r.slug, MissionID: &mid, MissionBranch: target,
+		TargetBranch: target, Lanes: []lanes.Lane{{LaneID: lanes.PlanningLaneID, WPIDs: ids}},
+		ComputedAt: clock.NowUTCISO(), ComputedFrom: "skip-lanes direct-on-target synthesis (T021, FR-012)"}
 }
 
 var compact = jsonx.Options{Indent: -1, EnsureASCII: true}
@@ -181,9 +203,20 @@ func Run(w io.Writer, root string, o Options) error {
 		sayErr(w, "Mission slug could not be resolved. Use --mission <slug>.")
 		return exit(2)
 	}
-	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret}
+	if o.Resume {
+		st := LoadState(root, missionIDOf(root, slug))
+		if st == nil {
+			sayErr(w, "No interrupted merge to resume.")
+			return exit(1)
+		}
+		say(w, fmt.Sprintf("Resume requested for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
+	}
+	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck, skipLanes: o.SkipLanes}
 	return r.execute()
 }
+
+// PrimaryBranch is resolve_primary_branch.
+func PrimaryBranch(root string) string { return primaryBranch(root) }
 
 func primaryBranch(root string) string {
 	if out, err := gitx.Run(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
@@ -241,6 +274,9 @@ func needsNumber(primaryDir string) bool {
 }
 
 func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o Options) error {
+	for _, n := range o.DryRunNotes {
+		say(w, "[yellow]Note:[/yellow] "+n)
+	}
 	errOut := func(msg string) error {
 		if o.JSON {
 			fmt.Fprintln(w, jsonx.Dumps(jsonx.NewObject("spec_kitty_version", app.Version, "error", msg), compact))
@@ -289,35 +325,170 @@ func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o O
 // ---------------------------------------------------------------------------
 
 type run struct {
-	w        io.Writer
-	root     string
-	slug     string
-	sf       *coord.Surface
-	target   string
-	strategy string
-	ret      Retention
-	m        *lanes.Manifest
-	wps      []string
-	snap     *status.Snapshot
-	number   int
-	baseline string
-	squash   string
+	w            io.Writer
+	root         string
+	slug         string
+	sf           *coord.Surface
+	target       string
+	strategy     string
+	ret          Retention
+	m            *lanes.Manifest
+	wps          []string
+	snap         *status.Snapshot
+	number       int
+	baseline     string
+	squash       string
+	push         bool
+	skipLanes    bool
+	planningOnly bool
+	state        *MergeState
+	originCheck  *string
+	originGated  bool
+	coordDone    bool
+}
+
+func hasRemote(root, name string) bool {
+	res, _ := gitx.Exec(root, nil, nil, "remote", "get-url", name)
+	return res.Code == 0
+}
+
+var linearHistoryTokens = []string{"linear history", "non-linear", "nonlinear", "merge commits", "GH006", "protected branch hook declined", "must not contain merge commits"}
+
+func isLinearHistoryRejection(stderr string) bool {
+	h := strings.ToLower(stderr)
+	for _, t := range linearHistoryTokens {
+		if strings.Contains(h, strings.ToLower(t)) {
+			return true
+		}
+	}
+	return false
+}
+
+// pushPreflight is _enforce_target_branch_sync_preflight: refresh
+// origin/<target> and refuse a push from a target behind or diverged from it.
+func (r *run) pushPreflight() error {
+	target := r.m.TargetBranch
+	if !hasRemote(r.root, "origin") {
+		return nil
+	}
+	if err := originfresh.FetchBranches(r.root, "origin", []string{target}, nil); err != nil {
+		say(r.w, "[red]Error:[/red] Could not refresh target branch tracking ref before merge.")
+		say(r.w, "  diagnostic_code: TARGET_BRANCH_REFRESH_FAILED")
+		say(r.w, "  branch_or_work_package: "+target)
+		say(r.w, "  violated_invariant: local_target_branch_must_match_tracking_branch")
+		say(r.w, "  remediation:")
+		say(r.w, fmt.Sprintf("  - Run: git fetch origin %s", target))
+		say(r.w, "  - Resolve the fetch problem, then retry spec-kitty consolidate.")
+		say(r.w, "  - Spec Kitty stopped before mutating merge state or reconstructing branches.")
+		return exit(1)
+	}
+	if revParse(r.root, "refs/heads/"+target) == "" {
+		return nil
+	}
+	tracking := ""
+	if res, _ := gitx.Exec(r.root, nil, nil, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "--verify", "--end-of-options", target+"@{upstream}"); res.Code == 0 && strings.TrimSpace(res.Stdout) != "" {
+		tracking = strings.TrimSpace(res.Stdout)
+	} else if revParse(r.root, "refs/remotes/origin/"+target) != "" {
+		tracking = "origin/" + target
+	}
+	if tracking == "" {
+		return nil
+	}
+	res, _ := gitx.Exec(r.root, nil, nil, "rev-list", "--left-right", "--count", target+"..."+tracking)
+	f := strings.Fields(res.Stdout)
+	if res.Code != 0 || len(f) < 2 || f[1] == "0" {
+		return nil
+	}
+	ahead, behind := f[0], f[1]
+	state := "behind"
+	if ahead != "0" {
+		state = "diverged"
+	}
+	say(r.w, "[red]Error:[/red] Target branch is not synchronized with its tracking branch.")
+	say(r.w, "  diagnostic_code: TARGET_BRANCH_NOT_SYNCHRONIZED")
+	say(r.w, "  branch_or_work_package: "+target)
+	say(r.w, "  violated_invariant: local_target_branch_must_match_tracking_branch")
+	say(r.w, "  remediation:")
+	lines := []string{
+		fmt.Sprintf("Local target branch '%s' is %s relative to '%s' (%s ahead, %s behind).", target, state, tracking, ahead, behind),
+		"Spec Kitty stopped before mutating merge state or reconstructing branches.",
+		"Refresh remote refs: git fetch origin " + target,
+		fmt.Sprintf("Inspect differences: git log --oneline --left-right --cherry-pick %s...%s", target, tracking),
+		fmt.Sprintf("Inspect changed paths: git diff --name-only %s...%s", tracking, target),
+	}
+	if state == "diverged" {
+		lines = append(lines, fmt.Sprintf("Recommended: use the focused PR path unless you verified every ahead commit belongs on '%s' now.", target),
+			fmt.Sprintf("Do not run 'git push origin %s' just to satisfy this preflight; local target commits may include orchestration history or unrelated missions.", target),
+			fmt.Sprintf("Only direct-push '%s' after reviewing the ahead commits and changed paths.", target))
+	} else {
+		lines = append(lines, fmt.Sprintf("Recommended: update local '%s' from '%s' after reviewing remote-only commits; do not push the local target branch.", target, tracking))
+	}
+	focused := "kitty/pr/" + r.slug + "-to-" + strings.ReplaceAll(target, "/", "-")
+	lines = append(lines, fmt.Sprintf("Focused PR path: git switch -c %s %s", focused, r.m.MissionBranch),
+		fmt.Sprintf("Then push it: git push -u origin %s", focused),
+		fmt.Sprintf("Open a PR from %s into %s.", focused, target),
+		"Do not use reset, rebase, or force-push as part of this preflight remediation.")
+	for _, l := range lines {
+		say(r.w, "  - "+l)
+	}
+	return exit(1)
 }
 
 const abortedNote = "Merge aborted before any state change. Resolve the reported condition, then re-run spec-kitty consolidate."
 
 func (r *run) execute() error {
+	if !r.originGated {
+		var laneBranches []string
+		if lm, err := lanes.Read(r.sf.PrimaryDir); err == nil && lm != nil {
+			done := map[string]bool{}
+			st := LoadState(r.root, missionIDOf(r.root, r.slug))
+			if st != nil {
+				for _, id := range st.CompletedWPs {
+					done[id] = true
+				}
+			}
+			laneBranches = originfresh.ApprovedLaneBranches(r.root, r.slug, lm, done)
+		}
+		warnings, refused := originfresh.Run(r.root, r.slug, originfresh.ResolveMode(r.originCheck), laneBranches,
+			LoadState(r.root, missionIDOf(r.root, r.slug)) != nil)
+		if refused != nil {
+			fmt.Fprintln(r.w, refused.Message)
+			return exit(1)
+		}
+		for _, w := range warnings {
+			fmt.Fprintln(r.w, w)
+		}
+	}
 	m, msg := requireLanes(r.sf.PrimaryDir)
+	if m == nil && r.skipLanes {
+		if _, err := os.Stat(filepath.Join(r.sf.PrimaryDir, lanes.File)); os.IsNotExist(err) {
+			m = r.synthesizeNoLaneManifest()
+		}
+	}
 	if m == nil {
 		sayErr(r.w, msg)
 		return exit(1)
 	}
 	r.m = m
+	r.planningOnly = m.MissionBranch == m.TargetBranch
+	for _, l := range m.Lanes {
+		if l.LaneID != lanes.PlanningLaneID {
+			r.planningOnly = false
+		}
+	}
 	for _, x := range r.ret.Warnings {
 		say(r.w, "[yellow]Warning:[/yellow] "+x)
 	}
 	for _, x := range r.ret.Notices {
 		say(r.w, "[yellow]Notice:[/yellow] "+x)
+	}
+	if st := LoadState(r.root, missionIDOf(r.root, r.slug)); st != nil && st.PushRequested {
+		r.push = true
+	}
+	if r.push {
+		if err := r.pushPreflight(); err != nil {
+			return err
+		}
 	}
 	if !gitx.BranchExists(r.root, m.MissionBranch) {
 		base := "<base-commit>"
@@ -359,6 +530,17 @@ func (r *run) execute() error {
 		say(r.w, "  No lane consolidation and no mission_number bake have occurred; the mission is unchanged. Move the listed WP(s) through review (approved/done), or cancel them with operator provenance, then re-run the merge.")
 		return exit(1)
 	}
+	mid := missionIDOf(r.root, r.slug)
+	st := LoadState(r.root, mid)
+	if st != nil {
+		done := 0
+		for _, id := range st.CompletedWPs {
+			if contains(st.WPOrder, id) {
+				done++
+			}
+		}
+		say(r.w, fmt.Sprintf("[bold cyan]Resuming[/bold cyan] merge for %s (%d/%d WPs already done)", r.slug, done, len(st.WPOrder)))
+	}
 	say(r.w, "[bold]Lane-based merge for "+r.slug+"[/bold]")
 	say(r.w, "  Mission branch: "+m.MissionBranch)
 	var ids []string
@@ -366,19 +548,66 @@ func (r *run) execute() error {
 		ids = append(ids, l.LaneID)
 	}
 	say(r.w, "  Lanes: "+strings.Join(ids, ", "))
-	say(r.w, fmt.Sprintf("  [green]✓[/green] Gate evidence: All %d WPs have review approval", len(r.wps)))
-	say(r.w, "  [green]✓[/green] Gate risk: Risk score 0.00 within threshold")
-	say(r.w, "  [green]✓[/green] Gate dependency: All dependencies complete")
-	say(r.w, "  [green]✓[/green] Gate issue_matrix_completeness: No gating issue references discovered — nothing to enforce")
-	say(r.w, "  [green]✓[/green] Gate issue_matrix_verdict_terminality: No gating issue references discovered — nothing to enforce")
+	if r.planningOnly {
+		say(r.w, "  Planning-artifact-only mission: target branch already contains deliverables; branch merge steps will be skipped.")
+	}
+	gatesPass := true
+	for _, g := range EvaluateGates(r.root, r.sf.PrimaryDir, r.sf.StatusDir(), r.sf.StatusDir(), r.wps, LoadGatePolicy(r.root)) {
+		icon := "[green]✓[/green]"
+		if g.Verdict != "pass" {
+			icon = "[yellow]⚠[/yellow]"
+			if g.Blocking {
+				icon = "[red]✗[/red]"
+				gatesPass = false
+			}
+		}
+		say(r.w, fmt.Sprintf("  %s Gate %s: %s", icon, g.Name, g.Details))
+	}
+	if !gatesPass {
+		say(r.w, "\n[red]Error:[/red] Merge gates failed.")
+		return exit(1)
+	}
+	if st == nil && mid != "" {
+		coordRef := r.m.TargetBranch
+		if r.sf.Routed() {
+			coordRef = r.m.MissionBranch
+		}
+		st = newState(r.root, r.slug, mid, r.m.TargetBranch, r.strategy, r.m, r.wps, r.ret, r.push, coordRef)
+		st.Save(r.root)
+	}
+	if st != nil {
+		st.BeginAttempt(r.root)
+		st.Save(r.root)
+	}
+	r.state = st
 
 	restore := activateDrivers(r.root)
 	defer restore()
 	r.baseline = revParse(r.root, "refs/heads/"+m.TargetBranch)
+	r.coordDone = coordDoneOf(r)
+	if err := r.mutationSpan(r.coordDone); err != nil {
+		if e, ok := err.(*Exit); ok && e.Code != 0 && r.state != nil {
+			fmt.Fprintln(r.w, r.state.Rollback(r.root))
+		}
+		return err
+	}
+	if r.strategy == "squash" {
+		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP claim integrity and squash content attribution verified (no un-attributable content on the target); per-SHA approved-reachability deferred under squash strategy.")
+	} else {
+		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP commit reachability on the target (no excluded commit reachable).")
+	}
+	return r.afterReconcile()
+}
+
+func coordDoneOf(r *run) bool { return r.sf.Routed() && dirExists(r.sf.CoordWorktree) }
+
+// mutationSpan is the executor's single rollback door span: lane merges
+// through the reconciliation gate. A failure inside it rolls every
+// snapshotted branch back.
+func (r *run) mutationSpan(coordDone bool) error {
 	if err := r.mergeLanes(); err != nil {
 		return err
 	}
-	coordDone := r.sf.Routed() && dirExists(r.sf.CoordWorktree)
 	if err := r.bake(); err != nil {
 		return err
 	}
@@ -401,17 +630,127 @@ func (r *run) execute() error {
 	if err := r.doneBookkeeping(coordDone); err != nil {
 		return err
 	}
-	if r.strategy == "squash" {
-		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP claim integrity and squash content attribution verified (no un-attributable content on the target); per-SHA approved-reachability deferred under squash strategy.")
-	} else {
-		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP commit reachability on the target (no excluded commit reachable).")
-	}
+	return r.reconcile()
+}
+
+// afterReconcile is the post-gate phases: stale check, push, teardown and
+// the summary.
+func (r *run) afterReconcile() error {
+	coordDone := r.coordDone
 	say(r.w, "  [dim]Running stale-assertion check...[/dim]")
+	stale, staleErr := staleassert.RunCheck(r.baseline, "HEAD", r.root)
+	if r.push && hasRemote(r.root, "origin") {
+		res, _ := gitx.Exec(r.root, nil, nil, "push", "origin", r.m.TargetBranch)
+		if res.Code != 0 {
+			if isLinearHistoryRejection(res.Stderr) {
+				say(r.w, "\n[yellow]Push rejected by linear-history protection.[/yellow]\nTry [cyan]spec-kitty consolidate --strategy squash[/cyan], or set [cyan]merge.strategy: squash[/cyan] in [cyan].kittify/config.yaml[/cyan].\n")
+			}
+			msg := strings.TrimSpace(res.Stderr)
+			if msg == "" {
+				msg = strings.TrimSpace(res.Stdout)
+			}
+			say(r.w, "[red]Error:[/red] Push failed: "+msg)
+			return exit(1)
+		}
+		say(r.w, fmt.Sprintf("[green]✓[/green] Pushed %s to origin", r.m.TargetBranch))
+	}
 	r.captureRetrospective()
 	r.teardown(coordDone)
+	ClearState(r.root, missionIDOf(r.root, r.slug))
 	say(r.w, "\n[bold]Stale assertion findings:[/bold]")
-	say(r.w, "  No likely-stale assertions detected.")
+	switch {
+	case staleErr != nil || stale == nil:
+		say(r.w, "  [yellow]Stale-assertion check could not run.[/yellow]")
+	case len(stale.Findings) == 0:
+		say(r.w, "  No likely-stale assertions detected.")
+	default:
+		line := func(grade string, f staleassert.Finding) {
+			fmt.Fprintln(r.w, rich.Wrap(fmt.Sprintf("  [%s] %s:%d — %s", grade, filepath.Base(f.TestFile), f.TestLine, f.Hint), rich.Width()))
+		}
+		var info []staleassert.Finding
+		for _, f := range stale.Findings {
+			switch f.Confidence {
+			case "high", "medium":
+				line(f.Confidence, f)
+			case "info":
+				info = append(info, f)
+			}
+		}
+		if len(info) > 0 {
+			say(r.w, fmt.Sprintf("  Message-content assertions skipped as info grade (%d) — review manually if diagnostic text changed:", len(info)))
+			for _, f := range info {
+				line("info", f)
+			}
+		}
+		for _, f := range stale.Findings {
+			if f.Confidence == "low" {
+				line("low", f)
+			}
+		}
+	}
 	return nil
+}
+
+func contains(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
+}
+
+func missionIDOf(root, slug string) string {
+	return mission.ReadMetaOrEmpty(project.Specs(root, slug)).GetString("mission_id")
+}
+
+// reconcile is the merge/rebase reconciliation gate: every approved lane
+// commit must be reachable from the landed target; otherwise every branch
+// the run moved is rolled back and the merge refuses.
+func (r *run) reconcile() error {
+	if r.strategy == "squash" || r.state == nil {
+		return nil
+	}
+	base := ""
+	for _, p := range r.state.PreRefs {
+		if p[0] == r.m.MissionBranch {
+			base = p[1]
+		}
+	}
+	tips := map[string]string{}
+	for _, p := range r.state.LaneTips {
+		tips[p[0]] = p[1]
+	}
+	var failures []string
+	for _, l := range r.m.Lanes {
+		tip := tips[lanes.LaneBranchName(r.slug, l.LaneID, r.m.TargetBranch)]
+		if tip == "" || base == "" {
+			continue
+		}
+		out, err := gitx.Run(r.root, "rev-list", "--no-merges", base+".."+tip)
+		if err != nil {
+			continue
+		}
+		commits := strings.Fields(out)
+		for _, id := range l.WPIDs {
+			st := r.snap.WP(id)
+			if st == nil || (st.GetString("lane") != "approved" && st.GetString("lane") != "done") {
+				continue
+			}
+			for _, c := range commits {
+				if res, _ := gitx.Exec(r.root, nil, nil, "merge-base", "--is-ancestor", c, "refs/heads/"+r.m.TargetBranch); res.Code != 0 {
+					failures = append(failures, fmt.Sprintf("approved %s commit %s is NOT reachable from the target — approved work would be dropped", id, c[:10]))
+				}
+			}
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	fmt.Fprintln(r.w, "\nError: Reconciliation FAILED: "+strings.Join(failures, "; ")+". Every branch this consolidation moved (target, mission and coordination branches) is being restored to its pre-consolidation commit; the rollback report below names each branch, and a branch marked NOT restored still carries this run's commits. nothing was torn down. Inspect the target branch and the lane tips, then re-run the merge.")
+	r.state.UpdatedAt = clock.NowUTCISO()
+	r.state.Save(r.root)
+	return exit(1)
 }
 
 // ---------------------------------------------------------------------------
@@ -590,6 +929,15 @@ func (r *run) bake() error {
 		return nil
 	}
 	r.number = NextMissionNumber(r.root)
+	if r.planningOnly {
+		// written now (the done transitions materialize it), committed by
+		// the done bookkeeping commit on the target
+		if meta, err := mission.ReadMeta(r.sf.PrimaryDir); err == nil {
+			meta.Set("mission_number", r.number)
+			mission.WriteMeta(r.sf.PrimaryDir, meta, false)
+		}
+		return nil
+	}
 	dir, cleanup, err := scratchWorktree(r.root, r.m.MissionBranch, "kitty-numwrite-")
 	if err != nil {
 		return nil
@@ -663,13 +1011,46 @@ func (r *run) recordDone() error {
 			return exit(1)
 		}
 	}
+	r.clearTerminalLaneTips(sf)
 	return nil
+}
+
+// clearTerminalLaneTips is the on_wp_terminal hook of the done transitions:
+// a lane's tip ref is cleared once every WP of the lane is terminal.
+func (r *run) clearTerminalLaneTips(sf *coord.Surface) {
+	snap, err := status.ReduceDir(sf.StatusDir())
+	if err != nil {
+		return
+	}
+	for _, l := range r.m.Lanes {
+		if l.LaneID == lanes.PlanningLaneID {
+			continue
+		}
+		all := true
+		for _, id := range l.WPIDs {
+			lane := ""
+			if st := snap.WP(id); st != nil {
+				lane = st.GetString("lane")
+			}
+			if lane != "done" && lane != "canceled" {
+				all = false
+			}
+		}
+		if all {
+			gitx.Run(r.root, "update-ref", "-d", lanes.LaneTipRefPrefix+lanes.LaneBranchName(r.m.MissionSlug, l.LaneID, r.m.TargetBranch))
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
 // mission → target squash
 
 func (r *run) squashIntoTarget() error {
+	if r.planningOnly {
+		say(r.w, fmt.Sprintf("  [dim]Skipping mission branch merge; %s is the planning artifact branch.[/dim]", r.m.TargetBranch))
+		r.squash = revParse(r.root, "refs/heads/"+r.m.TargetBranch)
+		return nil
+	}
 	say(r.w, fmt.Sprintf("  [dim]Merging mission branch into %s...[/dim]", r.m.TargetBranch))
 	dir, cleanup, err := scratchWorktree(r.root, r.m.TargetBranch, "kitty-merge-")
 	if err != nil {

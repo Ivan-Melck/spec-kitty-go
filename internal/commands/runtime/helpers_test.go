@@ -22,6 +22,10 @@ var (
 	reDBMid8     = regexp.MustCompile(`_0[0-9A-HJKMNP-TV-Z]{7}_`)
 	reParents    = regexp.MustCompile(`\[parents:([0-9a-f ]*)\]`)
 	reElapsed    = regexp.MustCompile(`"elapsed_seconds": [0-9.e-]+`)
+	// all-digit short SHAs escape testkit.Normalize (lane listings)
+	reDigitSHA = regexp.MustCompile(`  [0-9]{7}  `)
+	// mkstemp-named templateless step prompts
+	reStepPrompt = regexp.MustCompile(`(spec-kitty-step-[^\s"]*)-[a-z0-9_]{8}\.md`)
 )
 
 // norm normalizes run-specific values of one sandbox's output.
@@ -35,6 +39,8 @@ func norm(s *testkit.Sandbox, text string) string {
 	text = reCreatedAt.ReplaceAllString(text, `"shell_pid_created_at": "<CT>"`)
 	text = reDBMid8.ReplaceAllString(text, "_<MID8>_")
 	text = reElapsed.ReplaceAllString(text, `"elapsed_seconds": <S>`)
+	text = reDigitSHA.ReplaceAllString(text, "  <SHORTSHA>  ")
+	text = reStepPrompt.ReplaceAllString(text, "$1-<RND>.md")
 	return text
 }
 

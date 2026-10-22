@@ -11,6 +11,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
+	"github.com/spec-kitty/go-kitty3/internal/originfresh"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
@@ -24,6 +25,10 @@ func runAcceptMission(ctx *cli.Context) error {
 	m, err := v.mission(root, handle)
 	if err != nil {
 		return err
+	}
+	originWarnings, refusal := originGate(ctx, root, m.StatusDir, m.Slug, false, nil)
+	if refusal != nil {
+		return v.fail("MISSION_NOT_READY", refusal.Headline, refusalData(m.StatusDir, refusal, nil))
 	}
 	snap, err := status.Materialize(m.StatusDir)
 	if err != nil || snap == nil {
@@ -68,9 +73,13 @@ func runAcceptMission(ctx *cli.Context) error {
 	acceptedAt := mission.ReadMetaOrEmpty(sum.FeatureDir).GetString("accepted_at")
 	_, approved, done, _ := sum.LaneDerivations()
 	accepted := append(append([]string{}, approved...), done...)
-	return v.ok(identity(m.StatusDir, "accepted", true, "mode", "auto", "accepted_at", acceptedAt,
+	data := identity(m.StatusDir, "accepted", true, "mode", "auto", "accepted_at", acceptedAt,
 		"accepted_wps", strList(accepted), "approved_wps", strList(approved), "done_wps", strList(done),
-		"merge_pending_wps", strList(approved)))
+		"merge_pending_wps", strList(approved))
+	if len(originWarnings) > 0 {
+		data.Set("origin_warnings", strList(originWarnings))
+	}
+	return v.ok(data)
 }
 
 // ── consolidate-mission ───────────────────────────────────────────────────
@@ -92,6 +101,10 @@ func runConsolidateMission(ctx *cli.Context) error {
 	target, errs := consolidate.MergePreflight(root, m.Slug, ctx.String("target"))
 	if len(errs) > 0 {
 		return v.fail("PREFLIGHT_FAILED", "Merge failed", identity(m.StatusDir, "target_branch", target, "errors", strList(errs)))
+	}
+	originWarnings, refusal := originGate(ctx, root, m.StatusDir, m.Slug, true, &target)
+	if refusal != nil {
+		return v.fail("PREFLIGHT_FAILED", refusal.Headline, refusalData(m.StatusDir, refusal, &target))
 	}
 	err = consolidate.RunLaneMerge(root, consolidate.LaneMergeOptions{Handle: handle, Slug: m.Slug, Target: target,
 		Strategy: strategy, Push: ctx.Bool("push"), Log: ctx.Stderr, Console: ctx.Stderr})
@@ -116,7 +129,43 @@ func runConsolidateMission(ctx *cli.Context) error {
 		}
 		return v.fail("PREFLIGHT_FAILED", "Merge failed", data)
 	}
-	return v.ok(identity(m.StatusDir, "merged", true, "target_branch", target, "strategy", strategy, "worktree_removed", false))
+	data := identity(m.StatusDir, "merged", true, "target_branch", target, "strategy", strategy, "worktree_removed", false)
+	if len(originWarnings) > 0 {
+		data.Set("origin_warnings", strList(originWarnings))
+	}
+	return v.ok(data)
+}
+
+// originGate is _origin_gate: the origin-freshness check before any evidence
+// is read or any lane moves. Warn-mode warnings also go to stderr.
+func originGate(ctx *cli.Context, root, statusDir, slug string, withLanes bool, target *string) ([]string, *originfresh.Refused) {
+	setting := originfresh.ResolveMode(optString(ctx, "origin-check"))
+	var branches []string
+	record := false
+	if withLanes {
+		branches, record = consolidate.OriginGateInputs(root, slug)
+	}
+	warnings, refused := originfresh.Run(root, slug, setting, branches, record)
+	if refused != nil {
+		return nil, refused
+	}
+	for _, w := range warnings {
+		fmt.Fprintln(ctx.Stderr, "Warning: "+w)
+	}
+	return warnings, nil
+}
+
+func refusalData(statusDir string, r *originfresh.Refused, target *string) *jsonx.Object {
+	rows := []any{}
+	for _, v := range r.Verdicts {
+		rows = append(rows, v.Payload())
+	}
+	data := identity(statusDir, "preflight_error_code", r.Code, "preflight_error_codes", strList(r.Codes),
+		"origin_freshness", rows, "errors", strList([]string{r.Message}))
+	if target != nil {
+		data.Set("target_branch", *target)
+	}
+	return data
 }
 
 func checkList(cs []acceptance.Check) []any {

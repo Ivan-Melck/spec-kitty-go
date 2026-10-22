@@ -291,9 +291,15 @@ func backfillContextIfMissing(root, slug, wpID string, lane *lanes.Lane, wt, bra
 	})
 }
 
-// AllocateLaneWorktree is worktree_allocator.allocate_lane_worktree (no
-// --base support): REUSE, CRASH_RECOVERY and FRESH (coord / legacy) routes.
+// AllocateLaneWorktree is worktree_allocator.allocate_lane_worktree without
+// an explicit base: REUSE, CRASH_RECOVERY and FRESH (coord / legacy) routes.
 func AllocateLaneWorktree(o *Out, root, slug, wpID string, m *lanes.Manifest) (string, string, error) {
+	return AllocateLaneWorktreeBase(o, root, slug, wpID, m, "")
+}
+
+// AllocateLaneWorktreeBase is allocate_lane_worktree with an explicit
+// --base ("" = topology-derived parent).
+func AllocateLaneWorktreeBase(o *Out, root, slug, wpID string, m *lanes.Manifest, base string) (string, string, error) {
 	lane := m.LaneForWP(wpID)
 	if lane == nil {
 		return "", "", fmt.Errorf("%s is not assigned to any execution lane in lanes.json", wpID)
@@ -305,6 +311,9 @@ func AllocateLaneWorktree(o *Out, root, slug, wpID string, m *lanes.Manifest) (s
 	coordBranch := coordinationBranch(root, slug)
 
 	if _, err := os.Stat(wt); err == nil {
+		if base != "" {
+			return "", "", &UnhonorableBaseError{"reuse", wpID, base}
+		}
 		if err := validateWorktreeClean(wt, lane.LaneID); err != nil {
 			return "", "", err
 		}
@@ -320,6 +329,9 @@ func AllocateLaneWorktree(o *Out, root, slug, wpID string, m *lanes.Manifest) (s
 	}
 
 	if gitx.BranchExists(root, branch) {
+		if base != "" {
+			return "", "", &UnhonorableBaseError{"crash_recovery", wpID, base}
+		}
 		git(root, "worktree", "prune")
 		os.MkdirAll(filepath.Dir(wt), 0o755)
 		if r := git(root, "worktree", "add", wt, branch); r.Code != 0 {
@@ -344,6 +356,9 @@ func AllocateLaneWorktree(o *Out, root, slug, wpID string, m *lanes.Manifest) (s
 		return wt, branch, nil
 	}
 
+	if err := guardFreshBase(root, base, wpID, lane, m.PlanningCommitSHA); err != nil {
+		return "", "", err
+	}
 	parent := m.MissionBranch
 	if coordBranch != "" {
 		parent = coordBranch
@@ -352,12 +367,14 @@ func AllocateLaneWorktree(o *Out, root, slug, wpID string, m *lanes.Manifest) (s
 				return "", "", fmt.Errorf("Failed to create branch %s from %s: %s", coordBranch, m.TargetBranch, strings.TrimSpace(r.Stderr))
 			}
 		}
-	} else if !gitx.BranchExists(root, m.MissionBranch) {
-		if r := git(root, "branch", m.MissionBranch, m.TargetBranch); r.Code != 0 {
-			return "", "", fmt.Errorf("Failed to create mission branch %s from %s: %s", m.MissionBranch, m.TargetBranch, strings.TrimSpace(r.Stderr))
+	} else if mb := firstNonEmptyStr(base, m.MissionBranch); !gitx.BranchExists(root, mb) && branchTip(root, mb) == "" {
+		if r := git(root, "branch", mb, m.TargetBranch); r.Code != 0 {
+			return "", "", fmt.Errorf("Failed to create mission branch %s from %s: %s", mb, m.TargetBranch, strings.TrimSpace(r.Stderr))
 		}
 	}
-	if origin := "refs/remotes/origin/" + branch; branchTip(root, origin) != "" {
+	if base != "" {
+		parent = base
+	} else if origin := "refs/remotes/origin/" + branch; branchTip(root, origin) != "" {
 		parent = origin
 	}
 	os.MkdirAll(filepath.Dir(wt), 0o755)
@@ -381,8 +398,22 @@ func AllocateLaneWorktree(o *Out, root, slug, wpID string, m *lanes.Manifest) (s
 	return wt, branch, nil
 }
 
+func firstNonEmptyStr(xs ...string) string {
+	for _, x := range xs {
+		if x != "" {
+			return x
+		}
+	}
+	return ""
+}
+
 // CreateLaneWorkspace is implement_support.create_lane_workspace.
 func CreateLaneWorkspace(o *Out, root, slug, wpID, wpFile string, ws *lanes.Workspace, m *lanes.Manifest, deps []string) (*LaneWorkspaceResult, error) {
+	return CreateLaneWorkspaceBase(o, root, slug, wpID, wpFile, ws, m, deps, "")
+}
+
+// CreateLaneWorkspaceBase is create_lane_workspace with an explicit base.
+func CreateLaneWorkspaceBase(o *Out, root, slug, wpID, wpFile string, ws *lanes.Workspace, m *lanes.Manifest, deps []string, explicitBase string) (*LaneWorkspaceResult, error) {
 	if ws.RunsInCheckoutRoot() {
 		return &LaneWorkspaceResult{WorkspacePath: ws.WorktreePath, BranchName: ws.BranchName, LaneID: ws.LaneID,
 			ExecutionMode: ws.ExecutionMode, ResolutionKind: ws.ResolutionKind, LaneTestEnv: &jsonx.Object{}}, nil
@@ -401,7 +432,7 @@ func CreateLaneWorkspace(o *Out, root, slug, wpID, wpFile string, ws *lanes.Work
 	predictedBranch := lanes.LaneBranchName(slug, laneID, m.TargetBranch)
 	_, statErr := os.Stat(predicted)
 	isReuse := statErr == nil || gitx.BranchExists(root, predictedBranch)
-	wt, branch, err := AllocateLaneWorktree(o, root, slug, wpID, m)
+	wt, branch, err := AllocateLaneWorktreeBase(o, root, slug, wpID, m, explicitBase)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +441,9 @@ func CreateLaneWorkspace(o *Out, root, slug, wpID, wpFile string, ws *lanes.Work
 	if base == "" {
 		base = m.MissionBranch
 	}
-	if origin := "refs/remotes/origin/" + predictedBranch; branchTip(root, origin) != "" {
+	if explicitBase != "" {
+		base = explicitBase
+	} else if origin := "refs/remotes/origin/" + predictedBranch; branchTip(root, origin) != "" {
 		base = origin
 	}
 	res := &LaneWorkspaceResult{WorkspacePath: wt, BranchName: branch, LaneID: laneID, MissionBranch: m.MissionBranch,

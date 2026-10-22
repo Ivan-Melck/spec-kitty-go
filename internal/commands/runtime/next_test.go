@@ -63,7 +63,8 @@ func TestDiffNextFreshMission(t *testing.T) {
 		[]string{"next", "--agent", "claude", "--mission", "$M", "--json"},
 		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"},
 	)
-	// Op records of composed step contracts (kitty-ops/<ULID>.jsonl) are not
-	// written by this build: compare the lifecycle store only.
-	compareTree(t, p, "kitty-ops", "01", "ops-index")
+	// completing specify composes the specify step contract: one committed
+	// Op record per contract step.
+	compareTree(t, p, "kitty-ops")
+	compareGit(t, p)
 }

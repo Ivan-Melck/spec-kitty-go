@@ -22,7 +22,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
-	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
 const closeLong = "Close a mission. Wraps FR-016 lifecycle teardown.\n\n" +
@@ -116,14 +115,7 @@ func runMissionRun(ctx *cli.Context) error {
 			slug = s
 		}
 	}
-	env := customMissionRun(root, key, slug)
-	code := 0
-	if env.GetString("result") == "error" {
-		code = 2
-		if env.GetString("error_code") == "RUN_START_FAILED" {
-			code = 1
-		}
-	}
+	env, code := nextrt.RunCustomMission(root, key, slug)
 	if jsonMode {
 		if code != 0 {
 			p := jsonError(env.GetString("error_code"), env.GetString("message"))
@@ -144,7 +136,7 @@ func runMissionRun(ctx *cli.Context) error {
 			body += fmt.Sprintf("mission_id:   %s\n", id)
 		}
 		body += fmt.Sprintf("feature_dir:  %s\nrun_dir:      %s", env.GetString("feature_dir"), env.GetString("run_dir"))
-		rich.Panel(ctx.Stdout, body, "Mission Run Started")
+		rich.Panel(ctx.Stdout, body+warningLines(env), "Mission Run Started")
 		return nil
 	}
 	body := env.GetString("message")
@@ -154,7 +146,7 @@ func runMissionRun(ctx *cli.Context) error {
 			body += fmt.Sprintf("\n  %s: %s", k, pyStr(v))
 		}
 	}
-	rich.Panel(ctx.Stdout, body, env.GetString("error_code"))
+	rich.Panel(ctx.Stdout, body+warningLines(env), env.GetString("error_code"))
 	return cli.Exit(code)
 }
 
@@ -174,47 +166,15 @@ func pyStr(v any) string {
 	return status.PyStr(v)
 }
 
-// customMissionRun is mission_loader.command.run_custom_mission (discovery,
-// required-field validation, run start).
-func customMissionRun(root, key, slug string) *jsonx.Object {
-	var found string
-	for _, p := range []string{
-		filepath.Join(root, ".kittify", "overrides", "missions", key, "mission.yaml"),
-		filepath.Join(root, ".kittify", "missions", key, "mission.yaml"),
-		filepath.Join(project.GlobalKittify(), "missions", key, "mission.yaml"),
-	} {
-		if _, err := os.Stat(p); err == nil {
-			found = p
-			break
+// warningLines is _append_warning_lines.
+func warningLines(env *jsonx.Object) string {
+	out := ""
+	for _, w := range env.GetList("warnings") {
+		if o, ok := w.(*jsonx.Object); ok {
+			out += fmt.Sprintf("\n[warn] %s: %s", o.GetString("code"), o.GetString("message"))
 		}
 	}
-	if found == "" {
-		return jsonx.NewObject("result", "error", "error_code", "MISSION_KEY_UNKNOWN",
-			"message", fmt.Sprintf("Mission '%s' was not found in any discovery tier.", key),
-			"details", jsonx.NewObject("mission_key", key, "tiers_searched", []any{}), "warnings", []any{})
-	}
-	b, _ := os.ReadFile(found)
-	o, err := yamlx.ParseObject(b)
-	steps, _ := o.Get("steps")
-	if l, ok := steps.([]any); err != nil || !ok || len(l) == 0 {
-		return jsonx.NewObject("result", "error", "error_code", "MISSION_REQUIRED_FIELD_MISSING",
-			"message", fmt.Sprintf("Required mission field(s) missing in %s: steps", found),
-			"details", jsonx.NewObject("file", found, "mission_key", key, "field", "steps", "missing_fields", []any{"steps"},
-				"parse_error", "Mission template must declare at least one step."), "warnings", []any{})
-	}
-	dir := project.Specs(root, slug)
-	meta := mission.ReadMetaOrEmpty(dir)
-	ref, err := nextrt.GetOrStartRun(root, slug, meta.GetString("mission_id"), key)
-	if err != nil {
-		return jsonx.NewObject("result", "error", "error_code", "RUN_START_FAILED", "message", err.Error(),
-			"details", jsonx.NewObject("mission_key", key, "mission_slug", slug), "warnings", []any{})
-	}
-	var mid any
-	if id := meta.GetString("mission_id"); id != "" {
-		mid = id
-	}
-	return jsonx.NewObject("result", "success", "mission_key", key, "mission_slug", slug, "mission_id", mid,
-		"feature_dir", dir, "run_dir", ref.RunDir, "warnings", []any{})
+	return out
 }
 
 // ---------------------------------------------------------------------------

@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/invocation"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -221,10 +223,36 @@ func missionOrigin(root, missionType string) *jsonx.Object {
 		{filepath.Join(project.GlobalKittify(), "missions", missionType, "mission.yaml"), "global_mission"},
 	} {
 		if _, err := os.Stat(c.p); err == nil {
+			if c.tier == "legacy" {
+				legacyNudge()
+			}
 			return jsonx.NewObject("mission_tier", c.tier, "mission_path", filepath.Dir(c.p))
 		}
 	}
 	return jsonx.NewObject("mission_tier", "package_default", "mission_path", "packs/built-in/missions/"+missionType)
+}
+
+var nudgeOnce sync.Once
+
+// legacyNudge is runtime.resolver._emit_migrate_nudge for a legacy-tier hit
+// (once per invocation, never in --json invocations, only when the global
+// runtime is configured).
+func legacyNudge() {
+	nudgeOnce.Do(func() {
+		for _, a := range os.Args[1:] {
+			if a == "--json" {
+				return
+			}
+		}
+		if st, err := os.Stat(filepath.Join(project.GlobalKittify(), "cache", "version.lock")); err != nil || !st.Mode().IsRegular() {
+			return
+		}
+		disp := project.GlobalKittify()
+		if h, err := os.UserHomeDir(); err == nil && (disp == h || strings.HasPrefix(disp, h+"/")) {
+			disp = "~" + strings.TrimPrefix(disp, h)
+		}
+		fmt.Fprintf(os.Stderr, "Note: Run `spec-kitty migrate` to clean up legacy project files and use the global runtime (%s).\n", disp)
+	})
 }
 
 type advanceCtx struct {
@@ -357,14 +385,20 @@ func (c *advanceCtx) stepDecision(stepID string, guards []string, errorCode *str
 		return c.wpIterationDecision(stepID, guards)
 	}
 	action, wpID, wsPath := c.stateToAction(stepID)
+	if action == "" {
+		action = stepID
+	}
 	d := c.decision(KindStep, stepID)
 	d.StepID, d.GuardFailures, d.ErrorCode = sp(stepID), guards, errorCode
 	d.Action, d.WPID, d.WorkspacePath = spOrNil(action), spOrNil(wpID), spOrNil(wsPath)
 	if action == "" {
-		d.Reason = sp(fmt.Sprintf("no action mapped for step '%s'; cannot resolve prompt", stepID))
+		d.Reason = sp("no action and no step_id; cannot resolve prompt")
 		return materialize(d)
 	}
 	p, err := buildTemplatePrompt(c.m, c.featureDir, action, c.agent)
+	if err != nil && wpID == "" {
+		p, err = writeTemplatelessPrompt(c.m, action, c.agent)
+	}
 	if err != nil {
 		d.Reason = sp(err.Error())
 	} else {
@@ -500,6 +534,24 @@ func DecideNext(root, slug, agent, result string) *Decision {
 			}
 		}
 	}
+	// composition dispatch
+	if result == "success" && current != "" && shouldDispatchViaComposition(root, m.MissionType, current, tpl) {
+		action := normalizeComposedAction(current)
+		hint, contract := compositionInputs(root, m.MissionType, current, action, tpl)
+		var failures []string
+		if _, err := ExecuteStepContract(root, m.MissionType, action, agent, hint, "", contract); err != nil {
+			if _, ok := err.(*StepContractError); ok {
+				failures = []string{fmt.Sprintf("composition failed for %s/%s: %v", m.MissionType, action, err)}
+			} else {
+				failures = []string{fmt.Sprintf("composition crashed for %s/%s: %s: %v", m.MissionType, action, pyErrType(err), err)}
+			}
+		} else if m.MissionType == "software-dev" && action != "implement" && action != "review" {
+			failures = c.softwareDevGuards(action)
+		}
+		if len(failures) > 0 {
+			return c.compositionBlocked(current, failures)
+		}
+	}
 	plan, err := advanceRun(ref, agent, result)
 	if err != nil {
 		d := c.decision(KindBlocked, firstNonEmpty(current, "unknown"))
@@ -516,6 +568,7 @@ func DecideNext(root, slug, agent, result string) *Decision {
 		return materialize(d)
 	case KindDecisionRequired:
 		d := c.decision(KindDecisionRequired, firstNonEmpty(plan.StepID, "unknown"))
+		d.Reason = sp(firstNonEmpty(plan.Reason, "Decision required"))
 		d.StepID, d.DecisionID, d.InputKey, d.Question = spOrNil(plan.StepID), spOrNil(plan.DecisionID), spOrNil(plan.InputKey), spOrNil(plan.Question)
 		d.Options = plan.Options
 		d.PromptFile = spOrNil(buildDecisionPrompt(m, plan, agent))
@@ -530,6 +583,41 @@ func DecideNext(root, slug, agent, result string) *Decision {
 	d.Reason = spOrNil(plan.Reason)
 	d.StepID = spOrNil(state)
 	return materialize(d)
+}
+
+// compositionBlocked is _dn_composition_blocked_decision.
+func (c *advanceCtx) compositionBlocked(step string, failures []string) *Decision {
+	action, wpID, wsPath := c.stateToAction(step)
+	d := c.decision(KindBlocked, step)
+	d.Reason, d.StepID, d.GuardFailures = sp(failures[0]), sp(step), failures
+	d.Action, d.WPID, d.WorkspacePath = spOrNil(action), spOrNil(wpID), spOrNil(wsPath)
+	if action != "" {
+		var p string
+		var err error
+		if wpID != "" {
+			p, err = buildWPPrompt(c.m, action, wpID, c.agent)
+		} else {
+			p, err = buildTemplatePrompt(c.m, c.featureDir, action, c.agent)
+		}
+		if err == nil {
+			d.PromptFile = spOrNil(p)
+		}
+	}
+	return materialize(d)
+}
+
+// pyErrType names an error class for the composition crash surface.
+func pyErrType(err error) string {
+	switch err.(type) {
+	case *invocation.WriteError:
+		return "InvocationWriteError"
+	case *invocation.Error:
+		return "InvocationError"
+	}
+	if strings.Contains(err.Error(), "not found") {
+		return "ProfileNotFoundError"
+	}
+	return "RuntimeError"
 }
 
 func buildDecisionPrompt(m *missionCtx, p planned, agent string) string {

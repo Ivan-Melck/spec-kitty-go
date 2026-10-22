@@ -19,12 +19,18 @@ var (
 	reRunID = regexp.MustCompile(`"run_id": "[0-9a-f]{32}"`)
 	// rePyTime masks python-style "2026-10-21 22:59:16.123+00:00" too.
 	reGenAt = regexp.MustCompile(`"(timestamp|generated_at|accepted_at|reread_generated_at)": "[^"]*"`)
+	// prompt directories are keyed by a project-path hash; templateless
+	// step prompts carry a mkstemp suffix
+	rePromptDir  = regexp.MustCompile(`spec-kitty-prompts/[0-9a-f]{16}/`)
+	reStepPrompt = regexp.MustCompile(`(spec-kitty-step-[^"/]*)-[a-z0-9_]{8}\.md`)
 )
 
 func normEnvelope(s *testkit.Sandbox, out string) string {
 	out = reCorr.ReplaceAllString(out, "$1-X")
 	out = reRunID.ReplaceAllString(out, `"run_id": "<RUN>"`)
 	out = reGenAt.ReplaceAllString(out, `"$1": "<TS>"`)
+	out = rePromptDir.ReplaceAllString(out, "spec-kitty-prompts/<H>/")
+	out = reStepPrompt.ReplaceAllString(out, "$1-<RND>.md")
 	return s.Normalize(out)
 }
 
