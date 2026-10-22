@@ -77,12 +77,13 @@ func TestRoundTripCorpus(t *testing.T) {
 			if want == nil {
 				continue
 			}
-			data, err := LoadString(c.Src)
+			doc, err := LoadString(c.Src)
 			if err != nil {
 				t.Errorf("case %d: load: %v\nsrc: %q", i, err, c.Src)
 				fails++
 				break
 			}
+			data := doc.Root
 			switch edit {
 			case 1:
 				m, ok := data.(*Map)
@@ -99,7 +100,8 @@ func TestRoundTripCorpus(t *testing.T) {
 				}
 				m.Delete(m.Keys()[0])
 			}
-			got, err := Dump(data)
+			doc.Root = data
+			got, err := doc.Dump()
 			w := *want
 			if e, ok := w["err"].(string); ok {
 				cls, _, _ := strings.Cut(e, "|")

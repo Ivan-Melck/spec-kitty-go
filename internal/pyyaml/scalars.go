@@ -33,6 +33,10 @@ func asciiCheck(s string) string {
 }
 
 // a2bBase64 is binascii.a2b_base64(strict_mode=False) ("" = ok).
+// DecodeBase64 is base64.decodebytes (binascii.a2b_base64, non-strict):
+// the decoded bytes, or the binascii.Error message.
+func DecodeBase64(s string) ([]byte, string) { return a2bBase64(s) }
+
 func a2bBase64(s string) ([]byte, string) {
 	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 	out := []byte{}
@@ -82,6 +86,13 @@ func a2bBase64(s string) ([]byte, string) {
 }
 
 func pyStrip(s string) string { return strings.TrimFunc(s, unicode.IsSpace) }
+
+// PyInt is Python's int(s, base) (whitespace stripped, Unicode digits);
+// false on ValueError.
+func PyInt(s string, base int) (*big.Int, bool) { return pyInt(s, base) }
+
+// PyFloat is Python's float(s); false on ValueError.
+func PyFloat(s string) (float64, bool) { return pyFloat(s) }
 
 // pyInt is int(s, base) (s already free of underscores).
 func pyInt(s string, base int) (*big.Int, bool) {

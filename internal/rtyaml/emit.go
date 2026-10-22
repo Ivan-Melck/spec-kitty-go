@@ -37,6 +37,8 @@ type eevent struct {
 	flow     *bool
 	comment  *pyyaml.PyList
 	nrItems  int
+	version  *[2]int
+	tags     map[string]string
 }
 
 func (e *eevent) isCollStart() bool { return e.kind == evSeqStart || e.kind == evMapStart }
@@ -59,10 +61,12 @@ type serializer struct {
 	anchors map[*dnode]*string
 	lastID  int
 	v11     bool
+	version *[2]int
+	tags    map[string]string
 }
 
 func (s *serializer) serialize(n *dnode) {
-	s.em.emit(&eevent{kind: evDocStart})
+	s.em.emit(&eevent{kind: evDocStart, version: s.version, tags: s.tags})
 	s.anchorNode(n)
 	s.node(n)
 	s.em.emit(&eevent{kind: evDocEnd})
@@ -348,8 +352,30 @@ func (e *emitter) expectNextDocumentStart() { e.expectDocumentStart(false) }
 func (e *emitter) expectDocumentStart(first bool) {
 	switch e.event.kind {
 	case evDocStart:
+		ev := e.event
+		if (ev.version != nil || len(ev.tags) > 0) && e.openEnded {
+			e.writeIndicator("...", true, false, false)
+			e.writeIndent()
+		}
+		if ev.version != nil {
+			e.write(fmt.Sprintf("%%YAML %d.%d", ev.version[0], ev.version[1]))
+			e.writeLineBreak("")
+		}
 		e.tagPrefixes = map[string]string{"!": "!", "tag:yaml.org,2002:": "!!", "!!": "!!"}
-		implicit := first && !e.checkEmptyDocument()
+		if len(ev.tags) > 0 {
+			handles := make([]string, 0, len(ev.tags))
+			for h := range ev.tags {
+				handles = append(handles, h)
+			}
+			sort.Strings(handles)
+			for _, h := range handles {
+				prefix := ev.tags[h]
+				e.tagPrefixes[prefix] = h
+				e.write("%TAG " + e.prepareTagHandle(h) + " " + e.prepareTagPrefix(prefix))
+				e.writeLineBreak("")
+			}
+		}
+		implicit := first && ev.version == nil && len(ev.tags) == 0 && !e.checkEmptyDocument()
 		if !implicit {
 			e.writeIndent()
 			e.writeIndicator("---", true, false, false)
@@ -978,6 +1004,54 @@ func pyRepr(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "\\'") + "'"
 }
 
+func (e *emitter) prepareTagHandle(handle string) string {
+	if handle == "" {
+		e.fail("tag handle must not be empty")
+	}
+	if handle[0] != '!' || handle[len(handle)-1] != '!' {
+		e.fail("tag handle must start and end with '!': %s", pyRepr(handle))
+	}
+	for _, ch := range handle[1 : len(handle)-1] {
+		if !(ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z' || ch == '-' || ch == '_') {
+			e.fail("invalid character %s in the tag handle: %s", pyRepr(string(ch)), pyRepr(handle))
+		}
+	}
+	return handle
+}
+
+func (e *emitter) prepareTagPrefix(prefix string) string {
+	if prefix == "" {
+		e.fail("tag prefix must not be empty")
+	}
+	rs := []rune(prefix)
+	var chunks strings.Builder
+	start, end := 0, 0
+	if rs[0] == '!' {
+		end = 1
+	}
+	chSet := "-;/?:@&=+$,_.~*'()[]"
+	if !e.v11 {
+		chSet += "#"
+	}
+	for end < len(rs) {
+		ch := rs[end]
+		if ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z' || inStr(ch, chSet) {
+			end++
+			continue
+		}
+		if start < end {
+			chunks.WriteString(string(rs[start:end]))
+		}
+		end++
+		start = end
+		chunks.WriteString(fmt.Sprintf("%%%02X", ch))
+	}
+	if start < end {
+		chunks.WriteString(string(rs[start:end]))
+	}
+	return chunks.String()
+}
+
 // prepareTag is RoundTripEmitter.prepare_tag.
 func (e *emitter) prepareTag(ctag Tag) string {
 	tag := ctag.Value
@@ -1298,7 +1372,7 @@ func (e *emitter) writeDoubleQuoted(s string, split bool) {
 					}
 				}()
 			}
-			data := string(text[start:end])
+			data := pySlice(text, start, end)
 			if needBackslash {
 				data += "\\"
 			}
@@ -1323,6 +1397,14 @@ func (e *emitter) writeDoubleQuoted(s string, split bool) {
 		end++
 	}
 	e.writeIndicator("\"", false, false, false)
+}
+
+// pySlice is text[a:b] with Python's clamping (empty when a >= b).
+func pySlice(text []rune, a, b int) string {
+	if a >= b {
+		return ""
+	}
+	return string(text[a:b])
 }
 
 func indexRune(text []rune, r rune, from, to int) int {

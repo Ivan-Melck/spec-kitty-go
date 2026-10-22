@@ -241,6 +241,26 @@ func Compose(src string, opts ComposeOptions) (*Node, error) {
 	return ComposeInput(StringInput(src), opts)
 }
 
+// DocInfo is the directive state ruamel's parser leaves on the YAML
+// instance after a load: loader.version (nil = None) and loader.tags (the
+// declared %TAG handles; nil = None).
+type DocInfo struct {
+	Version *[2]int
+	Tags    map[string]string
+}
+
+// ComposeDocument is ComposeInput also returning the directive state.
+func ComposeDocument(in Input, opts ComposeOptions) (*Node, DocInfo, error) {
+	var n *Node
+	var info DocInfo
+	err := run(func() {
+		c := &composer{parser: newParser(in, opts.Dialect), anchors: map[string]*Node{}, resolve: opts.Resolve}
+		n = c.getSingleNode()
+		info = c.parser.docInfo
+	})
+	return n, info, err
+}
+
 // ComposeInput is Compose for any Input.
 func ComposeInput(in Input, opts ComposeOptions) (*Node, error) {
 	var n *Node

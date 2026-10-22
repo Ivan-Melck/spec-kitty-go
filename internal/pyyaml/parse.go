@@ -48,6 +48,9 @@ type parser struct {
 	*scanner
 	currentEvent *event
 	tagHandles   map[string]string
+	// docInfo is what ruamel's process_directives stores on the YAML
+	// instance (loader.version, loader.tags).
+	docInfo DocInfo
 	states       []stateFn
 	marks        []*Mark
 	state        stateFn
@@ -213,6 +216,18 @@ func (p *parser) processDirectives() {
 	if p.dialect.ruamel() && hasVersion && minor != 1 && minor != 2 {
 		// the YAML.version setter's assertion (loader.version = yaml_version)
 		panic(&PyError{"AssertionError", fmt.Sprintf("version minor part can only be 2 or 1, got (1, %d)", minor)})
+	}
+	if p.dialect.ruamel() {
+		p.docInfo.Version = nil
+		if hasVersion {
+			p.docInfo.Version = &[2]int{1, minor}
+		}
+		if p.docInfo.Tags == nil {
+			p.docInfo.Tags = map[string]string{}
+		}
+		for k, v := range p.tagHandles {
+			p.docInfo.Tags[k] = v
+		}
 	}
 	for k, v := range defaultTags {
 		if _, ok := p.tagHandles[k]; !ok {

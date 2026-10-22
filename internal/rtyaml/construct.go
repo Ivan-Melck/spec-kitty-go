@@ -14,6 +14,7 @@ import (
 // preserve_quotes True) over a composed, already validated node graph.
 type constructor struct {
 	built map[*pyyaml.Node]any
+	v11   bool // resolver.processing_version is (1, 1)
 }
 
 var templatedID = regexp.MustCompile(`^id(?:[0-9]{3,})$`)
@@ -147,15 +148,18 @@ func (c *constructor) mapping(n *pyyaml.Node, m *Map) {
 		key := c.object(kn)
 		switch x := key.(type) {
 		case *Seq:
-			cp := *x
-			cp.keySeq = true
-			cp.Flow = boolPtr(kn.FlowStyle)
-			key = &cp
+			// CommentedKeySeq(key): the items only
+			key = &Seq{Items: x.Items, keySeq: true, Flow: boolPtr(kn.FlowStyle)}
 		case *Map:
-			cp := *x
+			// CommentedKeyMap(key): the items (merged ones included) only
+			cp := NewMap()
+			for _, e := range x.entries {
+				cp.rawSet(e.key, e.val)
+				cp.own[e.hk] = true
+			}
 			cp.keyMap = true
 			cp.Flow = boolPtr(kn.FlowStyle)
-			key = &cp
+			key = cp
 		}
 		val := c.object(vn)
 		k := itemKey(key)
@@ -342,9 +346,11 @@ func (c *constructor) scalarText(n *pyyaml.Node) string {
 
 // scalar is the scalar half of RoundTripConstructor.
 func (c *constructor) scalar(n *pyyaml.Node) any {
-	anchor := anchorOf(n)
-	if anchor != nil {
-		anchor.AlwaysDump = true
+	// scalars take node.anchor as is (templated ids included), always
+	// dumped
+	var anchor *Anchor
+	if n.Anchor != "" {
+		anchor = &Anchor{Value: n.Anchor, AlwaysDump: true}
 	}
 	if n.TagHandle != "" && n.Tag == pyyaml.TagStr {
 		return &Tagged{Value: n.Value, Style: n.Style, Tag: Tag{Handle: n.TagHandle, Suffix: tagSuffix(n), Value: n.Tag}, Anchor: anchor}
@@ -359,15 +365,16 @@ func (c *constructor) scalar(n *pyyaml.Node) any {
 		}
 		return b
 	case pyyaml.TagInt:
-		return constructInt(n.Value, anchor)
+		return constructInt(n.Value, anchor, c.v11)
 	case pyyaml.TagFloat:
-		return constructFloat(n.Value, anchor)
+		return constructFloat(n.Value, anchor, c.v11)
 	case pyyaml.TagTS:
 		return constructTimestamp(n.Value)
 	case pyyaml.TagStr:
 		return c.str(n, anchor)
 	case pyyaml.TagBinary:
-		return &Tagged{Value: n.Value, Style: n.Style, Tag: Tag{Handle: n.TagHandle, Suffix: "binary", Value: n.Tag}}
+		b, _ := pyyaml.DecodeBase64(n.Value) // errors were raised by the validating load
+		return b
 	}
 	return &Tagged{Value: c.scalarText(n), Style: n.Style, Tag: Tag{Handle: n.TagHandle, Suffix: tagSuffix(n), Value: n.Tag}, Anchor: anchor}
 }
@@ -409,8 +416,8 @@ func (c *constructor) str(n *pyyaml.Node, anchor *Anchor) any {
 	return n.Value
 }
 
-// constructInt is RoundTripConstructor.construct_yaml_int (YAML 1.2).
-func constructInt(vsu string, anchor *Anchor) any {
+// constructInt is RoundTripConstructor.construct_yaml_int.
+func constructInt(vsu string, anchor *Anchor, v11 bool) any {
 	var underscore *[3]any
 	if sx := strings.TrimRight(vsu, "_"); strings.Contains(sx, "_") {
 		u := [3]any{len(sx) - strings.LastIndex(sx, "_") - 1, false, false}
@@ -425,7 +432,7 @@ func constructInt(vsu string, anchor *Anchor) any {
 		vs = vs[1:]
 	}
 	parse := func(s string, base int) *big.Int {
-		n, _ := new(big.Int).SetString(s, base)
+		n, _ := pyyaml.PyInt(s, base)
 		if n == nil {
 			n = new(big.Int)
 		}
@@ -433,7 +440,7 @@ func constructInt(vsu string, anchor *Anchor) any {
 	}
 	prefixed := func(kind IntKind, base int) any {
 		width := 0
-		if len(vs) > 2 && vs[2] == '0' {
+		if !v11 && len(vs) > 2 && vs[2] == '0' {
 			width = len(vs[2:])
 		}
 		if underscore != nil {
@@ -459,7 +466,26 @@ func constructInt(vsu string, anchor *Anchor) any {
 		return prefixed(kind, 16)
 	case strings.HasPrefix(vs, "0o"):
 		return prefixed(IntOctal, 8)
-	case vs != "" && vs[0] == '0':
+	case v11 && len(vs) > 1 && vs[0] == '0':
+		return &Int{V: parse(vs, 8), Kind: IntOctal, Underscore: underscore, Anchor: anchor}
+	case v11 && strings.Contains(vs, ":"):
+		parts := strings.Split(vs, ":")
+		total := new(big.Int)
+		base := big.NewInt(1)
+		for i := len(parts) - 1; i >= 0; i-- {
+			d, _ := pyyaml.PyInt(parts[i], 10)
+			if d == nil {
+				d = new(big.Int)
+			}
+			total.Add(total, new(big.Int).Mul(d, base))
+			base.Mul(base, big.NewInt(60))
+		}
+		total.Mul(total, big.NewInt(sign))
+		if total.IsInt64() {
+			return total.Int64()
+		}
+		return total
+	case !v11 && vs != "" && vs[0] == '0':
 		if underscore != nil {
 			underscore[2] = len(vsu) > 1 && vsu[len(vsu)-1] == '_'
 		}
@@ -477,8 +503,8 @@ func constructInt(vsu string, anchor *Anchor) any {
 	return n
 }
 
-// constructFloat is RoundTripConstructor.construct_yaml_float (YAML 1.2).
-func constructFloat(vso string, anchor *Anchor) any {
+// constructFloat is RoundTripConstructor.construct_yaml_float.
+func constructFloat(vso string, anchor *Anchor, v11 bool) any {
 	leadingZeros := func(v string) int {
 		n := 0
 		for _, ch := range v {
@@ -507,7 +533,17 @@ func constructFloat(vso string, anchor *Anchor) any {
 	case ".nan":
 		return math.NaN()
 	}
-	f, _ := strconv.ParseFloat(vs, 64)
+	if v11 && strings.Contains(vs, ":") {
+		parts := strings.Split(vs, ":")
+		value, base := 0.0, 1.0
+		for i := len(parts) - 1; i >= 0; i-- {
+			d, _ := pyyaml.PyFloat(parts[i])
+			value += d * base
+			base *= 60
+		}
+		return sign * value
+	}
+	f, _ := pyyaml.PyFloat(vs)
 	f *= sign
 	if strings.Contains(vs, "e") {
 		sep := "e"

@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
@@ -166,7 +168,7 @@ func (n *dnode) blockComment(c string) {
 }
 
 func isSpace(r rune) bool {
-	return strings.ContainsRune(" \t\n\r\v\f\u0085\u00a0\u2028\u2029", r) || r == 0x1c || r == 0x1d || r == 0x1e || r == 0x1f
+	return unicode.IsSpace(r) || (r >= 0x1c && r <= 0x1f)
 }
 
 func (r *representer) boolNode(v bool, anchor *Anchor) *dnode {
@@ -260,11 +262,15 @@ func (r *representer) floatNode(d *Float) *dnode {
 	ms := d.MSign
 	switch {
 	case d.Exp == "" && d.Prec > 0 && d.Prec == d.Width-1:
-		value = fmt.Sprintf("%s%d.", ms, absInt(f))
+		value = ms + absInt(f) + "."
 	case d.Exp == "":
 		prec := d.Prec
 		if prec < 0 {
-			value = fmt.Sprintf("%s%0*d", ms, d.Width-len(ms), absInt(f))
+			value = absInt(f)
+			for len(value) < d.Width-len(ms) {
+				value = "0" + value
+			}
+			value = ms + value
 		} else {
 			value = ms + pyFormatF(math.Abs(f), d.Width-len(ms), d.Width-prec-1)
 			if prec == 0 || (prec == 1 && ms != "") {
@@ -283,7 +289,11 @@ func (r *representer) floatNode(d *Float) *dnode {
 	return r.scalar(pyyaml.TagFloat, value, 0, d.Anchor)
 }
 
-func absInt(f float64) int64 { return int64(math.Abs(math.Trunc(f))) }
+// absInt is abs(int(f)) as a decimal string.
+func absInt(f float64) string {
+	b, _ := new(big.Float).SetFloat64(math.Abs(math.Trunc(f))).Int(nil)
+	return b.String()
+}
 
 // pyFormatF is f'{x:0{width}.{prec}f}'.
 func pyFormatF(x float64, width, prec int) string {
@@ -318,6 +328,13 @@ func expFloat(d *Float) string {
 		m = m[:w]
 	}
 	e, _ := strconv.Atoi(es)
+	if strings.Count(m, ".") != 1 {
+		// m1, m2 = m.split('.')
+		if strings.Count(m, ".") == 0 {
+			panic(&EmitterError{Msg: "ValueError: not enough values to unpack (expected 2, got 1)"})
+		}
+		panic(&EmitterError{Msg: "ValueError: too many values to unpack (expected 2)"})
+	}
 	m1, m2, _ := strings.Cut(m, ".")
 	need := d.Width
 	if d.Prec >= 0 {
@@ -362,10 +379,17 @@ func expFloat(d *Float) string {
 	if d.MLead0 > 0 {
 		m2 = strings.Repeat("0", d.MLead0-1) + m1 + m2
 		m1 = "0"
-		m2 = m2[:len(m2)-d.MLead0]
+		if len(m2) > d.MLead0 {
+			m2 = m2[:len(m2)-d.MLead0]
+		} else {
+			m2 = ""
+		}
 		e += d.MLead0
 	}
-	for len(m1) < d.Prec && m2 != "" {
+	for len(m1) < d.Prec {
+		if m2 == "" {
+			panic(&EmitterError{Msg: "IndexError: string index out of range"})
+		}
 		m1 += m2[:1]
 		m2 = m2[1:]
 		e--
@@ -413,6 +437,9 @@ func (r *representer) timestamp(ts *TimeStamp) *dnode {
 }
 
 func encodebytes(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
 	s := base64.StdEncoding.EncodeToString(b)
 	var out strings.Builder
 	for len(s) > 76 {
@@ -435,32 +462,45 @@ func (r *representer) tagged(x *Tagged) *dnode {
 	return n
 }
 
-func resetPre(l *pyyaml.PyList) {
+// resetPre is `for ct in pre: ct.reset()`; false when an entry is not a
+// CommentToken (a block scalar's comment string has no reset()).
+func resetPre(l *pyyaml.PyList) bool {
 	for _, v := range l.V {
-		if ct, ok := v.(*pyyaml.CommentToken); ok {
-			ct.PreDone = false
+		ct, ok := v.(*pyyaml.CommentToken)
+		if !ok || ct.Raw {
+			return false
 		}
+		ct.PreDone = false
 	}
+	return true
 }
 
 // containerComment is the shared head of represent_sequence/mapping: the
-// container's own comment (copied) with the end comments appended.
-func containerComment(ca *CommentAttr) *pyyaml.PyList {
+// container's own comment (copied) with the end comments appended, and
+// the per-item comments. A pre-comment list holding a non-token raises
+// AttributeError inside the representer's try, which drops the item
+// comments (and the end comments) silently.
+func containerComment(ca *CommentAttr) (*pyyaml.PyList, *CommentAttr) {
 	if ca == nil {
-		return nil
+		return nil, nil
 	}
 	var c *pyyaml.PyList
 	if ca.Comment != nil {
 		c = ca.Comment.Copy()
 	}
 	if c.Len() > 0 {
-		if pre, ok := c.Get(1).(*pyyaml.PyList); ok {
-			resetPre(pre)
+		if pre, ok := c.Get(1).(*pyyaml.PyList); ok && !resetPre(pre) {
+			return c, nil
 		}
 	}
-	for _, v := range ca.Items {
-		if pre, ok := v.Get(1).(*pyyaml.PyList); ok {
-			resetPre(pre)
+	keys := make([]string, 0, len(ca.Items))
+	for k := range ca.Items {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // dict order only matters for which tokens get reset first
+	for _, k := range keys {
+		if pre, ok := ca.Items[k].Get(1).(*pyyaml.PyList); ok && !resetPre(pre) {
+			return c, nil
 		}
 	}
 	if c != nil {
@@ -470,22 +510,23 @@ func containerComment(ca *CommentAttr) *pyyaml.PyList {
 		}
 		c.Append(end)
 	}
-	return c
+	return c, ca
 }
 
 // sequence is RoundTripRepresenter.represent_sequence.
 func (r *representer) sequence(s *Seq, reg func(*dnode)) *dnode {
 	tag := tagOf(pyyaml.TagSeq)
-	if s.Tag != nil {
-		tag = *s.Tag
+	if s.Tag != nil && s.Tag.Value != "" {
+		tag = keptTag(*s.Tag)
 	}
 	n := &dnode{kind: pyyaml.SequenceNode, tag: tag, flow: s.Flow, anchor: s.Anchor}
 	reg(n)
-	n.comment = containerComment(s.CA)
+	var ca *CommentAttr
+	n.comment, ca = containerComment(s.CA)
 	best := true
 	for idx, it := range s.Items {
 		ni := r.data(it)
-		if ic, ok := s.CA.item(itemKey(idx)); ok {
+		if ic, ok := ca.item(itemKey(idx)); ok {
 			mergeComments(ni, ic)
 		}
 		if !(ni.kind == pyyaml.ScalarNode && ni.style == 0) {
@@ -539,14 +580,15 @@ func (r *representer) key(k any) *dnode {
 func (r *representer) mapping(m *Map, flow *bool, reg func(*dnode)) *dnode {
 	tag := tagOf(pyyaml.TagMap)
 	if m.Tag != nil && m.Tag.Value != "" {
-		tag = *m.Tag
+		tag = keptTag(*m.Tag)
 	}
 	if m.Flow != nil {
 		flow = m.Flow
 	}
 	n := &dnode{kind: pyyaml.MappingNode, tag: tag, flow: flow, anchor: m.Anchor}
 	reg(n)
-	n.comment = containerComment(m.CA)
+	var ca *CommentAttr
+	n.comment, ca = containerComment(m.CA)
 	best := true
 	items := m.entries
 	if m.Merge != nil && len(m.Merge.Maps) > 0 {
@@ -557,7 +599,7 @@ func (r *representer) mapping(m *Map, flow *bool, reg func(*dnode)) *dnode {
 		count++
 		nk := r.key(e.key)
 		nv := r.data(e.val)
-		if ic, ok := m.CA.item(e.hk); ok && ic.Len() > 0 {
+		if ic, ok := ca.item(e.hk); ok && ic.Len() > 0 {
 			nk.comment = ic.Slice(0, 2)
 			if nv.comment != nil {
 				nv.comment.Set(0, ic.Get(2))
@@ -595,6 +637,15 @@ func (r *representer) mapping(m *Map, flow *bool, reg func(*dnode)) *dnode {
 	return n
 }
 
+// keptTag is represent_dict / represent_list's tag choice for a kept tag:
+// a resolved tag spelled "!!..." maps into the yaml.org namespace.
+func keptTag(t Tag) Tag {
+	if strings.HasPrefix(t.Value, "!!") {
+		return tagOf("tag:yaml.org,2002:" + t.Value[2:])
+	}
+	return t
+}
+
 // set is RoundTripRepresenter.represent_set.
 func (r *representer) set(m *Map, reg func(*dnode)) *dnode {
 	flow := boolPtr(false)
@@ -603,11 +654,12 @@ func (r *representer) set(m *Map, reg func(*dnode)) *dnode {
 	}
 	n := &dnode{kind: pyyaml.MappingNode, tag: tagOf("tag:yaml.org,2002:set"), flow: flow, anchor: m.Anchor}
 	reg(n)
-	n.comment = containerComment(m.CA)
+	var ca *CommentAttr
+	n.comment, ca = containerComment(m.CA)
 	for _, e := range m.entries {
 		nk := r.key(e.key)
 		nv := r.data(nil)
-		if ic, ok := m.CA.item(e.hk); ok && ic.Len() > 0 {
+		if ic, ok := ca.item(e.hk); ok && ic.Len() > 0 {
 			nk.comment = ic.Slice(0, 2)
 		}
 		nk.style = '?'
@@ -625,12 +677,13 @@ func (r *representer) set(m *Map, reg func(*dnode)) *dnode {
 func (r *representer) omap(m *Map, reg func(*dnode)) *dnode {
 	n := &dnode{kind: pyyaml.SequenceNode, tag: tagOf("tag:yaml.org,2002:omap"), flow: m.Flow, anchor: m.Anchor}
 	reg(n)
-	n.comment = containerComment(m.CA)
+	var ca *CommentAttr
+	n.comment, ca = containerComment(m.CA)
 	for _, e := range m.entries {
 		single := NewMap()
 		single.Set(e.key, e.val)
 		ni := r.mapping(single, nil, func(*dnode) {})
-		if ic, ok := m.CA.item(e.hk); ok && ic.Len() > 0 {
+		if ic, ok := ca.item(e.hk); ok && ic.Len() > 0 {
 			if pyyaml.Truthy(ic.Get(1)) {
 				ni.comment = pyyaml.NewList(nil, ic.Get(1))
 			}
