@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
@@ -25,11 +26,15 @@ func ownedFlag() *cli.Flag { return str("owned-checkout", helpOwnedCheckout, fal
 
 // decisionContext is _resolve_owned_decision_context (non-owned arm).
 func (v *verb) decisionContext(ctx *cli.Context) (*orch.Mission, *decision.Context, error) {
-	if ctx.String("owned-checkout") != "" {
+	root := v.root()
+	if claim := ctx.String("owned-checkout"); claim != "" {
+		if _, err := os.Stat(claim); err != nil {
+			return nil, nil, v.fail(decisionFallback, fmt.Sprintf("Cannot validate claimed checkout %s against resolved primary %s: git topology probe failed for PosixPath(%s): git binary not found on PATH",
+				claim, root, pyjson.ReprString(claim)), jsonx.NewObject("unregistered_error_code", "OWNERSHIP_BROKEN_POINTER"))
+		}
 		return nil, nil, v.fail(decisionFallback, "--owned-checkout is not supported by this build",
 			jsonx.NewObject("unregistered_error_code", "OWNED_OPTION_UNSUPPORTED"))
 	}
-	root := v.root()
 	handle := ctx.String("mission")
 	m, err := v.mission(root, handle)
 	if err != nil {

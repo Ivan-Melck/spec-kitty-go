@@ -15,13 +15,15 @@ import (
 const testPolicy = `{"orchestrator_id":"orch","orchestrator_version":"1.0","agent_family":"claude","approval_mode":"auto","sandbox_mode":"workspace","network_mode":"none","dangerous_flags":[]}`
 
 var (
-	reCorr = regexp.MustCompile(`(corr|hist)-[0-9a-f]{32}`)
+	reCorr  = regexp.MustCompile(`(corr|hist)-[0-9a-f]{32}`)
+	reRunID = regexp.MustCompile(`"run_id": "[0-9a-f]{32}"`)
 	// rePyTime masks python-style "2026-10-21 22:59:16.123+00:00" too.
 	reGenAt = regexp.MustCompile(`"(timestamp|generated_at|accepted_at|reread_generated_at)": "[^"]*"`)
 )
 
 func normEnvelope(s *testkit.Sandbox, out string) string {
 	out = reCorr.ReplaceAllString(out, "$1-X")
+	out = reRunID.ReplaceAllString(out, `"run_id": "<RUN>"`)
 	out = reGenAt.ReplaceAllString(out, `"$1": "<TS>"`)
 	return s.Normalize(out)
 }
