@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
@@ -43,13 +42,20 @@ func (o *Out) Print(s string) { fmt.Fprintln(o.W, s) }
 // Printf is Print with formatting.
 func (o *Out) Printf(format string, a ...any) { o.Print(fmt.Sprintf(format, a...)) }
 
-// Console writes text like rich's Console.print (plain text, wrapped).
-func (o *Out) Console(s string) {
+// Console is console.print(s) on the CLI console (markup, highlighting,
+// wrapping; ANSI styles on a colour terminal). In --json mode the console's
+// file is an in-memory buffer but it keeps the colour system detected for
+// stdout, like upstream's _json_safe_output capture.
+func (o *Out) Console(s string) { o.ConsoleR(s) }
+
+// ConsoleR is console.print(r) for any renderable.
+func (o *Out) ConsoleR(r any) {
+	c := rich.CliConsoleFor(o.W, 0)
 	w := o.W
 	if o.capture != nil {
 		w = o.capture
 	}
-	fmt.Fprintln(w, rich.Wrap(s, cli.Width()))
+	c.Print(w, r)
 }
 
 // Consolef is Console with formatting.

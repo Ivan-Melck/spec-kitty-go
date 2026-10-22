@@ -505,7 +505,7 @@ func tryFixMode(o *Out, s *coord.Surface, wpSlug, ref, file, wsPath, slug, wpID,
 	if a == nil {
 		return false
 	}
-	o.Console(fmt.Sprintf("Fix mode: generating focused prompt from review-cycle-%d (Canonical feedback: %s)", a.CycleNumber,
+	o.Console(fmt.Sprintf("[bold]Fix mode[/bold]: generating focused prompt from review-cycle-%d (Canonical feedback: %s)", a.CycleNumber,
 		filepath.Join(dir, fmt.Sprintf("review-cycle-%d.md", a.CycleNumber))))
 	p := WriteWorkflowPrompt("implement", slug, wpID, FixPrompt(a, wsPath, slug, wpID), root)
 	o.Print("")

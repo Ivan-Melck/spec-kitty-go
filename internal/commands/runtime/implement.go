@@ -71,7 +71,7 @@ func runTopImplement(ctx *cli.Context) error {
 		return strings.TrimSpace(strings.Join(lines, "\n"))
 	}
 	if !ctx.IsSet("mission") {
-		o.Console("Error: --mission <slug> is required")
+		o.Console("[red]Error:[/red] --mission <slug> is required")
 		if jsonMode {
 			emitJSONError(summary())
 		}
@@ -94,7 +94,7 @@ func runTopImplement(ctx *cli.Context) error {
 		tr.Add("create", "Resolve execution workspace")
 		tr.Start("detect")
 		tr.Error("detect", "1")
-		o.Console(tr.Render())
+		o.ConsoleR(tr.Render())
 		if jsonMode {
 			emitJSONError(summary())
 		}

@@ -263,12 +263,12 @@ func discardMission(ctx *cli.Context, root, slug, dir string, s *coord.Surface, 
 		if cur == "" {
 			cur = "HEAD"
 		}
-		out(fmt.Sprintf("Error: cannot discard %s: %s is not present on the current checkout (branch %s). A protected single_branch mission lives on its own minted mission branch (`git branch --list 'kitty/*'`); check that branch out and retry.", slug, metaPath, pyjson.ReprString(cur)))
+		out(fmt.Sprintf("[red]Error:[/red] cannot discard %s: %s is not present on the current checkout (branch %s). A protected single_branch mission lives on its own minted mission branch (`git branch --list 'kitty/*'`); check that branch out and retry.", slug, metaPath, pyjson.ReprString(cur)))
 		return cli.Exit(1)
 	}
 	m, err := lanes.Read(dir)
 	if err != nil {
-		out(fmt.Sprintf("Error: cannot discard %s: lanes.json is corrupt (%v). Repair or remove it, then retry.", slug, err))
+		out(fmt.Sprintf("[red]Error:[/red] cannot discard %s: lanes.json is corrupt (%v). Repair or remove it, then retry.", slug, err))
 		return cli.Exit(1)
 	}
 	meta := mission.ReadMetaOrEmpty(dir)
@@ -309,12 +309,12 @@ func discardMission(ctx *cli.Context, root, slug, dir string, s *coord.Surface, 
 			scope, history = "the mission branch and all worktrees", "the mission's files kept on that branch"
 		}
 		if !readYesNo(ctx, fmt.Sprintf("Discard mission %s? This deletes %s. Unmerged work on those branches WILL BE LOST, and so will %s.", slug, scope, history)) {
-			out("Aborted.")
+			out("[yellow]Aborted.[/yellow]")
 			return cli.Exit(1)
 		}
 	}
 	refusal := func(err error) error {
-		out(fmt.Sprintf("Error: cannot discard %s: %v", slug, err))
+		out(fmt.Sprintf("[red]Error:[/red] cannot discard %s: %v", slug, err))
 		return cli.Exit(1)
 	}
 	removeLaneWorktrees := func() error {
@@ -386,7 +386,7 @@ func discardMission(ctx *cli.Context, root, slug, dir string, s *coord.Surface, 
 	if minted != "" {
 		if cur := gitx.CurrentBranch(root); cur != target && minted != target {
 			if r := gitRun(root, "checkout", target); r.Code != 0 {
-				out(fmt.Sprintf("Error: cannot discard: the write checkout is on %s and could not be switched to %s so the branch can be deleted: %s. Commit or stash the changes you want to keep, or check out %s yourself, then retry.",
+				out(fmt.Sprintf("[red]Error:[/red] cannot discard: the write checkout is on %s and could not be switched to %s so the branch can be deleted: %s. Commit or stash the changes you want to keep, or check out %s yourself, then retry.",
 					pyjson.ReprString(minted), pyjson.ReprString(target), strings.TrimSpace(r.Stderr), pyjson.ReprString(target)))
 				return cli.Exit(1)
 			}
@@ -477,11 +477,11 @@ func discardMission(ctx *cli.Context, root, slug, dir string, s *coord.Surface, 
 		seen[b] = true
 	}
 	if len(leaks) > 0 {
-		out(fmt.Sprintf("Error: discard of %s did not complete — these artifacts were not removed:", slug))
+		out(fmt.Sprintf("[red]Error:[/red] discard of %s did not complete — these artifacts were not removed:", slug))
 		for _, l := range leaks {
 			out("  - " + l)
 		}
-		out("Remove them manually (git worktree remove --force / git branch -D) and retry, or report this as a bug.")
+		out("[dim]Remove them manually (git worktree remove --force / git branch -D) and retry, or report this as a bug.[/dim]")
 		return cli.Exit(1)
 	}
 	// flatten + discard marker + bookkeeping commit
@@ -496,14 +496,14 @@ func discardMission(ctx *cli.Context, root, slug, dir string, s *coord.Surface, 
 		rel, _ := filepath.Rel(root, metaPath)
 		if st := gitRun(root, "status", "--porcelain", "--", filepath.ToSlash(rel)); strings.TrimSpace(st.Stdout) != "" {
 			if _, err := coord.CommitPaths(root, fmt.Sprintf("chore(%s): flatten discarded mission metadata", slug), metaPath); err != nil {
-				out(fmt.Sprintf("Warning: discard of %s flattened meta.json but could not commit it (%v). meta.json is left uncommitted. From the project root, re-run `spec-kitty mission close --mission %s --discard --force` to commit it.", slug, err, slug))
+				out(fmt.Sprintf("[yellow]Warning:[/yellow] discard of %s flattened meta.json but could not commit it (%v). meta.json is left uncommitted. From the project root, re-run `spec-kitty mission close --mission %s --discard --force` to commit it.", slug, err, slug))
 			}
 		}
 	}
 	if jsonMode {
 		emitJSON(ctx, jsonx.NewObject("ok", true, "result", "discarded", "mission_slug", slug))
 	} else {
-		out(fmt.Sprintf("✓ Mission %s discarded.", slug))
+		out(fmt.Sprintf("[green]✓[/green] Mission %s discarded.", slug))
 	}
 	return nil
 }
