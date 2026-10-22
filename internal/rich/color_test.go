@@ -50,11 +50,13 @@ func TestColorCorpus(t *testing.T) {
 				continue
 			}
 			var b strings.Builder
-			if !printColor(&b, c.Src, 80, systems[name]) {
+			con := &Console{Width: 80, Color: systems[name], Highlighter: ReprHighlighter{}}
+			if _, err := renderMarkup(c.Src, ""); err != nil {
 				t.Errorf("case %d %s: markup error for %q", i, name, c.Src)
 				fails++
 				continue
 			}
+			con.Print(&b, c.Src)
 			if got := b.String(); got != want {
 				t.Errorf("case %d %s: %q\nwant %q\ngot  %q", i, name, c.Src, want, got)
 				fails++
