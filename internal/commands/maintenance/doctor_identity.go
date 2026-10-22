@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/healthcheck"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func newDoctorIdentityCmd() *cli.Command {
@@ -129,7 +130,8 @@ func runDoctorIdentity(ctx *cli.Context) error {
 	cprintf(out, "\n[bold]Mission Identity Audit[/bold] — %d mission(s)\n", len(all))
 	var rows [][]string
 	for _, st := range []string{"assigned", "pending", "legacy", "orphan"} {
-		rows = append(rows, []string{st, fmt.Sprint(counts[st])})
+		sty := map[string]string{"assigned": "[green]", "pending": "[yellow]", "legacy": "[red]", "orphan": "[red]"}[st]
+		rows = append(rows, []string{sty + st + "[/]", fmt.Sprint(counts[st])})
 	}
 	plainTableR(out, []string{"State", "Count"}, []int{10, 6}, []bool{false, true}, rows)
 	fmt.Fprintln(out)
@@ -219,7 +221,7 @@ func runDoctorTopology(ctx *cli.Context) error {
 	cprintf(out, "\n[bold]Mission Topology Audit[/bold] — %d mission(s)\n", len(rows))
 	var trows [][]string
 	for _, r := range rows {
-		topo := "null"
+		topo := "[red]null[/red]"
 		if r.Topology != nil {
 			topo = pyjson.Str(r.Topology)
 		}
@@ -228,15 +230,15 @@ func runDoctorTopology(ctx *cli.Context) error {
 			fl = pyjson.Str(r.Flattened)
 		}
 		f := ""
-		if r.Finding != nil {
-			f = *r.Finding
+		if r.Finding != nil && *r.Finding != "" {
+			f = "[yellow]" + *r.Finding + "[/yellow]"
 		}
 		trows = append(trows, []string{r.Slug, topo, fl, f})
 	}
 	plainTable(out, []string{"Mission", "Topology", "Flattened", "Finding"}, nil, trows)
 	for _, r := range rows {
 		if r.Remedy != nil {
-			fmt.Fprintf(out, "\nRemedy for %s (%s): %s\n", r.Slug, *r.Finding, *r.Remedy)
+			rich.PrintSoftWrap(out, fmt.Sprintf("\n[bold]Remedy[/bold] for %s (%s): %s", r.Slug, *r.Finding, *r.Remedy))
 		}
 	}
 	return nil
