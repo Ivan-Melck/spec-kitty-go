@@ -117,6 +117,10 @@ type Command struct {
 	AllowExtraArgs bool
 	// IgnoreUnknownOptions keeps unknown options as extra args.
 	IgnoreUnknownOptions bool
+	// UsageErrorHandler, when set on the command a usage error is raised for
+	// or on any of its ancestors, renders the error instead of the boxed
+	// click message and returns the exit code (e.g. a JSON envelope group).
+	UsageErrorHandler func(io_ IO, e *UsageError) int
 
 	parent *Command
 }
@@ -385,6 +389,11 @@ func handleErr(err error, io_ IO) int {
 	}
 	var ue *UsageError
 	if errors.As(err, &ue) {
+		for c := ue.Cmd; c != nil; c = c.parent {
+			if c.UsageErrorHandler != nil {
+				return c.UsageErrorHandler(io_, ue)
+			}
+		}
 		writeUsageError(io_.Stderr, ue)
 		return 2
 	}
