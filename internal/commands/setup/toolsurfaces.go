@@ -44,6 +44,10 @@ func runDoctorToolSurfaces(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	if !jsonOut {
+		toolsurface.LogWriter = ctx.Stderr
+		defer func() { toolsurface.LogWriter = nil }()
+	}
 	if ctx.Bool("fix") {
 		cwd, _ := os.Getwd()
 		if msg := missionstate.WriteRefusal(cwd, root); msg != "" {

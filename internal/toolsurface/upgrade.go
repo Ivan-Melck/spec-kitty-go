@@ -358,7 +358,7 @@ func (u *UpgradeRepairs) ErrorMessages() []string {
 func packSkillDiagnostics(root string) []Diagnostic {
 	var out []Diagnostic
 	for _, f := range FindPackSkillFindings(root) {
-		out = append(out, Diag("pack_skill_"+f.Kind, f.InstalledPath, "warning", f.Message))
+		out = append(out, Diag("pack_skill_"+f.Kind, f.InstalledPath, "warning", f.Message()))
 	}
 	return out
 }

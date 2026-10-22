@@ -157,6 +157,10 @@ func cliModePlan(root string, dryRun, noNag bool) CompatPlan {
 func runUpgrade(ctx *cli.Context) error {
 	w := ctx.Stdout
 	dryRun, jsonOut, planJSON := ctx.Bool("dry-run"), ctx.Bool("json"), ctx.Bool("plan-json")
+	if !jsonOut {
+		toolsurface.LogWriter = ctx.Stderr
+		defer func() { toolsurface.LogWriter = nil }()
+	}
 	cliMode, projectMode := ctx.Bool("cli"), ctx.Bool("project")
 	noWorktrees := ctx.Bool("no-worktrees")
 	confirmed := ctx.Bool("yes") || ctx.Bool("force")
