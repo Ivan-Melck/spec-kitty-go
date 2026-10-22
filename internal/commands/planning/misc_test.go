@@ -9,6 +9,7 @@ import (
 // TestDiffTracerAndRepair covers `agent tracer-append` (coord surface) and
 // `agent mission repair` (clean / fast-forward / divergent / no coord).
 func TestDiffTracerAndRepair(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	g, o := oracleCreate(t, p)
 	shellSteps(t, p, g, o,
@@ -33,6 +34,7 @@ func TestDiffTracerAndRepair(t *testing.T) {
 // TestDiffIntake covers `intake` (path, stdin, handoff packet, --show,
 // --force, --auto and the refusals).
 func TestDiffIntake(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	shellSteps(t, p, "", "",
 		`$SK intake`,
@@ -48,4 +50,19 @@ func TestDiffIntake(t *testing.T) {
 		`echo '# g' > .cursor/plans/b.md; $SK intake --auto --force`,
 		`$SK intake plan.md --auto`,
 	)
+}
+
+// TestDiffIntakeOverwriteGuard covers the brief's existence-alone overwrite
+// gate (guard_destructive_overwrite, no prover / no backup): a brief with no
+// provenance sidecar still refuses and is left untouched, --force replaces
+// it (partial state cleaned, nothing archived).
+func TestDiffIntakeOverwriteGuard(t *testing.T) {
+	t.Parallel()
+	p := missionfx.NewOraclePair(t)
+	shellSteps(t, p, "", "",
+		`mkdir -p .kittify; echo mine > .kittify/mission-brief.md; printf '# P\n' > p.md; $SK intake p.md; cat .kittify/mission-brief.md; ls .kittify | grep -c brief`,
+		`$SK intake p.md --force; ls -a .kittify | grep -c -e brief -e backup; head -c 40 .kittify/mission-brief.md`,
+		`rm .kittify/mission-brief.md; $SK intake p.md; ls .kittify | grep brief`,
+	)
+	p.CompareTree(".kittify", true)
 }

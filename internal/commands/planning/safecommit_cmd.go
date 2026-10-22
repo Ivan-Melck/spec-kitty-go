@@ -141,9 +141,15 @@ func runSafeCommit(ctx *cli.Context) error {
 			return fail("Unable to inspect requested files before commit.")
 		}
 		if len(entries) > 0 {
-			// TODO(area G): GuardCapability.POST_CONSOLIDATION_WRITE for a
-			// published (E2) mission-aware write; STANDARD here.
-			if _, err := safecommit.Commit(root, root, ref, message, expanded, safecommit.Options{}); err != nil {
+			// _resolve_capability_for_target: POST_CONSOLIDATION_WRITE only
+			// for the E2 CONSOLIDATED destination, STANDARD otherwise.
+			opts := safecommit.Options{}
+			if slug := missionSlugFromPaths(root, expanded); slug != "" {
+				if kind := missionFileKind(root, expanded); kind != "" {
+					opts.PostConsolidation = safecommit.IsPostConsolidationWriteTarget(root, slug, kind, ref)
+				}
+			}
+			if _, err := safecommit.Commit(root, root, ref, message, expanded, opts); err != nil {
 				return fail(err.Error())
 			}
 			committed = true
@@ -248,7 +254,14 @@ func resolveSafeCommitTarget(ctx *cli.Context, root string, files []string) (str
 				main = root
 			}
 			if dir, err := mission.ResolveHandle(main, slug); err == nil {
-				return safecommit.Placement(main, dir, kind), nil
+				ref, err := safecommit.ResolvePlacement(main, dir, kind)
+				if err != nil && safecommit.IsCode(err, safecommit.CodeConsolidatedContentAbsent) {
+					// MissionAwareCommitRefused: never fall through to HEAD.
+					return "", err
+				}
+				if err == nil {
+					return ref, nil
+				}
 			}
 		}
 	}

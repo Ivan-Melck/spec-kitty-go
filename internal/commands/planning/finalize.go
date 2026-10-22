@@ -11,6 +11,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
+	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/issuematrix"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -18,6 +19,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lifecycle"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
+	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/reqmap"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
@@ -96,20 +98,38 @@ type finalizeRun struct {
 	override     string
 	missionType  string
 
-	wpFiles       []string // sorted
-	wpIDs         []string
-	specIDs       reqmap.SpecIDs
-	declared      map[string]bool
-	functional    map[string]bool
-	extractWarns  []string
-	specContent   string
-	deps          map[string][]string
-	depOrder      []string
-	refs          map[string][]string
-	diagnostics   *jsonx.Object
-	preexisting   map[string]bool
-	persisted     bool
-	previousValue string
+	wpFiles      []string // sorted
+	wpIDs        []string
+	specIDs      reqmap.SpecIDs
+	declared     map[string]bool
+	functional   map[string]bool
+	extractWarns []string
+	specContent  string
+	deps         map[string][]string
+	depOrder     []string
+	refs         map[string][]string
+	refsOrder    []string // non-nil: dict order of refs (manifest-only outline)
+	diagnostics  *jsonx.Object
+	manifest     *orch.WpsManifest
+	// lane inputs (canceled work projected out) and the frozen membership
+	laneMan         map[string]ownManifest
+	laneDeps        map[string][]string
+	laneOrder       []string
+	laneBodies      map[string]string
+	allCanceled     bool
+	frozen          *lanes.FrozenMembership
+	refresh         bool
+	allowOrphaned   bool
+	pin             *planningPin
+	refreshFindings []string
+	scope           *writeScope
+	statusGuard     *statusGuard
+	commitLanded    bool
+	concernWarns    []string
+	tasksMDStale    bool
+	preexisting     map[string]bool
+	persisted       bool
+	previousValue   string
 
 	// bootstrap state
 	workPackages  []*jsonx.Object
@@ -152,10 +172,8 @@ func (f *finalizeRun) human(s string) {
 var wpFilePrefix = regexp.MustCompile(`^(WP\d{2})(?:[-_.]|$)`)
 
 func runFinalizeTasks(ctx *cli.Context) error {
-	f := &finalizeRun{ctx: ctx, json: ctx.Bool("json"), validateOnly: ctx.Bool("validate-only"), override: strings.TrimSpace(ctx.String("target-branch"))}
-	if ctx.Bool("refresh-planning-commit") {
-		return f.emitErr("--refresh-planning-commit is not supported by this build")
-	}
+	f := &finalizeRun{ctx: ctx, json: ctx.Bool("json"), validateOnly: ctx.Bool("validate-only"), override: strings.TrimSpace(ctx.String("target-branch")),
+		refresh: ctx.Bool("refresh-planning-commit"), allowOrphaned: ctx.Bool("allow-orphaned")}
 	f.root = project.Locate("")
 	if f.root == "" {
 		return f.emitErr("Could not locate project root")
@@ -188,29 +206,108 @@ func runFinalizeTasks(ctx *cli.Context) error {
 	f.slug = filepath.Base(dir)
 	f.dir = project.Specs(f.root, f.slug)
 	f.missionType = missionart.MissionTypeFor(f.dir)
+	var scope *FinalizeScope
+	if !f.refresh {
+		if scope, err = f.enterAPIAuthoredScope(); err != nil {
+			return err
+		}
+		if scope != nil && scope.Close != nil {
+			defer scope.Close()
+		}
+	}
+	if !f.validateOnly && !f.refresh {
+		f.scope = snapshotWriteScope(f.dir)
+	}
+	err = f.run()
+	if err != nil && f.scope != nil && !f.commitLanded {
+		// _undo_finalize_write_scope: the status commits first, then the
+		// mission directory (leaving what a kept status commit changed).
+		reason, commits, kept := f.statusGuard.restore()
+		f.scope.restore(f.persisted, kept)
+		if reason != "" {
+			if f.json {
+				emitJSON(ctx.Stdout, jsonx.NewObject("warning", "status_commits_not_undone", "branch", f.statusGuard.branch,
+					"detail", strings.TrimPrefix(reason, fmt.Sprintf("status commits on %s were not undone: ", mission.PyRepr(f.statusGuard.branch))), "commits", strList(nonNil(commits))))
+			} else {
+				say(ctx.Stdout, "[yellow]Warning:[/yellow] "+reason)
+				for _, c := range commits {
+					sayPlain(ctx.Stdout, "  "+c)
+				}
+			}
+		}
+	}
+	if err == nil && scope != nil && scope.Confirm != nil {
+		scope.Confirm()
+	}
+	return err
+}
+
+// noWrite: --validate-only, or a --refresh-planning-commit run (a
+// primary-only lanes.json pin write: every other writer runs in its
+// zero-mutation mode).
+func (f *finalizeRun) noWrite() bool { return f.validateOnly || f.refresh }
+
+func (f *finalizeRun) run() error {
 	if err := f.resolveBranches(); err != nil {
 		return err
 	}
+	if f.refresh {
+		pin, err := f.refreshPin()
+		if err != nil {
+			return err
+		}
+		f.pin = pin
+		if !f.validateOnly {
+			if err := f.preflightRefresh(); err != nil {
+				return err
+			}
+			if _, seeded, _, _ := f.bootstrapCounts(); seeded > 0 {
+				return f.refusePinRefresh("canonical coordination status would need bootstrap writes")
+			}
+		} else {
+			f.refreshFindings = f.refreshStatusFindings()
+		}
+	}
 	if err := f.validationGates(); err != nil {
+		return err
+	}
+	if done, err := f.finishOutlineValidation(); done {
 		return err
 	}
 	if err := f.bootstrapLoop(); err != nil {
 		return err
 	}
-	if !f.validateOnly {
+	if !f.noWrite() {
 		if err := f.flushWrites(); err != nil {
 			return f.emitErr(err.Error())
 		}
+	}
+	if err := f.regenerateTasksMD(); err != nil {
+		return f.emitErr(err.Error())
 	}
 	manifests, err := f.ownershipGates()
 	if err != nil {
 		return err
 	}
-	if !f.validateOnly {
+	if err := f.projectLaneInputs(manifests); err != nil {
+		return err
+	}
+	if !f.refresh {
+		if err := f.frozenPreflight(); err != nil {
+			return f.laneError(err)
+		}
+	}
+	if !f.noWrite() {
+		if f.scope != nil {
+			f.statusGuard = captureStatusSurface(coord.Resolve(f.root, f.slug).StatusDir(), f.dir)
+		}
 		lifecycle.EmitArtifactPhase(statusWriteDir(f.root, f.slug), lifecycle.PhaseInput{EventType: lifecycle.TasksStarted, MissionSlug: f.slug, Actor: finalizeCmd})
 	}
 	if f.validateOnly {
 		return f.validateOnlyReport(manifests)
+	}
+	if f.refresh {
+		return f.commitPinRefresh(f.pin)
 	}
 	return f.commitPipeline(manifests)
 }
@@ -253,7 +350,7 @@ func (f *finalizeRun) resolveBranches() error {
 		}
 	}
 	f.human(fmt.Sprintf("[bold cyan]Branch:[/bold cyan] %s (target for this mission)", f.target))
-	if !f.validateOnly && f.override != "" && merr == nil {
+	if !f.validateOnly && !f.refresh && f.override != "" && merr == nil {
 		prev := meta.GetString("target_branch")
 		f.previousValue = prev
 		if prev != f.target {
@@ -327,16 +424,30 @@ func (f *finalizeRun) validationGates() error {
 		}
 		return nil
 	})
-	if !f.validateOnly {
+	if !f.validateOnly && !f.refresh {
 		f.scaffoldIssueMatrix()
 	}
 	f.lintIssueMatrix()
-	// TODO(wps.yaml): the tasks-outline manifest flow is not ported.
+	man, merr := orch.LoadWpsManifest(f.dir)
+	if merr != nil {
+		return f.emitErr("wps.yaml is present but could not be loaded: " + merr.Error())
+	}
+	f.manifest = man
+	f.concernWarns = []string{}
+	if man != nil {
+		f.concernWarns = orch.CheckConcernRefsCoverage(man)
+	}
 	if err := f.resolveDeps(); err != nil {
 		return err
 	}
 	if err := f.validateGraph(); err != nil {
 		return err
+	}
+	if len(f.wpFiles) == 0 && man != nil {
+		f.wpIDs = nil
+		for _, e := range man.WorkPackages {
+			f.wpIDs = append(f.wpIDs, e.ID)
+		}
 	}
 	if err := f.validateMapping(); err != nil {
 		return err
@@ -344,16 +455,106 @@ func (f *finalizeRun) validationGates() error {
 	if err := f.depConflicts(); err != nil {
 		return err
 	}
+	for _, w := range f.concernWarns {
+		f.human("[yellow]Warning:[/yellow] " + w)
+	}
 	for _, w := range f.extractWarns {
 		f.human("[yellow]Warning:[/yellow] " + w)
 	}
 	return nil
 }
 
+// finishOutlineValidation is _finish_outline_validation_if_applicable: a
+// manifest-only outline (wps.yaml, no WP prompt files yet).
+func (f *finalizeRun) finishOutlineValidation() (bool, error) {
+	if len(f.wpFiles) > 0 || f.manifest == nil {
+		return false, nil
+	}
+	if !f.validateOnly {
+		return true, f.emitErr("WP prompt files are required to finalize tasks; run tasks-packages first")
+	}
+	if f.json {
+		r := jsonx.NewObject("result", "validation_passed", "validation_stage", "tasks-outline", "mission_slug", f.slug,
+			"wp_count", len(f.manifest.WorkPackages), "validate_only", true,
+			"dependencies_parsed", depsObject(f.deps, f.depOrder), "requirement_refs_parsed", f.refsObject())
+		for _, kv := range f.diagnostics.Pairs() {
+			r.Set(kv.Key, kv.Value)
+		}
+		emitJSON(f.ctx.Stdout, r)
+	} else {
+		say(f.ctx.Stdout, "tasks-outline manifest validation passed; WP prompt validation runs after tasks-packages")
+	}
+	return true, nil
+}
+
+// regenerateTasksMD is _regenerate_or_report_tasks_md (T017, #3221).
+func (f *finalizeRun) regenerateTasksMD() error {
+	if f.manifest == nil {
+		return nil
+	}
+	generated := orch.GenerateTasksMD(f.manifest, f.slug, f.deps)
+	path := filepath.Join(f.dir, "tasks.md")
+	if f.noWrite() {
+		b, err := os.ReadFile(path)
+		f.tasksMDStale = err != nil || string(b) != generated
+		if f.tasksMDStale {
+			f.human("[yellow]⚠[/yellow] tasks.md is stale relative to wps.yaml; run finalize-tasks without --validate-only to regenerate")
+		}
+		return nil
+	}
+	if err := os.WriteFile(path, []byte(generated), 0o644); err != nil {
+		return err
+	}
+	f.human(fmt.Sprintf("[green]Regenerated[/green] tasks.md from wps.yaml (%d WPs)", len(f.manifest.WorkPackages)))
+	return nil
+}
+
+func (f *finalizeRun) setDep(id string, d []string) {
+	if _, ok := f.deps[id]; !ok {
+		f.depOrder = append(f.depOrder, id)
+	}
+	f.deps[id] = d
+}
+
 func (f *finalizeRun) resolveDeps() error {
 	f.deps = map[string][]string{}
+	f.depOrder = nil
 	raw, _ := reqmap.ReadAllWPRawRefs(f.tasksDir)
 	f.refs = raw
+	if f.manifest != nil {
+		explicit := map[string]bool{}
+		for _, e := range f.manifest.WorkPackages {
+			if e.DependenciesExplicit {
+				explicit[e.ID] = true
+				f.setDep(e.ID, append([]string{}, e.Dependencies...))
+			} else {
+				f.setDep(e.ID, []string{})
+			}
+		}
+		// _frontmatter_fallback_dependencies (#5448).
+		for _, p := range f.wpFiles {
+			m := wpFilePrefix.FindStringSubmatch(filepath.Base(p))
+			if m == nil || explicit[m[1]] {
+				continue
+			}
+			if w, err := wp.Read(p); err == nil {
+				if d := w.Dependencies(); len(d) > 0 {
+					f.setDep(m[1], d)
+				}
+			}
+		}
+		if len(f.wpFiles) == 0 {
+			f.refs = map[string][]string{}
+			f.refsOrder = []string{}
+			for _, e := range f.manifest.WorkPackages {
+				if _, ok := f.refs[e.ID]; !ok {
+					f.refsOrder = append(f.refsOrder, e.ID)
+				}
+				f.refs[e.ID] = append([]string{}, e.RequirementRefs...)
+			}
+		}
+		return nil
+	}
 	tasksMD := filepath.Join(f.dir, "tasks.md")
 	b, err := os.ReadFile(tasksMD)
 	if err != nil {
@@ -407,19 +608,13 @@ func (f *finalizeRun) resolveDeps() error {
 			return f.emitErr(err.Error())
 		}
 		if d := w.Dependencies(); len(d) > 0 {
-			f.deps[m[1]] = d
+			f.setDep(m[1], d)
 		} else {
 			d := tdeps[m[1]]
 			if d == nil {
 				d = []string{}
 			}
-			f.deps[m[1]] = d
-		}
-	}
-	f.depOrder = nil
-	for _, p := range f.wpFiles {
-		if m := wpFilePrefix.FindStringSubmatch(filepath.Base(p)); m != nil {
-			f.depOrder = append(f.depOrder, m[1])
+			f.setDep(m[1], d)
 		}
 	}
 	return nil
@@ -476,6 +671,9 @@ func depsObject(m map[string][]string, order []string) *jsonx.Object {
 
 func (f *finalizeRun) refsObject() *jsonx.Object {
 	_, order := reqmap.ReadAllWPRawRefs(f.tasksDir)
+	if f.refsOrder != nil {
+		order = f.refsOrder
+	}
 	o := jsonx.NewObject()
 	seen := map[string]bool{}
 	for _, k := range order {
@@ -694,9 +892,10 @@ func branchStrategy(target, final string) string {
 func (f *finalizeRun) bootstrapLoop() error {
 	f.frontmatter = map[string]*jsonx.Object{}
 	f.bodies = map[string]string{}
-	f.ownershipWarn = []string{}
+	f.ownershipWarn = append([]string{}, f.concernWarns...)
 	f.postIntegWarn = []string{}
 	f.modified, f.unchanged, f.preserved, f.wouldModify = []string{}, []string{}, []string{}, []any{}
+	var contradictIDs, contradictions []string
 	for _, p := range f.wpFiles {
 		m := wpFilePrefix.FindStringSubmatch(filepath.Base(p))
 		if m == nil {
@@ -713,11 +912,20 @@ func (f *finalizeRun) bootstrapLoop() error {
 			f.human(fmt.Sprintf("[yellow]Warning:[/yellow] Could not read %s: %v", filepath.Base(p), err))
 			continue
 		}
+		if err := f.charterActivationGate(w.Meta().GetString("agent_profile"), id); err != nil {
+			return err
+		}
 		hasDepsLine := w.Meta().Has("dependencies")
 		_, depsIsString := func() (any, bool) { v, _ := w.Meta().Get("dependencies"); _, s := v.(string); return v, s }()
 		deps := f.deps[id]
 		if deps == nil {
 			deps = []string{}
+		}
+		preserved := false
+		if existing := w.Dependencies(); f.manifest == nil && len(deps) == 0 && len(existing) > 0 {
+			deps = existing
+			preserved = true
+			f.preserved = append(f.preserved, id)
 		}
 		refs := f.refs[id]
 		title := w.Meta().GetString("title")
@@ -743,31 +951,78 @@ func (f *finalizeRun) bootstrapLoop() error {
 		if len(wp.StringList(dumped, "requirement_refs")) == 0 && len(refs) > 0 {
 			changes.Set("requirement_refs", strList(refs))
 		}
-		// TODO: ownership inference (infer_ownership) for WPs missing
-		// execution_mode / owned_files is not ported.
+		// _apply_ownership_inference
+		rawB, _ := os.ReadFile(p)
+		raw := string(rawB)
+		mode := dumped.GetString("execution_mode")
+		explicitEmpty := ownedFilesExplicitlyEmpty(raw)
+		if mode == "code_change" && explicitEmpty {
+			contradictIDs = append(contradictIDs, id)
+			contradictions = append(contradictions, id+": code_change WP declares no owned files (execution_mode: code_change with an explicit owned_files: [] is an authoring contradiction)")
+			continue
+		}
+		needMode := mode == ""
+		needOwned := len(wp.StringList(dumped, "owned_files")) == 0 && !explicitEmpty
+		if needMode || needOwned {
+			owned, warns := inferOwnedFiles(raw, f.slug)
+			if needMode {
+				changes.Set("execution_mode", inferExecutionMode(raw, nil))
+			}
+			if needOwned {
+				changes.Set("owned_files", strList(owned))
+			}
+			if dumped.GetString("authoritative_surface") == "" {
+				changes.Set("authoritative_surface", inferAuthoritativeSurface(owned))
+			}
+			f.ownershipWarn = append(f.ownershipWarn, warns...)
+		}
 		updated := dumped.Clone()
 		for _, kv := range changes.Pairs() {
 			updated.Set(kv.Key, kv.Value)
 		}
 		f.frontmatter[id] = updated
 		f.bodies[id] = w.Doc.Body
+		for _, warn := range detectPostIntegrationAcceptance(raw, wp.StringList(updated, "owned_files")) {
+			f.postIntegWarn = append(f.postIntegWarn, id+": "+warn)
+		}
 		if changes.Len() > 0 {
-			if !f.validateOnly {
+			if !f.noWrite() {
 				f.pending = append(f.pending, pendingWrite{w: w, delta: changes})
 			} else {
 				f.wouldModify = append(f.wouldModify, jsonx.NewObject("wp_id", id, "changes", changes))
 			}
 			f.updated++
-			f.modified = append(f.modified, id)
-		} else {
+			if !preserved {
+				f.modified = append(f.modified, id)
+			}
+		} else if !preserved {
 			f.unchanged = append(f.unchanged, id)
 		}
+	}
+	if len(contradictions) > 0 {
+		msg := "Ownership contradiction detected for WP(s) " + strings.Join(contradictIDs, ", ") + ": " + strings.Join(contradictions, "; ")
+		if f.json {
+			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", msg, "error_code", "OWNERSHIP_CONTRADICTION_CODE_CHANGE_EMPTY_OWNED_FILES",
+				"ownership_contradiction_wp_ids", strList(contradictIDs), "ownership_contradictions", strList(contradictions)))
+		} else {
+			say(f.ctx.Stdout, "[red]Error:[/red] "+msg)
+			for _, c := range contradictions {
+				say(f.ctx.Stdout, "  - "+c)
+			}
+		}
+		return cli.Exit(1)
+	}
+	for _, w := range f.postIntegWarn {
+		f.human("[yellow]Warning:[/yellow] " + w)
 	}
 	// owned_files under kitty-specs/ are refused.
 	var invalid []any
 	var invalidHuman []string
 	ids := sortedKeysObj(f.frontmatter)
 	for _, id := range ids {
+		if confinedPlanningWP(f.frontmatter[id]) {
+			continue
+		}
 		for _, of := range wp.StringList(f.frontmatter[id], "owned_files") {
 			n := strings.TrimLeft(strings.TrimSpace(filepath.ToSlash(of)), "")
 			for strings.HasPrefix(n, "./") {
@@ -874,8 +1129,17 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 		walk(id, s)
 		reach[id] = s
 	}
+	// validate_all iterates the manifests in WP-file (scandir) order.
+	var fileOrder []string
+	for _, p := range f.wpFiles {
+		if m := wpFilePrefix.FindStringSubmatch(filepath.Base(p)); m != nil {
+			if _, ok := man[m[1]]; ok {
+				fileOrder = append(fileOrder, m[1])
+			}
+		}
+	}
 	narrow := []string{}
-	for _, id := range f.wpIDs {
+	for _, id := range fileOrder {
 		if m, ok := man[id]; ok && m.scope != "codebase-wide" {
 			narrow = append(narrow, id)
 		}
@@ -895,7 +1159,7 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 			}
 		}
 	}
-	for _, id := range f.wpIDs {
+	for _, id := range fileOrder {
 		m, ok := man[id]
 		if !ok || m.scope == "codebase-wide" {
 			continue
@@ -913,6 +1177,17 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 				errs = append(errs, fmt.Sprintf("%s: authoritative_surface %s is not a prefix of any owned_files entry: %s", id, mission.PyRepr(m.surface), pyListRepr(m.owned)))
 			}
 		}
+		if m.mode == "planning_artifact" {
+			var bad []string
+			for _, p := range m.owned {
+				if !strings.HasPrefix(p, "kitty-specs/") && !strings.HasPrefix(p, "docs/") {
+					bad = append(bad, p)
+				}
+			}
+			if len(bad) > 0 {
+				warns = append(warns, fmt.Sprintf("%s: planning_artifact WP owns files outside planning paths (kitty-specs/, docs/): %s", id, pyListRepr(bad)))
+			}
+		}
 		if m.mode == "code_change" {
 			has := false
 			for _, p := range m.owned {
@@ -920,7 +1195,7 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 					has = true
 				}
 			}
-			if !has {
+			if len(m.owned) > 0 && !has {
 				warns = append(warns, fmt.Sprintf("%s: code_change WP does not own any files under src/ or tests/. owned_files: %s", id, pyListRepr(m.owned)))
 			}
 		}
@@ -962,7 +1237,11 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 					fmt.Fprintln(f.ctx.Stderr, wrapPlain(fmt.Sprintf("INFO: %s: owned_files path '%s' has no match — suppressed by create_intent (planned-new-file).", id, pat)))
 				}
 			default:
-				gerrs = append(gerrs, fmt.Sprintf("%s: owned_files path '%s' is a literal file path that matches zero files in the repository. If this file will be created during implementation, declare it in the WP frontmatter:\n  create_intent:\n    - %s", id, pat, pat))
+				hint := ""
+				if sg := nearestMatchSuggestion(pat, f.root); sg != "" {
+					hint = " " + sg
+				}
+				gerrs = append(gerrs, fmt.Sprintf("%s: owned_files path '%s' is a literal file path that matches zero files in the repository.%s If this file will be created during implementation, declare it in the WP frontmatter:\n  create_intent:\n    - %s", id, pat, hint, pat))
 			}
 		}
 	}
@@ -987,20 +1266,26 @@ func (f *finalizeRun) metaObj() *jsonx.Object { return mission.ReadMetaOrEmpty(f
 
 func (f *finalizeRun) computeLanes(man map[string]ownManifest, previous *lanes.Manifest, planningSHA *string) (*lanes.Manifest, error) {
 	meta := f.metaObj()
+	laneMan, laneDeps, laneBodies := f.laneMan, f.laneDeps, f.laneBodies
+	if laneMan == nil {
+		// callers without the eligibility projection (agent tasks
+		// finalize-tasks) pass their raw inputs
+		laneMan, laneDeps, laneBodies = man, f.deps, f.bodies
+	}
 	own := map[string]*lanes.Ownership{}
-	for id, m := range man {
+	for id, m := range laneMan {
 		own[id] = &lanes.Ownership{ExecutionMode: m.mode, OwnedFiles: m.owned}
 	}
 	graph := map[string][]string{}
-	for k, v := range f.deps {
+	for k, v := range laneDeps {
 		graph[k] = v
 	}
 	var mid *string
 	if s := meta.GetString("mission_id"); s != "" {
 		mid = &s
 	}
-	in := lanes.ComputeInput{DependencyGraph: graph, Ownership: own, MissionSlug: f.slug, TargetBranch: f.target, WPBodies: f.bodies,
-		MissionID: mid, Previous: previous, Topology: coord.TopologyFromMeta(meta, f.dir), MissionBranch: meta.GetString("mission_branch")}
+	in := lanes.ComputeInput{DependencyGraph: graph, Ownership: own, MissionSlug: f.slug, TargetBranch: f.target, WPBodies: laneBodies,
+		MissionID: mid, Previous: previous, Topology: coord.TopologyFromMeta(meta, f.dir), MissionBranch: meta.GetString("mission_branch"), Frozen: f.frozen}
 	m, err := lanes.Compute(in)
 	if err != nil {
 		return nil, err
@@ -1056,14 +1341,21 @@ func (f *finalizeRun) lanesStats(m *lanes.Manifest) *jsonx.Object {
 	return jsonx.NewObject("computed", true, "count", len(m.Lanes), "lane_ids", ids, "planning_artifact_wps", strList(nonNil(m.PlanningArtifactWPs)), "collapse_report", cr)
 }
 
-func (f *finalizeRun) laneInputsOK(man map[string]ownManifest) error {
-	if len(man) > 0 && len(f.deps) > 0 {
+// lanesComputable is (lane manifests and lane dependencies) or all_canceled.
+func (f *finalizeRun) lanesComputable() bool {
+	return (len(f.laneMan) > 0 && len(f.laneDeps) > 0) || f.allCanceled
+}
+
+func (f *finalizeRun) laneInputsOK(_ map[string]ownManifest) error {
+	if f.lanesComputable() {
 		return nil
 	}
+	man := f.laneMan
+	lanesNow := f.lifecycleLanes()
 	var code []string
 	for id, m := range f.frontmatter {
 		mode := m.GetString("execution_mode")
-		if (mode == "" || mode == "code_change") && m.GetString("lane") != "canceled" {
+		if (mode == "" || mode == "code_change") && lanesNow[id] != "canceled" {
 			code = append(code, id)
 		}
 	}
@@ -1074,7 +1366,7 @@ func (f *finalizeRun) laneInputsOK(man map[string]ownManifest) error {
 	if len(man) == 0 {
 		missing = append(missing, "ownership manifests")
 	}
-	if len(f.deps) == 0 {
+	if len(f.laneDeps) == 0 {
 		missing = append(missing, "WP dependencies")
 	}
 	msg := "Lane computation aborted: missing " + strings.Join(missing, " and ") + ". finalize-tasks cannot write lanes.json without complete tasks and ownership metadata."
@@ -1083,10 +1375,106 @@ func (f *finalizeRun) laneInputsOK(man map[string]ownManifest) error {
 
 func (f *finalizeRun) laneError(err error) error {
 	switch e := err.(type) {
+	case *lanes.MembershipFrozenError:
+		if f.json {
+			cs := []any{}
+			for _, c := range e.Conflicts {
+				cs = append(cs, jsonx.NewObject("reason", c.Reason, "wp_ids", strList(nonNil(c.WPIDs)), "recorded_lanes", strList(nonNil(c.RecordedLanes)), "remedy", c.Remedy))
+			}
+			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", e.Error(), "error_code", e.ErrorCode(), "reason", e.Reason, "conflicts", cs, "next_step", e.NextStep))
+			return cli.Exit(1)
+		}
+		say(f.ctx.Stdout, "[red]Error:[/red] "+e.Error())
+		for _, c := range e.Conflicts {
+			var named []string
+			for _, p := range c.Pairs() {
+				named = append(named, p[0]+" ("+p[1]+")")
+			}
+			if len(named) == 0 {
+				named = c.WPIDs
+			}
+			if len(named) > 0 {
+				say(f.ctx.Stdout, "  "+c.Reason+": "+strings.Join(named, ", "))
+			} else {
+				say(f.ctx.Stdout, "  "+c.Reason)
+			}
+			say(f.ctx.Stdout, "  Remedy: "+c.Remedy)
+		}
+		return cli.Exit(1)
 	case *lanes.DependencyCycleError:
-		return f.emitErr(e.Error(), "error_code", e.ErrorCode())
+		if f.json {
+			cl := []any{}
+			for _, l := range e.CycleLanes {
+				cl = append(cl, jsonx.NewObject("lane_id", l.LaneID, "wp_ids", strList(l.WPIDs)))
+			}
+			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", e.Error(), "error_code", e.ErrorCode(), "cycle_path", strList(e.CyclePath), "cycle_lanes", cl))
+			return cli.Exit(1)
+		}
+		say(f.ctx.Stdout, "[red]Error:[/red] "+e.Error())
+		say(f.ctx.Stdout, "  Cycle path: "+strings.Join(e.CyclePath, " -> "))
+		for _, l := range e.CycleLanes {
+			say(f.ctx.Stdout, "  "+l.LaneID+": "+strings.Join(l.WPIDs, ", "))
+		}
+		return cli.Exit(1)
 	}
 	return f.emitErr(err.Error())
+}
+
+// nearestMatchSuggestion is _nearest_match_suggestion.
+func nearestMatchSuggestion(pattern, root string) string {
+	parent := filepath.Dir(filepath.FromSlash(pattern))
+	entries, err := os.ReadDir(filepath.Join(root, parent))
+	if err != nil {
+		return ""
+	}
+	var siblings []string
+	for _, e := range entries {
+		if info, err := os.Stat(filepath.Join(root, parent, e.Name())); err == nil && info.Mode().IsRegular() {
+			siblings = append(siblings, filepath.ToSlash(filepath.Join(parent, e.Name())))
+		}
+	}
+	if m := closestMatch(pattern, siblings, 0.5); m != "" {
+		return "Did you mean '" + m + "'?"
+	}
+	return ""
+}
+
+// confinedPlanningWP is _is_confined_planning_wp.
+func confinedPlanningWP(m *jsonx.Object) bool {
+	if m.GetString("execution_mode") != "planning_artifact" {
+		return false
+	}
+	for _, of := range wp.StringList(m, "owned_files") {
+		n := strings.TrimSpace(filepath.ToSlash(of))
+		for strings.HasPrefix(n, "./") {
+			n = n[2:]
+		}
+		if !strings.HasPrefix(n, "kitty-specs/") && !strings.HasPrefix(n, "docs/") {
+			return false
+		}
+	}
+	return true
+}
+
+// charterActivationGate is _enforce_charter_activation_gate (T044 / FR-017).
+func (f *finalizeRun) charterActivationGate(profile, id string) error {
+	if profile == "" {
+		return nil
+	}
+	act, err := dct.ActivatedProfiles(f.root)
+	if err != nil {
+		return f.emitErr(err.Error())
+	}
+	if act == nil || act[profile] {
+		return nil
+	}
+	list := strings.Join(act.Sorted(), ", ")
+	if list == "" {
+		list = "(none)"
+	}
+	resolution := "spec-kitty charter activate agent-profile " + profile
+	say(f.ctx.Stdout, fmt.Sprintf("[red]✗ Charter activation gate FAILED[/red]\n  WP %s assigns profile: [bold]%s[/bold]\n  '%s' is not in the activated agent-profile set.\n  Currently activated: %s\n  Resolution: %s", id, profile, profile, list, resolution))
+	return f.emitErr(fmt.Sprintf("artifact=%s, activated=%s, resolution=%s", mission.PyRepr(profile), mission.PyRepr(list), mission.PyRepr(resolution)))
 }
 
 func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
@@ -1095,7 +1483,7 @@ func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
 		return err
 	}
 	var lm *lanes.Manifest
-	if len(man) > 0 && len(f.deps) > 0 {
+	if f.lanesComputable() {
 		prev, _ := lanes.Read(f.dir)
 		m, err := f.computeLanes(man, prev, nil)
 		if err != nil {
@@ -1103,16 +1491,44 @@ func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
 		}
 		lm = m
 	}
+	wouldModify := append([]any{}, f.wouldModify...)
+	var pinPrev string
+	pinChanged := false
+	if f.pin != nil {
+		var prev any
+		if m, _ := lanes.Read(f.dir); m != nil && m.PlanningCommitSHA != nil {
+			prev = *m.PlanningCommitSHA
+			pinPrev = *m.PlanningCommitSHA
+		}
+		if pinPrev != f.pin.sha || prev == nil && f.pin.sha != "" {
+			pinChanged = true
+			wouldModify = append(wouldModify, jsonx.NewObject("artifact", "lanes.json", "changes",
+				jsonx.NewObject("planning_commit_sha", jsonx.NewObject("from", prev, "to", optAny(f.pin.sha)))))
+		}
+	}
+	message := "All validations passed. Run without --validate-only to commit."
+	if f.pin != nil {
+		if len(f.refreshFindings) > 0 {
+			message = "All validations passed. A mutating refresh would refuse on the listed status preflight findings."
+		} else {
+			message = "All validations passed. This is a planning-pin preview; a mutating refresh repeats its safety preflight."
+		}
+	}
 	if f.json {
 		r := jsonx.NewObject("result", "validation_passed", "mission_slug", f.slug, "wp_count", len(f.workPackages), "validate_only", true,
-			"would_modify", f.wouldModify, "would_preserve", strList(f.preserved), "unchanged", strList(f.unchanged), "updated_wp_count", f.updated,
-			"tasks_md_stale", false, "ownership_warnings", strList(f.ownershipWarn), "requirement_extraction_warnings", strList(nonNil(f.extractWarns)),
+			"would_modify", wouldModify, "would_preserve", strList(f.preserved), "unchanged", strList(f.unchanged), "updated_wp_count", f.updated,
+			"tasks_md_stale", f.tasksMDStale, "ownership_warnings", strList(f.ownershipWarn), "requirement_extraction_warnings", strList(nonNil(f.extractWarns)),
 			"post_integration_acceptance_warnings", strList(f.postIntegWarn),
 			"validation", jsonx.NewObject("bootstrap_preview", jsonx.NewObject("total_wps", total, "newly_seeded", seeded, "already_initialized", existing),
 				"lanes_preview", f.lanesStats(lm)),
-			"message", "All validations passed. Run without --validate-only to commit.")
+			"message", message)
 		for _, kv := range f.diagnostics.Pairs() {
 			r.Set(kv.Key, kv.Value)
+		}
+		if f.pin != nil {
+			r.Set("planning_commit", jsonx.NewObject("sha", optAny(f.pin.sha), "action", f.pin.action, "previous_sha", optAny(f.pin.previous), "branch_tip", optAny(f.pin.tip)))
+			r.Set("planning_refresh_preflight", jsonx.NewObject("mutating_refresh_would_refuse_for_status_preflight", len(f.refreshFindings) > 0,
+				"status_findings", strList(nonNil(f.refreshFindings))))
 		}
 		emitJSON(f.ctx.Stdout, r)
 		return nil
@@ -1122,6 +1538,26 @@ func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
 	say(out, "  Mission: "+f.slug)
 	say(out, fmt.Sprintf("  WPs validated: %d", len(f.workPackages)))
 	say(out, fmt.Sprintf("  Would modify: %d WP(s), preserve: %d, unchanged: %d", len(f.wouldModify), len(f.preserved), len(f.unchanged)))
+	if f.pin != nil {
+		if pinChanged {
+			prev, next := f.pin.previous, f.pin.sha
+			if prev == "" {
+				prev = "<unset>"
+			}
+			if next == "" {
+				next = "<unset>"
+			}
+			say(out, fmt.Sprintf("  Would refresh planning_commit_sha in lanes.json: %s -> %s", prev, next))
+		}
+		if len(f.refreshFindings) > 0 {
+			say(out, "[yellow]⚠[/yellow] Mutating refresh would refuse on status preflight findings:")
+			for _, fd := range f.refreshFindings {
+				say(out, "  - "+fd)
+			}
+		} else {
+			say(out, "  Mutating refresh status preflight: no pending primary or coordination changes")
+		}
+	}
 	say(out, fmt.Sprintf("  Bootstrap: %d WPs would be seeded, %d already initialized", seeded, existing))
 	if lm != nil {
 		say(out, fmt.Sprintf("  Lanes: %d lane(s) would be computed", len(lm.Lanes)))
@@ -1135,15 +1571,16 @@ func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
 // planningPin is _preserve_or_capture_planning_commit_sha (non-refresh).
 type planningPin struct {
 	sha, action, previous, tip, pinClass, reason string
+	refresh                                      bool
 }
 
 func (f *finalizeRun) executionHasBegun() bool {
 	s := coord.Resolve(f.root, f.slug)
 	snap, err := status.ReduceDir(s.StatusDir())
-	if err != nil || snap == nil {
+	if err != nil || snap == nil || snap.WorkPackages == nil {
 		return false
 	}
-	for _, id := range f.wpIDs {
+	for _, id := range snap.WorkPackages.Keys() {
 		if l := snap.Lane(id); l != "" && l != "planned" {
 			return true
 		}
@@ -1288,7 +1725,7 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 	var lm *lanes.Manifest
 	var pin *planningPin
 	lanesPath := ""
-	if len(man) > 0 && len(f.deps) > 0 {
+	if f.lanesComputable() {
 		prev, _ := lanes.Read(f.dir)
 		var err error
 		pin, err = f.planningPin(prev)
@@ -1312,6 +1749,9 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 		f.human(fmt.Sprintf("[green]✓[/green] Computed %d execution lane(s)", len(lm.Lanes)))
 		if lm.CollapseReport != nil && lm.CollapseReport.IndependentWPsCollapsed > 0 {
 			f.human(fmt.Sprintf("[yellow]⚠[/yellow] %d independent WP pair(s) collapsed into same lane. Run with --json to see details.", lm.CollapseReport.IndependentWPsCollapsed))
+		}
+		if err := f.reportParallelizationRisk(lm); err != nil {
+			return err
 		}
 	}
 	if lm != nil {
@@ -1373,6 +1813,7 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 		switch r.Status {
 		case safecommit.StatusCommitted:
 			commitCreated = true
+			f.commitLanded = true
 			commitHash = r.CommitHash
 			filesCommitted = rels
 			for _, h := range r.CommitHashes {
@@ -1405,12 +1846,8 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 		}
 	}
 	if f.json {
-		depsObj := jsonx.NewObject()
+		depsObj := depsObject(f.deps, f.depOrder)
 		refsObj := jsonx.NewObject()
-		for _, w := range f.workPackages {
-			id := w.GetString("id")
-			depsObj.Set(id, strList(nonNil(f.deps[id])))
-		}
 		for _, id := range sortedKeysObj(f.refs) {
 			refsObj.Set(id, strList(f.refs[id]))
 		}
@@ -1442,7 +1879,7 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 			"commit_hash", commitHash, "commit_hashes", commitHashes, "commit_surfaces", commitSurfaces, "files_committed", strList(filesCommitted),
 			"dependencies_parsed", depsObj, "requirement_refs_parsed", refsObj,
 			"bootstrap", jsonx.NewObject("total_wps", total, "newly_seeded", seeded, "already_initialized", existing),
-			"lanes", f.lanesStats(lm), "ownership_warnings", strList(f.ownershipWarn), "requirement_extraction_warnings", strList(nonNil(f.extractWarns)),
+			"lanes", f.lanesStatsFull(lm), "ownership_warnings", strList(f.ownershipWarn), "requirement_extraction_warnings", strList(nonNil(f.extractWarns)),
 			"post_integration_acceptance_warnings", strList(f.postIntegWarn),
 			"target_branch_override", jsonx.NewObject("requested", override, "persisted", f.persisted, "committed", f.persisted && metaCommitted, "previous_value", prevVal, "persist_error", nil),
 			"planning_commit", pinObj, "planning_commit_refresh", refresh)
@@ -1490,8 +1927,9 @@ func (f *finalizeRun) collectArtifacts(lanesPath string) []string {
 			out = append(out, p)
 		}
 	}
-	add(filepath.Join(f.dir, "tasks.md"))
-	add(filepath.Join(f.dir, "meta.json"))
+	for _, n := range []string{"status.events.jsonl", "status.json", "tasks.md", "wps.yaml", "meta.json", "issue-matrix.json"} {
+		add(filepath.Join(f.dir, n))
+	}
 	entries, _ := os.ReadDir(f.tasksDir)
 	var names []string
 	for _, e := range entries {
