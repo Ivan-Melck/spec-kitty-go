@@ -281,7 +281,9 @@ func (b *commandBatch) preserve(rel string, before FileState, existing *CommandE
 	return false
 }
 
-func unionSorted(a, b []string) []string { return uniqueSorted(append(append([]string(nil), a...), b...)) }
+func unionSorted(a, b []string) []string {
+	return uniqueSorted(append(append([]string(nil), a...), b...))
+}
 
 func (b *commandBatch) installCommand(command string, content []byte) error {
 	rel := agents.CommandSkillPath(command)

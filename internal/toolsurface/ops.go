@@ -254,12 +254,12 @@ func MustCoalesce(effects []Effect) []Effect {
 
 // Disposition is operations.Disposition (RootID/Path "" = None).
 type Disposition struct {
-	Owner  string
-	RootID string
-	Path   string
+	Owner            string
+	RootID           string
+	Path             string
 	HasRoot, HasPath bool
-	State  string // unchanged, preserve, consent_required, not_applicable
-	Reason string
+	State            string // unchanged, preserve, consent_required, not_applicable
+	Reason           string
 }
 
 // NewDisposition builds a disposition with a root id and optional path.
