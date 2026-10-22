@@ -118,9 +118,30 @@ func (p *OrgPackConfig) LocalPathRoot(repoRoot string) (string, error) {
 		}
 	}
 	if filepath.IsAbs(exp) {
-		return exp, nil
+		return pyPath(exp), nil
 	}
-	return filepath.Join(repoRoot, exp), nil
+	return pyPath(repoRoot + "/" + exp), nil
+}
+
+// pyPath is pathlib's lexical normalisation: repeated separators and "."
+// components are dropped, ".." is kept.
+func pyPath(p string) string {
+	abs := strings.HasPrefix(p, "/")
+	var parts []string
+	for _, c := range strings.Split(p, "/") {
+		if c == "" || c == "." {
+			continue
+		}
+		parts = append(parts, c)
+	}
+	out := strings.Join(parts, "/")
+	if abs {
+		return "/" + out
+	}
+	if out == "" {
+		return "."
+	}
+	return out
 }
 
 // pyResolve is Path.resolve(strict=False).

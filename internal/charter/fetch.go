@@ -754,7 +754,7 @@ func (a *apiSource) request(path string) (*apiResp, string) {
 	}
 	r, err := do()
 	if err != nil {
-		return nil, fmt.Sprintf("Network error calling %s: %v", endpoint, err)
+		return nil, fmt.Sprintf("Network error calling %s: %s", endpoint, requestsErrorText(endpoint, err))
 	}
 	if r.code == 429 {
 		d := 2.0
@@ -764,7 +764,7 @@ func (a *apiSource) request(path string) (*apiResp, string) {
 		time.Sleep(time.Duration(d * float64(time.Second)))
 		r, err = do()
 		if err != nil {
-			return nil, fmt.Sprintf("Network error on 429-retry for %s: %v", endpoint, err)
+			return nil, fmt.Sprintf("Network error on 429-retry for %s: %s", endpoint, requestsErrorText(endpoint, err))
 		}
 	}
 	return r, ""
@@ -1150,4 +1150,41 @@ func FetchPack(p *OrgPackConfig, repoRoot string) *FetchResult {
 		}
 	}
 	return res
+}
+
+// requestsErrorText renders a transport failure the way python-requests'
+// ConnectionError stringifies (connection refused / name resolution).
+func requestsErrorText(endpoint string, err error) string {
+	u, perr := url.Parse(endpoint)
+	if perr != nil {
+		return err.Error()
+	}
+	pool, conn := "HTTPConnectionPool", "HTTPConnection"
+	port := u.Port()
+	if u.Scheme == "https" {
+		pool, conn = "HTTPSConnectionPool", "HTTPSConnection"
+		if port == "" {
+			port = "443"
+		}
+	} else if port == "" {
+		port = "80"
+	}
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	if u.RawQuery != "" {
+		path += "?" + u.RawQuery
+	}
+	msg := err.Error()
+	var cause string
+	switch {
+	case strings.Contains(msg, "connection refused"):
+		cause = fmt.Sprintf(`NewConnectionError("%s(host='%s', port=%s): Failed to establish a new connection: [Errno 111] Connection refused")`, conn, u.Hostname(), port)
+	case strings.Contains(msg, "no such host"):
+		cause = fmt.Sprintf(`NameResolutionError("%s(host='%s', port=%s): Failed to resolve '%s' ([Errno -2] Name or service not known)")`, conn, u.Hostname(), port, u.Hostname())
+	default:
+		return msg
+	}
+	return fmt.Sprintf("%s(host='%s', port=%s): Max retries exceeded with url: %s (Caused by %s)", pool, u.Hostname(), port, path, cause)
 }
