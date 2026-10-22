@@ -9,6 +9,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/glossary"
 	"github.com/spec-kitty/go-kitty3/internal/invocation"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
@@ -118,6 +119,10 @@ func runDispatch(ctx *cli.Context) error {
 	cprint(w, "\n[bold]This Op is OPEN.[/bold] After completing the work, close it with the real outcome:")
 	cprint(w, "  [dim]spec-kitty profile-invocation complete --invocation-id %s --outcome <done|failed|abandoned> \\[--evidence <file>] \\[--artifact <path>] \\[--commit <sha>][/dim]", p.InvocationID)
 	cprint(w, "[dim]Unclosed Ops are reported by `spec-kitty doctor ops` and swept to 'abandoned' when stale.[/dim]")
+	// Inline glossary drift notices for this invocation (never fails).
+	for _, l := range glossary.NoticeLines(glossary.CollectNotices(root, p.InvocationID)) {
+		cprintRaw(w, l)
+	}
 	return nil
 }
 
