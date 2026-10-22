@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // LintHookCommand / LintHookMatcher are the lint_on_edit harness hook.
@@ -523,7 +524,7 @@ func runAgentConfigStatus(ctx *cli.Context) error {
 		}
 		rows = append(rows, []string{k, loc, c, e, status})
 	}
-	richTable(w, "Agent Status", []string{"Agent Key", "Directory", "Configured", "Exists", "Status"}, []byte("llccl"), rows)
+	rich.HeavyTable(w, "Agent Status", []string{"Agent Key", "Directory", "Configured", "Exists", "Status"}, []byte("llccl"), rows)
 	if len(orphaned) > 0 {
 		out(w, fmt.Sprintf("\n[yellow]⚠ %d orphaned directories found[/yellow] (present but not configured)", len(orphaned)))
 		out(w, "Run 'spec-kitty agent config sync --remove-orphaned' to clean up")

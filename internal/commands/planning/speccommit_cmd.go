@@ -32,6 +32,7 @@ func specCommitCommand() *cli.Command {
 		Short: "Commit spec artifacts to the mission's resolved placement.",
 		Long:  specCommitLong,
 		Args: []*cli.Arg{{Name: "files", Metavar: "{files}", Required: true, Variadic: true,
+			Type: "<path>",
 			Help: "Spec artifacts to commit (absolute or relative paths). Must belong to the mission resolved via --mission or the kitty-specs/<slug>/ path."}},
 		Flags: []*cli.Flag{
 			{Name: "message", Short: "m", Kind: cli.StringList, Metavar: "<str>", Required: true, Help: messageHelp},

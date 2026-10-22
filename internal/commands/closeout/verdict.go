@@ -14,7 +14,7 @@ const ownedCheckoutHelp = "Run against an owned checkout: a linked checkout that
 func verdictCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "acceptance-verdict",
-		Short: "Record an acceptance-criterion verdict, or register/execute a negative invariant (FR-007/FR-008) — exactly one of ``--criterion``/ ``--negative-invariant``, both routed through the WP03 write seam.",
+		Short: "Record an acceptance-criterion verdict, or register/execute a negative\ninvariant (FR-007/FR-008) — exactly one of ``--criterion``/\n``--negative-invariant``, both routed through the WP03 write seam.",
 		Flags: []*cli.Flag{
 			{Name: "mission", Kind: cli.String, Metavar: "<str>", Required: true, Help: "Mission slug, mid8, or mission_id"},
 			{Name: "criterion", Kind: cli.String, Metavar: "<str>", Help: "Acceptance criterion id (e.g. FR-001); mutually exclusive with --negative-invariant"},
