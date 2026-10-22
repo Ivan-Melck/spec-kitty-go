@@ -87,3 +87,37 @@ func TestDiffBranchContext(t *testing.T) {
 	p.Compare(false, "agent", "mission", "branch-context")
 	p.Compare(false, "agent", "mission", "branch-context", "--json")
 }
+
+// TestDiffMissionCreatePendingOrigin covers CORE-09: a staged
+// .kittify/pending-origin.yaml makes create fail closed after the scaffold
+// commit (PendingOriginConsumerNotRegisteredError) and rolls back the git
+// side effects while keeping the on-disk scaffold.
+func TestDiffMissionCreatePendingOrigin(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup []string
+		args  []string
+	}{
+		{"coord-on-main-json", nil, []string{"calc-ops", "--json"}},
+		{"coord-human", []string{"switch", "-q", "-c", "feat/z"}, []string{"calc-ops"}},
+		{"lanes-json", []string{"switch", "-q", "-c", "feat/x"}, []string{"lanes-one", "--topology", "lanes", "--json"}},
+		{"single-branch", []string{"switch", "-q", "-c", "feat/x"}, []string{"single-one", "--topology", "single_branch", "--json"}},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			p := newOraclePair(t)
+			p.Both(func(s *testkit.Sandbox) {
+				if c.setup != nil {
+					s.Git(c.setup...)
+				}
+				s.WriteFile(".kittify/pending-origin.yaml", "provider: linear\nticket: ABC-1\n")
+			})
+			p.Compare(false, append([]string{"agent", "mission", "create"}, c.args...)...)
+			p.CompareTree("kitty-specs", false)
+			p.CompareTree(".worktrees", false)
+			compareGit(t, p)
+		})
+	}
+}
