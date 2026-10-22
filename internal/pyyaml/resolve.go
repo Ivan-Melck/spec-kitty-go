@@ -47,6 +47,12 @@ func ruamelResolvers(v11 bool) []implicitResolver {
 
 var resolvers12, resolvers11 = ruamelResolvers(false), ruamelResolvers(true)
 
+// ResolveRuamel is ruamel's VersionedResolver.resolve for YAML 1.2 (v11
+// false) or 1.1: the tag a node of kind with value resolves to.
+func ResolveRuamel(v11 bool, kind NodeKind, value string, implicit [2]bool) string {
+	return resolveRuamel(v11)(kind, value, implicit)
+}
+
 // pyDollar emulates Python's `$` (also matching before a final newline)
 // for values that cannot contain one anyway (plain scalars).
 func resolveRuamel(v11 bool) func(kind NodeKind, value string, implicit [2]bool) string {

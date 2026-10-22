@@ -372,11 +372,22 @@ func (c *constructor) scalar(n *pyyaml.Node) any {
 	return &Tagged{Value: c.scalarText(n), Style: n.Style, Tag: Tag{Handle: n.TagHandle, Suffix: tagSuffix(n), Value: n.Tag}, Anchor: anchor}
 }
 
+// blockComment is node.comment[1][0] of a block scalar (the indicator
+// line's comment string).
+func blockComment(n *pyyaml.Node) string {
+	if pre := pyyaml.ListAt(n.Comment, 1); pre.Len() > 0 {
+		if ct, ok := pre.Get(0).(*pyyaml.CommentToken); ok && ct.Raw {
+			return ct.Value
+		}
+	}
+	return ""
+}
+
 // str is construct_scalar for strings (preserve_quotes).
 func (c *constructor) str(n *pyyaml.Node, anchor *Anchor) any {
 	switch n.Style {
 	case '|':
-		return &Str{V: n.Value, Style: '|', Anchor: anchor}
+		return &Str{V: n.Value, Style: '|', Anchor: anchor, Comment: blockComment(n)}
 	case '>':
 		var folds []int
 		idx := -1
@@ -388,7 +399,7 @@ func (c *constructor) str(n *pyyaml.Node, anchor *Anchor) any {
 			idx += 1 + j
 			folds = append(folds, len([]rune(n.Value[:idx]))-len(folds))
 		}
-		return &Str{V: strings.ReplaceAll(n.Value, "\a", ""), Style: '>', FoldPos: folds, Anchor: anchor}
+		return &Str{V: strings.ReplaceAll(n.Value, "\a", ""), Style: '>', FoldPos: folds, Anchor: anchor, Comment: blockComment(n)}
 	case '\'', '"':
 		return &Str{V: n.Value, Style: n.Style, Anchor: anchor}
 	}

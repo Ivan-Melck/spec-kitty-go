@@ -137,7 +137,9 @@ func (r *representer) scalar(tag, value string, style rune, anchor *Anchor) *dno
 func (r *representer) str(x *Str) *dnode {
 	switch x.Style {
 	case '|':
-		return r.scalar(pyyaml.TagStr, x.V, '|', x.Anchor)
+		n := r.scalar(pyyaml.TagStr, x.V, '|', x.Anchor)
+		n.blockComment(x.Comment)
+		return n
 	case '>':
 		data := []rune(x.V)
 		for i := len(x.FoldPos) - 1; i >= 0; i-- {
@@ -146,15 +148,25 @@ func (r *representer) str(x *Str) *dnode {
 				data = append(data[:fp:fp], append([]rune{'\a'}, data[fp:]...)...)
 			}
 		}
-		return r.scalar(pyyaml.TagStr, string(data), '>', x.Anchor)
+		n := r.scalar(pyyaml.TagStr, string(data), '>', x.Anchor)
+		n.blockComment(x.Comment)
+		return n
 	case '\'', '"':
 		return r.scalar(pyyaml.TagStr, x.V, x.Style, x.Anchor)
 	}
 	return r.scalar(pyyaml.TagStr, x.V, 0, x.Anchor)
 }
 
+// blockComment is represent_scalar's [None, [value.comment]] for a block
+// scalar carrying an indicator-line comment.
+func (n *dnode) blockComment(c string) {
+	if c != "" {
+		n.comment = pyyaml.NewList(nil, pyyaml.NewList(c))
+	}
+}
+
 func isSpace(r rune) bool {
-	return strings.ContainsRune(" \t\n\r\v\f\u0085   ", r) || r == 0x1c || r == 0x1d || r == 0x1e || r == 0x1f
+	return strings.ContainsRune(" \t\n\r\v\f\u0085\u00a0\u2028\u2029", r) || r == 0x1c || r == 0x1d || r == 0x1e || r == 0x1f
 }
 
 func (r *representer) boolNode(v bool, anchor *Anchor) *dnode {
@@ -185,7 +197,7 @@ func (r *representer) intNode(x *Int) *dnode {
 	}
 	if x.Width > 0 {
 		w := x.Width
-		if neg && x.Kind == IntScalar {
+		if neg {
 			w-- // f'{data:0{width}d}' counts the sign
 		}
 		for len(digits) < w {
@@ -415,7 +427,8 @@ func encodebytes(b []byte) string {
 func (r *representer) tagged(x *Tagged) *dnode {
 	n := r.scalar("", x.Value, x.Style, x.Anchor)
 	if x.Tag.Handle == "!!" {
-		n.tag = Tag{Handle: "!!", Suffix: x.Tag.Suffix, Value: x.Tag.Value}
+		// f'{data.tag.handle} {data.tag.suffix}' (a str tag)
+		n.tag = tagOf("!! " + x.Tag.Suffix)
 	} else {
 		n.tag = x.Tag
 	}
@@ -526,11 +539,7 @@ func (r *representer) key(k any) *dnode {
 func (r *representer) mapping(m *Map, flow *bool, reg func(*dnode)) *dnode {
 	tag := tagOf(pyyaml.TagMap)
 	if m.Tag != nil && m.Tag.Value != "" {
-		if m.Tag.Handle == "!!" {
-			tag = tagOf(m.Tag.Value)
-		} else {
-			tag = *m.Tag
-		}
+		tag = *m.Tag
 	}
 	if m.Flow != nil {
 		flow = m.Flow

@@ -208,6 +208,7 @@ type Str struct {
 	Style   rune
 	FoldPos []int
 	Anchor  *Anchor
+	Comment string // a block scalar's indicator-line comment (.comment)
 }
 
 // IntKind is the ScalarInt subclass.
