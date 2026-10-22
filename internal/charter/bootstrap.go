@@ -409,9 +409,12 @@ type selectionGroup struct {
 	norm               func(string) string
 }
 
-// renderSelectionBlock is selection_block._render_selection_block (org
-// provenance suffixes are not rendered).
-func renderSelectionBlock(sel Selection, off *dct.Offering) string {
+// renderSelectionBlock is selection_block._render_selection_block.
+func renderSelectionBlock(root string, sel Selection, off *dct.Offering) string {
+	orgReq := OrgRequiredSelections(root)
+	plural := map[dct.Kind]string{dct.Paradigm: "paradigms", dct.Directive: "directives", dct.Tactic: "tactics",
+		dct.Styleguide: "styleguides", dct.Toolguide: "toolguides", dct.Procedure: "procedures",
+		dct.AgentProfile: "agent_profiles", dct.MissionStepContract: "mission_step_contracts"}
 	groups := []selectionGroup{
 		{"Selected paradigms:", "paradigm", "are about to choose a reasoning frame", dct.Paradigm, sel.Paradigms, paradigmBody, nil},
 		{"Selected directives:", "directive", actionDoctrineLinkWhen, dct.Directive, sel.Directives, directiveBody, normalizeDirectiveID},
@@ -435,7 +438,19 @@ func renderSelectionBlock(sel Selection, off *dct.Offering) string {
 				continue
 			}
 			seen[id] = true
-			lines = append(lines, "  - "+id)
+			// _provenance_suffix: org-sourced (repository provenance) or
+			// org-required ids carry "(source: org)" (no per-pack attribution).
+			suffix := ""
+			if a := repo.Get(id); a != nil && a.ID == id && a.Source == dct.LayerOrg {
+				suffix = " (source: org)"
+			} else {
+				for _, r := range orgReq[plural[g.kindT]] {
+					if r == id {
+						suffix = " (source: org)"
+					}
+				}
+			}
+			lines = append(lines, "  - "+id+suffix)
 			lookup := id
 			if g.norm != nil {
 				lookup = g.norm(id)
@@ -851,7 +866,7 @@ func selectReferencePointers(refs []Reference, action string) []selectedReferenc
 // ------------------------------------------------------------- render
 
 // renderBootstrap is bootstrap_text._render_bootstrap_text.
-func renderBootstrap(root, action string, b *ActionBundle, refs []Reference, profile *dct.Profile) string {
+func renderBootstrap(root, action string, b *ActionBundle, refs []Reference, profile *dct.Profile) (string, error) {
 	mdPath := Path(root, CharterMD)
 	raw, _ := os.ReadFile(mdPath)
 	content := string(raw)
@@ -886,14 +901,19 @@ func renderBootstrap(root, action string, b *ActionBundle, refs []Reference, pro
 	if b != nil && b.Offer != nil {
 		off = b.Offer
 	}
-	selectionBlock := renderSelectionBlock(sel, off)
+	selectionBlock := renderSelectionBlock(root, sel, off)
 	block(selectionBlock)
-	lines = append(lines, "", "Action Doctrine ("+action+"):")
-	lines = renderActionDoctrineLines(lines, b)
 	mission := ""
 	if b != nil {
 		mission = b.Mission
 	}
+	activationBlock, err := renderActivationBlock(root, off, mission, action)
+	if err != nil {
+		return "", err
+	}
+	block(activationBlock)
+	lines = append(lines, "", "Action Doctrine ("+action+"):")
+	lines = renderActionDoctrineLines(lines, b)
 	lines = appendGuidelines(lines, mission, action)
 	if IsSPDDReasonsActive(root) {
 		lines = appendSPDDGuidance(lines, mission, action)
@@ -909,5 +929,5 @@ func renderBootstrap(root, action string, b *ActionBundle, refs []Reference, pro
 	if langs, known := InferRepoLanguages(root, nil, false); LacksSpecialistGuidance(langs, known, root) {
 		lines = append(lines, "", "  - Advisory: "+CharterExtensionAdvisory)
 	}
-	return enforceTokenBudgetSel(strings.Join(lines, "\n"), action, profileBlock, sectionBlock, selectionBlock)
+	return enforceTokenBudgetSel(strings.Join(lines, "\n"), action, profileBlock, sectionBlock, selectionBlock), nil
 }

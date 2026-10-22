@@ -191,7 +191,10 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 		return &Result{Action: norm, Mode: "compact", FirstLoad: st.firstLoad, Depth: st.depth, Text: augment(RenderCompact(root, in)), Warnings: warns}, nil
 	}
 	refs := LoadReferences(root)
-	text := renderBootstrap(root, norm, b, refs, opt.Profile)
+	text, err := renderBootstrap(root, norm, b, refs, opt.Profile)
+	if err != nil {
+		return nil, err
+	}
 	if opt.MarkLoaded && st.firstLoad {
 		st.markLoaded(norm)
 	}

@@ -4,7 +4,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"unicode"
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 )
@@ -108,15 +107,10 @@ func init() {
 	add("coordinate", "manager", "coordinate manage delegate monitor track")
 }
 
-// isWordRune approximates Python's re \w (str patterns).
-func isWordRune(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Nl, r) || unicode.Is(unicode.No, r)
-}
-
 // NormalizeTokens is _normalize_tokens: lowercase, split on [\s\W]+, drop
 // stop words.
 func NormalizeTokens(text string) []string {
-	parts := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !isWordRune(r) })
+	parts := strings.FieldsFunc(pyLower(text), func(r rune) bool { return !isWordRune(r) })
 	var out []string
 	for _, p := range parts {
 		if p != "" && !stopWords[p] {
@@ -208,7 +202,7 @@ func Route(reg *Registry, text string) (*Decision, error) {
 			}
 		}
 		for _, kw := range kws {
-			if tokSet[strings.ToLower(kw)] {
+			if tokSet[pyLower(kw)] {
 				kwMatches = append(kwMatches, km{p.ID, roleDefaultVerb(p.Role(), "review"), kw})
 			}
 		}

@@ -9,6 +9,7 @@ import (
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pydifflib"
 )
 
 // This file ports charter.activation.context_renderers.profile_sections,
@@ -189,44 +190,11 @@ func catalogMissLines(kind, id string, repo *dct.Repository) []string {
 
 // closeMatch is difflib.get_close_matches(id, ids, n=1, cutoff=0.75).
 func closeMatch(word string, cands []string) string {
-	best, bestScore := "", 0.0
-	for _, c := range cands {
-		r := seqRatio(word, c)
-		if r >= 0.75 && r > bestScore {
-			best, bestScore = c, r
-		}
+	// _catalog_miss: difflib.get_close_matches(word, candidates, n=1, cutoff=0.75).
+	if m := pydifflib.GetCloseMatches(word, cands, 1, 0.75); len(m) > 0 {
+		return m[0]
 	}
-	return best
-}
-
-// seqRatio approximates difflib.SequenceMatcher.ratio via LCS-of-blocks.
-func seqRatio(a, b string) float64 {
-	if len(a)+len(b) == 0 {
-		return 1
-	}
-	var m func(a, b string) int
-	m = func(a, b string) int {
-		if a == "" || b == "" {
-			return 0
-		}
-		bi, bj, bk := 0, 0, 0
-		for i := 0; i < len(a); i++ {
-			for j := 0; j < len(b); j++ {
-				k := 0
-				for i+k < len(a) && j+k < len(b) && a[i+k] == b[j+k] {
-					k++
-				}
-				if k > bk {
-					bi, bj, bk = i, j, k
-				}
-			}
-		}
-		if bk == 0 {
-			return 0
-		}
-		return bk + m(a[:bi], b[:bj]) + m(a[bi+bk:], b[bj+bk:])
-	}
-	return 2 * float64(m(a, b)) / float64(len(a)+len(b))
+	return ""
 }
 
 type selEntry struct{ id, rationale string }
