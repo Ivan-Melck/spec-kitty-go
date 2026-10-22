@@ -27,6 +27,9 @@ import (
 type regenNode struct {
 	URN, Kind string
 	Label     *string
+	// RawLabel is a non-str label set by _ensure_node's unvalidated
+	// model_copy (it fails validation when the node is rebuilt).
+	RawLabel any
 	Tags      []string
 }
 
@@ -233,7 +236,9 @@ func regenLoadYAML(path string) (*jsonx.Object, error) {
 		return nil, err
 	}
 	// _yaml = YAML(typ="safe"); _yaml.load(path) reads a binary stream.
-	v, err := yamlx.ParseWith(b, yamlx.ParseOptions{Safe: true, File: path})
+	// Python's value space (dates, int64), since the walkers apply Python
+	// type semantics to what they read.
+	v, err := pyyaml.LoadRuamelInputPy(pyyaml.FileInput(b, path), pyyaml.RuamelSafe)
 	if err != nil {
 		return nil, yamlCrash(err, "graph")
 	}
@@ -349,468 +354,6 @@ func resolvePathRef(s string) (string, string, bool) {
 	return "", "", false
 }
 
-type regenExtractor struct {
-	nodes *nodeSet
-	edges *edgeDict
-}
-
-func (x *regenExtractor) addRefEdge(source, refType, refID, relation string, when, reason *string) {
-	if !graphNodeKinds[refType] {
-		return
-	}
-	tgt := ArtifactToURN(refType, refID)
-	x.nodes.ensure(tgt, refType, nil)
-	x.edges.add(regenEdge{source, tgt, relation, when, reason})
-}
-
-// refDict yields the mapping entries of a references list (non-mapping
-// entries would raise AttributeError upstream; they are skipped).
-func refDicts(l []any) []*jsonx.Object {
-	var out []*jsonx.Object
-	for _, r := range l {
-		if o, ok := r.(*jsonx.Object); ok {
-			out = append(out, o)
-		}
-	}
-	return out
-}
-
-// extractArtifactEdges is extract_artifact_edges.
-func extractArtifactEdges(root string) ([]*regenNode, []regenEdge, error) {
-	x := &regenExtractor{nodes: newNodeSet(), edges: newEdgeDict(true)}
-	packs := regenArtifactsRoot(root)
-	load := func(p string) (*jsonx.Object, error) { return regenLoadYAML(p) }
-
-	if d := filepath.Join(packs, "directives"); isDirPath(d) {
-		for _, p := range globFiles(d, ".directive.yaml") {
-			data, err := load(p)
-			if err != nil {
-				return nil, nil, err
-			}
-			if data == nil {
-				continue
-			}
-			src := ArtifactToURN("directive", getStr(data, "id"))
-			x.nodes.ensure(src, "directive", strp(getStr(data, "title")))
-			for _, t := range getList(data, "tactic_refs") {
-				tgt := ArtifactToURN("tactic", pyStrVal(t))
-				x.nodes.ensure(tgt, "tactic", nil)
-				x.edges.add(regenEdge{src, tgt, "requires", nil, nil})
-			}
-			for _, ref := range refDicts(getList(data, "references")) {
-				rt, rid := getStr(ref, "type"), getStr(ref, "id")
-				if rt == "" || rid == "" || !graphNodeKinds[rt] {
-					continue
-				}
-				tgt := ArtifactToURN(rt, rid)
-				x.nodes.ensure(tgt, rt, nil)
-				x.edges.add(regenEdge{src, tgt, relationForRefType(rt), getOptStr(ref, "when"), getOptStr(ref, "reason")})
-			}
-		}
-	}
-	if d := filepath.Join(packs, "tactics"); isDirPath(d) {
-		for _, p := range rglobFiles(d, suffixMatch(".tactic.yaml")) {
-			data, err := load(p)
-			if err != nil {
-				return nil, nil, err
-			}
-			if data == nil {
-				continue
-			}
-			src := ArtifactToURN("tactic", getStr(data, "id"))
-			x.nodes.ensure(src, "tactic", strp(getStr(data, "name")))
-			refs := refDicts(getList(data, "references"))
-			for _, st := range getList(data, "steps") {
-				if so, ok := st.(*jsonx.Object); ok {
-					refs = append(refs, refDicts(getList(so, "references"))...)
-				}
-			}
-			for _, ref := range refs {
-				rt, rid := getStr(ref, "type"), getStr(ref, "id")
-				if rt == "" || rid == "" || !graphNodeKinds[rt] {
-					continue
-				}
-				tgt := ArtifactToURN(rt, rid)
-				x.nodes.ensure(tgt, rt, nil)
-				x.edges.add(regenEdge{src, tgt, "suggests", getOptStr(ref, "when"), getOptStr(ref, "reason")})
-			}
-		}
-	}
-	if d := filepath.Join(packs, "paradigms"); isDirPath(d) {
-		for _, p := range globFiles(d, ".paradigm.yaml") {
-			data, err := load(p)
-			if err != nil {
-				return nil, nil, err
-			}
-			if data == nil {
-				continue
-			}
-			src := ArtifactToURN("paradigm", getStr(data, "id"))
-			x.nodes.ensure(src, "paradigm", strp(getStr(data, "name")))
-			for _, t := range getList(data, "tactic_refs") {
-				tgt := ArtifactToURN("tactic", pyStrVal(t))
-				x.nodes.ensure(tgt, "tactic", nil)
-				x.edges.add(regenEdge{src, tgt, "requires", nil, nil})
-			}
-			for _, t := range getList(data, "directive_refs") {
-				tgt := ArtifactToURN("directive", pyStrVal(t))
-				x.nodes.ensure(tgt, "directive", nil)
-				x.edges.add(regenEdge{src, tgt, "requires", nil, nil})
-			}
-			for _, ref := range refDicts(getList(data, "references")) {
-				rt, rid := getStr(ref, "type"), getStr(ref, "id")
-				if rt == "" || rid == "" {
-					continue
-				}
-				x.addRefEdge(src, rt, rid, relationForProcedureRefType(rt), getOptStr(ref, "when"), getOptStr(ref, "reason"))
-			}
-		}
-	}
-	if d := filepath.Join(packs, "procedures"); isDirPath(d) {
-		for _, p := range globFiles(d, ".procedure.yaml") {
-			data, err := load(p)
-			if err != nil {
-				return nil, nil, err
-			}
-			if data == nil {
-				continue
-			}
-			src := ArtifactToURN("procedure", getStr(data, "id"))
-			x.nodes.ensure(src, "procedure", strp(getStr(data, "name")))
-			for _, ref := range refDicts(getList(data, "references")) {
-				rt, rid := getStr(ref, "type"), getStr(ref, "id")
-				if rt == "" || rid == "" {
-					continue
-				}
-				x.addRefEdge(src, rt, rid, relationForProcedureRefType(rt), getOptStr(ref, "when"), getOptStr(ref, "reason"))
-			}
-		}
-	}
-	// Agent profiles.
-	if d := filepath.Join(packs, "agent_profiles"); isDirPath(d) {
-		for _, p := range globFiles(d, ".agent.yaml") {
-			data, err := load(p)
-			if err != nil {
-				return nil, nil, err
-			}
-			if data == nil {
-				continue
-			}
-			pid := getStr(data, "profile-id")
-			if pid == "" {
-				continue
-			}
-			src := ArtifactToURN("agent_profile", pid)
-			var label *string
-			if l := getStr(data, "name"); l != "" {
-				label = &l
-			}
-			x.nodes.ensure(src, "agent_profile", label)
-			for _, ref := range refDicts(getList(data, "directive-references")) {
-				if code := getStr(ref, "code"); code != "" {
-					x.addRefEdge(src, "directive", code, "requires", nil, nil)
-				}
-			}
-			for _, ref := range refDicts(getList(data, "tactic-references")) {
-				if id := getStr(ref, "id"); id != "" {
-					x.addRefEdge(src, "tactic", id, "requires", nil, getOptStr(ref, "rationale"))
-				}
-			}
-			for _, rt := range []string{"toolguide", "styleguide"} {
-				for _, ref := range refDicts(getList(data, rt+"-references")) {
-					if id := getStr(ref, "id"); id != "" {
-						x.addRefEdge(src, rt, id, "suggests", nil, getOptStr(ref, "rationale"))
-					}
-				}
-			}
-		}
-	}
-	// Styleguides and toolguides: path-string references.
-	for _, kd := range []struct{ dir, kind string }{{"styleguides", "styleguide"}, {"toolguides", "toolguide"}} {
-		d := filepath.Join(packs, kd.dir)
-		if !isDirPath(d) {
-			continue
-		}
-		for _, p := range rglobFiles(d, suffixMatch("."+kd.kind+".yaml")) {
-			data, err := load(p)
-			if err != nil {
-				return nil, nil, err
-			}
-			if data == nil {
-				continue
-			}
-			id := getStr(data, "id")
-			if id == "" {
-				continue
-			}
-			src := ArtifactToURN(kd.kind, id)
-			var label *string
-			if t := getStr(data, "title"); t != "" {
-				label = &t
-			}
-			x.nodes.ensure(src, kd.kind, label)
-			for _, r := range getList(data, "references") {
-				s, ok := r.(string)
-				if !ok {
-					continue
-				}
-				rk, rid, ok := resolvePathRef(s)
-				if !ok || !graphNodeKinds[rk] {
-					continue
-				}
-				tgt := ArtifactToURN(rk, rid)
-				x.nodes.ensure(tgt, rk, nil)
-				x.edges.add(regenEdge{src, tgt, "suggests", nil, nil})
-			}
-		}
-	}
-	// Glossary packs and skills (source nodes only).
-	for _, p := range globFilesIfDir(filepath.Join(packs, "glossary_packs"), ".glossary-pack.yaml") {
-		data, err := load(p)
-		if err != nil {
-			return nil, nil, err
-		}
-		if data == nil {
-			continue
-		}
-		if id := getStr(data, "id"); id != "" {
-			x.nodes.ensure(ArtifactToURN("glossary_pack", id), "glossary_pack", nil)
-		}
-	}
-	for _, p := range globFilesIfDir(filepath.Join(packs, "skills"), ".skill.yaml") {
-		data, err := load(p)
-		if err != nil {
-			return nil, nil, err
-		}
-		if data == nil {
-			continue
-		}
-		if id := getStr(data, "id"); id != "" {
-			x.nodes.ensure(ArtifactToURN("skill", id), "skill", nil)
-		}
-	}
-	if err := x.emitOperatingProcedureEdges(filepath.Join(packs, "agent_profiles")); err != nil {
-		return nil, nil, err
-	}
-	for _, c := range curatedArtifactEdges {
-		x.nodes.ensure(c[0], strings.SplitN(c[0], ":", 2)[0], nil)
-		x.nodes.ensure(c[1], strings.SplitN(c[1], ":", 2)[0], nil)
-		x.edges.add(regenEdge{c[0], c[1], c[2], nil, nil})
-	}
-	return x.nodes.list(), x.edges.list(), nil
-}
-
-func globFilesIfDir(dir, suffix string) []string {
-	if !isDirPath(dir) {
-		return nil
-	}
-	return globFiles(dir, suffix)
-}
-
-// emitOperatingProcedureEdges is _emit_operating_procedure_edges.
-func (x *regenExtractor) emitOperatingProcedureEdges(profilesDir string) error {
-	if !isDirPath(profilesDir) {
-		return nil
-	}
-	byKind := map[string]map[string]bool{}
-	for _, n := range x.nodes.list() {
-		if byKind[n.Kind] == nil {
-			byKind[n.Kind] = map[string]bool{}
-		}
-		byKind[n.Kind][n.URN] = true
-	}
-	procs := byKind["procedure"]
-	type entryList struct {
-		profile string
-		entries []string
-	}
-	var entries []entryList
-	idx := map[string]int{}
-	for _, p := range globFiles(profilesDir, ".agent.yaml") {
-		data, err := regenLoadYAML(p)
-		if err != nil {
-			return err
-		}
-		if data == nil {
-			continue
-		}
-		pv, _ := data.Get("profile-id")
-		if !pyTruthy(pv) {
-			continue
-		}
-		pid := pyStrVal(pv)
-		var raw []any
-		if c, ok := data.Get("collaboration"); ok && pyTruthy(c) {
-			if co, ok := c.(*jsonx.Object); ok {
-				if r, ok := co.Get("operating-procedures"); ok && pyTruthy(r) {
-					raw, _ = r.([]any)
-				}
-			}
-		}
-		var es []string
-		for _, e := range raw {
-			if pyTruthy(e) {
-				es = append(es, pyStrVal(e))
-			}
-		}
-		if i, ok := idx[pid]; ok {
-			entries[i].entries = es
-		} else {
-			idx[pid] = len(entries)
-			entries = append(entries, entryList{pid, es})
-		}
-	}
-	type unresolved struct{ profile, entry, reason string }
-	var bad []unresolved
-	var kinds []string
-	for k := range byKind {
-		kinds = append(kinds, k)
-	}
-	sort.Strings(kinds)
-	for _, el := range entries {
-		src := ArtifactToURN("agent_profile", el.profile)
-		for _, e := range el.entries {
-			tgt := ArtifactToURN("procedure", e)
-			if procs[tgt] {
-				x.edges.add(regenEdge{src, tgt, "requires", nil, nil})
-				continue
-			}
-			reason := "no_node"
-			for _, k := range kinds {
-				if k != "procedure" && byKind[k][ArtifactToURN(k, e)] {
-					reason = "wrong_kind"
-					break
-				}
-			}
-			bad = append(bad, unresolved{el.profile, e, reason})
-		}
-	}
-	if len(bad) > 0 {
-		sort.SliceStable(bad, func(i, j int) bool {
-			if bad[i].profile != bad[j].profile {
-				return bad[i].profile < bad[j].profile
-			}
-			return bad[i].entry < bad[j].entry
-		})
-		var parts []string
-		for _, u := range bad {
-			parts = append(parts, fmt.Sprintf("%s:%s (%s)", u.profile, u.entry, u.reason))
-		}
-		return graphCrash("ValueError", "built-in operating-procedures entries do not resolve to a procedure node (triage required): "+strings.Join(parts, ", "),
-			fr{Name: "generate_graph", Line: 1803}, fr{Name: "extract_artifact_edges", Line: 1295}, fr{Name: "_emit_operating_procedure_edges", Line: 996})
-	}
-	return nil
-}
-
-var actionScopeFields = [][2]string{{"directives", "directive"}, {"tactics", "tactic"}, {"paradigms", "paradigm"},
-	{"styleguides", "styleguide"}, {"toolguides", "toolguide"}, {"procedures", "procedure"}, {"agent_profiles", "agent_profile"}}
-
-// extractActionEdges is extract_action_edges.
-func extractActionEdges(root string) ([]*regenNode, []regenEdge, error) {
-	nodes := newNodeSet()
-	edges := newEdgeDict(false)
-	md := regenMissionsRoot(root)
-	if !isDirPath(md) {
-		return nil, nil, nil
-	}
-	files := rglobFiles(md, func(rel string) bool {
-		parts := strings.Split(rel, "/")
-		n := len(parts)
-		return n >= 3 && parts[n-1] == "index.yaml" && parts[n-3] == "actions"
-	})
-	for _, p := range files {
-		data, err := regenLoadYAML(p)
-		if err != nil {
-			return nil, nil, err
-		}
-		if data == nil {
-			continue
-		}
-		action := filepath.Base(filepath.Dir(p))
-		if v, ok := data.Get("action"); ok {
-			action = pyStrVal(v)
-		}
-		mission := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(p))))
-		au := "action:" + mission + "/" + action
-		nodes.ensure(au, "action", strp(action))
-		for _, f := range actionScopeFields {
-			for _, raw := range getList(data, f[0]) {
-				tgt := ArtifactToURN(f[1], pyStrVal(raw))
-				nodes.ensure(tgt, f[1], nil)
-				edges.add(regenEdge{au, tgt, "scope", nil, nil})
-			}
-		}
-	}
-	return nodes.list(), edges.list(), nil
-}
-
-// discoverBuiltInArtifactNodes is _discover_built_in_artifact_nodes.
-func discoverBuiltInArtifactNodes(root string, nodes *nodeSet) error {
-	for _, sd := range [][2]string{{"styleguides", "styleguide"}, {"toolguides", "toolguide"}, {"procedures", "procedure"},
-		{"agent_profiles", "agent_profile"}, {"assets", "asset"}} {
-		d := filepath.Join(regenArtifactsRoot(root), sd[0])
-		if !isDirPath(d) {
-			continue
-		}
-		kind := sd[1]
-		suffix, idKey := "."+kind+".yaml", "id"
-		if kind == "agent_profile" {
-			suffix, idKey = ".agent.yaml", "profile-id"
-		}
-		for _, p := range rglobFiles(d, suffixMatch(suffix)) {
-			data, err := regenLoadYAML(p)
-			if err != nil {
-				return err
-			}
-			if data == nil {
-				continue
-			}
-			id := getStr(data, idKey)
-			var label string
-			if v, ok := data.Get("name"); ok {
-				label = pyStrVal(v)
-			} else {
-				label = getStr(data, "title")
-			}
-			if id == "" {
-				continue
-			}
-			var l *string
-			if label != "" {
-				l = &label
-			}
-			nodes.ensure(ArtifactToURN(kind, id), kind, l)
-		}
-	}
-	return nil
-}
-
-type missionTypeData struct {
-	id   string
-	data *jsonx.Object
-	path string
-}
-
-func iterMissionTypeData(root string) ([]missionTypeData, error) {
-	d := filepath.Join(regenMissionsRoot(root), "mission_types")
-	if !isDirPath(d) {
-		return nil, nil
-	}
-	var out []missionTypeData
-	for _, p := range globFiles(d, ".yaml") {
-		data, err := regenLoadYAML(p)
-		if err != nil {
-			return nil, err
-		}
-		if data == nil {
-			continue
-		}
-		if id := getStr(data, "id"); id != "" {
-			out = append(out, missionTypeData{id, data, p})
-		}
-	}
-	return out, nil
-}
 
 // regenStep is the slice of a validated MissionStep the extractor reads.
 type regenStep struct {
@@ -1036,8 +579,11 @@ func generatePureGraph(root string) (*dct.Graph, error) {
 		return nil, err
 	}
 	nodes := newNodeSet()
+	merge := site{{Name: "generate_graph", Line: 1811}}
 	for _, n := range append(artNodes, actNodes...) {
-		nodes.ensure(n.URN, n.Kind, n.Label)
+		if err := nodes.ensurePy(merge, n.URN, n.Kind, labelOf(n)); err != nil {
+			return nil, err
+		}
 	}
 	if err := discoverBuiltInArtifactNodes(root, nodes); err != nil {
 		return nil, err
@@ -1046,44 +592,11 @@ func generatePureGraph(root string) (*dct.Graph, error) {
 	if err != nil {
 		return nil, err
 	}
-	seen := map[string]string{}
-	for _, mt := range mts {
-		if prev, ok := seen[mt.id]; ok {
-			return nil, graphCrash("ValueError", fmt.Sprintf("Duplicate mission_type id %s declared by both %s and %s in %s",
-				pyjson.ReprString(mt.id), filepath.Base(prev), filepath.Base(mt.path), filepath.Dir(mt.path)),
-				fr{Name: "generate_graph", Line: 1817}, fr{Name: "_discover_mission_type_nodes", Line: 1473})
-		}
-		seen[mt.id] = mt.path
-		var l *string
-		if dn := getStr(mt.data, "display_name"); dn != "" {
-			l = &dn
-		}
-		nodes.ensure(ArtifactToURN("mission_type", mt.id), "mission_type", l)
+	if err := discoverMissionTypeNodes(mts, nodes); err != nil {
+		return nil, err
 	}
-	// Step contracts.
-	if cd := filepath.Join(regenMissionsRoot(root), "built_in_step_contracts"); isDirPath(cd) {
-		seenC := map[string]string{}
-		for _, p := range globFiles(cd, ".step-contract.yaml") {
-			data, err := regenLoadYAML(p)
-			if err != nil {
-				return nil, err
-			}
-			if data == nil {
-				continue
-			}
-			mission, action := getStr(data, "mission"), getStr(data, "action")
-			if mission == "" || action == "" {
-				continue
-			}
-			urn := ArtifactToURN("mission_step_contract", mission+"/"+action)
-			if prev, ok := seenC[urn]; ok {
-				return nil, graphCrash("ValueError", fmt.Sprintf("Duplicate mission_step_contract %s declared by both %s and %s in %s",
-					pyjson.ReprString(urn), filepath.Base(prev), filepath.Base(p), filepath.Dir(p)),
-					fr{Name: "generate_graph", Line: 1821}, fr{Name: "_discover_mission_step_contract_nodes", Line: 1523})
-			}
-			seenC[urn] = p
-			nodes.ensure(urn, "mission_step_contract", strp(action))
-		}
+	if err := discoverStepContractNodes(root, nodes); err != nil {
+		return nil, err
 	}
 	// Template instantiation (nodes + action --instantiates--> template).
 	var tmplEdges []regenEdge
@@ -1123,13 +636,23 @@ func generatePureGraph(root string) (*dct.Graph, error) {
 					fr{Name: "_resolve_action_sequence", Line: 1553}, fr{Name: "project_action_sequence", Line: 101}, fr{Name: "validate_action_sequence", Line: 200})
 			}
 		} else {
-			for _, x := range getList(mt.data, "action_sequence") {
-				seq = append(seq, pyStrVal(x))
+			mte := site{{Name: "generate_graph", Line: 1834}, {Name: "extract_mission_type_edges", Line: 1574}}
+			items, err := iterGet(mte.at("_resolve_action_sequence", 1554), mt.data, "action_sequence")
+			if err != nil {
+				return nil, err
+			}
+			for _, x := range items {
+				seq = append(seq, pyStrAny(x))
 			}
 		}
-		src := ArtifactToURN("mission_type", mt.id)
+		src := "mission_type:" + mt.id
 		for _, step := range seq {
-			mtEdges = append(mtEdges, regenEdge{src, ArtifactToURN("action", mt.id+"/"+step), "requires", nil, nil})
+			e, err := newEdgePy(site{{Name: "generate_graph", Line: 1834}, {Name: "extract_mission_type_edges", Line: 1577}},
+				src, "action:"+mt.id+"/"+step, "requires", false, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			mtEdges = append(mtEdges, e)
 		}
 	}
 	govEdges, err := extractGovernanceScopeEdges(root)
@@ -1237,14 +760,25 @@ func extractGovernanceScopeEdges(root string) ([]regenEdge, error) {
 		if data == nil {
 			continue
 		}
-		mt := filepath.Base(filepath.Dir(p))
-		if v, ok := data.Get("mission_type"); ok {
-			mt = pyStrVal(v)
+		src := "mission_type:" + pyStrAny(dget(data, "mission_type", filepath.Base(filepath.Dir(p))))
+		gp := func(line int) site {
+			return site{{Name: "generate_graph", Line: 1838}}.at("extract_governance_profile_scope_edges", line)
 		}
-		src := ArtifactToURN("mission_type", mt)
 		for _, f := range governanceScopeFields {
-			for _, raw := range getList(data, f[0]) {
-				d.add(regenEdge{src, ArtifactToURN(f[1], pyStrVal(raw)), "scope", nil, nil})
+			items, err := iterGet(gp(1650), data, f[0])
+			if err != nil {
+				return nil, err
+			}
+			for _, raw := range items {
+				tgt, err := pyURN(gp(1651), f[1], raw)
+				if err != nil {
+					return nil, err
+				}
+				e, err := newEdgePy(gp(1657), src, tgt, "scope", false, nil, nil)
+				if err != nil {
+					return nil, err
+				}
+				d.add(e)
 			}
 		}
 	}
