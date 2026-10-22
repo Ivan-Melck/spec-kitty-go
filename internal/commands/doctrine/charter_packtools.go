@@ -22,7 +22,7 @@ func packValidateCmd() *cli.Command {
 	short, long := helpK("charter_pack_validate")
 	return &cli.Command{
 		Name: "validate", Short: short, Long: long,
-		Args:  []*cli.Arg{{Name: "pack_path", Help: "Path to the Charter Pack directory to validate.", Required: true, Metavar: "pack_path"}},
+		Args:  []*cli.Arg{{Name: "pack_path", Help: "Path to the Charter Pack directory to validate.", Required: true, Metavar: "pack_path", Type: "<path>"}},
 		Flags: []*cli.Flag{{Name: "json", Kind: cli.Bool, Help: packJSONHelp}},
 		Run: func(ctx *cli.Context) error {
 			res := charter.ValidatePack(ctx.Arg("pack_path"), true)
@@ -40,11 +40,11 @@ func packAssembleCmd() *cli.Command {
 	return &cli.Command{
 		Name: "assemble", Short: short, Long: long,
 		Args: []*cli.Arg{
-			{Name: "output_path", Help: "Output directory for the assembled distributable pack.", Required: true, Metavar: "output_path"},
-			{Name: "input_packs", Help: "One or more input pack directories to assemble.", Required: true, Variadic: true, Metavar: "input_packs"},
+			{Name: "output_path", Help: "Output directory for the assembled distributable pack.", Required: true, Metavar: "output_path", Type: "<path>"},
+			{Name: "input_packs", Help: "One or more input pack directories to assemble.", Required: true, Variadic: true, Metavar: "input_packs", Type: "<path>"},
 		},
 		Flags: []*cli.Flag{
-			{Name: "conflicts-out", Kind: cli.String, Help: "Write the conflict report to this path (JSON)."},
+			{Name: "conflicts-out", Kind: cli.String, Metavar: "<path>", Help: "Write the conflict report to this path (JSON)."},
 			{Name: "force", Kind: cli.Bool, Help: "Resolve artifact-id conflicts by last-pack-wins and drop duplicate DRG edges silently."},
 			{Name: "json", Kind: cli.Bool, Help: packJSONHelp},
 		},
@@ -67,7 +67,7 @@ func packRegenerateGraphCmd() *cli.Command {
 		Name: "regenerate-graph", Short: short, Long: long,
 		Flags: []*cli.Flag{
 			{Name: "check", Kind: cli.Bool, Help: "Do not write; regenerate into a temp directory and compare the per-kind graph fragments against the committed packs/built-in source. Exit 1 when stale (operator-runnable freshness gate). Exit 0 when fresh."},
-			{Name: "pack-root", Kind: cli.String, Help: "Regenerate the DRG fragments and pack manifest for the BUILT-IN-level pack at this root instead of the shipped built-in pack (e.g. a vendored copy). The root must carry a pack.yaml declaring pack_level: built-in; org and project packs are refused. Applies to both the write path and --check. Defaults to the built-in pack root, leaving the no-flag behaviour byte-identical."},
+			{Name: "pack-root", Kind: cli.String, Metavar: "<path>", Help: "Regenerate the DRG fragments and pack manifest for the BUILT-IN-level pack at this root instead of the shipped built-in pack (e.g. a vendored copy). The root must carry a pack.yaml declaring pack_level: built-in; org and project packs are refused. Applies to both the write path and --check. Defaults to the built-in pack root, leaving the no-flag behaviour byte-identical."},
 			{Name: "json", Kind: cli.Bool, Help: packJSONHelp},
 		},
 		Run: runRegenerateGraph,

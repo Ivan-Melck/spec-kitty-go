@@ -28,7 +28,7 @@ func orgInitCmd() *cli.Command {
 	short, long := helpK("charter_org_init")
 	return &cli.Command{
 		Name: "init", Short: short, Long: long,
-		Args: []*cli.Arg{{Name: "pack_path", Help: "Destination directory for the scaffold or rendered charter pack tree.", Required: true, Metavar: "pack_path"}},
+		Args: []*cli.Arg{{Name: "pack_path", Help: "Destination directory for the scaffold or rendered charter pack tree.", Required: true, Metavar: "pack_path", Type: "<path>"}},
 		Flags: []*cli.Flag{
 			{Name: "force", Kind: cli.Bool, Help: "Overwrite an existing pack directory."},
 			{Name: "template", Kind: cli.String, Help: "Local template directory or git URL (HTTPS/SSH; optional #branch). When omitted, scaffolds the minimal four-file pack."},
@@ -78,7 +78,7 @@ func orgValidateCmd() *cli.Command {
 	short, long := helpK("charter_org_validate")
 	return &cli.Command{
 		Name: "validate", Short: short, Long: long,
-		Args: []*cli.Arg{{Name: "pack_path", Help: "Path to the org Charter Pack directory to validate.", Required: true, Metavar: "pack_path"}},
+		Args: []*cli.Arg{{Name: "pack_path", Help: "Path to the org Charter Pack directory to validate.", Required: true, Metavar: "pack_path", Type: "<path>"}},
 		Run: func(ctx *cli.Context) error {
 			res := charter.ValidatePack(ctx.Arg("pack_path"), true)
 			charter.RenderValidationResult(ctx.Stdout, res, false)

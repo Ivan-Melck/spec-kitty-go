@@ -29,6 +29,14 @@ const machineJSONHelp = "Machine-readable JSON output"
 
 func helpK(key string) (string, string) {
 	long := longHelpK[key]
+	// A usage line wrapped by the upstream renderer leaks into the captured
+	// docstring as a leading indented paragraph; the help renderer builds
+	// the usage itself.
+	if strings.HasPrefix(long, " ") {
+		if _, rest, ok := strings.Cut(long, "\n\n"); ok {
+			long = rest
+		}
+	}
 	short, _, _ := strings.Cut(long, "\n")
 	return short, long
 }
