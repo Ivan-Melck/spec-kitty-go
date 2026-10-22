@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
@@ -54,6 +56,11 @@ func submitRequest(t *testing.T, context string, parents map[string]string, arti
 	return string(b)
 }
 
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
 const outlineYAML = `work_packages:
   - id: WP01
     title: Subtraction and shared helper
@@ -80,6 +87,7 @@ func wpDraft(id, title, deps, owned, ref, sub string) string {
 func TestDiffDesignAuthoring(t *testing.T) {
 	t.Parallel()
 	p := missionfx.NewOraclePair(t)
+	p.Both(func(s *testkit.Sandbox) { s.Git("switch", "-q", "-c", "feat/calc-ops") })
 	m := "calc-ops"
 	step(t, p, api, "design-context", "--mission-type", "software-dev")
 	step(t, p, api, "specify", "--mission", m, "--mission-type", "software-dev")
@@ -134,8 +142,7 @@ func TestDiffDesignAuthoring(t *testing.T) {
 		planSHA := dataField(t, run(api, "artifact-read", "--mission", m, "--kind", "plan"), "sha256")
 		plan := strings.ReplaceAll(missionfx.Read(t, "calc/authored/plan.md"), missionfx.LocalSlug, slug)
 		req := submitRequest(t, ctxSHA, map[string]string{"specification": specSHA},
-			map[string]any{"kind": "plan", "content": plan, "expected_sha256": planSHA},
-			map[string]any{"kind": "research", "content": "# Research\n\nNone needed.\n", "expected_sha256": "absent"})
+			map[string]any{"kind": "plan", "content": plan, "expected_sha256": planSHA})
 		return []string{api, "artifact-submit", "--mission", m, "--actor", "me", "--policy", testPolicy, "--request-json", req}
 	})
 	compareGit(t, p, "after plan submit")
@@ -144,7 +151,7 @@ func TestDiffDesignAuthoring(t *testing.T) {
 		ctxSHA := dataField(t, run(api, "design-context", "--mission", m, "--stage", "tasks"), "context_sha256")
 		specSHA := dataField(t, run(api, "artifact-read", "--mission", m, "--kind", "specification"), "sha256")
 		planSHA := dataField(t, run(api, "artifact-read", "--mission", m, "--kind", "plan"), "sha256")
-		req := submitRequest(t, ctxSHA, map[string]string{"specification": specSHA, "plan": planSHA},
+		req := submitRequest(t, ctxSHA, map[string]string{"specification": specSHA, "plan": planSHA, "outline": sha256Hex(outlineYAML)},
 			map[string]any{"kind": "outline", "content": outlineYAML, "expected_sha256": "absent"},
 			map[string]any{"kind": "work_package", "artifact_id": "WP01", "content": wpDraft("WP01", "Subtraction and shared helper", "[]", "src/calc.py", "FR-001", "T001"), "expected_sha256": "absent"},
 			map[string]any{"kind": "work_package", "artifact_id": "WP02", "content": wpDraft("WP02", "Multiply", "[WP01]", "src/calc_multiply.py", "FR-002", "T002"), "expected_sha256": "absent"})
