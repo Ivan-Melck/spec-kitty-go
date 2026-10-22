@@ -31,7 +31,7 @@ without the oracle.
 
 | Command path | Status | Differential tests | Deviations |
 |---|---|---|---|
-| `orchestrator-api` (bare group, unknown verb, unknown option, `--help`) | done | `TestDiffEnvelopeAndReads` | help layout is the shared `internal/cli` renderer |
+| `orchestrator-api` (bare group, unknown verb, unknown option, `--help`) | done | `TestDiffEnvelopeAndReads` | none known |
 | `orchestrator-api contract-version` (`--provider-version` PEP 440 compare, `--require-capability`, delivery profile) | done | `TestDiffEnvelopeAndReads` | none known |
 | `orchestrator-api mission-state` | done | `TestDiffEnvelopeAndReads`, `TestDiffWPLifecycle` | none known |
 | `orchestrator-api list-ready` | done | `TestDiffEnvelopeAndReads`, `TestDiffWPLifecycle` | none known |
@@ -44,18 +44,18 @@ without the oracle.
 | `orchestrator-api consolidate-mission` (`merge`/`squash`/`rebase`, preflight, lane merges with stale auto-rebase, done transitions, cleanup) | done | `TestDiffAcceptAndConsolidateMission` (merge, coord), `TestDiffAcceptMissionAccepted` (squash), `TestDiffLanesTopologyLoop` (refusal, lanes topology), `TestDiffCloseoutOriginAndGates` (origin-freshness gate and merge gates), `TestDiffConsolidateMissionRefusals` (approved bound #5668: `LANE_MOVED_AFTER_APPROVAL` with `preflight_error_code(s)`; protected status target #5385: `PROTECTED_BRANCH_REFUSED: ... Next step: ...`) | none known |
 | `orchestrator-api specify` | done | `TestDiffDesignAuthoring` | none known |
 | `orchestrator-api plan` | done | `TestDiffDesignAuthoring`, `TestDiffDesignPhaseNative` | none known |
-| `orchestrator-api tasks` | done | `TestDiffDesignPhaseNative` | inherits finalize-tasks deviations (the wps.yaml manifest flow is not ported, so finalizing an API-authored outline without a hand-written tasks.md is untested); receipts are re-stamped after a successful finalize |
+| `orchestrator-api tasks` (incl. an API-authored wps.yaml outline + WP prompts without a hand-written tasks.md, outline-only refusal, stale-receipt refusal, receipt re-stamp, authoring lock) | done | `TestDiffDesignPhaseNative`, `TestDiffDesignTasksFromOutline`, `TestDiffNativeFinalizeAPIAuthored` | none known |
 | `orchestrator-api check-prerequisites` | done | `TestDiffEnvelopeAndReads`, `TestDiffDesignPhaseNative` | none known |
-| `orchestrator-api record-analysis` | done | `TestDiffDesignPhaseNative` | the write runs through the host `agent mission record-analysis` command in-process (no 10 s watchdog thread, so `underlying_call_timed_out` is never set) |
+| `orchestrator-api record-analysis` | done | `TestDiffDesignPhaseNative`, `TestRunWithTimeout` (Go-only: the 10 s watchdog cannot be exercised offline against the oracle) | the bounded write runs the host `agent mission record-analysis` in-process; a call that outlives 10 s is left running and the failure envelope carries `underlying_call_timed_out` |
 | `orchestrator-api open-decision` / `resolve-decision` / `defer-decision` / `cancel-decision` | done | `TestDiffDesignAuthoring` | `--owned-checkout` refused (`DECISION_OPERATION_FAILED`, `OWNED_OPTION_UNSUPPORTED`; a non-existent path mirrors upstream's `OWNERSHIP_BROKEN_POINTER`) |
 | `orchestrator-api answer-decision` | done | `TestDiffDesignPhaseNative`, `TestDiffAnswerDecisionNative` (real pending `requires_inputs` decision of a custom mission) | validation (`POLICY_*`, `RESULT_REQUIRED`, `INVALID_RESULT`, `NO_PENDING_DECISION`, `AMBIGUOUS_PENDING_DECISION`, `DECISION_NOT_PENDING`) matches; the answer is delegated to native `next --answer` (payload minus `answer`/`answered`, plus `answered_decision_id`, then `warnings`) |
-| `orchestrator-api next` | done | `TestDiffDesignPhaseNative` | inherits native `next` deviations (no `--answer`) |
+| `orchestrator-api next` | done | `TestDiffDesignPhaseNative`, `TestDiffAnswerDecisionNative` | none known (delegates to native `next`, `--answer` included) |
 | `orchestrator-api design-status` | done | `TestDiffEnvelopeAndReads`, `TestDiffDesignAuthoring` | none known |
-| `orchestrator-api design-context` | done | `TestDiffDesignAuthoring` (context digest byte-equal) | project/org overrides of `expected-artifacts.yaml` not consulted |
+| `orchestrator-api design-context` (incl. `required_artifacts` through the org-pack tier: last configured pack wins, schema-validated model dump, malformed / schema-invalid manifests fail) | done | `TestDiffDesignAuthoring` (context digest byte-equal), `TestDiffDesignContextOrgExpectedArtifacts` | the loader failures are uncaught upstream (rich traceback); Go prints `Traceback (most recent call last):` and the final exception line until PYF-01's traceback box lands |
 | `orchestrator-api design-validate` | done | `TestDiffDesignAuthoring`, `TestDiffEnvelopeAndReads` | none known |
 | `orchestrator-api interview-record` | done | `TestDiffDesignAuthoring` | none known |
-| `orchestrator-api artifact-read` | done | `TestDiffEnvelopeAndReads`, `TestDiffDesignAuthoring` | the cooperative authoring lock is a touched lock file, not an flock |
-| `orchestrator-api artifact-submit` | done | `TestDiffDesignAuthoring` | parent checks iterate specification, plan, outline in that fixed order (upstream iterates a Python set) |
+| `orchestrator-api artifact-read` | done | `TestDiffEnvelopeAndReads`, `TestDiffDesignAuthoring`, `TestAuthoringLock` (Go-only: contention needs two processes) | none known (the authoring lock is a real reentrant flock, `DESIGN_LOCK_TIMEOUT` after 10 s) |
+| `orchestrator-api artifact-submit` | done | `TestDiffDesignAuthoring`, `TestDiffDesignTasksFromOutline` | parent checks iterate specification, plan, outline in that fixed order (irreducible: upstream iterates a hash-randomized Python set) |
 
 General deviations:
 
@@ -69,8 +69,21 @@ General deviations:
 Help text: every verb carries upstream's docstring (first paragraph as the
 listing line, full docstring on its help page, `help_text.go` generated from
 the upstream sources); flags, metavars, defaults and choices follow
-`inventory/help`. All 28 orchestrator-api help pages match the inventory
-byte-for-byte through the shared renderer (`go test ./internal/helpparity`).
+`inventory/help`. All 28 orchestrator-api help pages are byte-identical to
+the inventory (`go test ./internal/helpparity`).
+
+## Irreducible differences (design / planning verbs)
+
+* `artifact-submit`: when several parents are stale, the one reported first
+  follows a fixed order (specification, plan, outline); upstream iterates a
+  Python `set`, whose order is hash-randomized per process.
+
+## Remaining work (design / planning verbs)
+
+* `--owned-checkout` on the decision verbs is area OWN's.
+* Mission resolution (`internal/orchestrator/mission.go`, area CORE): an
+  ambiguous handle still returns `MISSION_NOT_FOUND` where upstream crashes
+  with a traceback (`MissionSelectorAmbiguous`).
 
 ## Exported API (`internal/orchestrator`)
 
@@ -94,9 +107,17 @@ byte-for-byte through the shared renderer (`go test ./internal/helpparity`).
   `ResolveWPFile`, `WPIDPrefix`.
 * Design authoring: `DesignError` / `NewDesignError`, `Absent`, `SHA256Hex`,
   `AuthoringEnabled`, `ReadReceipts`, `EnableAuthoring`, `SaveReceipts`,
-  `ReceiptSet` / `Receipt` (pydantic JSON), `TouchAuthoringLock`,
-  `TasksFinalized` (with the status.json snapshot-drift check),
-  `LoadWpsManifest` / `ParseWpsManifest` (`WpsManifest`, `WPEntry`).
+  `ReceiptSet` / `Receipt` (pydantic JSON), `AcquireAuthoringLock(root, slug)
+  (release func(), error)` / `AuthoringLockPath` (reentrant flock,
+  `DESIGN_LOCK_TIMEOUT`), `TasksFinalized` (with the status.json
+  snapshot-drift check).
+* wps.yaml: `LoadWpsManifest` / `ParseWpsManifest` (`WpsManifest` with
+  `ConcernTrackingRequired`, `WPEntry` with `PlanConcernRefs`, `CrossCutting`,
+  `DependenciesExplicit`; errors are `*ManifestError` matching
+  `ErrManifestInvalid`, whose text is upstream's str(exc) incl. the pydantic
+  ValidationError rendering), `CheckConcernRefsCoverage`, `GenerateTasksMD`.
+* Expected artifacts: `LoadExpectedArtifacts(root, missionType)` (org-pack
+  tier, validated model dump; `*ManifestLoadError`).
 
 ## Extensions to other areas' packages (additive, new files)
 
@@ -105,7 +126,9 @@ byte-for-byte through the shared renderer (`go test ./internal/helpparity`).
   handler instead of the boxed click message (backwards compatible: nil for
   every other command).
 * `internal/commands/planning/orchestrator_export.go`:
-  `RecordAnalysisDirtyPreflight`, `ParseAnalysisVerdict`.
+  `RecordAnalysisDirtyPreflight`, `ParseAnalysisVerdict`; the planning
+  package also exposes `APIAuthoredFinalizeScope` (installed by
+  `internal/commands/orchestrator/finalize_scope.go`).
 * `internal/commands/agentcore/orchestrator_export.go`:
   `ParseReviewResultJSON`, `BuildDoneEvidence`.
 * `internal/workflow/orchestrator_export.go`: `AllocateLaneWorktreeFor`

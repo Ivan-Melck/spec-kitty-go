@@ -52,7 +52,10 @@ func newRebaselineDossierHashesCmd() *cli.Command {
 				return err
 			}
 			dry := groupBool(ctx, "dry-run")
-			outcomes := migrate.RebaselineSnapshots(root, dry)
+			outcomes, err := migrate.RebaselineSnapshots(root, dry)
+			if u, ok := err.(*migrate.UncaughtError); ok {
+				return uncaught(ctx, u.Type, u)
+			}
 			changed, errored := 0, 0
 			rows := []any{}
 			for _, o := range outcomes {

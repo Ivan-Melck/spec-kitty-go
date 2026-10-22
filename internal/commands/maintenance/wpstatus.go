@@ -163,6 +163,9 @@ func runBackfillWPStatus(ctx *cli.Context) error {
 		}
 	}
 	results, err := migrate.ApplyWPStatusBackfillRepo(root, scope, dry, manifest)
+	if u, ok := err.(*migrate.UncaughtError); ok {
+		return uncaught(ctx, u.Type, u)
+	}
 	if err != nil {
 		return fail(&wpsErr{"MISSION_SELECTOR_REJECTED", err.Error()})
 	}
