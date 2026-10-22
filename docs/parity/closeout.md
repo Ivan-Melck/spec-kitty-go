@@ -18,7 +18,7 @@ name-status file sets; worktree list; status; branches; all refs).
 
 | Command path | Status | Tests | Deviations |
 |---|---|---|---|
-| `agent acceptance-verdict` (`--criterion/--negative-invariant`, `--result`, `--verification-method/-command`, `--scope`, `--evidence`, `--actor`, `--no-execute`, `--json`) | done | `TestDiffAcceptanceVerdict` (coord, lanes; TRACE 6.2/6.3, errors, unknown mission), `TestLocalCloseout` | `--owned-checkout` is refused ("not supported by this build") |
+| `agent acceptance-verdict` (`--criterion/--negative-invariant`, `--result`, `--verification-method/-command`, `--scope`, `--evidence`, `--actor`, `--no-execute`, `--json`) | done | `TestDiffAcceptanceVerdict` (coord, lanes; TRACE 6.2/6.3, errors, unknown mission), `TestLocalCloseout` | `--owned-checkout` is refused ("not supported by this build"); owned by area OWN (wave 5) |
 | `agent mission acceptance-verdict` | done | same | same |
 | `agent mission accept` (`--diagnose`, `--json`, lenient/dirty refusals, origin check read-only) | done | `TestDiffAccept` (for-review-dirty, coord, lanes; TRACE 5.F5, 6.1, 6.4, 6.6, 9.3), `TestDiffAcceptMergeCommit` | none known |
 | `accept` (`--mission`, `--mode`, `--lenient`, `--no-commit`, `--json`, git_dirty and `docs/` path-convention refusals) | done | `TestDiffAccept` | none known |
@@ -44,9 +44,9 @@ name-status file sets; worktree list; status; branches; all refs).
 | `review` (merged-mission validation: WP lane gate, dead-code scan, `mission-review-report.md`; `--mode lightweight|post-merge`) | done | `TestDiffConsolidate` (TRACE 8.3), `TestDiffConsolidateTrace`, `TestDiffConsolidateNotReady` | dead-code scan is a port of the upstream Python-symbol heuristic |
 | `retrospect create` (`--overwrite/--update`, `--json`) | done | `TestDiffConsolidate`, `TestDiffConsolidateNotReady` | none known |
 | `retrospect summary` (`--json`, `--json-out`, `--limit`, `--since`, `--filter`, `--include-malformed`) | done | `TestDiffConsolidate` | none known |
-| `retrospect backfill` (`--dry-run`, `--json`, `--since/--until/--mission`, `--emit-*`) | done | `TestDiffConsolidate` (`--dry-run --json`) | only the dry-run path has a differential test |
+| `retrospect backfill` (`--dry-run`, `--json`, `--since/--until/--mission`, `--emit-skipped`, `--emit-failures`; `.kittify/missions/` registry, pre-screened skips before `already_exists`, `missing_artifacts` / `generator_exception` failures, `RetrospectiveSkipped` / `RetrospectiveCaptureFailed` events, authored record + commit) | done | `TestDiffConsolidate` (`--dry-run --json`), `TestDiffRetrospectBackfill` (CONS-10: dry-run, writing path, emit flags, human panel, filter, bad date) | — |
 | `agent retrospect summary` | done | `TestDiffConsolidate` | none known |
-| `agent retrospect synthesize` (`--mission`, `--proposal-id`, `--apply`, `--json`) | partial | `TestDiffConsolidate`, `TestDiffConsolidateNotReady` | generator-schema records (what consolidate and `retrospect create` write) match upstream: empty dry-run/apply batch, `--proposal-id` refused with `unsupported_generator_record`. Legacy-schema records with applicable proposals are not ported (their `--apply` would mutate glossary/doctrine, owned by area C) |
+| `agent retrospect synthesize` (`--mission`, `--proposal-id`, `--apply`, `--json`) | partial | `TestDiffConsolidate`, `TestDiffConsolidateNotReady` | generator-schema records (what consolidate and `retrospect create` write) match upstream: empty dry-run/apply batch, `--proposal-id` refused with `unsupported_generator_record`. Legacy-schema records with applicable proposals: owned by DOC-19 (wave 5, `retrospect synthesize --apply`) |
 | `archive create` (`--by`, `--reason`, `--json`) | done | `TestDiffConsolidate`, `TestDiffConsolidateNotReady` | none known |
 | `archive list` (`--json`) | done | `TestDiffConsolidate`, `TestLocalCloseout` | none known |
 | `agent release prep` (`--channel`, `--repo`, `--json`) | done | `TestDiffConsolidate` (alpha/beta/stable), `TestLocalCloseout` | none known |
@@ -99,18 +99,38 @@ done transitions (as upstream), not after the retrospective event.
   `PrimaryBranch(root)`.
 - Gates: `GatePolicy`, `LoadGatePolicy(root)`, `GateResult`, `RiskScore(m)`,
   `EvaluateGates(root, primaryDir, statusDir, matrixDir, wpIDs, pol)`.
-- Transaction record: `MergeState` (`Object`, `Save`, `Rollback`,
-  `BeginAttempt`), `LoadState`, `ClearState`, `Abort(w, root, handle)`.
+- Transaction record and rollback authority: `MergeState` (`Object`, `Save`,
+  `Rollback(root) *RollbackReport`), `RollbackReport` (`Render`), `LoadState`,
+  `ClearState`, `Abort(w, root, handle, releaseBranches, releaseReason)`,
+  `UnexplainedBranchMove`.
+- Reconciliation (wave 5, `reconcile.go`, `reconcile_canceled.go`,
+  `attribution.go`, `bound.go`, `probes.go`, `projection.go`): the claim
+  builder and verifier are package-internal (`buildClaim`, `claim.verify`);
+  exported: `ApprovedBoundRefusal(root, statusDir, manifest, coordBase,
+  windowBase, excluded) (string, error)` (approved_bound_refusal),
+  `BoundRefusal`, `RenderBoundRefusals(refusals, slug)`,
+  `BoundRefusalCodes(text)`, codes `LaneMovedAfterApproval`,
+  `ApprovalStampMissing`, `ApprovalStampNotOnLane`, `AttestApprovedFlag`,
+  `ProbeError` (GitProbeError).
+- Entry checks: `SparseCheckoutRefusal(root, command) string`,
+  `ProtectedStatusTargetRefusal(root, slug, manifest, excluded)
+  *PolicyRefusal` (`excluded` nil = acceptably canceled WPs), `PolicyRefusal`.
+- `Options` gained `AllowSparse`, `AttestCanceled`, `AttestApproved`,
+  `AttestReason`.
 - Orchestrator lane merge (area I, extended): `MergePreflight`,
-  `RunLaneMerge` (now evaluates the merge gates), `LaneMergeError`,
+  `RunLaneMerge` (evaluates the merge gates, the protected status target and
+  the approved bound), `LaneMergeError`, `ApprovedBoundError{Msg, Codes}`,
   `DestructiveRefusal`, `OriginGateInputs(root, slug)`.
 
 `internal/autorebase` (new): `Attempt(Options) Report` (attempt_auto_rebase),
-`Options{Root, LaneID, Branch, MissionBranch, Worktree, Env, EnsureDrivers}`,
-`Report`, `Classify(file, hunk)`, `ValidateResolution`, `ResolveText(file,
-body)`, `Classification`/`Resolution`, rule ids `Rule*`, `ValidateTOML(src)`
-(TOML 1.0 validity, checked against `tomllib`), `IsTargetOwnedPath`,
-`EnsureDriverConfig(root)`, `MergeEnv()`.
+`Options{Root, LaneID, Branch, MissionBranch, Worktree, Env, EnsureDrivers,
+Disposable}` (`Disposable` nil = the lane residue context of the branch's
+mission), `Report`, `Classify(file, hunk)`, `ValidateResolution`,
+`ResolveText(file, body)`, `Classification`/`Resolution`, rule ids `Rule*`,
+`ValidateTOML(src)` (TOML 1.0 validity, checked against `tomllib`),
+`IsTargetOwnedPath`, `EnsureDriverConfig(root)`, `MergeEnv()`;
+`AbortRefused` (guarded_merge_abort's DESTRUCTIVE_OP_ONLY_COPY refusal),
+`LaneResidue(root, slug)`.
 
 `internal/originfresh` (new): `Env`, `Setting`, `ReadOnly`, `ResolveMode`,
 `NotCheckedWarning`, `Verdict` (`Payload`), `ConfiguredRemotes`,
@@ -132,7 +152,9 @@ over the whole upstream source tree).
   `Record`, `Finding`, `Serialize`, `LoadRecord`, `ClassifyRecord`,
   `BuildSummary(project, since, limit)`, `MissionDirs`, `MissionStates`,
   `DefaultPolicySource`, `PolicyKeys`, `Now`, `FileName`, `GeneratorVersion`,
-  `Width`.
+  `Width`; wave 5: `NotFoundError` (generate's FileNotFoundError),
+  `EmitSkipped(dir, missionID, slug, reason)`, `EmitCaptureFailed(dir,
+  missionID, slug, category, message, remediation, attemptedKind, missing)`.
 
 ## Foundation changes / extensions to other areas' packages
 
@@ -141,3 +163,29 @@ None to area A. Wave 4 (area L) uses area H's `internal/migrate`
 --merge-commit`, and wires the merge gates and origin gate into area I's
 `orchestrator-api consolidate-mission` / `accept-mission` (see
 `docs/parity/orchestrator.md`).
+
+Wave 5 (area CONS) adds no foundation change. It reads other areas'
+packages without changing them: `internal/healthcheck.ScanSparse` (sparse
+checkout scan), `internal/coord.IsProtected` / `Surface.EmitTransition`
+(protected-branch policy, attestation transitions), `internal/mergedriver.Bodies`
+(driver replay), `internal/status` event reading. `internal/autorebase` now
+applies the lane residue context by default, which also changes CORE's lane
+sync (`internal/workflow/lanesync.go`) the way upstream's
+`worktree_allocator` does: a failed sync auto-rebase whose lane worktree
+holds an operator edit leaves the merge in progress and says so.
+
+## Irreducible differences
+
+- Excluded (canceled) commits are listed in a stable sorted order; upstream
+  iterates a Python `frozenset` of SHAs, whose order is not deterministic
+  (`excluded (canceled/removed) commit ... IS reachable` clauses of a merge/rebase
+  FAIL naming several canceled commits).
+- Refusal details that quote a Python exception (`coordination surface could
+  not be materialized: <exc>`, the `StoreError` text of an unreadable status log,
+  a `GitProbeError` naming git's stderr) carry the Go error text instead.
+- `TOMLDecodeError('<go message>')` in auto-rebase post-merge validation
+  failures (PYF-03 owns the tomllib message port).
+
+## Remaining work
+
+None.
