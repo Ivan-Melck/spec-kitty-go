@@ -76,7 +76,7 @@ func (v *verb) resolveStartWorkspace(m *orch.Mission, handle, wpID string) (*sta
 		if _, err := lanes.ResolveWorkspace(m.Root, m.Slug, wpID); err != nil {
 			return nil, v.fail("LANE_ALLOCATION_FAILED", err.Error(), identity(m.StatusDir, "wp_id", wpID, "reason", err.Error()))
 		}
-		recordClaimBase(m.Root, m.Slug, wpID)
+		recordClaimBase(m.Root, handle, wpID)
 		return &startWorkspace{path: m.Root, laneID: l.LaneID,
 			laneBranch: lanes.SingleBranchWriteRef(m.Root, m.Slug, manifest.TargetBranch), laneBaseRef: base}, nil
 	}
@@ -149,7 +149,20 @@ func forReviewGate(m *orch.Mission, handle, wpID string, force bool) lanes.GateD
 		return lanes.GateDecision{Passed: true}
 	}
 	if l.LaneID == lanes.PlanningLaneID {
-		return lanes.EvaluateForReviewGate(m.Root, m.Slug, wpID, false)
+		base := lanes.ReadClaimBase(m.Root, handle, wpID)
+		checkout := m.Root
+		if ws, err := lanes.ResolveWorkspace(m.Root, m.Slug, wpID); err == nil {
+			checkout = ws.WorktreePath
+		}
+		if base != "" && qualifyingCommitSince(checkout, base, handle) {
+			return lanes.GateDecision{Passed: true, LaneID: l.LaneID, LaneBranch: manifest.TargetBranch, BaseRef: base}
+		}
+		shown := base
+		if shown == "" {
+			shown = "<no recorded claim base>"
+		}
+		return lanes.GateDecision{Reason: fmt.Sprintf("%s cannot move to for_review: no implementation commit since claim in the repository root checkout beyond %s. Commit the work first, or pass --force if there is genuinely nothing to commit.", wpID, shown),
+			LaneID: l.LaneID, LaneBranch: manifest.TargetBranch, BaseRef: base}
 	}
 	wt := lanes.WorktreePath(m.Root, handle, l.LaneID)
 	branch := lanes.LaneBranchName(handle, l.LaneID, manifest.TargetBranch)
@@ -159,6 +172,33 @@ func forReviewGate(m *orch.Mission, handle, wpID string, force bool) lanes.GateD
 	}
 	return lanes.GateDecision{Reason: fmt.Sprintf("%s cannot move to for_review: no implementation commit on lane %s (%s) beyond %s. Commit the work in the lane worktree first, or pass --force if there is genuinely nothing to commit.", wpID, l.LaneID, branch, base),
 		LaneID: l.LaneID, LaneBranch: branch, BaseRef: base}
+}
+
+// qualifyingCommitSince is the repo-root lane's "implementation commit
+// since claim" probe: a commit beyond base touching anything but the
+// mission's (handle-named) status / issue-matrix / meta bookkeeping.
+func qualifyingCommitSince(checkout, base, slug string) bool {
+	out, err := gitx.Run(checkout, "log", "--no-renames", "--format=", "--name-only", base+"..HEAD")
+	if err != nil {
+		return false
+	}
+	excluded := []string{"kitty-specs/" + slug + "/status.", "kitty-specs/" + slug + "/issue-matrix.", "kitty-specs/" + slug + "/meta.json", ".kittify/"}
+	for _, p := range strings.Split(out, "\n") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		hit := false
+		for _, e := range excluded {
+			if strings.HasPrefix(p, e) {
+				hit = true
+			}
+		}
+		if !hit {
+			return true
+		}
+	}
+	return false
 }
 
 func isDir(p string) bool {

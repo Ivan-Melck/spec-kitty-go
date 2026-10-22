@@ -165,6 +165,31 @@ func TestDiffAcceptMissionAccepted(t *testing.T) {
 	compareGit(t, p, "after squash consolidate-mission")
 }
 
+// TestDiffSingleBranchLoop drives a single_branch mission (repo-root
+// planning lane) through the WP verbs.
+func TestDiffSingleBranchLoop(t *testing.T) {
+	t.Parallel()
+	p := missionfx.NewOraclePair(t)
+	missionfx.OracleCalcMission(t, p, "--pr-bound", "--branch-strategy", "already-confirmed", "--start-branch", "feat/calc-ops", "--topology", "single_branch")
+	m := "calc-ops"
+	step(t, p, api, "mission-state", "--mission", m)
+	step(t, p, api, "resolve-workspace", "--mission", m, "--wp", "WP01")
+	step(t, p, api, "start-implementation", "--mission", m, "--wp", "WP01", "--actor", "claude", "--policy", testPolicy)
+	compareGit(t, p, "after single_branch claim")
+	step(t, p, api, "transition", "--mission", m, "--wp", "WP01", "--to", "for_review", "--actor", "claude", "--policy", testPolicy)
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile("src/calc.py", "def add(a, b):\n    return a + b\n\n\ndef subtract(a, b):\n    return a - b\n")
+		s.Git("add", "src/calc.py")
+		s.Git("commit", "-q", "-m", "feat(WP01): subtract")
+	})
+	oracleBoth(t, p, "agent", "tasks", "mark-status", "T001", "T002", "T003", "--status", "done", "--mission", "$M")
+	step(t, p, api, "transition", "--mission", m, "--wp", "WP01", "--to", "for_review", "--actor", "claude", "--policy", testPolicy)
+	step(t, p, api, "start-review", "--mission", m, "--wp", "WP01", "--actor", "rev", "--policy", testPolicy)
+	step(t, p, api, "append-history", "--mission", m, "--wp", "WP01", "--actor", "rev", "--note", "looks good")
+	step(t, p, api, "mission-state", "--mission", m)
+	compareGit(t, p, "after single_branch review")
+}
+
 // TestDiffLanesTopologyLoop runs the orchestrated loop on a lanes (no
 // coordination branch) mission: a raw `--to claimed` transition, a forced
 // review exit, a rework rewind and a refused consolidation.
