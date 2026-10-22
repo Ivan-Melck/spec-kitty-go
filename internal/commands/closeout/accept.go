@@ -111,7 +111,7 @@ func (r *acceptRun) report(msg, step string, extra *jsonx.Object) {
 		r.tr.fail(step, msg)
 		r.tr.render(r.ctx.Stdout)
 	}
-	sayLiteral(r.ctx.Stdout, "Error: ", msg)
+	sayLiteral(r.ctx.Stdout, "[red]Error:[/red] ", msg)
 }
 
 func runAccept(ctx *cli.Context, o acceptOpts) error {

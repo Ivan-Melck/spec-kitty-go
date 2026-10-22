@@ -45,7 +45,7 @@ func verdictError(ctx *cli.Context, jsonMode bool, msg string) {
 	if jsonMode {
 		printJSON(ctx.Stdout, jsonx.NewObject("success", false, "error", msg))
 	} else {
-		sayLiteral(ctx.Stdout, "Error: ", msg)
+		sayLiteral(ctx.Stdout, "[red]Error:[/red] ", msg)
 	}
 }
 
@@ -173,7 +173,7 @@ func runAcceptanceVerdict(ctx *cli.Context) error {
 			for _, l := range out.Render() {
 				sayLiteral(ctx.Stdout, "", l)
 			}
-			sayLiteral(ctx.Stdout, "Error: ", failMsg)
+			sayLiteral(ctx.Stdout, "[red]Error:[/red] ", failMsg)
 		}
 		return cli.Exit(1)
 	}

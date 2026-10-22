@@ -172,7 +172,7 @@ func runConsolidate(ctx *cli.Context) error {
 	}
 	root := locateRoot()
 	if root == "" {
-		sayLiteral(ctx.Stdout, "Error: ", "Could not locate project root")
+		sayLiteral(ctx.Stdout, "[red]Error:[/red] ", "Could not locate project root")
 		return cli.Exit(1)
 	}
 	if ctx.Bool("abort") {

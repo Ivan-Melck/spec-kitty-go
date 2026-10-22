@@ -205,7 +205,7 @@ func runReleasePrep(ctx *cli.Context) error {
 			}
 			printJSON(ctx.Stdout, o)
 		} else {
-			sayLiteral(ctx.Stderr, "Error: ", err.Error())
+			sayLiteral(ctx.Stderr, "[red]Error:[/red] ", err.Error())
 		}
 		return cli.Exit(1)
 	}

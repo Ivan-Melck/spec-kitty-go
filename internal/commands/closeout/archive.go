@@ -76,7 +76,7 @@ func runArchiveCreate(ctx *cli.Context) error {
 					o.Set("candidates", amb.Candidates)
 					fmt.Fprintln(ctx.Stdout, jsonx.Dumps(o, jsonx.Pretty))
 				} else {
-					sayLiteral(ctx.Stdout, "Error: ", amb.Error())
+					sayLiteral(ctx.Stdout, "[red]Error:[/red] ", amb.Error())
 				}
 				return cli.Exit(1)
 			}
@@ -98,7 +98,7 @@ func runArchiveCreate(ctx *cli.Context) error {
 		if jsonMode {
 			fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonError(code, reason), jsonx.Pretty))
 		} else {
-			sayLiteral(ctx.Stdout, "Archive refused ("+code+"): ", reason)
+			sayLiteral(ctx.Stdout, "[red]Archive refused ("+code+"):[/red] ", reason)
 		}
 		return cli.Exit(1)
 	}

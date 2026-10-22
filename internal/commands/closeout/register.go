@@ -50,9 +50,9 @@ func printJSONPretty(w io.Writer, v any) { fmt.Fprintln(w, jsonx.Dumps(v, jsonx.
 // say is console.print(markup).
 func say(w io.Writer, s string) { rich.Print(w, s) }
 
-// sayLiteral is console.print(prefixMarkup + escape(literal)) / markup=False.
+// sayLiteral is console.print(prefixMarkup + escape(literal)).
 func sayLiteral(w io.Writer, prefixMarkup, literal string) {
-	fmt.Fprintln(w, rich.Wrap(rich.Strip(prefixMarkup)+literal, rich.Width()))
+	rich.Print(w, prefixMarkup+rich.EscapeMarkup(literal))
 }
 
 // locateRoot is find_repo_root / locate_project_root.
@@ -68,7 +68,7 @@ func resolveError(ctx *cli.Context, err error, jsonMode bool) error {
 				"handle", e.Handle, "candidates", e.Candidates))
 			return cli.Exit(1)
 		}
-		sayLiteral(ctx.Stderr, "Error: ", e.Error())
+		sayLiteral(ctx.Stderr, "[red]Error:[/red] ", e.Error())
 		return cli.Exit(2)
 	case *mission.AmbiguousError:
 		if jsonMode {

@@ -166,7 +166,7 @@ func runRetroSynthesize(ctx *cli.Context) error {
 			if jsonMode {
 				printJSON(ctx.Stderr, jsonx.NewObject("error", "record_malformed", "detail", reason))
 			} else {
-				sayLiteral(ctx.Stderr, "Error: ", "Retrospective record malformed: "+reason)
+				sayLiteral(ctx.Stderr, "[red]Error:[/red] ", "Retrospective record malformed: "+reason)
 			}
 			return cli.Exit(3)
 		}

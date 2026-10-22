@@ -3,6 +3,7 @@ package closeout
 import (
 	"errors"
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,7 +172,7 @@ func runRetroSummary(ctx *cli.Context) error {
 
 func dirOK(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() }
 
-func sayErrStderr(ctx *cli.Context, msg string) { sayLiteral(ctx.Stderr, "Error: ", msg) }
+func sayErrStderr(ctx *cli.Context, msg string) { sayLiteral(ctx.Stderr, "[red]Error:[/red] ", msg) }
 
 func renderSummary(ctx *cli.Context, s *jsonx.Object, includeMalformed bool) {
 	w := ctx.Stdout
@@ -231,7 +232,7 @@ func retroBlocked(ctx *cli.Context, jsonMode bool, code, human string, o *jsonx.
 	if jsonMode {
 		printJSON(ctx.Stdout, o)
 	} else {
-		say(ctx.Stderr, "[red]Error "+code+":[/red] "+human)
+		rich.PrintSoftWrap(ctx.Stderr, "[red]Error "+rich.EscapeMarkup(code)+":[/red] "+rich.EscapeMarkup(human))
 	}
 	return cli.Exit(exit)
 }
