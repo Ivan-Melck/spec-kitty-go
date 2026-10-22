@@ -27,6 +27,7 @@ type Node struct {
 	Tag       string
 	Value     string // scalars
 	Style     rune   // scalars: 0 plain, '\'', '"', '|', '>'
+	TagHandle string // the tag's handle ("!", "!!", "!e!"), "" if none / implicit
 	Items     []*Node
 	Pairs     [][2]*Node
 	FlowStyle bool
@@ -53,6 +54,16 @@ type composer struct {
 	*parser
 	anchors map[string]*Node
 	resolve func(kind NodeKind, value string, implicit [2]bool) string
+}
+
+func (c *composer) resolveTag(kind NodeKind, value string, implicit [2]bool) string {
+	if c.resolve != nil {
+		return c.resolve(kind, value, implicit)
+	}
+	if c.dialect.ruamel() {
+		return resolveRuamel(c.v11())(kind, value, implicit)
+	}
+	return resolve11(kind, value, implicit)
 }
 
 func (c *composer) cerr(context string, cm *Mark, problem string, pm *Mark) {
@@ -103,9 +114,9 @@ func (c *composer) composeNode() *Node {
 		ev := c.getEvent()
 		tag := ev.tag
 		if !ev.hasTag || tag == "!" {
-			tag = c.resolve(ScalarNode, ev.value, ev.implicit)
+			tag = c.resolveTag(ScalarNode, ev.value, ev.implicit)
 		}
-		n = &Node{Kind: ScalarNode, Tag: tag, Value: ev.value, Style: ev.style, Start: ev.start, End: ev.end}
+		n = &Node{Kind: ScalarNode, Tag: tag, TagHandle: ev.tagHandle, Value: ev.value, Style: ev.style, Start: ev.start, End: ev.end}
 		if ev.hasAnchor {
 			c.anchors[ev.anchor] = n
 		}
@@ -113,9 +124,9 @@ func (c *composer) composeNode() *Node {
 		start := c.getEvent()
 		tag := start.tag
 		if !start.hasTag || tag == "!" {
-			tag = c.resolve(SequenceNode, "", start.implicit)
+			tag = c.resolveTag(SequenceNode, "", start.implicit)
 		}
-		n = &Node{Kind: SequenceNode, Tag: tag, FlowStyle: start.flowStyle, Start: start.start}
+		n = &Node{Kind: SequenceNode, Tag: tag, TagHandle: start.tagHandle, FlowStyle: start.flowStyle, Start: start.start}
 		if start.hasAnchor {
 			c.anchors[start.anchor] = n
 		}
@@ -127,9 +138,9 @@ func (c *composer) composeNode() *Node {
 		start := c.getEvent()
 		tag := start.tag
 		if !start.hasTag || tag == "!" {
-			tag = c.resolve(MappingNode, "", start.implicit)
+			tag = c.resolveTag(MappingNode, "", start.implicit)
 		}
-		n = &Node{Kind: MappingNode, Tag: tag, FlowStyle: start.flowStyle, Start: start.start}
+		n = &Node{Kind: MappingNode, Tag: tag, TagHandle: start.tagHandle, FlowStyle: start.flowStyle, Start: start.start}
 		if start.hasAnchor {
 			c.anchors[start.anchor] = n
 		}
@@ -208,9 +219,6 @@ func Compose(src string, opts ComposeOptions) (*Node, error) {
 	var n *Node
 	err := run(func() {
 		c := &composer{parser: newParser(src, opts.Dialect), anchors: map[string]*Node{}, resolve: opts.Resolve}
-		if c.resolve == nil {
-			c.resolve = resolve11
-		}
 		n = c.getSingleNode()
 	})
 	return n, err

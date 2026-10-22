@@ -33,6 +33,7 @@ type event struct {
 	hasAnchor  bool
 	tag        string
 	hasTag     bool
+	tagHandle  string
 	implicit   [2]bool // scalar: (plain-implicit, quoted-implicit); collections: [0]
 	value      string
 	style      rune
@@ -108,6 +109,7 @@ func (p *parser) popMark() {
 
 func (p *parser) parseStreamStart() *event {
 	t := p.getToken()
+	p.moveComment(t, false)
 	p.state = p.parseImplicitDocumentStart
 	return &event{kind: eStreamStart, start: t.start, end: t.end}
 }
@@ -236,6 +238,7 @@ func (p *parser) parseNode(block, indentlessSequence bool) *event {
 	var start, end, tagMark *Mark
 	if p.checkToken(tAnchor) {
 		t := p.getToken()
+		p.moveComment(t, false)
 		start, end = t.start, t.end
 		anchor, hasAnchor = t.value, true
 		if p.checkToken(tTag) {
@@ -245,6 +248,7 @@ func (p *parser) parseNode(block, indentlessSequence bool) *event {
 		}
 	} else if p.checkToken(tTag) {
 		t := p.getToken()
+		p.moveComment(t, false)
 		start, tagMark = t.start, t.start
 		end = t.end
 		tagT = t
@@ -275,6 +279,9 @@ func (p *parser) parseNode(block, indentlessSequence bool) *event {
 	}
 	implicit := !hasTag || tag == "!"
 	ev := &event{anchor: anchor, hasAnchor: hasAnchor, tag: tag, hasTag: hasTag, start: start}
+	if tagT != nil && tagT.hasHandle {
+		ev.tagHandle = tagT.tagHandle
+	}
 	if indentlessSequence && p.checkToken(tBlockEntry) {
 		ev.end = p.peekToken().end
 		ev.kind = eSequenceStart
@@ -345,6 +352,7 @@ func (p *parser) parseBlockSequenceFirstEntry() *event {
 func (p *parser) parseBlockSequenceEntry() *event {
 	if p.checkToken(tBlockEntry) {
 		t := p.getToken()
+		p.moveComment(t, false)
 		if !p.checkToken(tBlockEntry, tBlockEnd) {
 			p.states = append(p.states, p.parseBlockSequenceEntry)
 			return p.parseBlockNode()
@@ -365,6 +373,7 @@ func (p *parser) parseBlockSequenceEntry() *event {
 func (p *parser) parseIndentlessSequenceEntry() *event {
 	if p.checkToken(tBlockEntry) {
 		t := p.getToken()
+		p.moveComment(t, false)
 		if !p.checkToken(tBlockEntry, tKey, tValue, tBlockEnd) {
 			p.states = append(p.states, p.parseIndentlessSequenceEntry)
 			return p.parseBlockNode()
@@ -386,6 +395,7 @@ func (p *parser) parseBlockMappingFirstKey() *event {
 func (p *parser) parseBlockMappingKey() *event {
 	if p.checkToken(tKey) {
 		t := p.getToken()
+		p.moveComment(t, false)
 		if !p.checkToken(tKey, tValue, tBlockEnd) {
 			p.states = append(p.states, p.parseBlockMappingValue)
 			return p.parseBlockNodeOrIndentlessSequence()
@@ -402,6 +412,7 @@ func (p *parser) parseBlockMappingKey() *event {
 		p.perr("while parsing a block mapping", p.marks[len(p.marks)-1], "expected <block end>, but found "+reprS(t.id()), t.start)
 	}
 	t := p.getToken()
+	p.moveComment(t, false)
 	p.state = p.popState()
 	p.popMark()
 	return &event{kind: eMappingEnd, start: t.start, end: t.end}
@@ -410,11 +421,23 @@ func (p *parser) parseBlockMappingKey() *event {
 func (p *parser) parseBlockMappingValue() *event {
 	if p.checkToken(tValue) {
 		t := p.getToken()
+		if p.dialect == Ruamel {
+			if p.checkToken(tValue) {
+				p.moveComment(t, false)
+			} else if !p.checkToken(tKey) {
+				p.moveComment(t, true)
+			}
+		}
 		if !p.checkToken(tKey, tValue, tBlockEnd) {
 			p.states = append(p.states, p.parseBlockMappingKey)
 			return p.parseBlockNodeOrIndentlessSequence()
 		}
 		p.state = p.parseBlockMappingKey
+		if p.dialect.ruamel() && !t.comment {
+			// ruamel marks the empty value at the next token (unless the
+			// value indicator kept a comment)
+			t = p.peekToken()
+		}
 		return p.processEmptyScalar(t.end)
 	}
 	p.state = p.parseBlockMappingKey
@@ -541,6 +564,20 @@ func (p *parser) parseFlowMappingValue() *event {
 func (p *parser) parseFlowMappingEmptyValue() *event {
 	p.state = p.parseFlowMappingKeyNext
 	return p.processEmptyScalar(p.peekToken().start)
+}
+
+// moveComment is RoundTripParser.move_token_comment (Token.move_old_comment
+// onto the next token); a no-op for the other dialects.
+func (p *parser) moveComment(t *token, empty bool) {
+	if p.dialect != Ruamel {
+		return
+	}
+	target := p.peekToken()
+	if !t.comment || target == nil || target.kind == tStreamEnd || target.kind == tDocumentStart {
+		return
+	}
+	t.comment = false
+	target.comment = true
 }
 
 func (p *parser) processEmptyScalar(m *Mark) *event {

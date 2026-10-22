@@ -62,6 +62,8 @@ type token struct {
 	// tags: handle (hasHandle=false is None) and suffix
 	hasHandle bool
 	suffix    string
+	// comment: the round-trip scanner attached a comment to the token
+	comment bool
 }
 
 func (t *token) id() string { return tokenIDs[t.kind] }
@@ -266,6 +268,7 @@ func (s *scanner) getToken() *token {
 		sameLine := t0.end.Line == t1.start.Line
 		postKinds := t0.kind == tScalar || t0.kind == tValue || t0.kind == tFlowSequenceEnd || t0.kind == tFlowMappingEnd
 		if (postKinds && sameLine) || (t0.kind == tScalar && !sameLine) {
+			t0.comment = true
 			s.tokensTaken++
 			s.popToken(1)
 			s.fetchMoreTokens()
@@ -286,9 +289,11 @@ func (s *scanner) gatherComments() {
 	if len(s.tokens) == 0 {
 		return
 	}
+	gathered := false
 	if s.tokens[0].kind == tComment {
 		s.popToken(0)
 		s.tokensTaken++
+		gathered = true
 	}
 	for s.needMoreTokens() {
 		s.fetchMoreTokens()
@@ -298,7 +303,11 @@ func (s *scanner) gatherComments() {
 		if s.tokens[0].kind == tComment {
 			s.tokensTaken++
 			s.popToken(0)
+			gathered = true
 		}
+	}
+	if gathered {
+		s.tokens[0].comment = true // add_pre_comments
 	}
 	if !s.done && len(s.tokens) < 2 {
 		s.fetchMoreTokens()
