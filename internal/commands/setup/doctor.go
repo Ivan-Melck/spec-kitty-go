@@ -45,7 +45,7 @@ func init() {
 				Name:  "env-file",
 				Short: "Report ``.kitty.env`` operator env-file health (presence/tier/ignore).",
 				Long: "Report ``.kitty.env`` operator env-file health (presence/tier/ignore).\n\nReads the repo- and home-tier ``.kitty.env`` files and the\nconfig.yaml ``env_file`` pointer, and reports which governed vars\n" +
-					"are set and from which tier -- names/presence only for anything not\non the printable-var allowlist (C-SEC-1), values never leaked.\n\nRead-only -- never mutates state.\n\n" +
+					"are set and from which tier -- names/presence only for anything not\non the printable-var allowlist (C-SEC-1), values never leaked.\nRead-only -- never mutates state.\n\n" +
 					"Examples:\n    spec-kitty doctor env-file\n    spec-kitty doctor env-file --json",
 				Flags: []*cli.Flag{jsonFlag()},
 				Run:   runDoctorEnvFile,

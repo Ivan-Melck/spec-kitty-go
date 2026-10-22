@@ -18,7 +18,7 @@ func init() {
 			Name:   "commit-guard-hook",
 			Short:  "Run the commit guard and exit with its result code.",
 			Hidden: true,
-			Args:   []*cli.Arg{{Name: "args", Variadic: true, Help: "Ignored; accepted for parity with the primary hook path."}},
+			Args:   []*cli.Arg{{Name: "args", Variadic: true, Metavar: "_args", Hidden: true, Help: "Ignored; accepted for parity with the primary hook path."}},
 			Run: func(ctx *cli.Context) error {
 				if code := Main(ctx.Stderr); code != 0 {
 					return cli.Exit(code)

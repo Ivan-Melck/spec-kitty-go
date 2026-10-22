@@ -203,7 +203,7 @@ func charterValidateCmd() *cli.Command {
 		Short: "Validate project-layer doctrine artifacts against their schemas (FR-017).",
 		Long:  "Validate project-layer doctrine artifacts against their schemas (FR-017).\n\nWhen *path* is a single file, validates that file.  When *path* is a\ndirectory, walks the tree for ``*.yaml`` files whose filename suffix\nmatches a canonical artifact kind and validates each one.\n\nExit code: ``0`` if every artifact validates; ``1`` if any artifact\nfails.  A per-file error report is printed for failures.",
 		Args: []*cli.Arg{
-			{Name: "path", Required: true, Metavar: "{path}", Help: "Artifact YAML file or a directory containing project-layer doctrine artifacts (recurses into per-kind subdirectories)."},
+			{Name: "path", Required: true, Metavar: "{path}", Type: "<path>", Help: "Artifact YAML file or a directory containing project-layer doctrine artifacts (recurses into per-kind subdirectories)."},
 		},
 		Run: runCharterValidate,
 	}

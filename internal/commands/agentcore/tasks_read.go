@@ -17,6 +17,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
 )
@@ -574,8 +575,8 @@ func panelLines(width int, title string, body []string) []string {
 	top := "╭" + strings.Repeat("─", inner) + "╮"
 	if title != "" {
 		t := " " + title + " "
-		left := (inner - cellWidth(t)) / 2
-		top = "╭" + strings.Repeat("─", left) + t + strings.Repeat("─", inner-left-cellWidth(t)) + "╮"
+		left := (inner - rich.CellLen(t)) / 2
+		top = "╭" + strings.Repeat("─", left) + t + strings.Repeat("─", inner-left-rich.CellLen(t)) + "╮"
 	}
 	out := []string{top}
 	for _, l := range body {

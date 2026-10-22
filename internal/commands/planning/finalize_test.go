@@ -53,8 +53,7 @@ func TestDiffFinalizeTasksHuman(t *testing.T) {
 		`$SK agent mission finalize-tasks --mission $M`,
 		`git checkout -q -- kitty-specs; sed -i 's#owned_files: \["src/calc.py"#owned_files: ["src/nothere.py"#' kitty-specs/$M/tasks/WP01-subtract-helper.md; $SK agent mission finalize-tasks --mission $M --json`,
 		`$SK agent mission finalize-tasks --mission $M`,
-		// mask the short SHA here: the normalizer skips all-digit SHAs.
-		`git checkout -q -- kitty-specs; $SK agent mission finalize-tasks --mission $M | sed -E 's/committed [0-9a-f]{7}/committed SHA/'`,
+		`git checkout -q -- kitty-specs; $SK agent mission finalize-tasks --mission $M`,
 	)
 	p.CompareTree("kitty-specs", true)
 	p.CompareTree(".worktrees", true)

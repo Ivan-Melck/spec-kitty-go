@@ -83,7 +83,7 @@ func init() {
 			Long:  initDoc,
 			Args:  []*cli.Arg{{Name: "project_name", Metavar: "project_name", Help: "Name for your new project directory (omit to initialize current directory)"}},
 			Flags: []*cli.Flag{
-				{Name: "ai", Kind: cli.String, Metavar: "<str>", Help: "Comma-separated AI assistants (claude,codex,gemini,...)"},
+				{Name: "ai", Kind: cli.String, Metavar: "<str>", Panel: "Selection", Help: "Comma-separated AI assistants (claude,codex,gemini,...)"},
 				{Name: "non-interactive", Aliases: []string{"yes"}, Kind: cli.Bool, Help: "Run without interactive prompts (suitable for CI/CD)"},
 			},
 			Run: runInit,

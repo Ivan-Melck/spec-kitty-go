@@ -40,12 +40,12 @@ func missionTypeLeaves() []*cli.Command {
 			Run:   runMissionInfo,
 		},
 		{
-			Name:  "switch",
-			Short: "[REMOVED] Switch active mission - this command was removed in v0.8.0. (deprecated)",
-			Long:  "(deprecated)\n\n[REMOVED] Switch active mission - this command was removed in v0.8.0.",
-			Flags: []*cli.Flag{{Name: "force", Kind: cli.Bool, Help: "(ignored)"}},
-			Args:  []*cli.Arg{{Name: "mission_name", Help: "Mission name (no longer supported)", Required: true, Metavar: "{mission_name}"}},
-			Run:   runMissionSwitch,
+			Name:       "switch",
+			Short:      "[REMOVED] Switch active mission - this command was removed in v0.8.0.",
+			Deprecated: true,
+			Flags:      []*cli.Flag{{Name: "force", Kind: cli.Bool, Help: "(ignored)"}},
+			Args:       []*cli.Arg{{Name: "mission_name", Help: "Mission name (no longer supported)", Required: true, Metavar: "{mission_name}"}},
+			Run:        runMissionSwitch,
 		},
 		{
 			Name:  "list",

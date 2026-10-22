@@ -27,7 +27,10 @@ func init() {
 			Name:  "setup-plan",
 			Short: "Scaffold an implementation plan template in the repository root checkout or an owned checkout.",
 			Long: "Scaffold an implementation plan template in the repository root checkout or an owned checkout.\n\nThis command is designed for AI agents to call programmatically.\nCreates plan.md and commits to target branch.\n\n" +
-				"Examples:\n    spec-kitty agent mission setup-plan --json\n    spec-kitty agent mission setup-plan --mission 020-my-feature --json",
+				"Examples:\n    spec-kitty agent mission setup-plan --json\n    spec-kitty agent mission setup-plan --mission 020-my-feature --json\n\n" +
+				"------------------------------------------------------------------\nThe SaaS-sync boundary gates this command used to enforce (FR-011 auth\n" +
+				"refusal, boundary preflight, dossier push) were removed with the sync\ntransport (issue #5); only local planning artifacts are produced here.\n" +
+				"------------------------------------------------------------------",
 			Flags: []*cli.Flag{
 				{Name: "mission", Kind: cli.String, Metavar: "<str>", Help: "Mission slug (e.g., '020-my-mission')"},
 				{Name: "json", Kind: cli.Bool, Help: "Output JSON format"},

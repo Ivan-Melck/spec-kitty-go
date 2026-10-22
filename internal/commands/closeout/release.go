@@ -23,7 +23,7 @@ func init() {
 			Short: "Prepare release artifacts (changelog draft, version bump, structured inputs).",
 			Long:  "Prepare release artifacts (changelog draft, version bump, structured inputs).\n\nReads kitty-specs/ artifacts and local git tags. No network calls.",
 			Flags: []*cli.Flag{
-				{Name: "channel", Kind: cli.String, Metavar: "<alpha|beta|stable>", Required: true, Help: "Release channel: alpha | beta | stable"},
+				{Name: "channel", Kind: cli.String, Choices: []string{"alpha", "beta", "stable"}, Required: true, Help: "Release channel: alpha | beta | stable"},
 				{Name: "repo", Kind: cli.String, Metavar: "<path>", Default: ".", Help: "Repository root (default: current directory)"},
 				{Name: "json", Kind: cli.Bool, Help: "Emit JSON instead of human-readable text"},
 			},

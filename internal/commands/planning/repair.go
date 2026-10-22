@@ -17,7 +17,7 @@ func init() {
 		missionG.Add(&cli.Command{
 			Name:  "repair",
 			Short: "Detect and forward-only repair a pre-existing cross-partition content split-brain for one mission (FR-005, NFR-005).",
-			Long: "Detect and forward-only repair a pre-existing cross-partition content split-brain for one mission (FR-005, NFR-005).\n\n" +
+			Long: "Detect and forward-only repair a pre-existing cross-partition content\nsplit-brain for one mission (FR-005, NFR-005).\n\n" +
 				"Fast-forwards under strict-ancestor + clean worktree, zero data loss.\nRefuses with a unified diff (scoped to the mission's own content) and\nmutates NOTHING on genuine (non-ancestor) divergence.\n\n" +
 				"Examples:\n    spec-kitty agent mission repair --mission 020-my-mission",
 			Flags: []*cli.Flag{{Name: "mission", Kind: cli.String, Metavar: "<str>", Required: true, Help: "Mission slug/handle to repair"}},
