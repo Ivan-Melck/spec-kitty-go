@@ -175,4 +175,3 @@ func doctorSparse(root string) []status.Finding {
 	return []status.Finding{{Severity: "warning", Category: "sparse_checkout", Message: strings.Join(lines, "\n"),
 		Action: "Run 'spec-kitty doctor sparse-checkout --fix' to remove legacy sparse-checkout state from the primary repo and any lane worktrees. Affected paths: " + strings.Join(affected, ", ")}}
 }
-

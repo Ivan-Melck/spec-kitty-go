@@ -5,7 +5,6 @@ import (
 	"strings"
 )
 
-
 // UnsafeSegmentReason returns core.paths.assert_safe_path_segment's error
 // text for v, or "" when v is a safe single path segment.
 func UnsafeSegmentReason(v string) string {
