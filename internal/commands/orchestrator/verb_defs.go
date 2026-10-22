@@ -4,12 +4,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 )
 
-func notYet(name string) func(*cli.Context) error {
-	return func(ctx *cli.Context) error {
-		return newVerb(ctx, name).fail("UNSUPPORTED_CAPABILITY", "not supported by this build", nil)
-	}
-}
-
 const helpOriginCheck = "Refuse (enforce, the default) or only warn (warn) when the mission's status evidence or approved lanes are behind or unreachable on their remote; off contacts nothing and accepts stale evidence. Overrides SPEC_KITTY_ORIGIN_CHECK."
 
 func originCheckFlag() *cli.Flag {
