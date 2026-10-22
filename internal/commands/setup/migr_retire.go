@@ -28,7 +28,9 @@ type retireSurface struct {
 	successorKeyPrefix  string
 }
 
-func selectedKey(kindKey string) string { return "selected_" + strings.TrimPrefix(kindKey, "activated_") }
+func selectedKey(kindKey string) string {
+	return "selected_" + strings.TrimPrefix(kindKey, "activated_")
+}
 
 func retireSurfaces(r retirement, answers bool) []retireSurface {
 	s := []retireSurface{

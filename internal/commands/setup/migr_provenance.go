@@ -22,7 +22,9 @@ func init() {
 	migrationImpls["3.2.7_heal_provenance_paths"] = mHealProvenancePaths()
 }
 
-func charterYAMLPath(root string) string { return filepath.Join(root, ".kittify", "charter", "charter.yaml") }
+func charterYAMLPath(root string) string {
+	return filepath.Join(root, ".kittify", "charter", "charter.yaml")
+}
 
 func isAbsAnyOS(p string) bool { return filepath.IsAbs(p) || isWindowsAbs(p) }
 
