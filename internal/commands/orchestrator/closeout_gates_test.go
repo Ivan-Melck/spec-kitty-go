@@ -16,6 +16,12 @@ import (
 // commits docs/contracts so accept-mission's readiness checks pass.
 func nativeApproval(t *testing.T, createArgs ...string) *testkit.Pair {
 	t.Helper()
+	return nativeApprovalExtra(t, nil, createArgs...)
+}
+
+// nativeApprovalExtra is nativeApproval with extra files in WP01's lane commit.
+func nativeApprovalExtra(t *testing.T, extraWP01 map[string]string, createArgs ...string) *testkit.Pair {
+	t.Helper()
 	p := missionfx.NewOraclePair(t)
 	missionfx.OracleCalcMission(t, p, createArgs...)
 	oracleBoth(t, p, "agent", "mission", "record-analysis", "--mission", "$M", "--input-file", missionfx.AnalysisReport(), "--json")
@@ -32,6 +38,12 @@ func nativeApproval(t *testing.T, createArgs ...string) *testkit.Pair {
 			wt := filepath.Join(".worktrees", missionfx.MissionSlug(t, s)+"-"+w.lane)
 			s.WriteFile(filepath.Join(wt, w.file), w.body)
 			s.Exec(wt, "git", "add", w.file)
+			if w.wp == "WP01" {
+				for rel, body := range extraWP01 {
+					s.WriteFile(filepath.Join(wt, rel), body)
+					s.Exec(wt, "git", "add", rel)
+				}
+			}
 			s.Exec(wt, "git", "commit", "-q", "-m", "feat("+w.wp+")")
 		})
 		oracleBoth(t, p, append(append([]string{"agent", "tasks", "mark-status"}, w.subtasks...), "--status", "done", "--mission", "$M")...)
@@ -185,4 +197,54 @@ func TestDiffCloseoutOriginAndGates(t *testing.T) {
 	orchGatePolicy(t, p, "warn")
 	step2M(t, p, api, "consolidate-mission", "--mission", "$M", "--origin-check", "warn")
 	compareGit(t, p, "after consolidate-mission")
+}
+
+// teammateCommit commits files to the coordination (mission) branch through
+// its worktree, as a teammate's push would land.
+func teammateCommit(t *testing.T, p *testkit.Pair, files map[string]string, msg string) {
+	p.Both(func(s *testkit.Sandbox) {
+		wt := filepath.Join(".worktrees", missionfx.MissionSlug(t, s)+"-coord")
+		for rel, body := range files {
+			s.WriteFile(filepath.Join(wt, rel), body)
+			if r := s.Exec(wt, "git", "add", "--", rel); r.Code != 0 {
+				t.Fatalf("git add: %s", r.Stderr)
+			}
+		}
+		if r := s.Exec(wt, "git", "commit", "-q", "-m", msg); r.Code != 0 {
+			t.Fatalf("git commit: %s%s", r.Stdout, r.Stderr)
+		}
+	})
+}
+
+// TestDiffConsolidateMissionAutoRebaseClassifier covers the stale-lane
+// auto-rebase conflict classifier through consolidate-mission: a source
+// conflict no rule resolves leaves the lane stale (PREFLIGHT_FAILED); additive
+// pyproject dependency and __init__.py import conflicts resolve by rule, with
+// the audit merge commit on the lane branch.
+func TestDiffConsolidateMissionAutoRebaseClassifier(t *testing.T) {
+	t.Parallel()
+	p := nativeApprovalExtra(t, map[string]string{
+		"pyproject.toml":  "[project]\nname = \"calc\"\ndependencies = [\n    \"click>=8\",\n]\n",
+		"src/__init__.py": "from .calc import add\n",
+	})
+	step2M(t, p, api, "accept-mission", "--mission", "$M", "--actor", "rev")
+	p.Both(func(s *testkit.Sandbox) {
+		s.Git("add", "-A")
+		s.Git("commit", "-q", "-m", "record acceptance")
+	})
+	teammateCommit(t, p, map[string]string{"src/calc.py": "def add(a, b):\n    return b + a\n"}, "teammate: calc")
+	step2M(t, p, api, "consolidate-mission", "--mission", "$M")
+	compareGit(t, p, "after manual conflict")
+	teammateCommit(t, p, map[string]string{
+		"src/calc.py":     "def add(a, b):\n    return a + b\n",
+		"pyproject.toml":  "[project]\nname = \"calc\"\ndependencies = [\n    \"rich>=13\",\n]\n",
+		"src/__init__.py": "from .version import VERSION\n",
+	}, "teammate: deps")
+	step2M(t, p, api, "consolidate-mission", "--mission", "$M")
+	compareGit(t, p, "after classifier auto-rebase")
+	if log := p.Go.Git("log", "--all", "--format=%s"); !strings.Contains(log, "auto-rebase(lane=lane-a): 3 conflicts resolved by classifier rules [R-INIT-IMPORTS-UNION, R-PYPROJECT-DEPS-UNION, R-STATUS-JSON-REMATERIALIZE]") {
+		t.Errorf("classifier audit commit missing:\n%s", log)
+	}
+	goSlug, oSlug := missionfx.MissionSlug(t, p.Go), missionfx.MissionSlug(t, p.Oracle)
+	compareFiles(t, p, goSlug, oSlug, "pyproject.toml", "src/__init__.py", "src/calc.py")
 }

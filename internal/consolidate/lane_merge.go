@@ -276,7 +276,7 @@ func (lm *laneMerge) consolidateLane(l lanes.Lane) error {
 	}
 	if ov := staleOverlap(lm.root, branch, mb); len(ov) > 0 {
 		wt := lanes.WorktreePath(lm.root, lm.o.Handle, l.LaneID)
-		if dirExists(wt) && autoRebase(lm.root, wt, branch, mb) {
+		if dirExists(wt) && autoRebase(lm.root, l.LaneID, wt, branch, mb) {
 			ov = staleOverlap(lm.root, branch, mb)
 		}
 		if len(ov) > 0 {

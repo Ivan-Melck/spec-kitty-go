@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
@@ -36,6 +37,7 @@ type MergeState struct {
 	PreTarget, PreCoord, PreCoordRef     string
 	LaneTips                             [][2]string // branch -> tip (snapshot order)
 	PreRefs                              [][2]string // branch -> sha (snapshot order)
+	RestoreTargets                       [][2]string // branch -> restore target (ADR A2)
 	LaneBranches                         []string
 }
 
@@ -76,7 +78,7 @@ func (s *MergeState) Object() *jsonx.Object {
 		"skip_lanes", s.SkipLanes, "pre_mutation_target_sha", optStr(s.PreTarget), "pre_mutation_coord_sha", optStr(s.PreCoord),
 		"pre_mutation_coord_ref", optStr(s.PreCoordRef), "pre_interrupt_lane_tips", pairsObj(s.LaneTips),
 		"reconciliation_passed_target_sha", nil, "pre_mutation_refs", pairsObj(s.PreRefs), "post_mutation_refs", &jsonx.Object{},
-		"restore_targets", pairsObj(s.PreRefs), "snapshot_lane_branches", strList(s.LaneBranches), "resume_seeded_refs", []any{},
+		"restore_targets", pairsObj(s.restoreTargets()), "snapshot_lane_branches", strList(s.LaneBranches), "resume_seeded_refs", []any{},
 		"unsettled_refs", []any{}, "advance_intents", &jsonx.Object{}, "released_refs", &jsonx.Object{}, "release_reasons", &jsonx.Object{})
 }
 
@@ -144,7 +146,56 @@ func LoadState(root, missionID string) *MergeState {
 		DeleteBranch: o.GetBool("delete_branch"), RemoveWorktree: o.GetBool("remove_worktree"), SkipLanes: o.GetBool("skip_lanes"),
 		PreTarget: o.GetString("pre_mutation_target_sha"), PreCoord: o.GetString("pre_mutation_coord_sha"),
 		PreCoordRef: o.GetString("pre_mutation_coord_ref"), LaneTips: pairsOf(o.GetObject("pre_interrupt_lane_tips")),
-		PreRefs: pairsOf(o.GetObject("pre_mutation_refs")), LaneBranches: strsOf(lb)}
+		PreRefs: pairsOf(o.GetObject("pre_mutation_refs")), RestoreTargets: pairsOf(o.GetObject("restore_targets")), LaneBranches: strsOf(lb)}
+}
+
+// restoreTargets is every snapshotted branch's restore target (the snapshot
+// unless a between-attempts move re-anchored it).
+func (s *MergeState) restoreTargets() [][2]string {
+	out := make([][2]string, 0, len(s.PreRefs))
+	for _, p := range s.PreRefs {
+		out = append(out, [2]string{p[0], s.restoreTarget(p[0])})
+	}
+	return out
+}
+
+func (s *MergeState) restoreTarget(b string) string {
+	for _, p := range s.RestoreTargets {
+		if p[0] == b {
+			return p[1]
+		}
+	}
+	for _, p := range s.PreRefs {
+		if p[0] == b {
+			return p[1]
+		}
+	}
+	return ""
+}
+
+// BeginAttempt is rollback.begin_attempt for a settled record: a branch
+// that moved between attempts gets its live tip as the new restore target
+// (a lane branch keeps its snapshot while still there).
+func (s *MergeState) BeginAttempt(root string) {
+	var out [][2]string
+	for _, p := range s.PreRefs {
+		b, snap := p[0], p[1]
+		target := s.restoreTarget(b)
+		live := revParse(root, "refs/heads/"+b)
+		switch {
+		case live == "":
+		case s.isLane(b):
+			if live == snap {
+				target = snap
+			} else {
+				target = live
+			}
+		case live != target:
+			target = live
+		}
+		out = append(out, [2]string{b, target})
+	}
+	s.RestoreTargets = out
 }
 
 // ClearState removes the transaction record.
@@ -230,27 +281,33 @@ func (s *MergeState) Rollback(root string) string {
 			width = len(p[0])
 		}
 	}
-	lines := []string{"Rollback to the pre-consolidation snapshot:"}
+	header := "Rollback to the pre-consolidation snapshot:"
+	var lines []string
 	for _, p := range s.PreRefs {
 		b, snap := p[0], p[1]
+		target := s.restoreTarget(b)
 		name := b + strings.Repeat(" ", width-len(b))
 		live := revParse(root, "refs/heads/"+b)
 		switch {
 		case live == "":
 			lines = append(lines, fmt.Sprintf("  missing    %s  (branch no longer exists)", name))
-		case live == snap:
+		case live == target:
 			lines = append(lines, fmt.Sprintf("  unchanged  %s  (already at %s)", name, short7(live)))
 		case s.isLane(b):
-			lines = append(lines, fmt.Sprintf("  kept       %s  (lane branches are reported, not moved; at %s)", name, short7(live)))
+			lines = append(lines, fmt.Sprintf("  kept       %s  (lane branch: not moved by consolidation; at %s)", name, short7(live)))
 		default:
 			if wt := worktreeOf(root, b); wt != "" {
-				gitx.Run(wt, "reset", "-q", "--hard", snap)
+				gitx.Run(wt, "reset", "-q", "--hard", target)
 			} else {
-				gitx.Run(root, "update-ref", "refs/heads/"+b, snap, live)
+				gitx.Run(root, "update-ref", "refs/heads/"+b, target, live)
 			}
-			lines = append(lines, fmt.Sprintf("  restored   %s  %s -> %s", name, short7(live), short7(snap)))
+			if target != snap {
+				header = "Rollback, restored to the record's restore targets:"
+			}
+			lines = append(lines, fmt.Sprintf("  restored   %s  %s -> %s", name, short7(live), short7(target)))
 		}
 	}
+	lines = append([]string{header}, lines...)
 	return strings.Join(lines, "\n")
 }
 
@@ -275,9 +332,41 @@ func Abort(w io.Writer, root, handle string) error {
 		say(w, fmt.Sprintf("No active merge state found for %s. Coordination workspace left unchanged.", slug))
 		return nil
 	}
-	fmt.Fprintln(w, st.Rollback(root))
-	say(w, fmt.Sprintf("Aborted consolidation for %s. Branches restored to their pre-consolidation commits; state and workspace cleaned up.", slug))
+	report := st.Rollback(root)
+	fmt.Fprintln(w, report)
+	teardownCoordForAbort(w, root, slug)
+	restoredTo := "their pre-consolidation commits"
+	if strings.HasPrefix(report, "Rollback, restored to the record's restore targets:") {
+		restoredTo = "the record's restore targets"
+	}
+	say(w, fmt.Sprintf("[green]Aborted[/green] consolidation for %s. Branches restored to %s; state and workspace cleaned up.", slug, restoredTo))
 	ClearState(root, mid)
 	say(w, "Removed merge lock.")
 	return nil
+}
+
+// teardownCoordForAbort is _teardown_coordination_for_abort: remove the
+// coordination worktree (never its branch) unless meta.json retains it.
+func teardownCoordForAbort(w io.Writer, root, slug string) {
+	sf := coord.Resolve(root, slug)
+	if strings.TrimSpace(sf.Meta.GetString("mid8")) == "" {
+		return
+	}
+	ret := ResolveRetention(sf.PrimaryDir, nil, nil)
+	for _, warning := range ret.Warnings {
+		say(w, "[yellow]Warning:[/yellow] "+warning)
+	}
+	if !ret.RemoveWorktree {
+		say(w, "[yellow]Notice:[/yellow] retention honored for worktrees (source: meta.json) — coordination worktree kept during abort.")
+		return
+	}
+	wt := sf.CoordWorktree
+	if wt == "" {
+		return
+	}
+	if _, err := os.Stat(wt); err != nil {
+		gitx.Run(root, "worktree", "prune")
+		return
+	}
+	gitx.Run(root, "worktree", "remove", "--force", wt)
 }

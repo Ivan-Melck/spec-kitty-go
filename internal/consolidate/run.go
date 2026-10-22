@@ -340,6 +340,7 @@ type run struct {
 	state        *MergeState
 	originCheck  *string
 	originGated  bool
+	coordDone    bool
 }
 
 func hasRemote(root, name string) bool {
@@ -570,15 +571,39 @@ func (r *run) execute() error {
 		st = newState(r.root, r.slug, mid, r.m.TargetBranch, r.strategy, r.m, r.wps, r.ret, r.push, coordRef)
 		st.Save(r.root)
 	}
+	if st != nil {
+		st.BeginAttempt(r.root)
+		st.Save(r.root)
+	}
 	r.state = st
 
 	restore := activateDrivers(r.root)
 	defer restore()
 	r.baseline = revParse(r.root, "refs/heads/"+m.TargetBranch)
+	r.coordDone = coordDoneOf(r)
+	if err := r.mutationSpan(r.coordDone); err != nil {
+		if e, ok := err.(*Exit); ok && e.Code != 0 && r.state != nil {
+			fmt.Fprintln(r.w, r.state.Rollback(r.root))
+		}
+		return err
+	}
+	if r.strategy == "squash" {
+		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP claim integrity and squash content attribution verified (no un-attributable content on the target); per-SHA approved-reachability deferred under squash strategy.")
+	} else {
+		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP commit reachability on the target (no excluded commit reachable).")
+	}
+	return r.afterReconcile()
+}
+
+func coordDoneOf(r *run) bool { return r.sf.Routed() && dirExists(r.sf.CoordWorktree) }
+
+// mutationSpan is the executor's single rollback door span: lane merges
+// through the reconciliation gate. A failure inside it rolls every
+// snapshotted branch back.
+func (r *run) mutationSpan(coordDone bool) error {
 	if err := r.mergeLanes(); err != nil {
 		return err
 	}
-	coordDone := r.sf.Routed() && dirExists(r.sf.CoordWorktree)
 	if err := r.bake(); err != nil {
 		return err
 	}
@@ -601,14 +626,13 @@ func (r *run) execute() error {
 	if err := r.doneBookkeeping(coordDone); err != nil {
 		return err
 	}
-	if err := r.reconcile(); err != nil {
-		return err
-	}
-	if r.strategy == "squash" {
-		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP claim integrity and squash content attribution verified (no un-attributable content on the target); per-SHA approved-reachability deferred under squash strategy.")
-	} else {
-		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP commit reachability on the target (no excluded commit reachable).")
-	}
+	return r.reconcile()
+}
+
+// afterReconcile is the post-gate phases: stale check, push, teardown and
+// the summary.
+func (r *run) afterReconcile() error {
+	coordDone := r.coordDone
 	say(r.w, "  [dim]Running stale-assertion check...[/dim]")
 	stale, staleErr := staleassert.RunCheck(r.baseline, "HEAD", r.root)
 	if r.push && hasRemote(r.root, "origin") {
@@ -628,7 +652,7 @@ func (r *run) execute() error {
 	}
 	r.captureRetrospective()
 	r.teardown(coordDone)
-	ClearState(r.root, mid)
+	ClearState(r.root, missionIDOf(r.root, r.slug))
 	say(r.w, "\n[bold]Stale assertion findings:[/bold]")
 	switch {
 	case staleErr != nil || stale == nil:
@@ -722,7 +746,6 @@ func (r *run) reconcile() error {
 	fmt.Fprintln(r.w, "\nError: Reconciliation FAILED: "+strings.Join(failures, "; ")+". Every branch this consolidation moved (target, mission and coordination branches) is being restored to its pre-consolidation commit; the rollback report below names each branch, and a branch marked NOT restored still carries this run's commits. nothing was torn down. Inspect the target branch and the lane tips, then re-run the merge.")
 	r.state.UpdatedAt = clock.NowUTCISO()
 	r.state.Save(r.root)
-	fmt.Fprintln(r.w, r.state.Rollback(r.root))
 	return exit(1)
 }
 

@@ -2,16 +2,13 @@ package consolidate
 
 import (
 	"fmt"
-	"os"
-	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/autorebase"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
-	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
 // targetOwnedPaths is target_owned_paths(): bookkeeping every branch writes.
@@ -98,43 +95,12 @@ func staleRemediation(l lanes.Lane, laneBranch, missionBranch string) string {
 	return fmt.Sprintf("Lane %s must incorporate mission changes before merging. Run: cd .worktrees/*-%s && git merge %s", l.LaneID, l.LaneID, missionBranch)
 }
 
-// autoRebase is attempt_auto_rebase for the clean-merge case: merge the
-// mission branch into the lane worktree (--no-ff), refresh staged status
-// snapshots and commit with git's default merge message. A conflicted merge
-// is aborted (the conflict classifier is not ported) and reported as failed.
-func autoRebase(root, wt, laneBranch, missionBranch string) bool {
-	res, _ := gitEnv(wt, mergeEnv(false), "merge", "--no-edit", "--no-ff", "--no-commit", missionBranch)
-	if res.Code != 0 {
-		gitEnv(wt, nil, "merge", "--abort")
-		return false
-	}
-	staged, _ := gitx.Run(wt, "diff", "--cached", "--name-only")
-	dirs := map[string]bool{}
-	for _, p := range strings.Split(staged, "\n") {
-		p = strings.TrimSpace(p)
-		if b := path.Base(p); strings.HasPrefix(p, "kitty-specs/") && (b == status.EventsFile || b == "status.json") {
-			dirs[path.Dir(p)] = true
-		}
-	}
-	keys := make([]string, 0, len(dirs))
-	for d := range dirs {
-		keys = append(keys, d)
-	}
-	sort.Strings(keys)
-	for _, d := range keys {
-		if snap, err := status.MaterializeSnapshot(filepath.Join(wt, d)); err == nil {
-			os.WriteFile(filepath.Join(wt, d, "status.json"), []byte(snap.Render()), 0o644)
-			gitx.Run(wt, "add", "--", path.Join(d, "status.json"))
-		}
-	}
-	if gitx.OK(wt, "rev-parse", "-q", "--verify", "MERGE_HEAD") {
-		if r, _ := gitEnv(wt, mergeEnv(false), "commit", "--no-edit"); r.Code != 0 {
-			gitEnv(wt, nil, "merge", "--abort")
-			return false
-		}
-	}
-	lanes.RecordTip(root, laneBranch)
-	return true
+// autoRebase is attempt_auto_rebase (internal/autorebase) for a lane
+// worktree: merge the mission branch, resolving conflicts by the classifier
+// rules; a refused attempt is aborted and reported as failed.
+func autoRebase(root, laneID, wt, laneBranch, missionBranch string) bool {
+	return autorebase.Attempt(autorebase.Options{Root: root, LaneID: laneID, Branch: laneBranch, MissionBranch: missionBranch,
+		Worktree: wt, Env: mergeEnv(false), EnsureDrivers: func() { ensureDriverConfig(root) }}).Succeeded
 }
 
 // checkStale runs the stale-lane gate with the worktree auto-rebase; it
@@ -145,7 +111,7 @@ func (r *run) checkStale(l lanes.Lane, branch string) string {
 		return ""
 	}
 	wt := lanes.WorktreePath(r.root, r.slug, l.LaneID)
-	if dirExists(wt) && autoRebase(r.root, wt, branch, r.m.MissionBranch) {
+	if dirExists(wt) && autoRebase(r.root, l.LaneID, wt, branch, r.m.MissionBranch) {
 		ov = staleOverlap(r.root, branch, r.m.MissionBranch)
 		if len(ov) == 0 {
 			return ""

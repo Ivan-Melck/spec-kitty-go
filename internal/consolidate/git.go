@@ -5,6 +5,8 @@ package consolidate
 
 import (
 	"fmt"
+
+	"github.com/spec-kitty/go-kitty3/internal/autorebase"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,26 +52,11 @@ var driverAttributes = []string{
 	"kitty-specs/**/decisions/index.json merge=spec-kitty-decision-index",
 }
 
-var driverDefs = [][3]string{
-	{"spec-kitty-event-log", "Spec Kitty event log union merge", "merge-driver-event-log"},
-	{"spec-kitty-meta", "Spec Kitty mission meta field merge", "merge-driver-meta"},
-	{"spec-kitty-traces", "Spec Kitty mission traces union merge", "merge-driver-traces"},
-	{"spec-kitty-acceptance-matrix", "Spec Kitty acceptance matrix filled-side merge", "merge-driver-acceptance-matrix"},
-	{"spec-kitty-issue-matrix", "Spec Kitty issue matrix row-aware merge", "merge-driver-issue-matrix"},
-	{"spec-kitty-review-cycle", "Spec Kitty review-cycle verdict collision refusal", "merge-driver-review-cycle"},
-	{"spec-kitty-decision-index", "Spec Kitty decision-index entry union merge", "merge-driver-decision-index"},
-}
-
 // activateDrivers is _ephemeral_merge_driver_activation: ensures the driver
 // definitions exist and seeds $GIT_COMMON_DIR/info/attributes; the returned
 // func restores the attributes file.
 func activateDrivers(root string) func() {
-	for _, d := range driverDefs {
-		if !gitx.OK(root, "config", "--get", "merge."+d[0]+".driver") {
-			gitx.Run(root, "config", "merge."+d[0]+".name", d[1])
-			gitx.Run(root, "config", "merge."+d[0]+".driver", "spec-kitty "+d[2]+" %O %A %B")
-		}
-	}
+	ensureDriverConfig(root)
 	common, err := gitx.CommonDir(root)
 	if err != nil {
 		return func() {}
@@ -100,6 +87,10 @@ func activateDrivers(root string) func() {
 		os.WriteFile(p, orig, 0o644)
 	}
 }
+
+// ensureDriverConfig is _ensure_merge_driver_git_config: define the
+// custom merge drivers without seeding info/attributes.
+func ensureDriverConfig(root string) { autorebase.EnsureDriverConfig(root) }
 
 // scratchWorktree creates a detached temp worktree at ref.
 func scratchWorktree(root, ref, prefix string) (string, func(), error) {

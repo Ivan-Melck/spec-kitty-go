@@ -48,15 +48,25 @@ func laneCommit(t testing.TB, s *testkit.Sandbox, lane string, files map[string]
 // WP01 and WP02 approved. stage "for_review" stops with WP02 in for_review.
 func approvedPair(t *testing.T, stage string, createArgs ...string) *testkit.Pair {
 	t.Helper()
+	return approvedPairExtra(t, stage, nil, createArgs...)
+}
+
+// approvedPairExtra is approvedPair with extra files in lane-a's commit.
+func approvedPairExtra(t *testing.T, stage string, extraLaneA map[string]string, createArgs ...string) *testkit.Pair {
+	t.Helper()
 	p := missionfx.NewOraclePair(t)
 	missionfx.OracleCalcMission(t, p, createArgs...)
 	oracleBoth(t, p, "agent", "mission", "record-analysis", "--mission", "$M", "--input-file", missionfx.AnalysisReport(), "--json")
 	oracleBoth(t, p, "agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M")
 	p.Both(func(s *testkit.Sandbox) {
-		laneCommit(t, s, "lane-a", map[string]string{
+		files := map[string]string{
 			"src/calc.py":            "def add(a, b):\n    return a + b\n\n\ndef subtract(a, b):\n    return a - b\n",
 			"tests/test_subtract.py": "from src.calc import subtract\n",
-		}, "feat(WP01): subtract")
+		}
+		for k, v := range extraLaneA {
+			files[k] = v
+		}
+		laneCommit(t, s, "lane-a", files, "feat(WP01): subtract")
 	})
 	oracleBoth(t, p, "agent", "tasks", "mark-status", "T001", "T002", "T003", "--status", "done", "--mission", "$M")
 	oracleBoth(t, p, "agent", "tasks", "move-task", "WP01", "--to", "for_review", "--mission", "$M", "--agent", "claude", "--note", "ready")
