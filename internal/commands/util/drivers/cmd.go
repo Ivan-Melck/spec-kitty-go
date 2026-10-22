@@ -138,7 +138,8 @@ func mergeStub() *cli.Command {
 		IgnoreUnknownOptions: true,
 		Run: func(ctx *cli.Context) error {
 			fmt.Fprintln(ctx.Stderr, "DeprecationWarning: The command 'merge' is deprecated.")
-			fmt.Fprintln(ctx.Stdout, "Error: The `merge` command has been renamed to `spec-kitty consolidate`. Re-run with `spec-kitty consolidate` (same flags).")
+			// console.print of _MERGE_RENAMED_MESSAGE: wrapped at the console width
+			rich.Print(ctx.Stdout, "[red]Error:[/red] The `merge` command has been renamed to `spec-kitty consolidate`. Re-run with `spec-kitty consolidate` (same flags).")
 			return cli.Exit(1)
 		},
 	}
