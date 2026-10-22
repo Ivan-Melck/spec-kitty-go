@@ -23,8 +23,8 @@ import (
 // destructiveRefused is git.destructive_guard.DestructiveOpRefused.
 type destructiveRefused struct {
 	code, worktree, current, remediation string
-	hasBranch                           bool
-	dirty                               []string
+	hasBranch                            bool
+	dirty                                []string
 }
 
 func (e *destructiveRefused) Error() string {

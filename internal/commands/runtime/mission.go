@@ -502,4 +502,3 @@ func runMissionClose(ctx *cli.Context) error {
 	}
 	return nil
 }
-
