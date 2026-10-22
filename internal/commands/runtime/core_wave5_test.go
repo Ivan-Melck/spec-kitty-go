@@ -24,6 +24,29 @@ func markMerged(t *testing.T, p *testkit.Pair) {
 	})
 }
 
+// TestDiffNextGuardFailurePaths covers CORE-14: guard_failure_paths names
+// the repo-relative path each genuinely missing artifact guard read (keyed
+// by the family's real artifact tag), for every advancing decision.
+func TestDiffNextGuardFailurePaths(t *testing.T) {
+	p := missionfx.NewOraclePair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		missionfx.RunOracle(t, s, "agent", "mission", "create", "calc-ops", "--json", "--pr-bound", "--branch-strategy", "already-confirmed", "--start-branch", "feat/calc-ops")
+	})
+	steps(t, p, false,
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"},
+	)
+	p.Both(func(s *testkit.Sandbox) {
+		s.Exec("", "rm", "-f", filepath.Join("kitty-specs", missionfx.MissionSlug(t, s), "spec.md"))
+	})
+	steps(t, p, false,
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"},
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success"},
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"},
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "failed", "--json"},
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success"},
+	)
+}
+
 // TestDiffMissionCloseMerged covers CORE-15: closing a merged mission
 // persists the retrospective (record + RetrospectiveCaptured event,
 // committed) and tears down the coordination worktree with its report line;
