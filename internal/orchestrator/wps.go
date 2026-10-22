@@ -241,7 +241,10 @@ type pdError struct {
 	input any
 }
 
-type pdValidator struct{ errs []pdError }
+type pdValidator struct {
+	errs  []pdError
+	title string // model name ("WpsManifest" when empty)
+}
 
 func with(loc []any, more ...any) []any { return append(append([]any(nil), loc...), more...) }
 
@@ -324,7 +327,11 @@ func (v *pdValidator) err() error {
 	if n == 1 {
 		plural = ""
 	}
-	fmt.Fprintf(&b, "%d validation error%s for WpsManifest", n, plural)
+	title := v.title
+	if title == "" {
+		title = "WpsManifest"
+	}
+	fmt.Fprintf(&b, "%d validation error%s for %s", n, plural, title)
 	for _, e := range v.errs {
 		b.WriteString("\n")
 		if len(e.loc) > 0 {
