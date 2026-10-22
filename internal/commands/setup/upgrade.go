@@ -590,7 +590,7 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 		if !opt.jsonOut {
 			var rows [][]string
 			for _, m := range migrations {
-				rows = append(rows, []string{m.ID, m.Description, m.TargetVersion})
+				rows = append(rows, []string{m.ID, rich.Strip(m.Description), m.TargetVersion})
 			}
 			rich.TableX(w, rich.TableSpec{Title: "Migration Plan", Headers: []string{"Migration", "Description", "Target"}}, rows)
 			fmt.Fprintln(w)
