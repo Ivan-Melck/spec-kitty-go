@@ -241,7 +241,9 @@ func TestParityCharterActivateRegistersDirectWrite(t *testing.T) {
 	compareSynth(t, p, true, "charter", "activate", "paradigm", "trunk-based")
 	compareSynthFile(t, p, ".kittify/charter/synthesis-manifest.yaml")
 	compareSynthFile(t, p, ".kittify/charter-packs/graph.yaml")
-	p.Both(func(s *testkit.Sandbox) { s.WriteFile(".kittify/charter-packs/directive/bad.directive.yaml", "id: 1\n") })
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile(".kittify/charter-packs/directive/bad.directive.yaml", "id: 1\n")
+	})
 	compareSynth(t, p, true, "charter", "activate", "paradigm", "trunk-based")
 }
 
