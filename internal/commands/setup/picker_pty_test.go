@@ -290,6 +290,32 @@ func TestNagColourMatchesOracle(t *testing.T) {
 	}
 }
 
+// Doctor tables on an 80-column colour terminal: rich's column collapse,
+// ellipsis and crop, bold header, cyan first column, markup cells, and the
+// highlighted markup=False issue lines.
+func TestDoctorColourTablesMatchOracle(t *testing.T) {
+	oracle := testkit.Oracle(t)
+	s := testkit.NewSandbox(t)
+	if r := s.Run("init", ".", "--ai", "claude,codex", "--non-interactive"); r.Code != 0 {
+		t.Fatalf("init: %s", r.Stderr)
+	}
+	os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty.plan"))
+	for _, args := range [][]string{{"doctor", "state-roots"}, {"doctor", "skills"}, {"doctor", "command-files"}} {
+		g, _, gc := runPTYIn(t, s, testkit.Binary(t), true, false, args)
+		o, _, oc := runPTYIn(t, s, oracle, true, false, args)
+		if gc != oc {
+			t.Errorf("%v: exit go=%d oracle=%d", args, gc, oc)
+		}
+		g, o = strings.ReplaceAll(g, "\r", ""), strings.ReplaceAll(o, "\r", "")
+		if !strings.Contains(o, "\x1b[") {
+			t.Fatalf("%v: oracle not coloured:\n%q", args, o)
+		}
+		if g != o {
+			t.Errorf("%v differs:\n%s", args, testkit.Diff(o, g))
+		}
+	}
+}
+
 var reSpaces = regexp.MustCompile(" {2,}")
 
 // initColourParts splits a coloured `init --ai` transcript into the part
