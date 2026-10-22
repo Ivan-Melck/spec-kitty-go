@@ -10,6 +10,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/atomicfile"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func init() {
@@ -62,6 +64,16 @@ func guarded(run func(*cli.Context) error) func(*cli.Context) error {
 		var ge *GuardedError
 		if errors.As(err, &ge) {
 			fmt.Fprintf(ctx.Stderr, "Error: %s\n", ge.Msg)
+			return cli.Exit(1)
+		}
+		var pe *pyyaml.PyError
+		if errors.As(err, &pe) {
+			// a non-YAMLError raised while loading is not collapsed: traceback
+			frame := rich.Frame{Name: "import_workflow", Line: 73}
+			if ctx.Cmd.Name == "export" {
+				frame = rich.Frame{Name: "export_workflow", Line: 47}
+			}
+			rich.Traceback(ctx.Stderr, pe.Type, pe.Msg, frame, rich.Frame{Name: "load_workflow_file", Line: 199})
 			return cli.Exit(1)
 		}
 		return err

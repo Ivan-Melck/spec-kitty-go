@@ -13,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -134,6 +135,9 @@ func provenanceFindings(root string) ([]string, []string) {
 // ruamelErrorClass maps a YAML parse failure to the ruamel exception class
 // name upstream reports (type(exc).__name__).
 func ruamelErrorClass(err error) string {
+	if c := pyyaml.ClassName(err); c != "" {
+		return c
+	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "already defined"):

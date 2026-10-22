@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	tr "github.com/spec-kitty/go-kitty3/internal/tracker"
 )
 
@@ -100,8 +101,47 @@ func fail(ctx *cli.Context, err error, jsonMode bool) error {
 	return crash(ctx, err)
 }
 
+// commandFrames are the upstream command-level traceback frames
+// (specify_cli/cli/commands/tracker.py): the command function at its
+// _run_or_exit call, and the line of its pre-boundary require_repo_root().
+var commandFrames = map[string]struct {
+	fn       string
+	boundary int
+	root     int
+}{
+	"providers":    {"providers_command", 142, 0},
+	"bind":         {"bind_command", 233, 0},
+	"status":       {"status_command", 275, 0},
+	"map add":      {"map_add_command", 304, 0},
+	"map list":     {"map_list_command", 333, 0},
+	"sync pull":    {"sync_pull_command", 363, 347},
+	"sync push":    {"sync_push_command", 393, 377},
+	"sync run":     {"sync_run_command", 425, 407},
+	"sync publish": {"sync_publish_command", 455, 442},
+	"unbind":       {"unbind_command", 471, 0},
+}
+
+func commandKey(ctx *cli.Context) string {
+	path := ctx.Cmd.Path()
+	if i := strings.Index(path, "tracker "); i >= 0 {
+		return path[i+len("tracker "):]
+	}
+	return path
+}
+
+// crash renders an uncaught exception raised inside the command's
+// _run_or_exit boundary as upstream's rich traceback.
 func crash(ctx *cli.Context, err error) error {
-	fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\n%s\n", tr.AsCrash(err).Error())
+	var fr []rich.Frame
+	if cf, ok := commandFrames[commandKey(ctx)]; ok {
+		fr = []rich.Frame{{Name: cf.fn, Line: cf.boundary}, {Name: "_run_or_exit", Line: 98}}
+	}
+	var c *tr.Crash
+	if errors.As(tr.AsCrash(err), &c) {
+		rich.PrintTraceback(ctx.Stderr, c.Exception(fr...))
+	} else {
+		rich.PrintTraceback(ctx.Stderr, rich.ParseException(err.Error(), fr...))
+	}
 	return cli.Exit(1)
 }
 
@@ -321,7 +361,12 @@ func runMapList(ctx *cli.Context) error {
 func syncRoot(ctx *cli.Context) (string, error) {
 	root, err := tr.RequireRepoRoot()
 	if err != nil {
-		return "", crash(ctx, &tr.Crash{Type: "TrackerConfigError", Msg: err.Error()})
+		var fr []rich.Frame
+		if cf, ok := commandFrames[commandKey(ctx)]; ok {
+			fr = []rich.Frame{{Name: cf.fn, Line: cf.root}, {Name: "require_repo_root", Line: 289}}
+		}
+		rich.Traceback(ctx.Stderr, "TrackerConfigError", err.Error(), fr...)
+		return "", cli.Exit(1)
 	}
 	return root, nil
 }

@@ -454,6 +454,10 @@ func BackfillWPIDs(dir, missionID string) map[string]string {
 			warnf("Cannot read frontmatter from %s: %v — skipping", filepath.Base(f[1]), err)
 			continue
 		}
+		// FrontmatterManager.read backfills dependencies: [] on WP files.
+		if strings.HasPrefix(filepath.Base(f[1]), "WP") && !d.Meta.Has("dependencies") {
+			d.Meta.Set("dependencies", []any{})
+		}
 		changed := false
 		if pyjson.Str(valueOf(d.Meta, "mission_id")) != missionID || valueOf(d.Meta, "mission_id") == nil {
 			d.Meta.Set("mission_id", missionID)
@@ -468,7 +472,10 @@ func BackfillWPIDs(dir, missionID string) map[string]string {
 			changed = true
 		}
 		if changed {
-			fm.Write(f[1], d, fm.WPFieldOrder)
+			// ruamel round trip: flow sequences read from the file stay flow.
+			raw, _ := os.ReadFile(f[1])
+			text := fm.RestoreFlow(fm.Render(d, fm.WPFieldOrder), fm.FlowKeys(string(raw)), nil)
+			fm.WriteFileAtomic(f[1], []byte(text), 0o644)
 		}
 		out[f[0]] = pyjson.Str(valueOf(d.Meta, "work_package_id"))
 	}

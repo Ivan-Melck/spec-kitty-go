@@ -5,17 +5,16 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
-	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 )
 
-// Compat planner (specify_cli.compat). The Go port never queries PyPI, so
-// the CLI status always reports latest_version=null / latest_source="none"
-// and the upgrade nag never fires.
+// Compat planner (specify_cli.compat). The latest-version lookup, nag cache
+// and nag configuration live in compat_latest.go.
 
 // Decision is compat.planner.Decision.
 type Decision string
@@ -45,6 +44,28 @@ type Invocation struct {
 	RawArgs     []string
 	IsHelp      bool
 	IsVersion   bool
+	FlagNoNag   bool
+	EnvCI       bool
+	StdoutTTY   bool
+}
+
+// suppressesNag is Invocation.suppresses_nag.
+func (i Invocation) suppressesNag() bool {
+	for _, a := range i.RawArgs {
+		if a == "--cli" {
+			return i.FlagNoNag || i.IsHelp || i.IsVersion
+		}
+	}
+	return i.FlagNoNag || i.EnvCI || !i.StdoutTTY || i.IsHelp || i.IsVersion
+}
+
+// suppressesNetwork is Invocation.suppresses_network.
+func (i Invocation) suppressesNetwork() bool { return i.EnvCI || !i.StdoutTTY || i.FlagNoNag }
+
+// CompatOptions are plan()'s read_only / query_latest switches.
+type CompatOptions struct {
+	ReadOnly, QueryLatest bool
+	Now                   time.Time
 }
 
 // Safe is compat.safety.classify.
@@ -73,6 +94,7 @@ type CompatPlan struct {
 	Safe     bool
 	Human    string
 	Pending  []any // pending_migrations entries
+	CLI      cliStatus
 }
 
 const unknownInstallNote = "Your install method could not be detected automatically. Upgrade Spec Kitty using the same method you used to install it. See https://spec-kitty.dev/docs/guides/install-and-upgrade for guidance."
@@ -88,8 +110,15 @@ func safeValue(v string) string {
 
 // PlanCompat is compat.planner.plan for a resolved project root.
 func PlanCompat(inv Invocation, root string) CompatPlan {
+	return PlanCompatWith(inv, root, CompatOptions{})
+}
+
+// PlanCompatWith is compat.planner.plan with explicit read_only /
+// query_latest.
+func PlanCompatWith(inv Invocation, root string, opt CompatOptions) CompatPlan {
 	st := kittify.ScanProjectStatus(root)
 	p := CompatPlan{Project: st, Safe: inv.Safe(), Decision: DecisionAllow, Case: "none"}
+	p.CLI = resolveCLIStatus(inv, opt)
 	switch {
 	case inv.IsHelp || inv.IsVersion:
 	case st.State == kittify.StateCorrupt:
@@ -100,6 +129,10 @@ func PlanCompat(inv Invocation, root string) CompatPlan {
 		p.Decision, p.Case = DecisionBlockMigration, "project_migration_needed"
 	case (st.State == kittify.StateNoProject || st.State == kittify.StateUninitialized) && !p.Safe:
 		p.Case = "project_not_initialized"
+	case p.CLI.outdated && !inv.suppressesNag():
+		// The Go binary's install method is never detected, so the
+		// update-available case is always install_method_unknown.
+		p.Decision, p.Case = DecisionAllowWithNag, "install_method_unknown"
 	}
 	p.ExitCode = decisionExit[p.Decision]
 	if p.Decision == DecisionBlockMigration && st.Root != "" {
@@ -122,6 +155,8 @@ func PlanCompat(inv Invocation, root string) CompatPlan {
 		p.Human = "This directory is not a Spec Kitty project. Run: spec-kitty init"
 	case "project_metadata_corrupt":
 		p.Human = fmt.Sprintf("This project's .kittify/metadata.yaml is unreadable: %s.\nRun: spec-kitty doctor", merr)
+	case "cli_update_available", "install_method_unknown":
+		p.Human = fmt.Sprintf("Spec Kitty %s is available; you have %s.\n%s", safeValue(p.CLI.latest), safeValue(p.CLI.installed), safeValue(unknownInstallNote))
 	}
 	return p
 }
@@ -150,7 +185,7 @@ func (p CompatPlan) JSON() *jsonx.Object {
 	}
 	return jsonx.NewObject(
 		"schema_version", 1, "case", p.Case, "decision", string(p.Decision), "exit_code", p.ExitCode,
-		"cli", jsonx.NewObject("installed_version", app.Version, "latest_version", nil, "latest_source", "none", "is_outdated", false, "fetched_at", nil),
+		"cli", p.CLI.json(),
 		"project", jsonx.NewObject("state", state, "project_root", rootV, "schema_version", svV, "min_supported", kittify.MinSupportedSchema,
 			"max_supported", kittify.MaxSupportedSchema, "metadata_error", merrV),
 		"safety", safety, "install_method", "unknown",
@@ -194,10 +229,13 @@ func SchemaGate(ctx *cli.Context, argv []string) error {
 	if first == "upgrade" || first == "init" {
 		return nil
 	}
-	inv := Invocation{CommandPath: commandPathFromArgv(argv), RawArgs: argv}
+	inv := Invocation{CommandPath: commandPathFromArgv(argv), RawArgs: argv, EnvCI: isCIEnv(), StdoutTTY: stdoutIsTTY()}
 	for _, a := range argv {
 		if a == "--help" || a == "-h" {
 			inv.IsHelp = true
+		}
+		if a == "--no-nag" {
+			inv.FlagNoNag = true
 		}
 	}
 	if len(argv) > 0 && (argv[0] == "--version" || argv[0] == "-v") {

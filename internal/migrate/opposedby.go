@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rtyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -218,6 +219,10 @@ func (g *drgGraph) render() string {
 	}
 	doc.Set("nodes", nodes)
 	doc.Set("edges", edges)
+	// _write_graph: yaml_rt.dump(payload) with width 4096
+	if out, err := rtyaml.DumpWidth(doc, 4096); err == nil {
+		return out
+	}
 	return yamlx.Emit(doc)
 }
 
@@ -228,6 +233,21 @@ func (g *drgGraph) hasEdge(src, tgt, rel string) bool {
 		}
 	}
 	return false
+}
+
+// dropOpposedBy is `del data["opposed_by"]; yaml_rt.dump(data, fh)` on the
+// round-trip load of the artifact (comments and styles kept, width 4096).
+func dropOpposedBy(text string) string {
+	doc, err := rtyaml.LoadString(text)
+	if err == nil {
+		if m, ok := doc.Root.(*rtyaml.Map); ok {
+			m.Delete("opposed_by")
+			if out, err := doc.DumpWidth(4096); err == nil {
+				return out
+			}
+		}
+	}
+	return removeTopLevelKey(text, "opposed_by")
 }
 
 // removeTopLevelKey drops the `key:` block (and the lines attached to it)
@@ -354,7 +374,7 @@ func RewriteOpposedBy(pack string, dryRun bool) (*RewriteResult, error) {
 		res.Rewritten = append(res.Rewritten, rewritten...)
 		if !dryRun && len(rewritten) > 0 {
 			b, _ := os.ReadFile(f.path)
-			os.WriteFile(f.path, []byte(removeTopLevelKey(string(b), "opposed_by")), 0o644)
+			os.WriteFile(f.path, []byte(dropOpposedBy(string(b))), 0o644)
 		}
 	}
 	if !dryRun {

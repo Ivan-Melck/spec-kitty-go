@@ -65,12 +65,12 @@ frontmatter shapes) and `internal/missionstate.TestPydanticDatetimeAgainstPython
 - `doctor provenance`: "the installed built-in pack root" is the Python wheel's site-packages location; the Go binary embeds its packs and has no such tree, so without `SPEC_KITTY_PACKS_ROOT` nothing classifies as under it.
 - A misconfigured `SPEC_KITTY_PACKS_ROOT` makes upstream log `UserWarning` lines that carry site-packages source paths, line numbers and source excerpts; Go prints nothing (`TestDiffDoctorProvenanceBadPacksRoot` compares stdout and exit code).
 - `migrate rebaseline-dossier-hashes`: artifacts that share an `artifact_key` are ordered by upstream's `Path.rglob` (filesystem directory order) inside `artifact_summaries`; Go uses name order. Hashes and counts do not depend on it.
-- Uncaught exceptions (`migrate rebaseline-dossier-hashes` non-object snapshot, `migrate backfill-wp-status` TypeError, `doctor mission-state --fix` symlinked lock, `--teamspace-dry-run --mission` selection errors) print `Traceback (most recent call last):` plus the exact final exception line; rich's framed traceback (site-packages frames) is PYF-01's call-site sweep.
+- Uncaught exceptions (`migrate rebaseline-dossier-hashes` non-object snapshot, `migrate backfill-wp-status` TypeError, `doctor mission-state --fix` symlinked lock, `--teamspace-dry-run --mission` selection errors) print rich's framed traceback (`rich.Traceback` via `uncaught`; PYF-01 sweep) with the exact final exception line; the frames inside the panel are sourceless (upstream shows site-packages paths and source excerpts: irreducible).
 
 ## Remaining work
 
 - `migrate charter-encoding`: the single-byte branch needs charset_normalizer 3.5.2 (`from_bytes` mess/coherence scoring over every CPython codec, including the CJK multibyte decoders). Porting it without third-party dependencies means porting those codecs' mapping tables as well; until then cp1252 selection uses a fixed confidence and other single-byte files report no candidates.
-- `migrate rewrite-opposed-by`: byte parity for non-canonically formatted artifacts needs a ruamel round-trip (comment-preserving) emitter, which is PYF-04's yamlx work; switch `internal/migrate/opposedby.go` to it once it lands.
+- `migrate rewrite-opposed-by`: the artifact rewrite and the graph dump go through `internal/rtyaml` (ruamel round trip, width 4096; PYF-04), so comments and styles of non-canonically formatted artifacts are kept as upstream.
 - `migrate backfill-runtime-state`: the `_flip_phase` PlacementMismatchError (placement port resolving a different PRIMARY home than the write target) needs OWN's placement port (OWN-01/OWN-10); without it the flip writes the canonical mission dir, which is the port's answer for every mission dir the CLI hands it.
 
 ## Exported library API
@@ -113,5 +113,5 @@ frontmatter shapes) and `internal/missionstate.TestPydanticDatetimeAgainstPython
 
 - `internal/cli`: `Context.InvokedSubcommand` (click's `ctx.invoked_subcommand`; additive, used by the `migrate` group callback).
 - `internal/dossier` (CORE), additive new files: `authored.go` (`ReadAuthoredWP(path) (*jsonx.Object, bool, error)` = `read_authored_wp_frontmatter` with strict `WPMetadata` validation; `WPProjectionHash(path) (hash string, verr error, ok bool)` = the indexer's `_hash_wp_projection`; `PyTypeError`) and `wpmeta_pydantic.go` (`WPMetadataValidationError(src, meta) string` = `str(pydantic.ValidationError)` for `WPMetadata` with ruamel round-trip input types; `WPMetadataTypeError(src, meta) string` = the uncaught `shell_pid` TypeError). One-line fix in `dossier.go`: `shell_pid` accepted yamlx's `int` values (they were rejected as invalid, so a WP with a numeric `shell_pid` hashed as non-present).
-- `internal/healthcheck` reads `internal/tracker.ParseTOML` (pyproject.toml for the former-checkout proof); switch to PYF's `internal/pytoml` when it lands.
+- `internal/healthcheck` reads pyproject.toml with `internal/pytoml` (CPython `tomllib`; PYF-03 sweep).
 - `docs/parity/setup.md`: the `materialize` / `migrate` rows point here (DOCS-03).

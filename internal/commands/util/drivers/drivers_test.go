@@ -196,7 +196,7 @@ func readOurs(s *testkit.Sandbox) string {
 var dictInputValue = regexp.MustCompile(`input_value=\{.*?\}, input_type`)
 
 // TestDriversParity runs every case through both binaries and compares exit
-// code, stdout, stderr (unless upstream crashed with a traceback) and the
+// code, stdout, stderr (traceback frames masked) and the
 // resulting OURS bytes.
 func TestDriversParity(t *testing.T) {
 	testkit.Oracle(t)
@@ -220,10 +220,10 @@ func TestDriversParity(t *testing.T) {
 			if a, b := norm(g, gr.Stdout), norm(o, or.Stdout); a != b {
 				t.Errorf("stdout differs\n%s", testkit.Diff(b, a))
 			}
-			if !strings.Contains(or.Stderr, "Traceback") {
-				if a, b := norm(g, gr.Stderr), norm(o, or.Stderr); a != b {
-					t.Errorf("stderr differs\n%s", testkit.Diff(b, a))
-				}
+			// Tracebacks: borders and exception lines must match; the
+			// frames (site-packages paths, source) are masked.
+			if a, b := testkit.MaskTracebackFrames(norm(g, gr.Stderr)), testkit.MaskTracebackFrames(norm(o, or.Stderr)); a != b {
+				t.Errorf("stderr differs\n%s", testkit.Diff(b, a))
 			}
 			if a, b := readOurs(g), readOurs(o); a != b {
 				t.Errorf("OURS differs\n%s", testkit.Diff(b, a))

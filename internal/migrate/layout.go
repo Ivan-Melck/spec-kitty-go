@@ -122,6 +122,10 @@ func moveBlocker(source, dest, overridesRoot string) string {
 	return ""
 }
 
+// OnLayoutMove, when set, observes each customized-file move (the upgrade
+// auto-commit's mutation log; upstream's audit hook on os.rename).
+var OnLayoutMove func(src, dst string)
+
 // ExecuteLayoutMigration is execute_migration(project_dir, dry_run).
 func ExecuteLayoutMigration(projectDir string, dryRun bool) *LayoutReport {
 	const mission = "software-dev"
@@ -153,6 +157,9 @@ func ExecuteLayoutMigration(projectDir string, dryRun bool) *LayoutReport {
 				rep.Moved = append(rep.Moved, [2]string{p, dest})
 				if !dryRun {
 					os.MkdirAll(filepath.Dir(dest), 0o755)
+					if OnLayoutMove != nil {
+						OnLayoutMove(p, dest)
+					}
 					os.Rename(p, dest)
 				}
 				continue

@@ -101,7 +101,7 @@ func planHasConcerns(dir string) bool {
 
 // ParseWpsManifest validates wps.yaml content against the canonical schema.
 func ParseWpsManifest(b []byte) (*WpsManifest, error) {
-	v, err := yamlx.Parse(b)
+	v, err := yamlx.ParseWith(b, yamlx.ParseOptions{Safe: true}) // YAML(typ="safe").load(text)
 	if err != nil {
 		return nil, &ManifestError{err.Error()}
 	}
