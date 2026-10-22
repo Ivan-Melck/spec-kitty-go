@@ -6,11 +6,13 @@
 package encguard
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
+	"github.com/spec-kitty/go-kitty3/internal/charsetnorm"
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func init() {
@@ -25,12 +27,17 @@ func wrap(c *cli.Command) {
 			if err == nil {
 				return ret
 			}
-			fmt.Fprintln(ctx.Stderr, "Traceback (most recent call last):")
-			msg := err.Error() // UnicodeDecodeError text plus any PEP 678 notes
+			exc := &rich.Exception{Type: exceptionType(err), Value: charter.ExceptionMessage(err)}
 			if charter.IsCharterEncodingError(err) {
-				msg = charter.ExceptionMessage(err) // str(exc) is the code
+				exc.Frames = charterEncodingFrames
+			} else {
+				exc.Frames = bomDecodeFrames
 			}
-			fmt.Fprintf(ctx.Stderr, "%s: %s\n", exceptionType(err), msg)
+			var noted *charsetnorm.NotedError
+			if errors.As(err, &noted) {
+				exc.Notes = noted.Notes
+			}
+			rich.PrintTraceback(ctx.Stderr, exc)
 			return cli.Exit(1)
 		}
 	}
@@ -38,6 +45,14 @@ func wrap(c *cli.Command) {
 		wrap(s)
 	}
 }
+
+// The innermost upstream frames of each failure (charter/activation/_io.py,
+// charter/encoding_recovery.py); the command's own outer frames vary.
+var (
+	charterEncodingFrames = []rich.Frame{{Name: "load_charter_file", Line: 121}, {Name: "_load_inner", Line: 175}}
+	bomDecodeFrames       = []rich.Frame{{Name: "load_charter_file", Line: 121}, {Name: "_load_inner", Line: 172},
+		{Name: "recover", Line: 101}, {Name: "_recover_from_bom", Line: 127}, {Name: "_bom_result", Line: 131}}
+)
 
 func exceptionType(err error) string {
 	if charter.IsCharterEncodingError(err) {
