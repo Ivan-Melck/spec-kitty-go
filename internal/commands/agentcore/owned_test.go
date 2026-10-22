@@ -2,6 +2,7 @@ package agentcore_test
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,7 +16,7 @@ import (
 func ownedSteps(t *testing.T, p *testkit.Pair, cwd, goSlug, orSlug string, steps [][]string) {
 	t.Helper()
 	for _, s := range steps {
-		ga, oa := subst(s, goSlug), subst(s, orSlug)
+		ga, oa := ownedSubst(p.Go, s, goSlug), ownedSubst(p.Oracle, s, orSlug)
 		g := p.Go.Exec(cwd, testkit.Binary(t), ga...)
 		o := p.Oracle.Exec(cwd, testkit.Oracle(t), oa...)
 		if os.Getenv("KITTY_TEST_TRACE") != "" {
@@ -33,6 +34,120 @@ func ownedSteps(t *testing.T, p *testkit.Pair, cwd, goSlug, orSlug string, steps
 		if ge != oe {
 			t.Errorf("%v (cwd %q): stderr differs\n%s", s, cwd, testkit.Diff(oe, ge))
 		}
+	}
+}
+
+// ownedSubst substitutes $M (the side's mission slug) and a "$MD/" prefix
+// (the side's owned mission dir).
+func ownedSubst(s *testkit.Sandbox, args []string, slug string) []string {
+	out := subst(args, slug)
+	md := filepath.Join(missionfx.OwnedDir(s), "kitty-specs", slug)
+	for i, a := range out {
+		if strings.HasPrefix(a, "$MD/") {
+			out[i] = filepath.Join(md, strings.TrimPrefix(a, "$MD/"))
+		}
+	}
+	return out
+}
+
+// ownedWalk is the upstream owned e2e quickstart walk
+// (tests/integration/test_owned_lifecycle_acceptance_e2e.py): create ->
+// spec-commit -> setup-plan -> status -> finalize-tasks -> move-task
+// claimed/in_progress -> implementation commit -> for_review -> context
+// resolve -> in_review/approved/done -> mark-status, from cwd, with
+// --owned-checkout (flag) or by flagless adoption, optionally with a stale
+// copy of the mission in R.
+func ownedWalk(t *testing.T, cwd string, flag, stale bool) {
+	p := missionfx.NewOwnedPair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		missionfx.GitIn(t, s, missionfx.OwnedDir(s), "commit", "-q", "--allow-empty", "-m", "owned base")
+	})
+	ownedSteps(t, p, cwd, "", "", [][]string{createOwnedArgs("--topology", "single_branch", "--json")})
+	g, o := missionfx.OwnedMissionSlug(t, p.Go), missionfx.OwnedMissionSlug(t, p.Oracle)
+	p.Both(func(s *testkit.Sandbox) {
+		slug := missionfx.OwnedMissionSlug(t, s)
+		md := filepath.Join(missionfx.OwnedDir(s), "kitty-specs", slug)
+		if stale {
+			os.MkdirAll(filepath.Join(s.Dir, "kitty-specs"), 0o755)
+			os.CopyFS(filepath.Join(s.Dir, "kitty-specs", slug), os.DirFS(md))
+			s.WriteFile(filepath.Join("kitty-specs", slug, "tasks", "WP02-stale.md"), "---\nwork_package_id: WP02\ntitle: stale\ndependencies: []\n---\n# WP02\n")
+			s.Git("add", "-A")
+			s.Git("commit", "-q", "-m", "stale copy of the mission")
+		}
+		os.WriteFile(filepath.Join(md, "spec.md"), []byte("# Demo\n\n## Functional Requirements\n\n| ID | Requirement | Status |\n|----|-------------|--------|\n| FR-001 | The demo works. | Draft |\n"), 0o644)
+	})
+	var own []string
+	if flag {
+		own = []string{"--owned-checkout", missionfx.OwnedRel}
+	}
+	with := func(args ...string) []string { return append(args, own...) }
+	ownedSteps(t, p, cwd, g, o, [][]string{
+		with("spec-commit", "$MD/spec.md", "$MD/meta.json", "--message", "docs: spec for demo", "--mission", "$M", "--json"),
+		with("agent", "mission", "setup-plan", "--mission", "$M", "--json"),
+		with("agent", "tasks", "status", "--mission", "$M", "--json"),
+	})
+	p.Both(func(s *testkit.Sandbox) {
+		slug := missionfx.OwnedMissionSlug(t, s)
+		owned := missionfx.OwnedSandbox(s)
+		md := filepath.Join("kitty-specs", slug)
+		owned.WriteFile(filepath.Join(md, "tasks.md"), "# Tasks\n\n## Work Package WP01\n\n**Dependencies**: None\n\nImplement the demo.\n")
+		owned.WriteFile(filepath.Join(md, "tasks", "WP01-demo.md"), "---\nwork_package_id: WP01\ntitle: Demo work package\ndependencies: []\nrequirement_refs: [FR-001]\nsubtasks: []\nowned_files: [demo.py]\nauthoritative_surface: demo.py\nexecution_mode: code_change\ncreate_intent:\n  - demo.py\n---\n\n# WP01\n\nImplement the demo.\n")
+		owned.WriteFile("demo.py", "# demo\n")
+		owned.Git("add", "-A")
+		owned.Git("commit", "-q", "-m", "tasks: demo work package")
+	})
+	ownedSteps(t, p, cwd, g, o, [][]string{
+		with("agent", "mission", "finalize-tasks", "--mission", "$M", "--json"),
+		with("agent", "tasks", "move-task", "WP01", "--to", "claimed", "--mission", "$M", "--agent", "claude", "--json"),
+		with("agent", "tasks", "move-task", "WP01", "--to", "in_progress", "--mission", "$M", "--agent", "claude", "--json"),
+		with("agent", "tasks", "move-task", "WP01", "--to", "for_review", "--mission", "$M", "--agent", "claude", "--json"),
+	})
+	p.Both(func(s *testkit.Sandbox) {
+		owned := missionfx.OwnedSandbox(s)
+		owned.WriteFile("demo.py", "# demo\nVALUE = 1\n")
+		owned.Git("add", "-A")
+		owned.Git("commit", "-q", "-m", "feat: implement demo")
+	})
+	ownedSteps(t, p, cwd, g, o, [][]string{
+		with("agent", "tasks", "move-task", "WP01", "--to", "for_review", "--mission", "$M", "--agent", "claude", "--json"),
+		with("agent", "context", "resolve", "--action", "implement", "--mission", "$M", "--wp-id", "WP01", "--json"),
+		with("agent", "context", "resolve", "--action", "implement", "--mission", "$M", "--wp-id", "WP01"),
+		with("agent", "tasks", "status", "--mission", "$M"),
+		with("agent", "tasks", "move-task", "WP01", "--to", "in_review", "--mission", "$M", "--agent", "reviewer", "--json"),
+		with("agent", "tasks", "move-task", "WP01", "--to", "approved", "--mission", "$M", "--agent", "reviewer", "--note", "ok", "--json"),
+		with("agent", "tasks", "move-task", "WP01", "--to", "done", "--mission", "$M", "--agent", "reviewer", "--json"),
+		with("agent", "tasks", "mark-status", "T001", "--status", "done", "--mission", "$M", "--json"),
+		with("agent", "tasks", "status", "--mission", "$M", "--json"),
+	})
+	p.CompareTree(missionfx.OwnedRel+"/kitty-specs", true)
+	compareOwnedGit(t, p)
+}
+
+// TestDiffOwnedLifecycleWalk covers OWN-01/OWN-02/OWN-03/OWN-07: the owned
+// lifecycle walk with --owned-checkout from R, P and S, by flagless adoption
+// from P (and its non-adoption from R / S), and with a stale repository-root
+// copy of the mission.
+func TestDiffOwnedLifecycleWalk(t *testing.T) {
+	cases := []struct {
+		name        string
+		cwd         string
+		flag, stale bool
+	}{
+		{"flag-from-R", "", true, false},
+		{"flag-from-P", missionfx.OwnedRel, true, false},
+		{"flag-from-S", missionfx.SiblingRel, true, false},
+		{"adopt-from-P", missionfx.OwnedRel, false, false},
+		{"flagless-from-R", "", false, false},
+		{"flagless-from-S", missionfx.SiblingRel, false, false},
+		{"flag-from-R-stale", "", true, true},
+		{"adopt-from-P-stale", missionfx.OwnedRel, false, true},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ownedWalk(t, c.cwd, c.flag, c.stale)
+		})
 	}
 }
 

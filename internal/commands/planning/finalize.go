@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/acceptance"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
@@ -2084,7 +2085,12 @@ func (f *finalizeRun) scaffoldAcceptanceMatrix() string {
 	}
 	doc := jsonx.NewObject("mission_slug", f.slug, "mission_number", "", "mission_type", "", "overall_verdict", "pending", "criteria", crit, "negative_invariants", []any{})
 	os.MkdirAll(home, 0o755)
-	if err := os.WriteFile(homePath, []byte(jsonx.Dumps(doc, jsonx.Pretty)+"\n"), 0o644); err != nil {
+	// write_acceptance_matrix: identity re-stamped from a sibling meta.json.
+	m, merr := acceptance.MatrixFromObject(doc)
+	if merr != nil {
+		return ""
+	}
+	if _, err := acceptance.WriteMatrix(home, m); err != nil {
 		return ""
 	}
 	if home == f.dir {
