@@ -145,6 +145,44 @@ func TestDiffDoctorMissionStateFixCalc(t *testing.T) {
 	}
 }
 
+// wedgedCorpus: execution has begun (WP01 claimed) but lanes.json is gone,
+// so --fix rebuilds it; literal owned_files that match nothing refuse the
+// rebuild with nearest-match suggestions unless declared in create_intent.
+func wedgedCorpus(s *testkit.Sandbox, slug string, owned1, owned2 string) {
+	m := "kitty-specs/" + slug + "/"
+	s.WriteFile(m+"meta.json", `{"mission_id": "01JWWWWWWWWWWWWWWWWWWWWWW`+slug[2:3]+`", "mission_slug": "`+slug+`", "slug": "`+slug+`", "mission_number": `+slug[1:3]+`, "mission_type": "software-dev", "friendly_name": "W", "target_branch": "main", "topology": "lanes", "created_at": "2025-01-01T00:00:00+00:00"}`+"\n")
+	s.WriteFile(m+"spec.md", "# Spec\n")
+	s.WriteFile(m+"tasks/WP01-a.md", "---\nwork_package_id: WP01\ntitle: A\ndependencies: []\nexecution_mode: code_change\nowned_files:\n"+owned1+"create_intent:\n  - src/new_module.py\n---\nbody\n")
+	s.WriteFile(m+"tasks/WP02-b.md", "---\nwork_package_id: WP02\ntitle: B\ndependencies: [WP01]\nexecution_mode: code_change\nowned_files:\n"+owned2+"---\nbody\n")
+	s.WriteFile(m+"status.events.jsonl", `{"actor": "x", "at": "2025-01-02T00:00:00+00:00", "event_id": "01JWWWWWWWWWWWWWWWWWWWWW`+slug[2:3]+`1", "evidence": null, "execution_mode": "worktree", "force": false, "from_lane": "planned", "mission_slug": "`+slug+`", "reason": null, "review_ref": null, "to_lane": "claimed", "wp_id": "WP01"}`+"\n")
+}
+
+func TestDiffDoctorMissionStateFixWedgedLanes(t *testing.T) {
+	p := newOraclePair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile("src/calc_ops.py", "x = 1\n")
+		s.WriteFile("src/calc_util.py", "y = 2\n")
+		s.WriteFile("README.md", "r\n")
+		wedgedCorpus(s, "096-bad", "  - src/calc.py\n  - src/new_module.py\n  - src/**/*.py\n  - lib/{a,b}.py\n", "  - docs/missing.md\n  - READM.md\n  - src/calc.py\n  - src/calc_utl.py\n")
+		s.Git("add", "-A")
+		s.Git("commit", "-q", "-m", "wedged")
+	})
+	compareSteps(t, p, "", "",
+		step{"doctor", "mission-state", "--fix", "--json"},
+		step{"doctor", "mission-state", "--fix"},
+	)
+	p.Both(func(s *testkit.Sandbox) {
+		os.RemoveAll(join(s.Dir, "kitty-specs/096-bad"))
+		wedgedCorpus(s, "097-good", "  - src/calc_ops.py\n  - src/new_module.py\n", "  - src/calc_util.py\n")
+		s.Git("add", "-A")
+		s.Git("commit", "-q", "-m", "wedged good")
+	})
+	compareSteps(t, p, "", "",
+		step{"doctor", "mission-state", "--fix"},
+	)
+	p.CompareTree("kitty-specs/097-good", true)
+}
+
 func TestMissionStateFixWithoutOracle(t *testing.T) {
 	s := missionfx.NewProject(t)
 	repairCorpus(s)

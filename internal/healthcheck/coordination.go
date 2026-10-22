@@ -19,10 +19,7 @@ import (
 
 // Coordination + sparse-checkout health (cli/commands/_coordination_doctor.py).
 //
-// Deviation: stranded coordination-revert markers
-// (.kittify/runtime/merge/*/state.json pending_coord_reconcile) are reported
-// only when unparseable; a parseable marker's committed-ref coherence is not
-// re-derived and `--fix` does not revert strands.
+// Stranded coordination-revert markers live in strand.go.
 
 // CoordFinding is DoctorFinding.
 type CoordFinding struct {
@@ -97,43 +94,6 @@ func trackedWorktreesFindings(root string) []CoordFinding {
 		sp("Remove it from version control: `git rm -r --cached .worktrees/` then commit, and ensure `.worktrees/` is gitignored."), sp("TRACKED_WORKTREES_CONTENT"))
 	f.Extra = jsonx.NewObject("tracked", strs(preview), "tracked_count", len(tracked), "truncated", len(tracked) > 10)
 	return []CoordFinding{f}
-}
-
-func strandedMarkerFindings(root string) []CoordFinding {
-	var out []CoordFinding
-	base := project.Kittify(root, "runtime", "merge")
-	for _, n := range sortedChildren(base) {
-		b, err := os.ReadFile(filepath.Join(base, n, "state.json"))
-		if err != nil {
-			continue
-		}
-		v, err := pyjson.Loads(string(b))
-		if err != nil {
-			continue
-		}
-		st, _ := v.(*jsonx.Object)
-		marker, ok := valueOf(st, "pending_coord_reconcile").(*jsonx.Object)
-		if !ok {
-			continue
-		}
-		parsed := true
-		for _, k := range []string{"coord_ref", "captured_sha", "coord_worktree"} {
-			if s, ok := valueOf(marker, k).(string); !ok || s == "" {
-				parsed = false
-			}
-		}
-		if l, ok := valueOf(marker, "stranded_wp_ids").([]any); !ok || len(l) == 0 {
-			parsed = false
-		}
-		if !parsed {
-			f := cf("warning", fmt.Sprintf("Mission %s carries a `pending_coord_reconcile` marker that could not be parsed into repair inputs.", pyjson.Repr(valueOf(st, "mission_slug"))),
-				sp("A `pending_coord_reconcile` marker could not be parsed into repair inputs (missing coord_ref/captured_sha/coord_worktree or an empty strand). Inspect `.kittify/runtime/merge/<mission_id>/state.json` and clear or repair the marker."),
-				sp("COORDINATION_RECONCILE_MARKER_UNPARSEABLE"))
-			f.Extra = jsonx.NewObject("mission_id", valueOf(st, "mission_id"), "mission_slug", valueOf(st, "mission_slug"))
-			out = append(out, f)
-		}
-	}
-	return out
 }
 
 type coordIdentity struct{ branch, slug, id string }
@@ -444,6 +404,11 @@ func FixCoordination(root string, names []string, findings []CoordFinding, say f
 			continue
 		}
 		say(fmt.Sprintf("[green]Materialized:[/green] coordination worktree for mission %s.", pyjson.ReprString(slug)))
+	}
+	healed, strandExtra := fixStrandedReverts(root, findings)
+	extra = append(extra, strandExtra...)
+	for _, slug := range healed {
+		say(fmt.Sprintf("[green]Healed:[/green] reverted the stranded coordination `done` and cleared the reconcile marker for %s.", slug))
 	}
 	// Gap-1 fast-forward
 	for _, n := range names {
