@@ -175,7 +175,13 @@ var reCommit = regexp.MustCompile(`Commit: [0-9a-f]{7}\b`)
 // reDigitSHA masks all-digit short SHAs that testkit.Normalize keeps.
 var reDigitSHA = regexp.MustCompile(`\b[0-9]{7}(?:[0-9]{3})?\b`)
 
-func digitSHA(s string) string { return reDigitSHA.ReplaceAllString(s, "<SHORTSHA>") }
+// reRollbackSHA masks the short SHAs of rollback report lines, which testkit
+// keeps when they happen to be all letters (a-f).
+var reRollbackSHA = regexp.MustCompile(`(-> |at |observed |expected )[0-9a-f]{7}\b`)
+
+func digitSHA(s string) string {
+	return reRollbackSHA.ReplaceAllString(reDigitSHA.ReplaceAllString(s, "<SHORTSHA>"), "${1}<SHORTSHA>")
+}
 
 // compareMissionTree compares kitty-specs (and optionally .worktrees),
 // dropping the oracle-written analysis-report.md whose issue_counts key

@@ -24,6 +24,10 @@ type Options struct {
 	Env []string
 	// EnsureDrivers is _ensure_merge_driver_git_config (optional).
 	EnsureDrivers func()
+	// Disposable is the lane worktree's residue context (_abort_context):
+	// paths a guarded merge abort may discard beyond the merge's own. nil:
+	// nothing else is disposable.
+	Disposable func(string) bool
 }
 
 // Report is AutoRebaseReport.
@@ -430,10 +434,14 @@ func (a *attempt) ensureUser() {
 	}
 }
 
-// fail is _abort_with_failure (a plain merge --abort: the destructive
-// guard's refusal is not ported).
+// fail is _abort_with_failure: the merge is aborted through the destructive
+// guard; a refusal leaves it in progress and says so in the halt reason.
 func (a *attempt) fail(reason string) Report {
-	a.git("merge", "--abort")
+	if err := a.guardedAbort(a.o.Disposable); err != nil {
+		if refused, ok := err.(*AbortRefused); ok {
+			reason += "; the merge was left in progress because aborting it would discard local changes: " + refused.Remediation
+		}
+	}
 	if e := a.reapplySparse(); e != "" {
 		reason += "; sparse checkout cleanup failed: " + e
 	}
@@ -532,6 +540,11 @@ func (a *attempt) ruffFix(rel string) (bool, string) {
 // Attempt is attempt_auto_rebase: merge the mission branch into the lane
 // worktree, resolving conflicts by the classifier rules.
 func Attempt(o Options) Report {
+	if o.Disposable == nil {
+		if p := lanes.ParseBranch(o.Branch); p != nil {
+			o.Disposable = LaneResidue(o.Root, p.MissionSlug)
+		}
+	}
 	a := &attempt{o: o, wt: o.Worktree, lane: o.LaneID}
 	a.ensureUser()
 	if h := a.refusePreexistingLaneStatusDeletions(); h != "" {

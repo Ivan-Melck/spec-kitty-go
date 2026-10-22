@@ -43,6 +43,35 @@ type LaneMergeError struct {
 
 func (e *LaneMergeError) Error() string { return e.Msg }
 
+// ApprovedBoundError is ApprovedBoundRefused: a lane holding content
+// committed after review approved it (#5668), with its refusal codes.
+type ApprovedBoundError struct {
+	Msg   string
+	Codes []string
+}
+
+func (e *ApprovedBoundError) Error() string { return e.Msg }
+
+// refusePostApprovalContent is _refuse_post_approval_lane_content.
+func (lm *laneMerge) refusePostApprovalContent(canceled map[string]bool) error {
+	tip, err := resolveCommit(lm.root, lm.m.TargetBranch)
+	if err != nil {
+		return &LaneMergeError{Msg: err.Error()}
+	}
+	refusal, err := ApprovedBoundRefusal(lm.root, lm.sf.StatusDir(), lm.m, tip, tip, canceled)
+	if err != nil {
+		return &LaneMergeError{Msg: fmt.Sprintf("The approved lanes could not be checked against what review approved (%s); no lane was merged.", err.Error())}
+	}
+	if refusal == "" {
+		return nil
+	}
+	codes := BoundRefusalCodes(refusal)
+	if strings.Contains(refusal, AttestApprovedFlag) {
+		refusal += "\nconsolidate-mission has no attestation flag: attestation is done with `spec-kitty consolidate` (CLI only), not with this command."
+	}
+	return &ApprovedBoundError{Msg: refusal, Codes: codes}
+}
+
 // DestructiveRefusal is DestructiveOpRefused.
 type DestructiveRefusal struct {
 	Code        string
@@ -121,6 +150,9 @@ func RunLaneMerge(root string, o LaneMergeOptions) error {
 	}
 	m.TargetBranch = o.Target
 	lm := &laneMerge{root: root, o: o, sf: sf, m: m}
+	if pr := ProtectedStatusTargetRefusal(root, o.Slug, m, lm.canceledWPs()); pr != nil {
+		return &LaneMergeError{Msg: fmt.Sprintf("%s: %s Next step: %s", pr.Code, pr.Message, pr.NextStep)}
+	}
 	if planningOnly(m) {
 		var buf strings.Builder
 		ret := ResolveRetention(sf.PrimaryDir, nil, nil)
@@ -156,6 +188,9 @@ func RunLaneMerge(root string, o LaneMergeOptions) error {
 	}
 	if len(blocking) > 0 {
 		return &LaneMergeError{Msg: strings.Join(blocking, "; ")}
+	}
+	if err := lm.refusePostApprovalContent(canceled); err != nil {
+		return err
 	}
 	if err := lm.preflight(ret); err != nil {
 		return err
