@@ -244,4 +244,3 @@ func reportOwnedMarkFailure(ctx *cli.Context, jsonMode bool, owned *ownedcheckou
 	}
 	ownedcheckout.Emit(ctx.Stdout, ctx.Stderr, &ownedcheckout.Error{Code: code, Message: msg}, false, nil)
 }
-
