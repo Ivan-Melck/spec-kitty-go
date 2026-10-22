@@ -11,11 +11,13 @@ import (
 	"strconv"
 	"strings"
 
+	"errors"
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/commands/util/encoding"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
@@ -99,7 +101,7 @@ func ParseIndex(text string) ([]Entry, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, nil
 	}
-	loaded, err := yamlx.Parse([]byte(text))
+	loaded, err := yamlx.ParseWith([]byte(text), yamlx.ParseOptions{Safe: true}) // YAML(typ="safe").load(text)
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +240,12 @@ func runQuery(ctx *cli.Context) error {
 	}
 	entries, err := ParseIndex(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"))
 	if err != nil {
+		var pe *pyyaml.PyError
+		if errors.As(err, &pe) {
+			// not a YAMLError: uncaught
+			rich.Traceback(ctx.Stderr, pe.Type, pe.Msg, rich.Frame{Name: "query_command", Line: 202}, rich.Frame{Name: "_load_store", Line: 92})
+			return cli.Exit(1)
+		}
 		return readFail(err.Error())
 	}
 	matches := Query(entries, normalized, divio, section)

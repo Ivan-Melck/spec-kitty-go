@@ -73,6 +73,10 @@ func ParseFrontmatter(content string, warn io.Writer) (*jsonx.Object, string) {
 	body := normalized[bodyStart:]
 	v, err := pyyaml.SafeLoad(fmText)
 	if err != nil {
+		if pe, ok := err.(*pyyaml.PyError); ok {
+			// only yaml.YAMLError is caught upstream
+			panic(&crash{pe.Type + ": " + pe.Msg})
+		}
 		if warn != nil {
 			rich.LogWarning(warn, "YAML parse error in frontmatter (WP may vanish from dashboard): "+err.Error())
 		}
@@ -118,7 +122,23 @@ func DetectLaneMismatch(path string, warn io.Writer) (bool, string, string, erro
 	if err != nil {
 		return false, expected, "", nil
 	}
-	meta, _ := ParseFrontmatter(content, warn)
+	// read + parse_frontmatter run under `except Exception` upstream: a
+	// non-YAMLError from the loader just means "no mismatch".
+	meta, parsed := func() (m *jsonx.Object, ok bool) {
+		defer func() {
+			if r := recover(); r != nil {
+				if _, isCrash := r.(*crash); !isCrash {
+					panic(r)
+				}
+				m, ok = nil, false
+			}
+		}()
+		m, _ = ParseFrontmatter(content, warn)
+		return m, true
+	}()
+	if !parsed {
+		return false, expected, "", nil
+	}
 	raw, ok := meta.Get("lane")
 	if !ok {
 		raw = ""
@@ -249,7 +269,17 @@ func run(ctx *cli.Context) error {
 		shellPID = fmt.Sprint(os.Getpid())
 	}
 	fix := ctx.Bool("fix")
-	err := func() error {
+	err := func() (err error) {
+		defer func() {
+			// ParseFrontmatter panics with *crash for non-YAMLErrors
+			if r := recover(); r != nil {
+				c, ok := r.(*crash)
+				if !ok {
+					panic(r)
+				}
+				err = c
+			}
+		}()
 		if ctx.Bool("all") {
 			var dirs []string
 			add := func(specs string) {

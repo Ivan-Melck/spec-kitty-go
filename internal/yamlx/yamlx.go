@@ -34,6 +34,10 @@ type ParseOptions struct {
 	// File names the file when upstream loads a path / binary stream
 	// (marks then name the file and carry no snippet).
 	File string
+	// TextFile names the file when upstream loads a text-mode handle
+	// (open(path, encoding="utf-8")): like File, but decoding errors are
+	// the read's UnicodeDecodeError and newlines are universal.
+	TextFile string
 }
 
 // ParseWith is Parse with the upstream loader's options.
@@ -44,6 +48,13 @@ func ParseWith(src []byte, opts ParseOptions) (any, error) {
 	}
 	if opts.File != "" {
 		return pyyaml.LoadRuamelInput(pyyaml.FileInput(src, opts.File), d)
+	}
+	if opts.TextFile != "" {
+		in, err := pyyaml.TextFileInput(src, opts.TextFile)
+		if err != nil {
+			return nil, err
+		}
+		return pyyaml.LoadRuamelInput(in, d)
 	}
 	text, err := pyjson.DecodeUTF8(src)
 	if err != nil {

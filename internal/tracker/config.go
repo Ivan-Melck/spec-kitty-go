@@ -247,7 +247,8 @@ func readPayload(root string) (any, []byte, bool, error) {
 		}
 		return nil, nil, true, err
 	}
-	v, err := yamlx.Parse(b)
+	// YAML().load(open(path, encoding="utf-8")): a text stream
+	v, err := yamlx.ParseWith(b, yamlx.ParseOptions{TextFile: p})
 	return v, b, true, err
 }
 

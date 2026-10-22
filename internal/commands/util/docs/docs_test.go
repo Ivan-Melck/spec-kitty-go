@@ -67,11 +67,15 @@ func TestDocsQueryParity(t *testing.T) {
 	} {
 		p.Compare(true, append([]string{"docs", "query"}, args...)...)
 	}
-	p.Both(func(s *testkit.Sandbox) { s.WriteFile("docs/development/docs-retrieval-index.yaml", "pages: [\n") })
-	g, o := p.Compare(false, "docs", "query", "x")
-	const pre = "Error: could not read or parse the docs retrieval index at docs/development/docs-retrieval-index.yaml: "
-	if !strings.HasPrefix(g.Stderr, pre) || !strings.HasPrefix(o.Stderr, pre) {
-		t.Errorf("go=%q oracle=%q", g.Stderr, o.Stderr)
+	// ruamel's exact error text (scanner, parser, duplicate key) and the
+	// uncaught ValueError traceback.
+	for _, bad := range []string{"pages: [\n", "pages: \"x\n", "a: 1\na: 2\n", "pages:\n- {a: b: c}\n", "pages: !!timestamp 2024-13-01\n"} {
+		bad := bad
+		p.Both(func(s *testkit.Sandbox) { s.WriteFile("docs/development/docs-retrieval-index.yaml", bad) })
+		g, o := p.Compare(false, "docs", "query", "x")
+		if a, b := testkit.MaskTracebackFrames(g.Stderr), testkit.MaskTracebackFrames(o.Stderr); a != b {
+			t.Errorf("%q: stderr differs\n%s", bad, testkit.Diff(b, a))
+		}
 	}
 	p.Both(func(s *testkit.Sandbox) { s.WriteFile("docs/development/docs-retrieval-index.yaml", "- a\n") })
 	p.Compare(true, "docs", "query", "x", "--json")

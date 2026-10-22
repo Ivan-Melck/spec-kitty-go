@@ -113,16 +113,24 @@ func TestValidateTasksParityEdgeCases(t *testing.T) {
 		s.WriteFile(".kittify/config.yaml", "agents:\n  available: [claude]\n")
 	})
 	p.Compare(true, "validate-tasks", "--all")
-	// A YAML error degrades to empty metadata plus a logged warning (the
-	// PyYAML error detail itself is not reproduced byte for byte).
+	// A YAML error degrades to empty metadata plus a logged warning with
+	// PyYAML's exact error text.
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile("kitty-specs/001-x/tasks/doing/WP01.md", "---\nlane: [a\n---\n")
 	})
+	p.Compare(true, "validate-tasks", "--mission", "001-x")
+	// A ValueError while constructing (an impossible date) is not a
+	// YAMLError; detect_lane_mismatch's except Exception swallows it.
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile("kitty-specs/001-x/tasks/doing/WP01.md", "---\nlane: doing\nat: 2024-02-30\n---\n")
+	})
 	g, o := p.Compare(false, "validate-tasks", "--mission", "001-x")
-	const warn = "WARNING  YAML parse error in frontmatter (WP may vanish from dashboard): "
-	if !strings.HasPrefix(g.Stderr, warn) || !strings.HasPrefix(o.Stderr, warn) {
-		t.Errorf("warning: go=%q oracle=%q", g.Stderr, o.Stderr)
+	if a, b := testkit.MaskTracebackFrames(p.Go.Normalize(g.Stderr)), testkit.MaskTracebackFrames(p.Oracle.Normalize(o.Stderr)); a != b {
+		t.Errorf("traceback differs\n%s", testkit.Diff(b, a))
 	}
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile("kitty-specs/001-x/tasks/doing/WP01.md", "---\nlane: [a\n---\n")
+	})
 	// A non-string lane is an uncaught AttributeError: compare the rich
 	// traceback (frames masked).
 	p.Both(func(s *testkit.Sandbox) {

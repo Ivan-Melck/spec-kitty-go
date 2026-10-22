@@ -112,7 +112,11 @@ func newScanner(in Input, d Dialect) *scanner {
 		if s.name == "" {
 			s.name = "<file>"
 		}
-		runes = s.decodeStream(in.Data)
+		if in.Binary {
+			runes = s.decodeStream(in.Data)
+		} else {
+			runes = []rune(in.Text)
+		}
 	} else {
 		runes = []rune(in.Text)
 	}
@@ -211,13 +215,28 @@ type Input struct {
 	Data   []byte
 	Name   string
 	Stream bool
+	Binary bool // stream of bytes (Data) rather than an already decoded text stream (Text)
 }
 
 // StringInput is a Python str input.
 func StringInput(s string) Input { return Input{Text: s} }
 
 // FileInput is a binary file stream input named by its path.
-func FileInput(data []byte, name string) Input { return Input{Data: data, Name: name, Stream: true} }
+func FileInput(data []byte, name string) Input {
+	return Input{Data: data, Name: name, Stream: true, Binary: true}
+}
+
+// TextFileInput is a text-mode stream (open(path, encoding="utf-8")):
+// strict UTF-8 decoding (a failure is the *pyjson.UnicodeError the read
+// raises, not a YAML error) and universal newlines.
+func TextFileInput(data []byte, name string) (Input, error) {
+	text, err := pyjson.DecodeUTF8(data)
+	if err != nil {
+		return Input{}, err
+	}
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	return Input{Text: text, Name: name, Stream: true}, nil
+}
 
 // decodeStream is Reader.determine_encoding + update for a whole stream
 // (UTF-16 by BOM, else strict UTF-8). Decoding and printable checks run
