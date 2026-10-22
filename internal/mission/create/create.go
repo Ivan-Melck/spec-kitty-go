@@ -19,6 +19,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/lifecycle"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
@@ -74,6 +75,9 @@ type Options struct {
 	RetainWorktrees      bool
 	CommitToTarget       bool
 	AllowDuplicate       bool
+	// Owned is the validated owned create root (--owned-checkout); nil for
+	// an unowned (repository root) create.
+	Owned                *ownedcheckout.CreateRoot
 	MissionID, CreatedAt string // test seams
 }
 
@@ -89,6 +93,8 @@ type Result struct {
 	CoordinationBranch        string
 	CoordinationBranchCreated bool
 	ScaffoldCommitSkipped     bool
+	OwnedCheckout             string // the owned checkout (owned create only)
+	CanonicalRepoRoot         string // the repository root (owned create only)
 }
 
 func validate(slug string, friendly *string) (string, error) {
@@ -370,20 +376,29 @@ func Create(o Options) (*Result, error) {
 	if o.CommitToTarget && topology != SingleBranch {
 		return nil, fail("--commit-to-target is only valid for a single_branch mission (got topology '%s'). Pass --topology single_branch, or drop --commit-to-target.", topology)
 	}
-	if IsWorktreeContext(o.Cwd) {
+	owned := o.Owned != nil
+	if !owned && IsWorktreeContext(o.Cwd) {
 		return nil, fail("Cannot create missions from inside a worktree. Run from the project root checkout.")
 	}
 	root := o.Root
+	if owned {
+		root = o.Owned.RepositoryRoot
+	}
 	if root == "" {
 		return nil, fail("Could not locate project root. Run from within spec-kitty repository.")
+	}
+	// The write checkout: the owned checkout for an owned create.
+	writeRoot := root
+	if owned {
+		writeRoot = o.Owned.Checkout
 	}
 	if !gitx.IsRepo(root) {
 		return nil, fail("Not in a git repository. Mission creation requires git.")
 	}
-	if !gitx.OK(root, "rev-parse", "--verify", "--quiet", "HEAD") {
+	if !gitx.OK(writeRoot, "rev-parse", "--verify", "--quiet", "HEAD") {
 		return nil, fail("This checkout has no commits yet, so Spec Kitty cannot commit the mission scaffold.\n\nMake an initial commit first, then create the mission:\n  git commit --allow-empty -m 'Initial commit'\n\nIf the repository already has files staged, commit those instead.")
 	}
-	current := gitx.CurrentBranch(root)
+	current := gitx.CurrentBranch(writeRoot)
 	if current == "" || current == "HEAD" {
 		return nil, fail("Must be on a branch to create missions (detached HEAD detected).")
 	}
@@ -396,7 +411,7 @@ func Create(o Options) (*Result, error) {
 		missionType = "software-dev"
 	}
 	if !o.AllowDuplicate {
-		if name, mid8, ok := findLiveDuplicate(root, o.Slug, missionType); ok {
+		if name, mid8, ok := findLiveDuplicate(writeRoot, o.Slug, missionType); ok {
 			return nil, &Error{ErrorCode: "MISSION_ALREADY_EXISTS", Msg: fmt.Sprintf("A mission named '%s' of type '%s' already exists and is not abandoned: %s (mid8 %s). Refusing to silently create a duplicate (#4033).\n\nIf the prior mission is genuinely abandoned (canceled, or never actually worked), re-run this create with no flag -- abandoned priors are auto-allowed.\n\nTo deliberately create a second mission with the same name, pass --allow-duplicate (create_mission_core(allow_duplicate=True) for programmatic callers).",
 				mission.StripNumericPrefix(o.Slug), missionType, name, mid8)}
 		}
@@ -419,7 +434,7 @@ func Create(o Options) (*Result, error) {
 	if len(perr) > 0 {
 		return nil, fail("%s", strings.Join(perr, " "))
 	}
-	tmpl, err := SpecTemplate(root, missionType)
+	tmpl, err := SpecTemplate(writeRoot, missionType)
 	if err != nil {
 		return nil, err
 	}
@@ -429,10 +444,13 @@ func Create(o Options) (*Result, error) {
 	}
 	mid8 := missionID[:8]
 	dirName := mission.DirName(o.Slug, mid8)
-	featureDir := project.Specs(root, dirName)
-	coordRouted := MintsCoordination(topology)
+	featureDir := project.Specs(writeRoot, dirName)
+	mintsCoord := MintsCoordination(topology)
+	// An owned create is never coordination-routed (INV-COORD-HOME): its
+	// status log stays in the owned checkout.
+	coordRouted := mintsCoord && !owned
 
-	rb := captureRollback(root, current)
+	rb := captureRollback(writeRoot, current)
 
 	// scaffold
 	for _, d := range []string{featureDir, filepath.Join(featureDir, "checklists"), filepath.Join(featureDir, "research"), filepath.Join(featureDir, "tasks")} {
@@ -487,7 +505,7 @@ func Create(o Options) (*Result, error) {
 	}
 	res := &Result{FeatureDir: featureDir, MissionSlug: dirName, TargetBranch: planning, CurrentBranch: current}
 	coordSkipped := true
-	if coordRouted {
+	if mintsCoord {
 		name, created, skipped, err := ensureCoordinationBranch(root, dirName, missionID, planning, o.ForceRecreateCoord)
 		if err != nil {
 			return nil, err
@@ -540,7 +558,7 @@ func Create(o Options) (*Result, error) {
 	}); err != nil {
 		return nil, fail("Local canonical MissionCreated persistence failed for %s: %v. The partial scaffold is retained for explicit resume-probe diagnosis; do not retry create until it is repaired or removed.", mission.PyRepr(dirName), err)
 	}
-	specRel, _ := filepath.Rel(root, specFile)
+	specRel, _ := filepath.Rel(writeRoot, specFile)
 	lifecycle.EmitArtifactPhase(statusDir, lifecycle.PhaseInput{EventType: lifecycle.SpecifyStarted, MissionSlug: dirName,
 		Actor: "spec-kitty mission create", ArtifactPath: filepath.ToSlash(specRel)})
 
@@ -563,18 +581,22 @@ func Create(o Options) (*Result, error) {
 		paths = append(paths, filepath.Join(featureDir, status.EventsFile))
 	}
 	paths = append(paths, readme, filepath.Join(featureDir, "tasks", ".gitkeep"))
-	if ProtectedBranches(root)[planning] || gitx.CurrentBranch(root) != planning {
+	protected := ProtectedBranches(root)[planning]
+	if owned {
+		protected = o.Owned.IsProtected(featureDir, planning)
+	}
+	if protected || gitx.CurrentBranch(writeRoot) != planning {
 		res.ScaffoldCommitSkipped = true
 	} else {
 		var rel []string
 		for _, p := range paths {
-			r, _ := filepath.Rel(root, p)
+			r, _ := filepath.Rel(writeRoot, p)
 			rel = append(rel, filepath.ToSlash(r))
 		}
-		if _, err := gitx.Run(root, append([]string{"add", "--"}, rel...)...); err != nil {
+		if _, err := gitx.Run(writeRoot, append([]string{"add", "--"}, rel...)...); err != nil {
 			return nil, fmt.Errorf("meta.json commit failed: %v", err)
 		}
-		if _, err := gitx.Run(root, append([]string{"commit", "-q", "-m", "Add scaffold for mission " + dirName, "--"}, rel...)...); err != nil {
+		if _, err := gitx.Run(writeRoot, append([]string{"commit", "-q", "-m", "Add scaffold for mission " + dirName, "--"}, rel...)...); err != nil {
 			return nil, fmt.Errorf("meta.json commit failed: %v", err)
 		}
 	}
@@ -593,6 +615,10 @@ func Create(o Options) (*Result, error) {
 		res.CreatedFiles = append(res.CreatedFiles, logPath)
 	}
 	res.UncommittedFiles = []string{specFile}
+	if owned {
+		res.OwnedCheckout = o.Owned.Checkout
+		res.CanonicalRepoRoot = root
+	}
 	if res.ScaffoldCommitSkipped {
 		skipped := []string{filepath.Join(featureDir, mission.MetaFile), readme, filepath.Join(featureDir, "tasks", ".gitkeep")}
 		if !coordSeeded {
