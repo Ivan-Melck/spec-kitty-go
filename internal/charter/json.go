@@ -53,7 +53,7 @@ func AllDirectives(root string) []any {
 			ids = append(ids, d.ID)
 		}
 	}
-	repo := dct.NewOffering(root, dct.OrgRoots(root)).Repo(dct.Directive)
+	repo := dct.NewOffering(root, nil).Repo(dct.Directive) // _build_offering_service(repo_root): built-in + project, no org layer
 	for _, id := range ids {
 		if l, ok := local[id]; ok {
 			e := jsonx.NewObject("id", id, "source", "project")
@@ -94,6 +94,6 @@ func ContextJSON(root string, res *Result, missionType string, includeAll bool) 
 	o.Set("references", refs)
 	o.Set("governance_references", []any{})
 	o.Set("project_charter", ProjectCharterBlock(root))
-	o.Set("org_charter", jsonx.NewObject("present", false, "packs", []any{}))
+	o.Set("org_charter", OrgCharterJSONBlock(root))
 	return o
 }

@@ -2,6 +2,7 @@ package charter
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
@@ -251,4 +252,41 @@ func promoteOrgRequired(repoRoot string, pol *OrgPolicy) ([]string, error) {
 		}
 	}
 	return append(promoted, leftAbsent...), nil
+}
+
+// OrgCharterJSONBlock is org_charter_loader.load_org_charter_json_block over
+// resolve_pack_chain(strict=False): one entry per pack shipping a valid
+// org-charter.yaml.
+func OrgCharterJSONBlock(repoRoot string) *jsonx.Object {
+	packs := []any{}
+	for _, r := range ResolvePackChain(repoRoot) {
+		pol, err := LoadOrgCharterPolicy(r)
+		if err != nil || pol == nil {
+			continue
+		}
+		gps := []any{}
+		for _, x := range pol.GetList("governance_policies") {
+			gp, ok := x.(*jsonx.Object)
+			if !ok {
+				continue
+			}
+			enf := any("advisory")
+			if v, ok := gp.Get("enforcement"); ok {
+				enf = v
+			}
+			field, _ := gp.Get("field")
+			value, _ := gp.Get("value")
+			gps = append(gps, jsonx.NewObject("field", field, "value", value, "enforcement", enf, "source", "org"))
+		}
+		name := pol.GetString("org_name")
+		if name == "" {
+			name = filepath.Base(r)
+		}
+		req := []any{}
+		for _, d := range pol.GetList("required_directives") {
+			req = append(req, pyStrValue(d))
+		}
+		packs = append(packs, jsonx.NewObject("pack_name", name, "governance_policies", gps, "required_directives", req))
+	}
+	return jsonx.NewObject("present", len(packs) > 0, "packs", packs)
 }

@@ -505,9 +505,40 @@ func attrText(o *jsonx.Object, k string) string {
 	return pyStrOf(v)
 }
 
-func renderActionDoctrineLines(lines []string, b *ActionBundle) []string {
+func renderActionDoctrineLines(root string, lines []string, b *ActionBundle) []string {
 	if b == nil {
 		return lines
+	}
+	// _build_action_org_source_map: fragment node id -> contributing pack.
+	orgMap := map[string]string{}
+	var actionIDs []string
+	for _, row := range actionRenderRows {
+		actionIDs = append(actionIDs, b.IDs[row.kind]...)
+	}
+	if len(actionIDs) > 0 {
+		want := map[string]bool{}
+		for _, id := range actionIDs {
+			want[id] = true
+		}
+		if frags, err := LoadOrgDRG(root); err == nil {
+			for _, f := range frags {
+				for _, n := range f.Nodes {
+					if _, seen := orgMap[n.ID]; want[n.ID] && !seen {
+						orgMap[n.ID] = f.PackName
+					}
+				}
+			}
+		}
+	}
+	suffix := func(id string) string {
+		p, ok := orgMap[id]
+		switch {
+		case !ok:
+			return ""
+		case strings.TrimSpace(p) != "":
+			return " (source: org, pack: " + strings.TrimSpace(p) + ")"
+		}
+		return " (source: org)"
 	}
 	inline := map[string]bool{}
 	if b.Merged != nil {
@@ -528,23 +559,24 @@ func renderActionDoctrineLines(lines []string, b *ActionBundle) []string {
 			if repo != nil {
 				a = repo.Get(id)
 			}
+			sfx := suffix(id)
 			if a == nil {
-				f = append(f, "    - "+id)
+				f = append(f, "    - "+id+sfx)
 				continue
 			}
 			title := attrText(a.Data, row.titleAttr)
 			if row.progressive != "" && !inline[row.progressive+":"+id] {
-				f = append(f, "    - "+id+": "+title)
+				f = append(f, "    - "+id+": "+title+sfx)
 				f = append(f, fetchStanzaLines(row.progressive+":"+id, actionDoctrineLinkWhen, "    ")...)
 				continue
 			}
 			if row.summaryAttr != "" {
 				if s, ok := strField(a.Data, row.summaryAttr); ok && s != "" {
-					f = append(f, "    - "+id+": "+title+" — "+s)
+					f = append(f, "    - "+id+": "+title+" — "+s+sfx)
 					continue
 				}
 			}
-			f = append(f, "    - "+id+": "+title)
+			f = append(f, "    - "+id+": "+title+sfx)
 		}
 		lines = append(lines, "  "+row.heading+":")
 		lines = append(lines, f...)
@@ -913,7 +945,7 @@ func renderBootstrap(root, action string, b *ActionBundle, refs []Reference, pro
 	}
 	block(activationBlock)
 	lines = append(lines, "", "Action Doctrine ("+action+"):")
-	lines = renderActionDoctrineLines(lines, b)
+	lines = renderActionDoctrineLines(root, lines, b)
 	lines = appendGuidelines(lines, mission, action)
 	if IsSPDDReasonsActive(root) {
 		lines = appendSPDDGuidance(lines, mission, action)
