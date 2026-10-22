@@ -155,6 +155,9 @@ func (s *Sandbox) Environ() []string {
 		"HOME=" + s.Home,
 		"PATH=" + os.Getenv("PATH"),
 		"SPEC_KITTY_NO_UPGRADE_CHECK=1",
+		// The Go binary's PyPI lookups go to a closed local port unless a
+		// test points them at a fake index (never pypi.org).
+		"SPEC_KITTY_GO_PYPI_JSON_URL=http://127.0.0.1:9/pypi/%s/json",
 		"NO_COLOR=1",
 		"TERM=dumb",
 		"COLUMNS=200",

@@ -19,10 +19,12 @@ type migrationInfo struct {
 
 // migrationResult is upgrade.migrations.base.MigrationResult.
 type migrationResult struct {
-	Success  bool
-	Changes  []string
-	Warnings []string
-	Errors   []string
+	Success      bool
+	Changes      []string
+	Warnings     []string
+	Errors       []string
+	ManualReview bool
+	Preserved    []string
 }
 
 // migrationImpl ports one migration's detect/can_apply/apply. Migrations
@@ -34,6 +36,14 @@ type migrationImpl struct {
 	detect   func(root string) bool
 	canApply func(root string) (bool, string)
 	apply    func(root string, dryRun bool) migrationResult
+	// detectE / applyE may fail closed (GitignorePathError,
+	// MigrationStateUnreadableError): the runner records a failure.
+	detectE func(root string) (bool, error)
+	applyE  func(root string, dryRun bool) (migrationResult, error)
+	// noWorktrees is runs_on_worktrees = False.
+	noWorktrees bool
+	// structural is a runs_first migration's structural_detect.
+	structural func(root string) bool
 }
 
 var migrationImpls = map[string]migrationImpl{}
@@ -41,10 +51,60 @@ var migrationImpls = map[string]migrationImpl{}
 func (m migrationInfo) impl() migrationImpl { return migrationImpls[m.ID] }
 
 func (m migrationInfo) detect(root string) bool {
-	if i := m.impl(); i.detect != nil {
-		return i.detect(root)
+	ok, _ := m.detectErr(root)
+	return ok
+}
+
+// detectFailClosed is registry._detect_fail_closed: a fail-closed detection
+// error selects the migration.
+func (m migrationInfo) detectFailClosed(root string) bool {
+	ok, err := m.detectErr(root)
+	return ok || err != nil
+}
+
+// detectErr is detect() with its fail-closed exception.
+func (m migrationInfo) detectErr(root string) (bool, error) {
+	i := m.impl()
+	if i.detectE != nil {
+		return i.detectE(root)
 	}
-	return false
+	if i.detect != nil {
+		return i.detect(root), nil
+	}
+	return false, nil
+}
+
+// reselectWhenRecorded is BaseMigration.reselect_when_recorded.
+func (m migrationInfo) reselectWhenRecorded(root string) bool {
+	i := m.impl()
+	return m.RunsFirst && i.structural != nil && i.structural(root)
+}
+
+// mainCheckoutOnly lists the migrations declaring runs_on_worktrees = False.
+var mainCheckoutOnly = map[string]bool{
+	"0_9_4_roo_deprecation":                     true,
+	"3_2_0rc39_refresh_orientation_block":       true,
+	"0_9_3_surface_repair_wiring":               true,
+	"3_3_0_session_presence_claude_code":        true,
+	"runtime_state_backfill":                    true,
+	"migrate_lifecycle_envelope":                true,
+	"3_3_0_session_presence_all_harnesses":      true,
+	"verdict_provenance_backfill":               true,
+	"normalize_activation_absence":              true,
+	"consolidate_charter_bundle_fold":           true,
+	"4_0_0rc5_install_lane_tip_recorder":        true,
+	"3.2.0rc35_unified_bundle":                  true,
+	"charter_pack_cutover":                      true,
+	"4_0_0rc5_heal_template_set_provenance":     true,
+	"4_0_0_retired_hosted_target":               true,
+	"3.2.7_heal_provenance_paths":               true,
+	"3.2.8_provision_kitty_env":                 true,
+	"4_0_0rc5_heal_run_index_paths":             true,
+	"4_0_0rc5_single_branch_code_lanes_restamp": true,
+}
+
+func (m migrationInfo) runsOnWorktrees() bool {
+	return !m.impl().noWorktrees && !mainCheckoutOnly[m.ID]
 }
 
 func (m migrationInfo) canApply(root string) (bool, string) {
@@ -58,10 +118,19 @@ func (m migrationInfo) canApply(root string) (bool, string) {
 }
 
 func (m migrationInfo) apply(root string, dryRun bool) migrationResult {
-	if i := m.impl(); i.apply != nil {
-		return i.apply(root, dryRun)
+	r, _ := m.applyErr(root, dryRun)
+	return r
+}
+
+func (m migrationInfo) applyErr(root string, dryRun bool) (migrationResult, error) {
+	i := m.impl()
+	if i.applyE != nil {
+		return i.applyE(root, dryRun)
 	}
-	return migrationResult{Success: true}
+	if i.apply != nil {
+		return i.apply(root, dryRun), nil
+	}
+	return migrationResult{Success: true}, nil
 }
 
 // targetSchema is int(Version(target_version).major) (MigrationStep).
@@ -85,7 +154,7 @@ func applicableMigrations(from, to, root string) []migrationInfo {
 		switch {
 		case lo < 0 && hi <= 0:
 			applicable = append(applicable, m)
-		case lo == 0 && root != "" && m.detect(root):
+		case lo == 0 && root != "" && m.detectFailClosed(root):
 			applicable = append(applicable, m)
 		}
 	}
@@ -102,7 +171,10 @@ func applicableMigrations(from, to, root string) []migrationInfo {
 	if root != "" {
 		md := kittify.LoadMetadata(root)
 		for _, m := range migrationCatalog {
-			if m.RunsFirst && !selected[m.ID] && !(md != nil && md.HasMigration(m.ID)) && m.detect(root) {
+			if !m.RunsFirst || selected[m.ID] {
+				continue
+			}
+			if m.reselectWhenRecorded(root) || (!(md != nil && md.HasMigration(m.ID)) && m.detectFailClosed(root)) {
 				first = append(first, m)
 			}
 		}
@@ -169,18 +241,6 @@ func init() {
 			}
 			return migrationResult{Success: true, Changes: ch}
 		},
-	}
-	for _, g := range []struct {
-		id    string
-		equiv [][]string // first element is the canonical entry
-	}{
-		{"3.2.4_runtime_dirs_gitignore_backfill", [][]string{{".kittify/migrations/", ".kittify/migrations"}, {".kittify/logs/", ".kittify/logs"}}},
-		{"3.2.4_derived_mission_views_gitignore_backfill", [][]string{{".kittify/derived/", ".kittify/derived"}}},
-		{"3.2.5_agents_skills_gitignore_backfill", [][]string{{".agents/skills/", ".agents/skills", ".agents/", ".agents"}, {".kittify/skills-manifest.json"}}},
-		{"3.2.6rc3_lint_report_gitignore_backfill", [][]string{{".kittify/lint-report.json"}}},
-		{"3.2.6rc3_worktrees_gitignore_backfill", [][]string{{".worktrees/", ".worktrees", "/.worktrees/", "/.worktrees"}}},
-	} {
-		migrationImpls[g.id] = gitignoreBackfill(g.equiv)
 	}
 	for id, d := range mergeDriverMigrations {
 		migrationImpls[id] = mergeDriverMigration(d.summary, d.drivers)

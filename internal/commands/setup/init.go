@@ -340,7 +340,14 @@ func runInit(ctx *cli.Context) error {
 			out(w, "[red]Error:[/red] --ai is required in non-interactive mode")
 			return cli.Exit(1)
 		}
-		selected = promptAgents(ctx)
+		sel, ok, perr := pickAgentsInteractive(ctx)
+		if perr != nil {
+			return cli.Exit(1)
+		}
+		if !ok {
+			sel = promptAgents(ctx)
+		}
+		selected = sel
 	}
 	if len(selected) == 0 {
 		out(w, "[red]Error:[/red] No AI assistants selected")
@@ -625,7 +632,8 @@ func hasOperatorAuthoredContent(root string) bool {
 	return false
 }
 
-// promptAgents is a plain-text stand-in for multi_select_with_arrows.
+// promptAgents is the line-prompt fallback for multi_select_with_arrows
+// when stdin is not a terminal (upstream's readchar needs one).
 func promptAgents(ctx *cli.Context) []string {
 	w := ctx.Stdout
 	out(w, "Choose your AI assistant(s):")

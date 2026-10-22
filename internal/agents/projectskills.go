@@ -251,6 +251,18 @@ func InstallProjectSkills(root, agent, now string) ([]SkillEntry, int, error) {
 	return entries, written, nil
 }
 
+// Origin is the entry's provenance origin ("builtin" when unrecorded).
+func (e SkillEntry) Origin() string {
+	for _, kv := range e.extra {
+		if kv.Key == "origin" {
+			if s, ok := kv.Value.(string); ok {
+				return s
+			}
+		}
+	}
+	return "builtin"
+}
+
 func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
