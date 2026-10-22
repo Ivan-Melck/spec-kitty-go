@@ -84,4 +84,3 @@ func SaveCommandSkillsManifest(root string, entries map[string]*CommandSkillEntr
 
 // VibeSkillPath is the shared skills root vibe must discover.
 const VibeSkillPath = ".agents/skills"
-
