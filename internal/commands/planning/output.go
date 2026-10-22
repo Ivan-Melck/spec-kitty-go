@@ -38,7 +38,7 @@ func emitJSON(w io.Writer, payload *jsonx.Object) {
 func say(w io.Writer, s string) { rich.Print(w, s) }
 
 // sayPlain is console.print(..., markup=False).
-func sayPlain(w io.Writer, s string) { fmt.Fprintln(w, rich.Wrap(s, rich.Width())) }
+func sayPlain(w io.Writer, s string) { rich.PrintNoMarkup(w, s) }
 
 func wrapPlain(s string) string { return rich.Wrap(s, rich.Width()) }
 
