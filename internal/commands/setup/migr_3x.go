@@ -2189,13 +2189,7 @@ func assetsDisplayRoot() string { return "<spec-kitty>" }
 
 // --- session presence (rc39 / 3_3_0) ---------------------------------------------------
 
-func migrationPresence(root string) agents.Presence {
-	c := presenceContent(root)
-	if PlanCompat(Invocation{CommandPath: []string{"session-start"}, RawArgs: []string{"session-start"}}, root).Decision == DecisionBlockMigration {
-		c.Health = "migration-required"
-	}
-	return c
-}
+func migrationPresence(root string) agents.Presence { return presenceContent(root) }
 
 func extractOrientation(root, rules string) (string, bool) {
 	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rules)))

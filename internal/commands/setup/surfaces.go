@@ -254,7 +254,21 @@ func presenceContent(root string) agents.Presence {
 	if slug == "" {
 		slug = "unknown"
 	}
-	return agents.Presence{Version: app.Version, ProjectSlug: slug, Health: "healthy"}
+	// SessionPresenceManager._build_content: the cached available version
+	// (refreshed in the background) and the compat health.
+	avail := upgradeCheckerAvailable()
+	if avail == "" {
+		upgradeCheckInBackground()
+	}
+	c := agents.Presence{Version: app.Version, ProjectSlug: slug, Health: "healthy", AvailableVersion: avail}
+	inv := Invocation{CommandPath: []string{"session-start"}, RawArgs: []string{"session-start"}, FlagNoNag: true}
+	switch {
+	case PlanCompat(inv, root).Decision == DecisionBlockMigration:
+		c.Health = "migration-required"
+	case isVersionNewer(avail, app.Version):
+		c.Health = "upgrade-available"
+	}
+	return c
 }
 
 // InstallPresence is SessionPresenceManager.install: writes orientation for

@@ -143,8 +143,13 @@ func displayVersion(v string) string {
 	return s
 }
 
-func cliModePlan(root string) CompatPlan {
-	return PlanCompat(Invocation{CommandPath: []string{"upgrade"}, RawArgs: []string{"--cli"}}, root)
+func cliModePlan(root string, dryRun, noNag bool) CompatPlan {
+	raw := []string{"--cli"}
+	if dryRun {
+		raw = append(raw, "--dry-run")
+	}
+	inv := Invocation{CommandPath: []string{"upgrade"}, RawArgs: raw, FlagNoNag: noNag, EnvCI: isCIEnv(), StdoutTTY: stdoutIsTTY()}
+	return PlanCompatWith(inv, root, CompatOptions{ReadOnly: true, QueryLatest: true})
 }
 
 func runUpgrade(ctx *cli.Context) error {
@@ -184,7 +189,7 @@ func runUpgrade(ctx *cli.Context) error {
 			return emitBlockedFullPlan(w, cwd, tgtV, projectMode, noWorktrees, 2, "incompatible_flags", msg)
 		}
 		if jsonOut {
-			p := PlanCompat(Invocation{CommandPath: []string{"upgrade"}, RawArgs: []string{"--cli", "--project"}}, cwd).JSON()
+			p := PlanCompatWith(Invocation{CommandPath: []string{"upgrade"}, RawArgs: []string{"--cli", "--project"}, FlagNoNag: true, EnvCI: true}, cwd, CompatOptions{ReadOnly: true}).JSON()
 			if len(msg) > 1024 {
 				msg = msg[:1024]
 			}
@@ -204,11 +209,7 @@ func runUpgrade(ctx *cli.Context) error {
 		return cli.Exit(2)
 	}
 	if agentCheck {
-		if jsonOut {
-			fmt.Fprintln(w, prettyJSON(jsonx.NewObject("schema_version", 1, "action", "none", "installed_version", app.Version, "latest_version", nil,
-				"latest_source", "none", "install_method", "unknown", "upgrade_command", nil, "upgrade_note", unknownInstallNote, "reason", "up_to_date")))
-		}
-		return nil
+		return runAgentCheck(w, jsonOut)
 	}
 	if agentChoice != nil {
 		switch *agentChoice {
@@ -229,6 +230,7 @@ func runUpgrade(ctx *cli.Context) error {
 			}
 			return cli.Exit(2)
 		}
+		recordAgentChoice(*agentChoice, *agentLatest)
 		if jsonOut {
 			fmt.Fprintln(w, prettyJSON(jsonx.NewObject("status", "recorded", "choice", *agentChoice, "latest_version", *agentLatest)))
 		} else {
@@ -236,8 +238,9 @@ func runUpgrade(ctx *cli.Context) error {
 		}
 		return nil
 	}
+	noNag := ctx.Bool("no-nag")
 	if cliMode {
-		return runCLIMode(w, cwd, jsonOut, dryRun)
+		return runCLIMode(w, cwd, jsonOut, dryRun, noNag)
 	}
 	if planJSON && !isInProject(cwd) {
 		return emitBlockedFullPlan(w, cwd, tgtV, projectMode, noWorktrees, 1, "project_not_initialized", "Not a Spec Kitty project")
@@ -253,7 +256,7 @@ func runUpgrade(ctx *cli.Context) error {
 			}
 			return cli.Exit(1)
 		}
-		return runCLIMode(w, cwd, jsonOut, dryRun)
+		return runCLIMode(w, cwd, jsonOut, dryRun, noNag)
 	}
 	root := cwd
 	targetVersion := app.Version
@@ -266,7 +269,7 @@ func runUpgrade(ctx *cli.Context) error {
 	// CHK037: a too-new project is never upgraded, whatever --yes says.
 	if v := kittify.ProjectSchemaVersion(root); v != nil && *v > kittify.MaxSupportedSchema {
 		if jsonOut {
-			fmt.Fprintln(w, prettyJSON(PlanCompat(Invocation{CommandPath: []string{"__project_compat_check__"}, RawArgs: []string{"--project"}}, root).JSON()))
+			fmt.Fprintln(w, prettyJSON(PlanCompat(Invocation{CommandPath: []string{"__project_compat_check__"}, RawArgs: []string{"--project"}, FlagNoNag: true}, root).JSON()))
 		} else {
 			out(w, fmt.Sprintf("[red]Error:[/red] This project uses Spec Kitty project schema %d, but this CLI supports up to schema %d.", *v, kittify.MaxSupportedSchema))
 			out(w, "[cyan]Upgrade your CLI:[/cyan] "+unknownInstallNote)
@@ -274,7 +277,7 @@ func runUpgrade(ctx *cli.Context) error {
 		return cli.Exit(5)
 	}
 	if jsonOut && (projectMode || dryRun) {
-		return runPlannerJSON(w, root, targetVersion, dryRun)
+		return runPlannerJSON(w, root, targetVersion, dryRun, noNag)
 	}
 	return runProjectUpgrade(ctx, root, targetVersion, upgradeOptions{dryRun: dryRun, jsonOut: jsonOut, verbose: ctx.Bool("verbose"), confirmed: confirmed, noWorktrees: noWorktrees})
 }
@@ -287,9 +290,9 @@ func project0(cwd string) string {
 	return ""
 }
 
-func runCLIMode(w io.Writer, cwd string, jsonOut, dryRun bool) error {
+func runCLIMode(w io.Writer, cwd string, jsonOut, dryRun, noNag bool) error {
 	root := projectRootOrHome(cwd)
-	p := cliModePlan(root)
+	p := cliModePlan(root, dryRun, noNag)
 	if jsonOut {
 		code := p.ExitCode
 		if dryRun {
@@ -315,8 +318,13 @@ func projectRootOrHome(cwd string) string {
 	return locateProject(cwd)
 }
 
-func runPlannerJSON(w io.Writer, root, targetVersion string, dryRun bool) error {
-	p := PlanCompat(Invocation{CommandPath: []string{"__project_compat_check__"}, RawArgs: []string{"--project"}}, root)
+func runPlannerJSON(w io.Writer, root, targetVersion string, dryRun, noNag bool) error {
+	raw := []string{"--project"}
+	if dryRun {
+		raw = append(raw, "--dry-run")
+	}
+	inv := Invocation{CommandPath: []string{"__project_compat_check__"}, RawArgs: raw, FlagNoNag: noNag, EnvCI: isCIEnv(), StdoutTTY: stdoutIsTTY()}
+	p := PlanCompatWith(inv, root, CompatOptions{ReadOnly: true, QueryLatest: true})
 	p.Pending = nil
 	payload := p.JSON()
 	payload.Set("rendered_human", "")
@@ -373,7 +381,7 @@ func emptyFullPlan(root string, target any, project, noWorktrees bool) *jsonx.Ob
 }
 
 func fullPlanCompat(root string) *jsonx.Object {
-	return PlanCompat(Invocation{CommandPath: []string{"__project_compat_check__"}, RawArgs: []string{"--project", "--plan-json"}}, root).JSON()
+	return PlanCompatWith(Invocation{CommandPath: []string{"__project_compat_check__"}, RawArgs: []string{"--project", "--plan-json"}, FlagNoNag: true, EnvCI: true}, root, CompatOptions{ReadOnly: true}).JSON()
 }
 
 func emitBlockedFullPlan(w io.Writer, root string, target any, project, noWorktrees bool, code int, diag, msg string) error {
