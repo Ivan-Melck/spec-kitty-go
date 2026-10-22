@@ -274,7 +274,7 @@ func extractArtifactEdges(root string) ([]*regenNode, []regenEdge, error) {
 	}
 	// Styleguides and toolguides: path-string references.
 	for _, kd := range []struct {
-		dir, kind                                 string
+		dir, kind                                  string
 		urnL, ensureL, iterL, refEnsureL, refEdgeL int
 	}{{"styleguides", "styleguide", 1227, 1228, 1230, 1241, 1243}, {"toolguides", "toolguide", 1264, 1265, 1267, 1278, 1280}} {
 		d := filepath.Join(packs, kd.dir)
@@ -696,7 +696,9 @@ func iterMissionTypeData(root string) ([]missionTypeData, error) {
 
 // discoverMissionTypeNodes is _discover_mission_type_nodes.
 func discoverMissionTypeNodes(mts []missionTypeData, nodes *nodeSet) error {
-	in := func(line int) site { return site{{Name: "generate_graph", Line: 1817}}.at("_discover_mission_type_nodes", line) }
+	in := func(line int) site {
+		return site{{Name: "generate_graph", Line: 1817}}.at("_discover_mission_type_nodes", line)
+	}
 	seen := map[string]string{}
 	for _, mt := range mts {
 		if pyUnhashable(mt.rawID) {

@@ -30,7 +30,7 @@ type regenNode struct {
 	// RawLabel is a non-str label set by _ensure_node's unvalidated
 	// model_copy (it fails validation when the node is rebuilt).
 	RawLabel any
-	Tags      []string
+	Tags     []string
 }
 
 type regenEdge struct {
@@ -353,7 +353,6 @@ func resolvePathRef(s string) (string, string, bool) {
 	}
 	return "", "", false
 }
-
 
 // regenStep is the slice of a validated MissionStep the extractor reads.
 type regenStep struct {
