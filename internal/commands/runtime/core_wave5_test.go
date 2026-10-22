@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -96,6 +97,30 @@ func TestDiffCharterPreflightDefaultProfile(t *testing.T) {
 		[]string{"next", "--agent", "claude", "--mission", "$M"},
 		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"},
 	)
+}
+
+// TestDiffReconcileSnapshotLoadErrors covers CORE-16: the recorded
+// snapshot's load failures carry upstream's exception text (json decode,
+// UnicodeDecodeError, ** mapping TypeError, pydantic ValidationError).
+func TestDiffReconcileSnapshotLoadErrors(t *testing.T) {
+	p := missionfx.NewOraclePair(t)
+	missionfx.OracleCalcMission(t, p, "--pr-bound", "--branch-strategy", "already-confirmed", "--start-branch", "feat/calc-ops", "--topology", "lanes")
+	hex64 := strings.Repeat("a", 64)
+	for _, body := range []string{
+		"not json",
+		"[1, 2]",
+		"{}",
+		`{"mission_slug": 5, "parity_hash_sha256": "abc"}`,
+		`{"mission_slug": "x", "parity_hash_sha256": "` + hex64 + `", "total_artifacts": -1, "required_artifacts": "3", "optional_present": 1.5, "required_missing": "x", "parity_hash_components": ["a", 1], "artifact_summaries": [1], "computed_at": 5}`,
+		`{"mission_slug": "x", "parity_hash_sha256": "sha256:` + strings.Repeat("g", 64) + `", "total_artifacts": true, "snapshot_id": null, "computed_at": "nope"}`,
+		"\xff\xfe",
+	} {
+		p.Both(func(s *testkit.Sandbox) {
+			slug := missionfx.MissionSlug(t, s)
+			s.WriteFile(filepath.Join("kitty-specs", slug, ".kittify", "dossiers", slug, "snapshot-latest.json"), body)
+		})
+		steps(t, p, false, []string{"reconcile", "--mission", "$M", "--json"}, []string{"reconcile", "--mission", "$M"})
+	}
 }
 
 // TestDiffMissionCloseMerged covers CORE-15: closing a merged mission
