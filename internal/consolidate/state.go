@@ -309,7 +309,7 @@ func missingSnapshotBranches(root string, m *lanes.Manifest, coordRef string) []
 
 // newState creates a fresh record (persisted target/coord anchors and the
 // pre-interrupt lane tips; the snapshot is captured by captureSnapshot).
-func newState(root, slug, missionID, target, strategy string, m *lanes.Manifest, wps []string, ret Retention, push bool, coordRef string) *MergeState {
+func newState(root, slug, missionID, target, strategy string, m *lanes.Manifest, wps []string, ret Retention, push bool, coordRef string, excluded map[string]bool) *MergeState {
 	now := clock.NowUTCISO()
 	s := &MergeState{MissionID: missionID, MissionSlug: slug, TargetBranch: target, WPOrder: wps, Strategy: strategy,
 		StartedAt: now, UpdatedAt: now, PushRequested: push, DeleteBranch: ret.DeleteBranch, RemoveWorktree: ret.RemoveWorktree}
@@ -317,7 +317,7 @@ func newState(root, slug, missionID, target, strategy string, m *lanes.Manifest,
 	s.PreCoordRef = coordRef
 	s.PreCoord = revParse(root, "refs/heads/"+coordRef)
 	for _, l := range m.Lanes {
-		if l.LaneID == lanes.PlanningLaneID {
+		if l.LaneID == lanes.PlanningLaneID || laneFullyCanceled(l, excluded) {
 			continue
 		}
 		b := lanes.LaneBranchName(slug, l.LaneID, m.TargetBranch)

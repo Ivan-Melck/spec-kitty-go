@@ -81,7 +81,7 @@ func (r *run) captureClaim(st *MergeState) error {
 		window = revParse(r.root, r.m.TargetBranch)
 	}
 	r.windowBase = window
-	c, err := buildClaim(claimInput{root: r.root, featureDir: r.sf.StatusDir(), m: r.m, coordBase: coordBase, windowBase: window, excluded: map[string]bool{}})
+	c, err := buildClaim(claimInput{root: r.root, featureDir: r.sf.StatusDir(), m: r.m, coordBase: coordBase, windowBase: window, excluded: r.excluded})
 	if err != nil {
 		fmt.Fprintf(r.w, "\nError: Reconciliation refused (fail-closed): a git probe failed while building the approved-WP claim: %s. %s and no refs/worktrees were mutated. Resolve the underlying git issue, then re-run the merge.\n", err.Error(), nothingTornDown)
 		return exit(1)

@@ -297,7 +297,7 @@ func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o O
 	if m == nil {
 		return errOut(msg)
 	}
-	if pr := ProtectedStatusTargetRefusal(root, slug, m, map[string]bool{}); pr != nil {
+	if pr := ProtectedStatusTargetRefusal(root, slug, m, nil); pr != nil {
 		text := fmt.Sprintf("%s: %s Next step: %s", pr.Code, pr.Message, pr.NextStep)
 		if o.JSON {
 			fmt.Fprintln(w, jsonx.Dumps(jsonx.NewObject("spec_kitty_version", app.Version, "error", text, "error_code", pr.Code), compact))
@@ -367,6 +367,7 @@ type run struct {
 	opts            Options
 	attested        []string
 	verifiedLanding bool
+	excluded        map[string]bool
 }
 
 func hasRemote(root, name string) bool {
@@ -529,7 +530,7 @@ func (r *run) execute() error {
 		sayErr(r.w, fmt.Sprintf("Missing mission branch: %s. Run: git branch %s %s", m.MissionBranch, m.MissionBranch, base))
 		return exit(1)
 	}
-	if pr := ProtectedStatusTargetRefusal(r.root, r.slug, m, map[string]bool{}); pr != nil {
+	if pr := ProtectedStatusTargetRefusal(r.root, r.slug, m, nil); pr != nil {
 		sayErr(r.w, pr.Code+": "+pr.Message)
 		fmt.Fprintln(r.w, rich.Wrap("  Next step: "+pr.NextStep, rich.Width()))
 		footer := "Consolidation refused before any branch moved."
@@ -556,8 +557,13 @@ func (r *run) execute() error {
 		return exit(1)
 	}
 	r.snap = snap
+	r.excluded = r.acceptablyCanceled()
 	for _, l := range m.Lanes {
-		r.wps = append(r.wps, l.WPIDs...)
+		for _, id := range l.WPIDs {
+			if !r.excluded[id] {
+				r.wps = append(r.wps, id)
+			}
+		}
 	}
 	var missing []string
 	for _, id := range r.wps {
@@ -618,7 +624,7 @@ func (r *run) execute() error {
 		return err
 	}
 	if st == nil && mid != "" {
-		st = newState(r.root, r.slug, mid, r.m.TargetBranch, r.strategy, r.m, r.wps, r.ret, r.push, r.coordRef())
+		st = newState(r.root, r.slug, mid, r.m.TargetBranch, r.strategy, r.m, r.wps, r.ret, r.push, r.coordRef(), r.excluded)
 		st.Save(r.root)
 	}
 	if st != nil {
@@ -947,6 +953,10 @@ func (r *run) mergeLanes() error {
 			say(r.w, fmt.Sprintf("  [green]✓[/green] %s already on %s", l.LaneID, r.m.TargetBranch))
 			continue
 		}
+		if laneFullyCanceled(l, r.excluded) {
+			say(r.w, fmt.Sprintf("  [dim]Skipping %s (all WPs canceled with provenance — acceptable ending, no branch to integrate)[/dim]", l.LaneID))
+			continue
+		}
 		branch := lanes.LaneBranchName(r.m.MissionSlug, l.LaneID, r.m.TargetBranch)
 		if !gitx.BranchExists(r.root, branch) || gitx.IsAncestor(r.root, branch, r.m.MissionBranch) {
 			say(r.w, fmt.Sprintf("  [dim]Skipping %s (already integrated into %s)[/dim]", l.LaneID, r.m.MissionBranch))
@@ -1067,7 +1077,15 @@ func (r *run) recordDone() error {
 			r.state.Save(r.root)
 		}
 	}
-	for _, id := range r.wps {
+	var order []string
+	for _, l := range r.m.Lanes {
+		order = append(order, l.WPIDs...)
+	}
+	for _, id := range order {
+		if r.excluded[id] {
+			say(r.w, fmt.Sprintf("  [dim]Skipping %s (canceled with provenance — acceptable ending, excluded from done)[/dim]", id))
+			continue
+		}
 		if completed[id] {
 			say(r.w, fmt.Sprintf("  [dim]Skipping %s (already recorded as done)[/dim]", id))
 			continue

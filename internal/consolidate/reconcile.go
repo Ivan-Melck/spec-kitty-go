@@ -86,6 +86,9 @@ type claim struct {
 	verifyReachability bool
 	laneContent        []*laneContent
 	boundLaneTips      [][2]string
+	canceledContent    []canceledPath
+	attestedCanceled   map[string]bool
+	canceledDependency []canceledDependencyContent
 }
 
 func (c *claim) isBookkeeping(p string) bool { return isBookkeepingPath(p, c.slug, c.planningPrefix) }
@@ -644,6 +647,28 @@ func buildClaim(in claimInput) (*claim, error) {
 		return c, nil
 	}
 	events, eventsOK := readEvents(in.featureDir)
+	if r := unreadableCanceledDependencyRefusal(in.root, m, in.excluded, in.coordBase, events, eventsOK); r != "" {
+		c.refusal = r
+		return c, nil
+	}
+	dep, err := resolveCanceledDependencyLanes(in, wps, c.planningPrefix, events, eventsOK)
+	if err != nil {
+		return nil, err
+	}
+	boundOnly := func() (string, error) {
+		r, _, err := boundVerdict(in, wps, events, eventsOK, c.planningPrefix)
+		return r, err
+	}
+	if dep.refusal != "" {
+		c.refusal = compoundRefusal(dep.refusal, boundOnly, eventsOK)
+		return c, nil
+	}
+	canceledContent, attested, mixedRefusal := resolveMixedLanes(in, wps, c.planningPrefix, events, eventsOK, dep.unapproved)
+	if mixedRefusal != "" {
+		c.refusal = compoundRefusal(mixedRefusal, boundOnly, eventsOK)
+		return c, nil
+	}
+	c.canceledContent, c.attestedCanceled, c.canceledDependency = canceledContent, attested, dep.content
 	refusal, tips, err := boundVerdict(in, wps, events, eventsOK, c.planningPrefix)
 	if err != nil {
 		return nil, err
@@ -686,7 +711,7 @@ func buildClaim(in claimInput) (*claim, error) {
 			}
 		}
 	}
-	canceledLaneCommits := map[string]bool{} // mixed-lane / canceled-dependency resolution not ported
+	canceledLaneCommits := dep.unapproved
 	// authored
 	c.authoredShas, c.authoredPatchIDs = map[string]bool{}, map[string]bool{}
 	c.authoredBlobs, c.authoredDeletions = map[[2]string]bool{}, map[string]bool{}
@@ -834,11 +859,14 @@ type divergence struct {
 	unattrContent     [][2]string
 	unattrBlobs       [][2]string
 	unattrDeletions   []string
+	canceledContent   []canceledPath
 	contentMissing    []missingContent
+	canceledReachable []canceledDependencyContent
 }
 
 func (d *divergence) empty() bool {
-	return len(d.missingApproved)+len(d.reachableExcluded)+len(d.unattrContent)+len(d.unattrBlobs)+len(d.unattrDeletions)+len(d.contentMissing) == 0
+	return len(d.missingApproved)+len(d.reachableExcluded)+len(d.unattrContent)+len(d.unattrBlobs)+len(d.unattrDeletions)+
+		len(d.canceledContent)+len(d.contentMissing)+len(d.canceledReachable) == 0
 }
 
 func short(s string, n int) string {
@@ -873,6 +901,9 @@ func (d *divergence) describe() string {
 	for _, p := range d.unattrDeletions {
 		parts = append(parts, fmt.Sprintf("file '%s' was DELETED from the target but that deletion is NOT attributable to any approved WP's own authorship — un-attributable (data loss: approved content may have been silently removed)", p))
 	}
+	for _, e := range d.canceledContent {
+		parts = append(parts, describeCanceledContent(e))
+	}
 	for _, e := range d.contentMissing {
 		who, ls := strings.Join(e.wpIDs, ", "), strings.Join(e.laneIDs, ", ")
 		var what string
@@ -889,6 +920,9 @@ func (d *divergence) describe() string {
 			"(if you committed the staged changes of a lagging coordination or mission worktree, revert that commit on the mission branch, "+
 			"and never commit such changes — discard them with `git reset --hard HEAD`), %s", who, e.path, recoveryTail)
 		parts = append(parts, situation+"; "+recovery)
+	}
+	for _, e := range d.canceledReachable {
+		parts = append(parts, describeCanceledReachable(e))
 	}
 	if len(parts) == 0 {
 		return "no divergence"
@@ -930,9 +964,17 @@ func (c *claim) verify(root, target string) verifyResult {
 	if r := c.claimIntegrityRefusal(); r != "" {
 		return refused(r)
 	}
+	canceledFail, cref := c.canceledContentDivergence(root, target)
+	if cref != "" {
+		return refused(cref)
+	}
 	missing, mref := c.approvedContentDivergence(root, target)
 	if mref != "" {
 		return refused(mref)
+	}
+	carried, dref := c.canceledDependencyDivergence(root, target)
+	if dref != "" {
+		return refused(dref)
 	}
 	var res verifyResult
 	switch {
@@ -943,15 +985,102 @@ func (c *claim) verify(root, target string) verifyResult {
 	default:
 		res = c.verifyMergeReachability(root, target)
 	}
-	if res.status == "refuse" || len(missing) == 0 {
+	if res.status == "refuse" || len(canceledFail)+len(missing)+len(carried) == 0 {
 		return res
 	}
 	d := res.div
 	if d == nil {
 		d = &divergence{}
 	}
+	d.canceledContent = append(d.canceledContent, canceledFail...)
 	d.contentMissing = append(d.contentMissing, missing...)
+	d.canceledReachable = append(d.canceledReachable, carried...)
 	return failed(d)
+}
+
+// canceledContentDivergence is _canceled_content_divergence (#5046).
+func (c *claim) canceledContentDivergence(root, target string) ([]canceledPath, string) {
+	if len(c.canceledContent) == 0 {
+		return nil, ""
+	}
+	if c.windowBase == "" {
+		return nil, refuseWindowBaseUnresolved
+	}
+	entries := append([]canceledPath(nil), c.canceledContent...)
+	sort.SliceStable(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		if a.laneID != b.laneID {
+			return a.laneID < b.laneID
+		}
+		if a.wpID != b.wpID {
+			return a.wpID < b.wpID
+		}
+		return a.path < b.path
+	})
+	var fail []canceledPath
+	for _, e := range entries {
+		ts, err := stateAt(root, target, e.path)
+		if err != nil {
+			return nil, "a git probe failed while verifying the canceled-content window: " + err.Error()
+		}
+		ws, err := stateAt(root, c.windowBase, e.path)
+		if err != nil {
+			return nil, "a git probe failed while verifying the canceled-content window: " + err.Error()
+		}
+		if ts.key() == e.canceled.key() {
+			if ws.key() != e.canceled.key() || e.preStateBySurvivor {
+				fail = append(fail, e)
+			}
+			continue
+		}
+		if ts.key() == e.pre.key() || ts.key() == ws.key() {
+			continue
+		}
+		if c.attestedCanceled[e.wpID] {
+			continue
+		}
+		return fail, refuseMergedIndependentChange(e)
+	}
+	return fail, ""
+}
+
+// canceledDependencyDivergence is _canceled_dependency_divergence (#5569/#5613).
+func (c *claim) canceledDependencyDivergence(root, target string) ([]canceledDependencyContent, string) {
+	if len(c.canceledDependency) == 0 {
+		return nil, ""
+	}
+	if c.windowBase == "" {
+		return nil, refuseWindowBaseUnresolved
+	}
+	entries := append([]canceledDependencyContent(nil), c.canceledDependency...)
+	sort.SliceStable(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		if a.carrierLane != b.carrierLane {
+			return a.carrierLane < b.carrierLane
+		}
+		if a.canceledLane != b.canceledLane {
+			return a.canceledLane < b.canceledLane
+		}
+		return a.path < b.path
+	})
+	var hits []canceledDependencyContent
+	for _, e := range entries {
+		ts, err := stateAt(root, target, e.path)
+		if err != nil {
+			return nil, "a git probe failed while verifying canceled dependency content: " + err.Error()
+		}
+		if ts.key() != e.state.key() {
+			continue
+		}
+		ws, err := stateAt(root, c.windowBase, e.path)
+		if err != nil {
+			return nil, "a git probe failed while verifying canceled dependency content: " + err.Error()
+		}
+		if ws.key() != e.state.key() {
+			hits = append(hits, e)
+		}
+	}
+	return hits, ""
 }
 
 func (c *claim) verifyMergeReachability(root, target string) verifyResult {
@@ -1142,7 +1271,14 @@ func (c *claim) approvedContentDivergence(root, target string) ([]missingContent
 		return s
 	}
 	missing := unmetApprovedContent(c.laneContent, func(p string) pstate { return at(target, p) },
-		func(p string) pstate { return at(c.windowBase, p) }, c.isBookkeeping, at)
+		func(p string) pstate { return at(c.windowBase, p) }, func(p string) bool {
+			for _, e := range c.canceledContent {
+				if e.path == p {
+					return true
+				}
+			}
+			return c.isBookkeeping(p)
+		}, at)
 	if perr != nil {
 		return nil, "a git probe failed while verifying approved content presence: " + perr.Error()
 	}

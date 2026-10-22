@@ -72,6 +72,9 @@ func pendingDoneWPs(sf *coord.Surface, m *lanes.Manifest, excluded map[string]bo
 // less mission whose recorded target is protected (nil when none).
 func ProtectedStatusTargetRefusal(root, slug string, m *lanes.Manifest, excluded map[string]bool) *PolicyRefusal {
 	sf := coord.Resolve(root, slug)
+	if excluded == nil {
+		excluded = acceptablyCanceledIn(sf)
+	}
 	pending := pendingDoneWPs(sf, m, excluded)
 	if len(pending) == 0 || !sf.Transactional() || strings.TrimSpace(sf.Meta.GetString("coordination_branch")) != "" {
 		return nil

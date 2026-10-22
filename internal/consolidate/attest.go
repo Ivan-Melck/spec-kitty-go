@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -175,9 +176,11 @@ func (r *run) refuseMovedReattestations(wps []string, events []*status.Event, cu
 
 // acceptablyCanceled is acceptably_canceled_wp_ids: canceled with operator
 // provenance.
-func (r *run) acceptablyCanceled() map[string]bool {
+func (r *run) acceptablyCanceled() map[string]bool { return acceptablyCanceledIn(r.sf) }
+
+func acceptablyCanceledIn(sf *coord.Surface) map[string]bool {
 	out := map[string]bool{}
-	snap, err := status.ReduceDir(r.sf.StatusDir())
+	snap, err := status.ReduceDir(sf.StatusDir())
 	if err != nil {
 		return out
 	}
