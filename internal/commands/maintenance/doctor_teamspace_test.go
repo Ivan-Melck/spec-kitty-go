@@ -37,6 +37,47 @@ func transitionsCorpus(s *testkit.Sandbox) {
 	s.Git("commit", "-q", "-m", "transitions")
 }
 
+// envelopeCorpus writes canonical-looking rows whose envelope fields fail
+// spec_kitty_events.Event validation (timestamp, event_id, aggregate_id).
+func envelopeCorpus(s *testkit.Sandbox, slug string, rows ...[3]string) {
+	s.WriteFile("kitty-specs/"+slug+"/meta.json", `{"created_at": "2025-03-01T00:00:00+00:00", "friendly_name": "e", "mission_id": "01JEEEEEEEEEEEEEEEEEEEEE`+slug[1:3]+`", "mission_number": `+slug[1:3]+`, "mission_slug": "`+slug+`", "mission_type": "software-dev", "slug": "`+slug+`", "target_branch": "main"}`+"\n")
+	var lines []string
+	for _, r := range rows {
+		lines = append(lines, `{"actor": "a", "at": "`+r[0]+`", "event_id": "`+r[1]+`", "evidence": null, "execution_mode": "worktree", "force": false, "from_lane": "planned", "mission_slug": "`+slug+`", "policy_metadata": null, "reason": null, "review_ref": null, "to_lane": "claimed", "wp_id": "`+r[2]+`"}`)
+	}
+	s.WriteFile("kitty-specs/"+slug+"/status.events.jsonl", strings.Join(lines, "\n")+"\n")
+	s.Git("add", "-A", "kitty-specs/"+slug)
+	s.Git("commit", "-q", "-m", slug)
+}
+
+func TestDiffDoctorMissionStateTeamspaceEnvelopes(t *testing.T) {
+	p := newOraclePair(t)
+	cases := [][]string{
+		{"not-a-date", "2025-13-01T00:00:00", "2025-01-01T25:00:00", "2025-1-1", "", "2025-02-29T00:00:00", "2024-02-29", "20250101",
+			"2025-01-01T00:00", "2025-01-01 00:00:00Z", "2025-01-01T00:00:00.1234567+00:00", "2025/01/01", "2025-0a-01", "2025-01-0x", "2025-04-31",
+			"2025-01-01X00:00", "2025-01-01T0", "2025-01-01T00:00:00+0000", "2025-01-01T00:00:61", "x025-01-01"},
+	}
+	ids := []string{"01JEEEEEEEEEEEEEEEEEEEEEI1", "short", "0123456789abcdef0123456789ABCDEF", "01234567-89ab-cdef-0123-456789abcdef"}
+	p.Both(func(s *testkit.Sandbox) {
+		var rows [][3]string
+		for i, ts := range cases[0] {
+			rows = append(rows, [3]string{ts, "01JEEEEEEEEEEEEEEEEEEEE" + string(rune('A'+i)) + "00", "WP01"})
+		}
+		envelopeCorpus(s, "040-timestamps", rows...)
+		var idRows [][3]string
+		for _, id := range ids {
+			idRows = append(idRows, [3]string{"2025-03-01T00:00:00+00:00", id, "WP02"})
+		}
+		idRows = append(idRows, [3]string{"bad", "01JEEEEEEEEEEEEEEEEEEEEEZ9", ""})
+		envelopeCorpus(s, "041-ids", idRows...)
+	})
+	compareSteps(t, p, "", "",
+		step{"doctor", "mission-state", "--teamspace-dry-run", "--mission", "040-timestamps", "--json"},
+		step{"doctor", "mission-state", "--teamspace-dry-run", "--mission", "041-ids", "--json"},
+		step{"doctor", "mission-state", "--teamspace-dry-run", "--mission", "041-ids"},
+	)
+}
+
 var envelopeHashRe = regexp.MustCompile(`"envelope_sha256": "([0-9a-f]{64})"`)
 
 func envelopeHashes(s string) []string {
