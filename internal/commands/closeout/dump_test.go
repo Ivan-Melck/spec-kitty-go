@@ -22,6 +22,7 @@ func TestDumpOracleScenario(t *testing.T) {
 		t.Logf("$ %s\n== exit %d ==\n%s%s", strings.Join(args, " "), r.Code, r.Stdout, r.Stderr)
 	}
 	sh := func(args ...string) {
+		args = subst(args, slugOf(t, s))
 		r := s.Exec("", args[0], args[1:]...)
 		t.Logf("$ %s\n%s%s", strings.Join(args, " "), r.Stdout, r.Stderr)
 	}

@@ -3,11 +3,17 @@ package closeout
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/consolidate"
+	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 )
 
@@ -95,7 +101,44 @@ func printNext(ctx *cli.Context, slug string) {
 		"  [bold]spec-kitty agent retrospect synthesize --mission "+slug+"[/bold] — apply staged proposals (dry-run; add --apply to mutate)")
 }
 
+// requireMainRepo is core.context_validation.require_main_repo: refuse to
+// run from inside a .worktrees/<name> checkout.
+func requireMainRepo(ctx *cli.Context, name string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	if r, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = r
+	}
+	parts := strings.Split(filepath.ToSlash(cwd), "/")
+	for i, part := range parts {
+		if part != ".worktrees" || i+1 >= len(parts) {
+			continue
+		}
+		root := strings.Join(parts[:i], "/")
+		if root == "" {
+			root = "/"
+		}
+		_, e1 := os.Stat(filepath.Join(root, ".kittify"))
+		_, e2 := os.Stat(filepath.Join(root, ".git"))
+		if e1 != nil && e2 != nil {
+			continue
+		}
+		say(ctx.Stdout, fmt.Sprintf("[bold red]Error:[/bold red] '%s' must run from the main repository\n\n"+
+			"[yellow]Current location:[/yellow] Inside worktree [cyan]%s[/cyan]\n[yellow]Required location:[/yellow] Main repository\n\n"+
+			"[bold]Change to main repository:[/bold]\n  cd %s\n\n"+
+			"[dim]This command creates/manages worktrees and must run from the main repository.\n"+
+			"Running from inside a worktree would create nested worktrees, corrupting git state.[/dim]", name, parts[i+1], root))
+		return cli.Exit(1)
+	}
+	return nil
+}
+
 func runConsolidate(ctx *cli.Context) error {
+	if err := requireMainRepo(ctx, "consolidate"); err != nil {
+		return err
+	}
 	note := strings.TrimSpace(ctx.String("note"))
 	if ctx.Bool("skip-review-artifact-check") && note == "" {
 		say(ctx.Stdout, `[red]Error:[/red] --skip-review-artifact-check requires --note "<reason>" so the bypass is recorded as override evidence.`)
@@ -157,6 +200,20 @@ func runAgentMerge(ctx *cli.Context) error {
 		n := !*v
 		return &n
 	}
+	if target == "" {
+		target = consolidate.PrimaryBranch(root)
+	}
+	if ctx.Bool("auto-retry") && os.Getenv("SPEC_KITTY_AUTORETRY") == "" {
+		if code, err := autoRetry(ctx, root, slug, target); err != nil {
+			printJSON(ctx.Stdout, jsonx.NewObject("error", err.Error(), "success", false))
+			return cli.Exit(1)
+		} else if code >= 0 {
+			return cli.Exit(code)
+		}
+	}
+	if err := requireMainRepo(ctx, "consolidate"); err != nil {
+		return err
+	}
 	o := consolidate.Options{Mission: slug, Target: target, Strategy: ctx.String("strategy"),
 		DeleteBranch: inv("keep-branch"), RemoveWorktree: inv("keep-worktree"), Push: ctx.Bool("push"), DryRun: ctx.Bool("dry-run")}
 	if err := consolidate.Run(ctx.Stdout, root, o); err != nil {
@@ -167,4 +224,87 @@ func runAgentMerge(ctx *cli.Context) error {
 	}
 	_ = fmt.Sprint
 	return nil
+}
+
+var reNumberedBranch = regexp.MustCompile(`^\d{3}-`)
+
+// autoRetry is _maybe_auto_retry_in_worktree: re-run the merge inside the
+// mission's deterministic worktree. Returns the child's exit code, or -1
+// when no retry applies.
+func autoRetry(ctx *cli.Context, root, slug, target string) (int, error) {
+	cur := ""
+	if out, err := gitx.Run(root, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+		cur = strings.TrimSpace(out)
+	} else {
+		cur = consolidate.PrimaryBranch(root)
+	}
+	if reNumberedBranch.MatchString(cur) {
+		return -1, nil
+	}
+	if slug == "" {
+		return 0, fmt.Errorf("Not on mission branch (%s). Auto-retry requires --mission to choose a deterministic worktree.", cur)
+	}
+	wt := ""
+	for _, c := range lanes.ListContexts(root) {
+		if c.MissionSlug != slug {
+			continue
+		}
+		cand := filepath.Join(root, c.WorktreePath)
+		if st, err := os.Stat(cand); err == nil && st.IsDir() {
+			wt = cand
+			break
+		}
+	}
+	if wt == "" {
+		if m, err := lanes.Read(projectSpecs(root, slug)); err == nil && m != nil {
+			for _, l := range m.Lanes {
+				cand := lanes.WorktreePath(root, slug, l.LaneID)
+				if st, err := os.Stat(cand); err == nil && st.IsDir() {
+					wt = cand
+					break
+				}
+			}
+		}
+	}
+	if wt == "" {
+		return 0, fmt.Errorf("Could not find worktree for mission %s under %s.", slug, filepath.Join(root, ".worktrees"))
+	}
+	say(ctx.Stdout, fmt.Sprintf("[yellow]Auto-retry:[/yellow] Not on mission branch (%s). Running merge in %s", cur, filepath.Base(wt)))
+	args := []string{"agent", "mission", "merge", "--mission", slug, "--target", target, "--strategy", ctx.String("strategy")}
+	if ctx.Bool("push") {
+		args = append(args, "--push")
+	}
+	if ctx.Bool("dry-run") {
+		args = append(args, "--dry-run")
+	}
+	if ctx.IsSet("keep-branch") {
+		if ctx.Bool("keep-branch") {
+			args = append(args, "--keep-branch")
+		} else {
+			args = append(args, "--delete-branch")
+		}
+	}
+	if ctx.IsSet("keep-worktree") {
+		if ctx.Bool("keep-worktree") {
+			args = append(args, "--keep-worktree")
+		} else {
+			args = append(args, "--remove-worktree")
+		}
+	}
+	args = append(args, "--no-auto-retry")
+	exe, err := exec.LookPath("spec-kitty")
+	if err != nil {
+		return 0, fmt.Errorf("[Errno 2] No such file or directory: 'spec-kitty'")
+	}
+	cmd := exec.Command(exe, args...)
+	cmd.Dir = wt
+	cmd.Env = append(os.Environ(), "SPEC_KITTY_AUTORETRY=1")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, ctx.Stdout, ctx.Stderr
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode(), nil
+		}
+		return 0, err
+	}
+	return 0, nil
 }

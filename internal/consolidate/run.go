@@ -197,6 +197,9 @@ func Run(w io.Writer, root string, o Options) error {
 	return r.execute()
 }
 
+// PrimaryBranch is resolve_primary_branch.
+func PrimaryBranch(root string) string { return primaryBranch(root) }
+
 func primaryBranch(root string) string {
 	if out, err := gitx.Run(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
 		return strings.TrimPrefix(strings.TrimSpace(out), "origin/")
