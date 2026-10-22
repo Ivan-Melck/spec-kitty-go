@@ -28,8 +28,13 @@ def cps(s):
 
 for enc in encs:
     for i in range(n):
-        mode = i % 4
-        if mode == 0:
+        mode = i % 5
+        if mode == 4:
+            toks = [b"\x1b", b"$", b"(", b")", b".", b"&@", b"@", b"A", b"B", b"C", b"D", b"F", b"I", b"J", b"N", b"O",
+                    b"P", b"Q", b"\x0e", b"\x0f", b"\n", b"~", b"~{", b"~}", b"+", b"-", b"/", b"!", b"0", b"x",
+                    bytes([rng.randint(0x80, 0xFF)]), bytes([rng.randint(0x21, 0x7E)]), bytes([rng.randint(0x21, 0x7E)])]
+            data = b"".join(rng.choice(toks) for _ in range(rng.randint(0, 30)))
+        elif mode == 0:
             data = bytes(rng.randint(0, 255) for _ in range(rng.randint(0, 40)))
         else:
             t = rand_text(rng.randint(1, 30))
