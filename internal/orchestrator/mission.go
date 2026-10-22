@@ -51,6 +51,18 @@ type ResolveError struct {
 
 func (e *ResolveError) Error() string { return e.Message }
 
+// SelectorAmbiguousCrash is an ambiguous --mission handle. Upstream's
+// read-path seam propagates MissionSelectorAmbiguous unchanged, so every
+// verb crashes with a traceback (stderr, exit 1, no envelope).
+type SelectorAmbiguousCrash struct{ Err *mission.SelectorAmbiguousError }
+
+func (e *SelectorAmbiguousCrash) Error() string { return e.Err.Error() }
+
+// Traceback is the final exception line upstream prints.
+func (e *SelectorAmbiguousCrash) Traceback() string {
+	return "MissionSelectorAmbiguous: " + e.Err.Error()
+}
+
 // MissionNotFoundMessage is the shared genuine-not-found message.
 func MissionNotFoundMessage(handle string) string {
 	return fmt.Sprintf("Mission '%s' not found in kitty-specs/", handle)
@@ -78,7 +90,7 @@ func ResolveMission(root, handle string) (*Mission, error) {
 	if err != nil {
 		var amb *mission.SelectorAmbiguousError
 		if errors.As(err, &amb) {
-			return nil, &ResolveError{Code: "MISSION_NOT_FOUND", Message: amb.Error()}
+			return nil, &SelectorAmbiguousCrash{Err: amb}
 		}
 		return nil, &ResolveError{Code: "MISSION_NOT_FOUND", Message: MissionNotFoundMessage(handle)}
 	}
