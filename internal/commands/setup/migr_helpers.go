@@ -228,6 +228,37 @@ func rmtreeWritable(p string) error {
 	return os.RemoveAll(p)
 }
 
+// atomicWrite is kernel.atomic.atomic_write: a mkstemp sibling (mode 0600)
+// replaced over p; a read-only destination keeps its mode.
+func atomicWrite(p string, content []byte) error {
+	var restore os.FileMode
+	if st, err := os.Lstat(p); err == nil && st.Mode()&os.ModeSymlink == 0 && st.Mode().Perm()&0o200 == 0 {
+		restore = st.Mode().Perm()
+		os.Chmod(p, restore|0o200)
+	}
+	f, err := os.CreateTemp(filepath.Dir(p), ".atomic-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, werr := f.Write(content)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		recordUpgradeMutation(tmp, p, true)
+		werr = os.Rename(tmp, p)
+	}
+	if werr != nil {
+		os.Remove(tmp)
+	}
+	if restore != 0 {
+		os.Chmod(p, restore)
+	}
+	return werr
+}
+
 // ---------------------------------------------------------------------------
 // runtime.generated_writer.write_generated_file
 // ---------------------------------------------------------------------------

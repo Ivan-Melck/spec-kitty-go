@@ -276,7 +276,7 @@ func runUpgrade(ctx *cli.Context) error {
 	if jsonOut && (projectMode || dryRun) {
 		return runPlannerJSON(w, root, targetVersion, dryRun)
 	}
-	return runProjectUpgrade(ctx, root, targetVersion, upgradeOptions{dryRun: dryRun, jsonOut: jsonOut, verbose: ctx.Bool("verbose"), confirmed: confirmed})
+	return runProjectUpgrade(ctx, root, targetVersion, upgradeOptions{dryRun: dryRun, jsonOut: jsonOut, verbose: ctx.Bool("verbose"), confirmed: confirmed, noWorktrees: noWorktrees})
 }
 
 // project0 resolves the project the way the read-only intent resolver does.
@@ -455,7 +455,7 @@ func locateProject(cwd string) string {
 // ---------------------------------------------------------------------------
 
 type upgradeOptions struct {
-	dryRun, jsonOut, verbose, confirmed bool
+	dryRun, jsonOut, verbose, confirmed, noWorktrees bool
 }
 
 // upgradeOutcome is upgrade.outcome.UpgradeOutcome (+ UpgradeResult).
@@ -474,6 +474,22 @@ type upgradeOutcome struct {
 	commitPaths        []string
 	regenerated        []string
 	created, repaired  []string
+	resultOrder        []string
+	manualReview       []string
+	worktreeFailures   []string
+}
+
+// collectManualReviewPaths is upgrade._collect_manual_review_paths.
+func (o *upgradeOutcome) collectManualReviewPaths() {
+	set := map[string]bool{}
+	for _, id := range o.resultOrder {
+		if r := o.results[id]; r.ManualReview {
+			for _, p := range r.Preserved {
+				set[p] = true
+			}
+		}
+	}
+	o.manualReview = sortedKeys(set)
 }
 
 func (o *upgradeOutcome) reasons() []string {
@@ -483,6 +499,9 @@ func (o *upgradeOutcome) reasons() []string {
 	}
 	if len(o.activationErrors) > 0 {
 		r = append(r, "activation_error")
+	}
+	if len(o.worktreeFailures) > 0 {
+		r = append(r, "worktree_failure")
 	}
 	if len(o.surfaceRepairFails) > 0 {
 		r = append(r, "surface_repair_failed")
@@ -514,6 +533,7 @@ func (o *upgradeOutcome) errorList() []string {
 	var all []string
 	all = append(all, o.errors...)
 	all = append(all, o.activationErrors...)
+	all = append(all, o.worktreeFailures...)
 	all = append(all, o.surfaceRepairFails...)
 	seen := map[string]bool{}
 	var out []string
@@ -577,12 +597,26 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 	migrations := applicableMigrations(from, target, root)
 	o := &upgradeOutcome{from: current, to: target, dryRun: opt.dryRun, success: true, results: map[string]migrationResult{}, mergeDriverConfig: "skipped"}
 	now := clock.NowUTCISO()
+	stamp := kittify.VersionStamp{}
+	if !opt.dryRun {
+		stamp = kittify.CaptureVersionStamp(root)
+	}
+	wtAutoCommit := !opt.dryRun && kittify.AutoCommit(root)
 	if len(migrations) == 0 {
 		if !opt.dryRun {
 			if err := kittify.SetMetadataVersion(root, target, now); err != nil {
 				return err
 			}
 			kittify.StampSchemaVersion(root)
+		}
+		if !opt.noWorktrees && current == target {
+			wr := upgradeWorktrees(root, target, nil, opt.dryRun, wtAutoCommit)
+			o.warnings = append(o.warnings, wr.warnings...)
+			if len(wr.errors) > 0 {
+				o.warnings = append(o.warnings, wr.errors...)
+				o.warnings = append(o.warnings, "Some worktrees had issues - check errors above")
+			}
+			o.worktreeFailures = append(o.worktreeFailures, wr.failures...)
 		}
 	} else {
 		o.hadMigrations = true
@@ -623,6 +657,16 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 			}
 		}
 		runMigrations(root, target, migrations, o, now)
+		if !opt.noWorktrees {
+			wr := upgradeWorktrees(root, target, migrations, opt.dryRun, wtAutoCommit)
+			o.warnings = append(o.warnings, wr.warnings...)
+			if len(wr.errors) > 0 {
+				o.errors = append(o.errors, wr.errors...)
+				o.warnings = append(o.warnings, "Some worktrees had issues - check errors above")
+			}
+			o.worktreeFailures = append(o.worktreeFailures, wr.failures...)
+		}
+		o.collectManualReviewPaths()
 	}
 	// Finalizer tail.
 	shouldCommit := o.success && !opt.dryRun && kittify.AutoCommit(root)
@@ -652,16 +696,34 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 			}
 		}
 	}
-	if shouldCommit && len(o.activationErrors) == 0 && o.success && len(o.surfaceRepairFails) == 0 {
+	commitWarned := false
+	if shouldCommit && len(o.activationErrors) == 0 && !o.mainCheckoutRunFailed() {
 		committed, paths, warn := commitUpgradeChurn(root, baseline, o.from, o.to)
 		o.committed, o.commitPaths = committed, paths
 		if warn != "" {
 			o.warnings = append(o.warnings, warn)
-		} else if reason := noCommitReason(root, o, baseline, opt.dryRun, shouldCommit); reason != "" {
+			commitWarned = true
+		}
+	}
+	if o.kind() == "failed" && stamp.Restore(root) && !opt.jsonOut {
+		v := stamp.Version()
+		if v == "" {
+			v = "its previous version"
+		}
+		out(w, "[yellow].kittify/metadata.yaml restored to "+escapeMarkup(v)+"; the change is uncommitted[/yellow]")
+	}
+	if !opt.dryRun && o.success && len(o.manualReview) > 0 {
+		joined := strings.Join(o.manualReview, ", ")
+		if o.committed {
+			o.warnings = append(o.warnings, fmt.Sprintf(heldForReviewNotCommittedFmt, joined))
+		} else {
+			o.warnings = append(o.warnings, fmt.Sprintf(heldForReviewSkippedCommitFmt, len(o.manualReview), joined))
+		}
+	}
+	if !commitWarned {
+		if reason := noCommitReason(root, o, baseline, opt.dryRun, shouldCommit); reason != "" {
 			o.warnings = append(o.warnings, reason)
 		}
-	} else if reason := noCommitReason(root, o, baseline, opt.dryRun, shouldCommit); reason != "" {
-		o.warnings = append(o.warnings, reason)
 	}
 	leftUncommitted := !opt.jsonOut && !opt.dryRun && o.success && !shouldCommit && !o.committed && baseline != nil && len(upgradeCommitCandidates(root, baseline)) > 0
 	if opt.jsonOut {
@@ -752,6 +814,9 @@ func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOu
 			}
 		}
 		o.warnings = append(o.warnings, res.Warnings...)
+		if _, seen := o.results[m.ID]; !seen {
+			o.resultOrder = append(o.resultOrder, m.ID)
+		}
 		o.results[m.ID] = res
 		switch status {
 		case "applied":
@@ -932,8 +997,12 @@ func upgradeJSON(o *upgradeOutcome, migrations []migrationInfo) *jsonx.Object {
 		} else if skippedSet[m.ID] {
 			st = "skipped"
 		}
+		mr, pp := false, []any{}
+		if r, ok := o.results[m.ID]; ok {
+			mr, pp = r.ManualReview, strList(r.Preserved)
+		}
 		detail = append(detail, jsonx.NewObject("id", m.ID, "description", m.Description, "target_version", m.TargetVersion, "status", st,
-			"manual_review_required", false, "preserved_paths", []any{}))
+			"manual_review_required", mr, "preserved_paths", pp))
 		if r, ok := o.results[m.ID]; ok && len(r.Changes) > 0 {
 			if v, err := jsonx.Decode([]byte(r.Changes[0])); err == nil {
 				reports.Set(m.ID, v)
@@ -943,7 +1012,7 @@ func upgradeJSON(o *upgradeOutcome, migrations []migrationInfo) *jsonx.Object {
 	return jsonx.NewObject("status", o.status(), "outcome", o.kind(), "failure_reasons", reasons, "current_version", o.from, "target_version", o.to,
 		"dry_run", o.dryRun, "migrations", detail, "migrations_applied", strList(o.applied), "migrations_skipped", strList(o.skipped),
 		"migration_reports", reports, "success", len(o.reasons()) == 0, "errors", strList(o.errorList()), "warnings", strList(o.warnings),
-		"manual_review_required", false, "manual_review_paths", []any{}, "auto_committed", o.committed, "auto_commit_paths", strList(o.commitPaths),
+		"manual_review_required", len(o.manualReview) > 0, "manual_review_paths", strList(o.manualReview), "auto_committed", o.committed, "auto_commit_paths", strList(o.commitPaths),
 		"merge_driver_config", o.mergeDriverConfig, "surface_repair", surface)
 }
 
@@ -953,7 +1022,7 @@ func printSection(w io.Writer, header string, items []string, prefix string) {
 	}
 	out(w, header)
 	for _, it := range items {
-		out(w, prefix+escapeMarkup(it))
+		raw(w, rich.Strip(prefix+escapeMarkup(it))) // soft_wrap=True
 	}
 }
 
@@ -990,15 +1059,27 @@ func renderUpgradeText(w io.Writer, root string, o *upgradeOutcome, leftUncommit
 	if o.kind() == "no_op" {
 		plain(w, o.closingLine())
 		for _, x := range o.warnings {
-			out(w, "[yellow]Warning:[/yellow] "+escapeMarkup(x))
+			raw(w, rich.Strip("[yellow]Warning:[/yellow] "+escapeMarkup(x)))
 		}
 		for _, x := range o.errorList() {
-			out(w, "[red]Error:[/red] "+escapeMarkup(x))
+			raw(w, rich.Strip("[red]Error:[/red] "+escapeMarkup(x)))
 		}
 		commitLine()
 	} else {
+		for _, id := range o.resultOrder {
+			ch := o.results[id].Changes
+			if len(ch) == 0 {
+				continue
+			}
+			if v, err := jsonx.Decode([]byte(ch[0])); err == nil {
+				if _, ok := v.(*jsonx.Object); ok {
+					printSection(w, "[cyan]"+escapeMarkup(id)+":[/cyan]", ch[1:], "  [cyan]•[/cyan] ")
+				}
+			}
+		}
 		printSection(w, "[yellow]Warnings:[/yellow]", o.warnings, "  [yellow]![/yellow] ")
 		printSection(w, "[red]Errors:[/red]", o.errorList(), "  [red]✗[/red] ")
+		printSection(w, "[yellow]Manual review required:[/yellow]", o.manualReview, "  [yellow]![/yellow] ")
 		success := o.kind() == "applied"
 		if !o.dryRun && !success {
 			commitLine()

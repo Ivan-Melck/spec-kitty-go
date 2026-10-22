@@ -469,7 +469,7 @@ func backfillOwnership(feature, slug string) {
 			}
 		}
 		if changed {
-			os.WriteFile(wp, []byte(renderFrontmatter(front, body)), 0o666&^umask())
+			atomicWrite(wp, []byte(renderFrontmatter(front, body)))
 		}
 	}
 }
@@ -491,7 +491,7 @@ func stripOne(p string) {
 		}
 	}
 	if n > 0 {
-		os.WriteFile(p, []byte(renderFrontmatter(front, body)), 0o666&^umask())
+		atomicWrite(p, []byte(renderFrontmatter(front, body)))
 	}
 }
 
@@ -2203,7 +2203,7 @@ func staleOrientationKeys(root, rendered string) []string {
 	var stale []string
 	for _, k := range ac.Available {
 		w := agents.WriterFor(k)
-		if !w.HasPresence(root) || w.RulesPath == "" || w.Claude {
+		if !w.HasPresence(root) || w.RulesPath == "" {
 			continue
 		}
 		if ex, _ := extractOrientation(root, w.RulesPath); ex != rendered {

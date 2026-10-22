@@ -217,18 +217,6 @@ func init() {
 			return migrationResult{Success: true, Changes: ch}
 		},
 	}
-	for _, g := range []struct {
-		id    string
-		equiv [][]string // first element is the canonical entry
-	}{
-		{"3.2.4_runtime_dirs_gitignore_backfill", [][]string{{".kittify/migrations/", ".kittify/migrations"}, {".kittify/logs/", ".kittify/logs"}}},
-		{"3.2.4_derived_mission_views_gitignore_backfill", [][]string{{".kittify/derived/", ".kittify/derived"}}},
-		{"3.2.5_agents_skills_gitignore_backfill", [][]string{{".agents/skills/", ".agents/skills", ".agents/", ".agents"}, {".kittify/skills-manifest.json"}}},
-		{"3.2.6rc3_lint_report_gitignore_backfill", [][]string{{".kittify/lint-report.json"}}},
-		{"3.2.6rc3_worktrees_gitignore_backfill", [][]string{{".worktrees/", ".worktrees", "/.worktrees/", "/.worktrees"}}},
-	} {
-		migrationImpls[g.id] = gitignoreBackfill(g.equiv)
-	}
 	for id, d := range mergeDriverMigrations {
 		migrationImpls[id] = mergeDriverMigration(d.summary, d.drivers)
 	}
