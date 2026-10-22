@@ -3,8 +3,11 @@ package planning
 import (
 	"os"
 
+	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
 
 // ownedClaim returns the raw --owned-checkout value (nil when not given).
@@ -32,4 +35,21 @@ func resolveOwnedOrRefuse(ctx *cli.Context, root, handle string, jsonMode bool, 
 		return nil, err
 	}
 	return f, nil
+}
+
+// withCLIVersion is _with_cli_version: spec_kitty_version appended.
+func withCLIVersion(o *jsonx.Object) *jsonx.Object {
+	if !o.Has("spec_kitty_version") {
+		o.Set("spec_kitty_version", app.Version)
+	}
+	return o
+}
+
+// pyStrOrEmpty is str(meta.get(key) or "").
+func pyStrOrEmpty(meta *jsonx.Object, key string) string {
+	v, _ := meta.Get(key)
+	if !pyjson.Truthy(v) {
+		return ""
+	}
+	return pyjson.Str(v)
 }
