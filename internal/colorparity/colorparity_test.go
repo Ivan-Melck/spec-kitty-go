@@ -226,6 +226,43 @@ func usageProbes(t *testing.T) []probe {
 	return out
 }
 
+// TestPTYSpotCheck runs a few commands under a real pseudo-terminal
+// (util-linux script(1)), no FORCE_COLOR: colour detection from isatty.
+func TestPTYSpotCheck(t *testing.T) {
+	oracle := testkit.Oracle(t)
+	bin := testkit.Binary(t)
+	if _, err := exec.LookPath("script"); err != nil {
+		t.Skip("script(1) not available")
+	}
+	for _, args := range [][]string{
+		{"archive", "--help"},
+		{"agent", "tasks", "move-task", "--help"},
+		{"archive", "--bogus"},
+		{"nonexistent"},
+	} {
+		args := args
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			t.Parallel()
+			pty := func(exe string) string {
+				home, cwd := t.TempDir(), t.TempDir()
+				cmd := exec.Command("script", "-qec", exe+" "+strings.Join(args, " "), "/dev/null")
+				cmd.Dir = cwd
+				cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "SPEC_KITTY_NO_UPGRADE_CHECK=1",
+					"LANG=C.UTF-8", "COLUMNS=100", "LINES=40", "TERM=xterm-256color"}
+				out, _ := cmd.CombinedOutput()
+				return string(out)
+			}
+			want, got := pty(oracle), pty(bin)
+			if want != got {
+				t.Errorf("%v under a PTY: %s", args, firstDiff(want, got))
+			}
+			if !strings.Contains(want, "\x1b[") {
+				t.Errorf("oracle output under a PTY has no colour: %q", want)
+			}
+		})
+	}
+}
+
 // TestUsageErrorColour: typer's rich_format_error on stderr.
 func TestUsageErrorColour(t *testing.T) {
 	compareAll(t, usageProbes(t), append(colourSystems[:len(colourSystems):len(colourSystems)], plainVariants...))
