@@ -405,22 +405,8 @@ func (c *advanceCtx) stepDecision(stepID string, guards []string, errorCode *str
 		d.PromptFile = spOrNil(p)
 	}
 	d = materialize(d)
-	c.guardPaths(d)
-	return d
-}
 
-func (c *advanceCtx) guardPaths(d *Decision) {
-	if len(d.GuardFailures) == 0 {
-		return
-	}
-	o := &jsonx.Object{}
-	for _, g := range d.GuardFailures {
-		var name string
-		if n, err := fmt.Sscanf(g, MissingArtifactMessage, &name); err == nil && n == 1 {
-			o.Set(name, filepath.Join(c.m.Primary, name))
-		}
-	}
-	d.GuardFailurePaths = o
+	return d
 }
 
 // softwareDevGuards is _evaluate_software_dev_guards for a non-WP step.
@@ -478,6 +464,10 @@ func (c *advanceCtx) shouldAdvanceWPStep(step string) bool {
 
 // DecideNext is runtime_bridge.decide_next_via_runtime (advancing mode).
 func DecideNext(root, slug, agent, result string) *Decision {
+	return withGuardFailurePaths(root, slug, decideNext(root, slug, agent, result))
+}
+
+func decideNext(root, slug, agent, result string) *Decision {
 	if d := mergedShortCircuit(root, slug, agent, KindTerminal); d != nil {
 		return d
 	}
@@ -574,14 +564,11 @@ func DecideNext(root, slug, agent, result string) *Decision {
 		d.PromptFile = spOrNil(buildDecisionPrompt(m, plan, agent))
 		return materialize(d)
 	}
-	snap2, _ := ReadSnapshot(ref.RunDir)
-	state := current
-	if snap2 != nil && snap2.issued() != "" {
-		state = snap2.issued()
-	}
-	d := c.decision(KindBlocked, firstNonEmpty(state, "blocked"))
+	// _map_runtime_decision: an engine blocked decision carries no step_id
+	// (blocked_reason / unschedulable DAG), so mission_state is "unknown".
+	d := c.decision(KindBlocked, firstNonEmpty(plan.StepID, "unknown"))
 	d.Reason = spOrNil(plan.Reason)
-	d.StepID = spOrNil(state)
+	d.StepID = spOrNil(plan.StepID)
 	return materialize(d)
 }
 

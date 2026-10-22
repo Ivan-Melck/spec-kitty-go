@@ -23,6 +23,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/status"
+	"github.com/spec-kitty/go-kitty3/internal/workflow"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
 )
 
@@ -287,21 +288,28 @@ func (st *moveState) resolveTargets() error {
 		return st.outErr(err.Error())
 	}
 	st.targetBranch = cur
-	if st.hasModel && !st.hasInvID {
-		return st.outErr("--model cannot be recorded as resolved actual without correlated durable dispatch evidence; pass --invocation-id")
+	// _resolve_dispatch_binding: APPROVED/DONE (and IN_REVIEW) are reviewer
+	// decisions, everything else resolves the implement action.
+	action := "implement"
+	switch status.Lane(st.target) {
+	case status.InReview, status.Approved, status.Done:
+		action = "review"
+	}
+	req := workflow.BindingRequest{ProfileVersion: func(id string) (string, error) { return resolveProfileVersion(root, id) }}
+	if st.hasModel {
+		req.Model = &st.model
+	}
+	if st.hasProfile {
+		req.Profile = &st.profile
 	}
 	if st.hasInvID {
-		return st.outErr(fmt.Sprintf("Dispatch Op record %s could not be read by this build.", mission.PyRepr(st.invocationID)))
+		req.InvocationID = &st.invocationID
 	}
-	st.binding = &status.ResolvedBinding{}
-	if st.hasProfile {
-		ver, err := resolveProfileVersion(root, st.profile)
-		if err != nil {
-			return st.outErr(err.Error())
-		}
-		p := st.profile
-		st.binding.AgentProfile, st.binding.AgentProfileVersion = &p, &ver
+	b, err := req.Resolve(root, slug, st.taskID, action)
+	if err != nil {
+		return st.outErr(err.Error())
 	}
+	st.binding = b
 	if st.autoCommit {
 		st.skipPrimary = isDir(st.m.Surface.CoordWorktree) && st.m.Surface.CoordWorktree != "" && coord.IsProtected(root, slug, st.targetBranch)
 		if !st.skipPrimary && coord.IsProtected(root, slug, st.targetBranch) {
@@ -1103,14 +1111,19 @@ func (st *moveState) runDecision() error {
 	r := st.guards()
 	if r == nil {
 		st.gatherLateFacts()
-		r = st.guards()
-		// The issue-matrix guard (last in the sequence) is not evaluated, so
-		// "guards preceding issue-matrix clear" is r == nil.
-		if r == nil && st.isArbiter {
+		// arbiter_persist_signal: the OLD-timing arbiter persist fires when
+		// every guard preceding the issue-matrix guard (the last one) clears,
+		// so an issue-matrix refusal still leaves the arbiter write on disk.
+		blocker := st.issueMatrixBlocker
+		st.issueMatrixBlocker = ""
+		preceding := st.guards()
+		st.issueMatrixBlocker = blocker
+		if preceding == nil && st.isArbiter {
 			if err := st.runArbiterOverride(); err != nil {
 				return err
 			}
 		}
+		r = st.guards()
 	}
 	if r != nil {
 		return st.printRefusal(r)
@@ -1364,60 +1377,6 @@ func truthyEnv(v string) bool {
 	return false
 }
 
-func (st *moveState) runPreReviewGate() error {
-	if st.target != string(status.ForReview) {
-		return nil
-	}
-	skip := ""
-	if st.skipGate {
-		skip = "--skip-pre-review-gate flag"
-	} else if truthyEnv(os.Getenv("SPEC_KITTY_SKIP_PRE_REVIEW_GATE")) {
-		skip = "SPEC_KITTY_SKIP_PRE_REVIEW_GATE is set"
-	}
-	if skip != "" {
-		st.gateMeta = gateMetadata("no_coverage", "gate skipped — "+skip)
-		st.console(fmt.Sprintf("Pre-review regression gate: SKIPPED (%s)", skip))
-		return nil
-	}
-	var wt string
-	ws, err := lanes.ResolveWorkspace(st.root, st.m.Slug, st.taskID)
-	if err == nil && ws.Exists() {
-		wt = ws.WorktreePath
-	}
-	if st.oldLane == string(status.InProgress) {
-		fork := ""
-		if wt != "" {
-			if out, err := gitx.Run(wt, "merge-base", "HEAD", st.targetBranch); err == nil {
-				fork = strings.TrimSpace(out)
-			}
-		}
-		if fork == "" && !st.json {
-			warnLog(st.ctx.Stderr, fmt.Sprintf("Could not resolve the merge-base of %s's lane with %s; capturing the baseline at the base branch tip.", st.taskID, st.targetBranch))
-		}
-	}
-	changed := false
-	if wt != "" {
-		if mb, err := gitx.Run(wt, "merge-base", "HEAD", st.targetBranch); err == nil {
-			if out, err := gitx.Run(wt, "diff", "--name-only", strings.TrimSpace(mb), "HEAD"); err == nil && strings.TrimSpace(out) != "" {
-				changed = true
-			}
-		}
-		if !changed {
-			if es, err := statusEntries(wt); err == nil && len(filterRuntimeState(es)) > 0 {
-				changed = true
-			}
-		}
-	}
-	if !changed {
-		reason := "no changed files detected for this WP — skipping the gate cheaply"
-		st.gateMeta = gateMetadata("no_coverage", reason)
-		st.console("Pre-review regression gate: no_coverage — " + reason)
-		return nil
-	}
-	st.gateMeta = gateMetadata("skipped", "pre-review regression gate not declared by this repo — skipped (non-blocking; configure review.test_command in .kittify/config.yaml to declare one)")
-	return nil
-}
-
 // --- deferred for_review readiness ----------------------------------------
 
 func (st *moveState) completeDeferredReadiness() error {
@@ -1462,7 +1421,7 @@ func (st *moveState) commitLaneDeliverables() {
 	if len(paths) == 0 {
 		return
 	}
-	if err := safeCommitPaths(ws.WorktreePath, fmt.Sprintf("chore(%s): commit lane deliverables for review", st.taskID), paths); err != nil {
+	if err := safeCommitPaths(ws.WorktreePath, fmt.Sprintf("chore(%s): commit lane deliverables for review", st.taskID), paths, st.logWarn); err != nil {
 		st.console(fmt.Sprintf("Warning: could not auto-commit lane deliverables for %s: %v", st.taskID, err))
 		return
 	}
@@ -1480,12 +1439,19 @@ func isOccurrenceMap(p string) bool {
 // safeCommitPaths is the safe_commit primitive for worktree-relative paths:
 // `add --force -- paths` + `commit --only -- paths`, then refuse (after the
 // commit landed) when the commit carries unrequested paths.
-func safeCommitPaths(dir, message string, paths []string) error {
+func safeCommitPaths(dir, message string, paths []string, warn func(string)) error {
 	if _, err := gitx.Run(dir, append([]string{"add", "--force", "--"}, paths...)...); err != nil {
 		return err
 	}
-	if _, err := gitx.Run(dir, append([]string{"commit", "-q", "--only", "-m", message, "--"}, paths...)...); err != nil {
+	res, err := gitx.Exec(dir, nil, nil, append([]string{"commit", "-q", "--only", "-m", message, "--"}, paths...)...)
+	if err != nil {
 		return err
+	}
+	if res.Code != 0 {
+		return fmt.Errorf("%s", strings.TrimSpace(res.Stdout+"\n"+res.Stderr))
+	}
+	if e := strings.TrimSpace(res.Stderr); e != "" && warn != nil {
+		warn(fmt.Sprintf("git commit in %s produced warnings on a successful commit: %s", dir, e))
 	}
 	sha, _ := gitx.HeadSHA(dir)
 	out, err := gitx.Run(dir, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD")
@@ -2162,8 +2128,8 @@ func resolveProfileVersion(root, id string) (string, error) {
 		for _, x := range ids {
 			quoted = append(quoted, "'"+x+"'")
 		}
-		return "", fmt.Errorf("Could not resolve --profile %s: Profile '%s' not found. Available: [%s]. Omit --profile to use the work package's own frontmatter agent_profile instead.",
-			mission.PyRepr(id), id, strings.Join(quoted, ", "))
+		// workflow.ResolveBinding wraps this as "Could not resolve --profile …".
+		return "", fmt.Errorf("Profile '%s' not found. Available: [%s]", id, strings.Join(quoted, ", "))
 	}
 	for _, k := range []string{"schema-version", "schema_version"} {
 		if v, ok := p.Data.Get(k); ok && v != nil {

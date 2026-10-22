@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
@@ -90,6 +91,24 @@ func RenderCompact(root string, in CompactInput) string {
 	lines = section(lines, "Section Anchors:", SectionAnchors(string(md)), true)
 	if len(diags) > 0 {
 		lines = append(lines, "  - Diagnostics: "+strings.Join(diags, " | "))
+	}
+	// compact._append_language_lines: the languages footnote (and the
+	// charter-extension advisory) from the single language authority.
+	var langs []string
+	var known bool
+	if err := CatchLoad(func() { langs, known = InferRepoLanguages(root, nil, false) }); err != nil {
+		if !IsCharterEncodingError(err) {
+			panic(&LoadPanic{Err: err})
+		}
+		langs, known = nil, false
+	}
+	if known && len(langs) > 0 {
+		sorted := append([]string(nil), langs...)
+		sort.Strings(sorted)
+		lines = append(lines, "  - Languages: "+strings.Join(sorted, ", "))
+		if LacksSpecialistGuidance(langs, known, root) {
+			lines = append(lines, "  - Advisory: "+CharterExtensionAdvisory)
+		}
 	}
 	text := strings.Join(lines, "\n")
 	var blocks []string

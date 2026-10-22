@@ -127,6 +127,16 @@ func Capture(root, slug string) (string, error) {
 // provenance kind/command ("" = runtime terminus capture) and appends the
 // RetrospectiveCaptured event. Returns the record and its path.
 func Author(root, slug, kind, command string) (*Record, string, error) {
+	return authorWith(root, slug, kind, command, kind != "")
+}
+
+// AuthorRuntime is a runtime-actor capture stamped with provenance kind
+// (e.g. runtime_abandoned for `mission close --discard`).
+func AuthorRuntime(root, slug, kind string) (*Record, string, error) {
+	return authorWith(root, slug, kind, "", false)
+}
+
+func authorWith(root, slug, kind, command string, human bool) (*Record, string, error) {
 	dir := project.Specs(root, slug)
 	path := filepath.Join(dir, FileName)
 	now := Now()
@@ -134,7 +144,7 @@ func Author(root, slug, kind, command string) (*Record, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	rec.ProvenanceKind, rec.Command, rec.Human = kind, command, kind != ""
+	rec.ProvenanceKind, rec.Command, rec.Human = kind, command, human
 	if err := os.WriteFile(path, []byte(Serialize(rec.ToObject())), 0o644); err != nil {
 		return nil, "", err
 	}

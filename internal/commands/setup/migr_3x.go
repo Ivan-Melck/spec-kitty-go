@@ -3143,8 +3143,8 @@ func mUnifiedBundle() migrationImpl {
 				if stale {
 					if data, err := os.ReadFile(cp); err != nil {
 						errs = append(errs, pyOSError(err))
-					} else if rec, rerr := migrate.RecoverEncoding(data); rerr != nil || rec == nil {
-						errs = append(errs, migrate.AmbiguousBody(cp))
+					} else if rec, cands, rerr := migrate.RecoverEncoding(data); rerr != nil || rec == nil {
+						errs = append(errs, migrate.AmbiguousBody(cp, cands))
 					} else {
 						migrate.WriteEncodingProvenance(cp, rec)
 					}
