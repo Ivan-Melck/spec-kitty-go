@@ -10,6 +10,7 @@ import (
 // TestDiffCheckPrerequisites covers TRACE 1.4 (resume probe), 3.2 and 4.3
 // plus detection errors and the hidden `agent check-prerequisites` alias.
 func TestDiffCheckPrerequisites(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	shellSteps(t, p, "", "",
 		`$SK agent mission check-prerequisites --mission calc-ops --resume-probe --json`,

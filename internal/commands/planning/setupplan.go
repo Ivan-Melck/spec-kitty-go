@@ -247,8 +247,7 @@ func runSetupPlan(ctx *cli.Context) error {
 			}
 		}
 	}
-	// TODO: documentation missions' gap analysis / generator detection
-	// (_run_documentation_wiring) is not ported.
+	gapPath, generators := runDocumentationWiring(ctx.Stdout, jsonMode, root, slug)
 	res := "blocked"
 	if planSub || scaffoldOnly {
 		res = "success"
@@ -276,6 +275,16 @@ func runSetupPlan(ctx *cli.Context) error {
 		if len(commitRes.Surfaces) > 0 {
 			payload.Set("surfaces", commitRes.SurfacesPayload())
 		}
+	}
+	if gapPath != "" {
+		payload.Set("gap_analysis", gapPath)
+	}
+	if len(generators) > 0 {
+		gl := make([]any, len(generators))
+		for i, g := range generators {
+			gl[i] = g
+		}
+		payload.Set("generators_detected", gl)
 	}
 	payload = inject(payload)
 	if jsonMode {

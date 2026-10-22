@@ -243,24 +243,6 @@ func atomicWrite(path, content string) error {
 	return os.Rename(tmp, path)
 }
 
-// TouchAuthoringLock creates the cooperative authoring lock file
-// (<git-common-dir>/spec-kitty-locks/design-<sha256(slug)>.lock) the way
-// upstream's machine_file_lock leaves it behind.
-func TouchAuthoringLock(root, slug string) {
-	cd, err := commonDir(root)
-	if err != nil {
-		return
-	}
-	p := filepath.Join(cd, "spec-kitty-locks", "design-"+SHA256Hex([]byte(slug))+".lock")
-	if _, err := os.Stat(p); err == nil {
-		return
-	}
-	_ = os.MkdirAll(filepath.Dir(p), 0o700)
-	if f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-		f.Close()
-	}
-}
-
 // TasksFinalized is status.tasks_are_finalized(statusDir) with the
 // snapshot-drift check against status.json.
 func TasksFinalized(statusDir string) (bool, error) {

@@ -207,7 +207,11 @@ func runTasks(ctx *cli.Context) error {
 		return err
 	}
 	slug := filepath.Base(m.StatusDir)
-	orch.TouchAuthoringLock(root, slug)
+	release, lerr := orch.AcquireAuthoringLock(root, slug)
+	if lerr != nil {
+		return v.designErr(lerr, nil)
+	}
+	defer release()
 	receipts, err := orch.ReadReceipts(root, slug)
 	if err != nil {
 		return v.designErr(err, nil)
@@ -378,8 +382,17 @@ func runRecordAnalysis(ctx *cli.Context) error {
 	}
 	wctx := *ctx
 	wctx.Stdin = strings.NewReader(string(body))
-	raw, code := delegate(&wctx, []string{"agent", "mission", "record-analysis"}, argv...)
-	out := extractJSONPayload(raw)
+	// _run_write_with_timeout: the write runs bounded by a real wall-clock
+	// limit; a still-running call is left behind (a leaked daemon thread
+	// upstream) and the re-read below stays the sole success signal.
+	w := runWithTimeout(func() (string, int) {
+		return delegate(&wctx, []string{"agent", "mission", "record-analysis"}, argv...)
+	}, recordAnalysisTimeout)
+	raw, code := w.raw, w.code
+	var out *jsonx.Object
+	if w.completed {
+		out = extractJSONPayload(raw)
+	}
 	path := filepath.Join(m.PrimaryDir, "analysis-report.md")
 	verdict, generatedAt, exists := rereadReport(path)
 	confirmed := exists && generatedAt != nil && strictlyAfter(*generatedAt, callStart)
@@ -411,7 +424,9 @@ func runRecordAnalysis(ctx *cli.Context) error {
 		data.Set("reread_verdict", optAny(verdict))
 		data.Set("reread_generated_at", optAny(generatedAt))
 	}
-	if code != 0 && out != nil {
+	if !w.completed {
+		data.Set("underlying_call_timed_out", true)
+	} else if code != 0 && out != nil {
 		if e := out.GetString("error"); e != "" {
 			data.Set("underlying_call_error", e)
 		}
@@ -514,4 +529,30 @@ func strictlyAfter(candidate string, ref time.Time) bool {
 		return false
 	}
 	return t.After(ref)
+}
+
+// recordAnalysisTimeout is _RECORD_ANALYSIS_TIMEOUT_SECONDS.
+var recordAnalysisTimeout = 10 * time.Second
+
+// timedOutcome is _TimedWriteOutcome.
+type timedOutcome struct {
+	completed bool
+	raw       string
+	code      int
+}
+
+// runWithTimeout is _run_write_with_timeout: fn runs in its own goroutine;
+// control returns after timeout whether or not it finished.
+func runWithTimeout(fn func() (string, int), timeout time.Duration) timedOutcome {
+	done := make(chan timedOutcome, 1)
+	go func() {
+		raw, code := fn()
+		done <- timedOutcome{true, raw, code}
+	}()
+	select {
+	case o := <-done:
+		return o
+	case <-time.After(timeout):
+		return timedOutcome{}
+	}
 }
