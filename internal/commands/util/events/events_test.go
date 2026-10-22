@@ -92,32 +92,16 @@ func TestTailParity(t *testing.T) {
 	}
 }
 
-// compareTail compares exit code and stdout, and stderr exactly unless the
-// oracle crashed with a Rich traceback (e.g. JSONDecodeError on a blank or
-// trailing-garbage line): then parity means the same exit code and the same
-// final "<Exception>: <message>" line. The Go port prints a plain
-// "Traceback (most recent call last):" stub plus that line instead of Rich's
-// frame dump.
+// compareTail runs args on both sides and compares exit code, stdout and
+// stderr. When the oracle crashed with a Rich traceback (e.g. JSONDecodeError
+// on a blank or trailing-garbage line) the frames are masked: parity is the
+// panel borders plus the exact "<Exception>: <message>" lines.
 func compareTail(t *testing.T, p *testkit.Pair, args ...string) {
 	t.Helper()
 	g, o := p.Compare(false, args...)
-	if !strings.Contains(o.Stderr, "Traceback") {
-		if a, b := p.Go.Normalize(g.Stderr), p.Oracle.Normalize(o.Stderr); a != b {
-			t.Errorf("%s: stderr differs\n%s", strings.Join(args, " "), testkit.Diff(b, a))
-		}
-		return
+	if a, b := testkit.MaskTracebackFrames(p.Go.Normalize(g.Stderr)), testkit.MaskTracebackFrames(p.Oracle.Normalize(o.Stderr)); a != b {
+		t.Errorf("%s: stderr differs\n%s", strings.Join(args, " "), testkit.Diff(b, a))
 	}
-	if !strings.HasPrefix(g.Stderr, "Traceback (most recent call last):") {
-		t.Errorf("%s: go stderr is not a traceback: %q", strings.Join(args, " "), g.Stderr)
-	}
-	if a, b := lastLine(g.Stderr), lastLine(o.Stderr); a != b {
-		t.Errorf("%s: final exception line differs\n  oracle: %q\n  go:     %q", strings.Join(args, " "), b, a)
-	}
-}
-
-func lastLine(s string) string {
-	ls := strings.Split(strings.TrimRight(s, "\n "), "\n")
-	return strings.TrimSpace(ls[len(ls)-1])
 }
 
 func TestTailParityResume(t *testing.T) {

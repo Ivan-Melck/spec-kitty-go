@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
-	"github.com/spec-kitty/go-kitty3/internal/tracker"
+	"github.com/spec-kitty/go-kitty3/internal/pytoml"
 )
 
 // Built-in pack provenance (charter/offering/provenance.py and
@@ -231,7 +231,7 @@ func checkoutTracksMission(root string, rel []string, initial []snapEntry) bool 
 	if err != nil {
 		return false
 	}
-	meta, err := tracker.ParseTOML(string(b))
+	meta, err := pytoml.Loads(string(b))
 	if err != nil {
 		return false
 	}

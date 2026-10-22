@@ -350,11 +350,29 @@ func deref(s *string) string {
 	return *s
 }
 
-// uncaught renders an exception upstream lets escape (typer prints a
-// traceback; the last line names the exception) and exits 1.
+// uncaughtFrames are the upstream typer command functions (name, def line)
+// shown in the traceback panel; the deeper site-packages frames rich would
+// print with source excerpts are irreducible (docs/parity/util.md).
+var uncaughtFrames = map[string]rich.Frame{
+	"rebaseline-dossier-hashes": {Name: "rebaseline_dossier_hashes", Line: 1533},
+	"backfill-wp-status":        {Name: "backfill_wp_status_cmd", Line: 1449},
+	"rewrite-opposed-by":        {Name: "rewrite_opposed_by", Line: 1253},
+	"charter-encoding":          {Name: "charter_encoding", Line: 1014},
+	"backfill-provenance":       {Name: "backfill_provenance", Line: 1095},
+	"mission-state":             {Name: "mission_state", Line: 1004},
+	"decisions":                 {Name: "decisions_reconcile", Line: 1516},
+}
+
+// uncaught renders an exception upstream lets escape (typer's rich
+// traceback: framed panel, then the exception line) and exits 1.
 func uncaught(ctx *cli.Context, typ string, err error) error {
-	fmt.Fprintln(ctx.Stderr, "Traceback (most recent call last):")
-	fmt.Fprintf(ctx.Stderr, "%s: %v\n", typ, err)
+	var frames []rich.Frame
+	if ctx.Cmd != nil {
+		if f, ok := uncaughtFrames[ctx.Cmd.Name]; ok {
+			frames = append(frames, f)
+		}
+	}
+	rich.Traceback(ctx.Stderr, typ, err.Error(), frames...)
 	return cli.Exit(1)
 }
 

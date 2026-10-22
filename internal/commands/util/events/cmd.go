@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 const tailLong = "Tail a mission's event log (``status.events.jsonl``) as JSON lines on stdout.\n\n" +
@@ -43,8 +44,17 @@ func errEnvelope(w io.Writer, code, detail string) {
 	fmt.Fprintln(w, jsonx.Dumps(jsonx.NewObject("error", code, "detail", detail), jsonx.Options{Indent: -1}))
 }
 
-func traceback(w io.Writer, err error) error {
-	fmt.Fprintf(w, "Traceback (most recent call last):\n%s\n", err.Error())
+// traceback prints an uncaught exception as upstream's rich traceback;
+// line is the tail_command line (specify_cli/cli/commands/events.py) the
+// exception propagated through.
+func traceback(w io.Writer, line int, err error) error {
+	frames := []rich.Frame{{Name: "tail_command", Line: line}}
+	var pe *PyError
+	if errors.As(err, &pe) {
+		rich.Traceback(w, pe.Type, pe.Msg, frames...)
+	} else {
+		rich.PrintTraceback(w, rich.ParseException(err.Error(), frames...))
+	}
 	return cli.Exit(1)
 }
 
@@ -82,7 +92,7 @@ func runTail(ctx *cli.Context) error {
 				errEnvelope(ctx.Stderr, code, rr.Error())
 				return cli.Exit(2)
 			}
-			return traceback(ctx.Stderr, err)
+			return traceback(ctx.Stderr, 159, err)
 		}
 		cursor = c
 	}
@@ -90,7 +100,7 @@ func runTail(ctx *cli.Context) error {
 	if ctx.Bool("once") {
 		r, err := PollOnce(logPath, cursor)
 		if err != nil {
-			return traceback(ctx.Stderr, err)
+			return traceback(ctx.Stderr, 178, err)
 		}
 		for _, ev := range r.Events {
 			emit(ev)
@@ -101,11 +111,11 @@ func runTail(ctx *cli.Context) error {
 	if ctx.IsSet("max-events") {
 		max = ctx.Int("max-events")
 		if max < 0 {
-			return traceback(ctx.Stderr, &PyError{"ValueError", "Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize."})
+			return traceback(ctx.Stderr, 185, &PyError{"ValueError", "Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize."})
 		}
 	}
 	if err := Tail(logPath, cursor, max, time.Sleep, emit); err != nil {
-		return traceback(ctx.Stderr, err)
+		return traceback(ctx.Stderr, 186, err)
 	}
 	return nil
 }

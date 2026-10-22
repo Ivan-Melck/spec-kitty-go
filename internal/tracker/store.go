@@ -47,7 +47,8 @@ func DefaultDBPath(provider, workspace, serverURL, username, teamSlug string) st
 }
 
 // Store is TrackerSqliteStore. Every operation reads the database file and
-// every mutation rewrites it (sqlitedb has no in-place page updates).
+// every mutation rewrites the tracker tables in place (sqlitedb.Update:
+// other tables, header fields and the freelist are kept).
 type Store struct{ Path string }
 
 // OpenStore creates the parent directory and any missing tables.
@@ -91,7 +92,7 @@ func (s *Store) write(f *sqlitedb.File, schemaBump uint32) error {
 	if f.ChangeCounter == 0 && f.SchemaCookie == 0 {
 		counter = schemaBump
 	}
-	return sqlitedb.Write(s.Path, storeSchema, data, counter, f.SchemaCookie+schemaBump)
+	return sqlitedb.Update(s.Path, storeSchema, data, counter, f.SchemaCookie+schemaBump)
 }
 
 func (s *Store) mutate(table string, fn func(rows []sqlitedb.Row) ([]sqlitedb.Row, error)) error {
@@ -108,7 +109,7 @@ func (s *Store) mutate(table string, fn func(rows []sqlitedb.Row) ([]sqlitedb.Ro
 		data[spec.Name] = f.Rows(spec.Name)
 	}
 	data[table] = rows
-	return sqlitedb.Write(s.Path, storeSchema, data, f.ChangeCounter+1, f.SchemaCookie)
+	return sqlitedb.Update(s.Path, storeSchema, data, f.ChangeCounter+1, f.SchemaCookie)
 }
 
 func nextRowID(rows []sqlitedb.Row) int64 {

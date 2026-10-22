@@ -73,6 +73,10 @@ func ParseFrontmatter(content string, warn io.Writer) (*jsonx.Object, string) {
 	body := normalized[bodyStart:]
 	v, err := pyyaml.SafeLoad(fmText)
 	if err != nil {
+		if pe, ok := err.(*pyyaml.PyError); ok {
+			// only yaml.YAMLError is caught upstream
+			panic(&crash{pe.Type + ": " + pe.Msg})
+		}
 		if warn != nil {
 			rich.LogWarning(warn, "YAML parse error in frontmatter (WP may vanish from dashboard): "+err.Error())
 		}
@@ -118,7 +122,23 @@ func DetectLaneMismatch(path string, warn io.Writer) (bool, string, string, erro
 	if err != nil {
 		return false, expected, "", nil
 	}
-	meta, _ := ParseFrontmatter(content, warn)
+	// read + parse_frontmatter run under `except Exception` upstream: a
+	// non-YAMLError from the loader just means "no mismatch".
+	meta, parsed := func() (m *jsonx.Object, ok bool) {
+		defer func() {
+			if r := recover(); r != nil {
+				if _, isCrash := r.(*crash); !isCrash {
+					panic(r)
+				}
+				m, ok = nil, false
+			}
+		}()
+		m, _ = ParseFrontmatter(content, warn)
+		return m, true
+	}()
+	if !parsed {
+		return false, expected, "", nil
+	}
 	raw, ok := meta.Get("lane")
 	if !ok {
 		raw = ""
@@ -155,14 +175,9 @@ func scan(featureDir string, warn io.Writer) ([]mismatch, error) {
 		if _, err := os.Stat(laneDir); err != nil {
 			continue
 		}
-		var files []string
-		filepath.WalkDir(laneDir, func(p string, d os.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && strings.HasPrefix(d.Name(), "WP") && strings.HasSuffix(d.Name(), ".md") {
-				files = append(files, p)
-			}
-			return nil
+		files := rglob(laneDir, func(name string) bool {
+			return strings.HasPrefix(name, "WP") && strings.HasSuffix(name, ".md")
 		})
-		sort.Strings(files)
 		for _, f := range files {
 			mm, exp, act, err := DetectLaneMismatch(f, warn)
 			if err != nil {
@@ -202,6 +217,9 @@ func RepairLaneMismatch(path, agent, shellPID string, warn io.Writer) (bool, str
 	if err != nil || !mm {
 		return false, "", err
 	}
+	// The read, the repair and the write are one hold of the Mission write lock.
+	release := missionWriteLock(missionDirOf(path))
+	defer release()
 	content, err := readUTF8Sig(path)
 	if err != nil {
 		return false, "Failed to parse frontmatter: " + err.Error(), nil
@@ -254,11 +272,21 @@ func run(ctx *cli.Context) error {
 		shellPID = fmt.Sprint(os.Getpid())
 	}
 	fix := ctx.Bool("fix")
-	err := func() error {
+	err := func() (err error) {
+		defer func() {
+			// ParseFrontmatter panics with *crash for non-YAMLErrors
+			if r := recover(); r != nil {
+				c, ok := r.(*crash)
+				if !ok {
+					panic(r)
+				}
+				err = c
+			}
+		}()
 		if ctx.Bool("all") {
 			var dirs []string
 			add := func(specs string) {
-				names, _ := os.ReadDir(specs)
+				names := scandir(specs)
 				for _, n := range names {
 					if st, err := os.Stat(filepath.Join(specs, n.Name())); err == nil && st.IsDir() {
 						dirs = append(dirs, filepath.Join(specs, n.Name()))
@@ -266,7 +294,7 @@ func run(ctx *cli.Context) error {
 				}
 			}
 			add(project.Specs(repoRoot))
-			wts, _ := os.ReadDir(filepath.Join(repoRoot, ".worktrees"))
+			wts := scandir(filepath.Join(repoRoot, ".worktrees"))
 			for _, wt := range wts {
 				if st, err := os.Stat(filepath.Join(repoRoot, ".worktrees", wt.Name())); err == nil && st.IsDir() {
 					add(filepath.Join(repoRoot, ".worktrees", wt.Name(), "kitty-specs"))
@@ -326,7 +354,7 @@ func run(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}()
 	if c, ok := err.(*crash); ok {
-		fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\n%s\n", c.msg)
+		rich.PrintTraceback(ctx.Stderr, rich.ParseException(c.msg, rich.Frame{Name: "validate_tasks", Line: 131}))
 		return cli.Exit(1)
 	}
 	return err

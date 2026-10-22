@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 const buildLong = "Build a Spec Kitty plugin bundle for a specific target harness.\n\n" +
@@ -42,16 +43,20 @@ func init() {
 	})
 }
 
-func crash(ctx *cli.Context, err error) error {
+// crash prints an uncaught build exception as upstream's rich traceback;
+// line is the plugin_build line (specify_cli/cli/commands/plugin.py) of the
+// projector's build() call.
+func crash(ctx *cli.Context, line int, err error) error {
+	frame := rich.Frame{Name: "plugin_build", Line: line}
 	var be *BuildError
 	var pe *pyError
 	switch {
 	case errors.As(err, &be):
-		fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\nBuildError: %s\n", be.Msg)
+		rich.Traceback(ctx.Stderr, "BuildError", be.Msg, frame)
 	case errors.As(err, &pe):
-		fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\n%s\n", pe.Error())
+		rich.Traceback(ctx.Stderr, pe.Type, pe.Msg, frame)
 	default:
-		fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\nOSError: %s\n", err)
+		rich.Traceback(ctx.Stderr, "OSError", err.Error(), frame)
 	}
 	return cli.Exit(1)
 }
@@ -64,7 +69,7 @@ func runBuild(ctx *cli.Context) error {
 	case "claude-code":
 		dir, err := BuildClaude(ctx.Stderr, out)
 		if err != nil {
-			return crash(ctx, err)
+			return crash(ctx, 62, err)
 		}
 		if err := validateClaude(ctx, dir, skip); err != nil {
 			return err
@@ -73,7 +78,7 @@ func runBuild(ctx *cli.Context) error {
 	case "codex":
 		dir, err := BuildCodex(ctx.Stderr, out)
 		if err != nil {
-			return crash(ctx, err)
+			return crash(ctx, 69, err)
 		}
 		if skip {
 			fmt.Fprintln(ctx.Stderr, "Warning: Skipping Codex plugin validation (--skip-validate passed).")
@@ -107,7 +112,8 @@ func validateClaude(ctx *cli.Context, dir string, skip bool) error {
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	runErr := cmd.Run()
 	if c.Err() != nil {
-		fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\nsubprocess.TimeoutExpired: Command '['claude', 'plugin', 'validate', '--strict', %s]' timed out after 30 seconds\n", pyjson.ReprString(dir))
+		rich.Traceback(ctx.Stderr, "TimeoutExpired", fmt.Sprintf("Command '['claude', 'plugin', 'validate', '--strict', %s]' timed out after 30 seconds", pyjson.ReprString(dir)),
+			rich.Frame{Name: "plugin_build", Line: 62})
 		return cli.Exit(1)
 	}
 	if runErr != nil {

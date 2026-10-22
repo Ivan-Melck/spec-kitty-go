@@ -168,7 +168,12 @@ func loadAgentProfiles(builtInDir string, builtInFS bool, orgDirs []string, proj
 				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "YAML/read error: " + err.Error()})
 				continue
 			}
-			v, err := yamlx.Parse(b)
+			// YAML(typ="safe").load(yaml_file): a binary file stream
+			opts := yamlx.ParseOptions{Safe: true}
+			if name != dct.LayerBuiltIn {
+				opts.File = f
+			}
+			v, err := yamlx.ParseWith(b, opts)
 			if err != nil {
 				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "YAML/read error: " + err.Error()})
 				continue
