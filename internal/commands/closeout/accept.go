@@ -41,6 +41,7 @@ func init() {
 					json: ctx.Bool("json"), lenient: ctx.Bool("lenient"), noCommit: ctx.Bool("no-commit"), diagnose: ctx.Bool("diagnose"),
 					allowFail: ctx.Bool("allow-fail"), owned: ctx.IsSet("owned-checkout"), mergeCommit: ctx.String("merge-commit"),
 					targetBranch: ctx.OptString("target-branch"), originCheck: ctx.OptString("origin-check"), attest: ctx.Bool("attest-first-landing-commit"),
+					normalizeEncoding: ctx.Bool("normalize-encoding"),
 				})
 			},
 		})
@@ -79,6 +80,7 @@ type acceptOpts struct {
 	owned, agent                                 bool
 	targetBranch, originCheck                    *string
 	attest                                       bool
+	normalizeEncoding                            bool
 }
 
 type acceptRun struct {
@@ -188,7 +190,7 @@ func runAccept(ctx *cli.Context, o acceptOpts) error {
 	if !o.json {
 		r.tr.start("verify")
 	}
-	sum, err := acceptance.Collect(root, slug, acceptance.CollectOptions{StrictMetadata: !o.lenient, MutateMatrix: !o.diagnose})
+	sum, err := r.collectWithOptionalRepair(root, slug, acceptance.CollectOptions{StrictMetadata: !o.lenient, MutateMatrix: !o.diagnose}, o.normalizeEncoding)
 	if err != nil {
 		return r.fail(err.Error(), 1, "verify", nil)
 	}

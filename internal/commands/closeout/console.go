@@ -69,7 +69,19 @@ func (t *tracker) renderText() string {
 		if detail != "" {
 			line += " (" + detail + ")"
 		}
-		b.WriteString(guide + line + "\n")
+		// rich's Tree renders the label at (console width - guide width)
+		// and continues wrapped lines under the guide.
+		cont := "│   "
+		if i == len(t.steps)-1 {
+			cont = "    "
+		}
+		for j, l := range strings.Split(rich.Wrap(line, rich.Width()-4), "\n") {
+			if j == 0 {
+				b.WriteString(guide + l + "\n")
+			} else {
+				b.WriteString(cont + l + "\n")
+			}
+		}
 	}
 	return b.String()
 }
