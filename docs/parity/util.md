@@ -54,17 +54,15 @@ and compare exit code, normalized stdout/stderr and the resulting file trees
 - Recursive YAML aliases (`&a [*a]`) build cyclic Python objects upstream;
   the jsonx value space cannot hold cycles.
 - Coloured output: rich's OSC 8 hyperlink ids are random per process, so
-  `[link=...]` markup is not reproducible byte for byte.
+  `[link=...]` markup is not reproducible byte for byte. Traceback frames
+  (above) keep upstream's pygments-styled source excerpts out of reach.
+- Colour (PYF-14, area COLOR): every renderer goes through the segment
+  engine in `internal/rich` (see help.md "Colour" and the engine API there);
+  the `internal/colorparity` harness and `SPEC_KITTY_TEST_COLOR=standard|256|
+  truecolor` (reruns every differential suite with colour on) verify it.
 
 ## Remaining work
 
-- Colour (PYF-14): `console.print` output (`rich.Print`) is coloured exactly
-  as rich does (markup + `ReprHighlighter`, default theme, colour-system
-  detection and downgrade, NO_COLOR, verified on a 2000-line corpus per
-  colour system and by `TestMergeStubColorParity`). Still plain on a
-  terminal: rich tables and panels, `RichHandler` log lines, tracebacks,
-  typer help, and commands that print through their own markup-stripping
-  helpers instead of `rich.Print`.
 - Round-trip config writers (PYF-04): the tracker, `internal/kittify`
   (agent config add/remove/sync, init vcs/agents) and
   `migrate rewrite-opposed-by` use `internal/rtyaml`. Other areas'
