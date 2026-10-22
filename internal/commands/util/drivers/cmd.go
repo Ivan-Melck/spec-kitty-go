@@ -26,8 +26,34 @@ var helpText = map[string]string{
 		"line-level global dedup, never fail-closed on an ordinary repeat.",
 	mergedriver.DriverIssueMatrix:      "Row-aware, 3-way merge of ``issue-matrix.json``; write result to ``ours`` (FR-008).",
 	mergedriver.DriverAcceptanceMatrix: "Row-aware, 3-way merge of ``acceptance-matrix.json``; write result to ``ours`` (FR-008).",
-	mergedriver.DriverReviewCycle:      "Reconcile a ``review-cycle-N.md`` collision, best-effort, non-aborting.",
-	mergedriver.DriverDecisionIndex:    "Union ``decisions/index.json`` entries keyed by ``decision_id`` (FR-009b/#5023).",
+	mergedriver.DriverReviewCycle: "Reconcile a ``review-cycle-N.md`` collision, best-effort, non-aborting.\n" +
+		"\n" +
+		"Two distinct verdict documents colliding under the same filename are\n" +
+		"NEVER unioned/field-merged/interleaved into one document -- see the\n" +
+		"module-level design-decision comment in ``specify_cli.consolidation.drivers``,\n" +
+		"immediately above :func:`specify_cli.consolidation.drivers.run_review_cycle_driver`,\n" +
+		"for the full reasoning (embed both verbatim, never fabricate a blended\n" +
+		"verdict). Unlike WP18's original T077 driver, a divergent collision no\n" +
+		"longer aborts the squash (FR-014/D-PLAN-6): the ``.md`` render is\n" +
+		"non-authoritative, unread prose now that ``status.events.jsonl``'s\n" +
+		"``review_result`` event slot is the sole verdict authority, so refusing\n" +
+		"the merge over it is no longer justified.\n" +
+		"\n" +
+		"Identical content on both sides (byte-for-byte) is the trivial fast path:\n" +
+		"resolves cleanly, exit 0, never reported as a conflict. Otherwise, both\n" +
+		"raw documents are embedded verbatim inside standard git-style conflict\n" +
+		"markers (never blended field-by-field -- a review verdict has no safely\n" +
+		"mergeable sub-fields the way a JSON matrix row does) and the driver\n" +
+		"exits 0, so ``git merge --squash`` treats the path as resolved\n" +
+		"and the squash proceeds.",
+	mergedriver.DriverDecisionIndex: "Union ``decisions/index.json`` entries keyed by ``decision_id`` (FR-009b/#5023).\n" +
+		"\n" +
+		"See ``specify_cli.consolidation.drivers.run_decision_index_driver``'s\n" +
+		"docstring for the full collision/precedence semantics: a terminal status\n" +
+		"(resolved/deferred/canceled) beats ``open``; the one legal reopen pair\n" +
+		"(deferred -> resolved) takes the reopen target; any other divergence, or\n" +
+		"malformed input, is a conflict (non-zero exit) -- never a silently\n" +
+		"picked side.",
 }
 
 func init() {
@@ -92,8 +118,8 @@ func run(ctx *cli.Context, body mergedriver.Body) error {
 func mergeStub() *cli.Command {
 	return &cli.Command{
 		Name:                 "merge",
-		Short:                "(deprecated) [REMOVED] Renamed to ``spec-kitty consolidate`` -- this stub always fails.",
-		Long:                 "(deprecated)\n[REMOVED] Renamed to ``spec-kitty consolidate`` -- this stub always fails.",
+		Short:                "[REMOVED] Renamed to ``spec-kitty consolidate`` -- this stub always fails.",
+		Deprecated:           true,
 		Hidden:               true,
 		AllowExtraArgs:       true,
 		IgnoreUnknownOptions: true,

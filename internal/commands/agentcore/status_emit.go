@@ -40,7 +40,7 @@ func init() {
 				{Name: "workspace-context", Kind: cli.String, Metavar: "<str>", Help: "Workspace context identifier for claimed->in_progress"},
 				{Name: "subtasks-complete", Kind: cli.Bool, Help: "Whether required subtasks are complete for in_progress->for_review"},
 				{Name: "implementation-evidence-present", Kind: cli.Bool, Help: "Whether implementation evidence exists for in_progress->for_review"},
-				{Name: "execution-mode", Kind: cli.String, Default: "worktree", Metavar: "<str>", Help: "Execution mode (worktree or direct_repo) [default: worktree]"},
+				{Name: "execution-mode", Kind: cli.String, Default: "worktree", Metavar: "<str>", Help: "Execution mode (worktree or direct_repo)"},
 				{Name: "json", Kind: cli.Bool, Help: "Machine-readable JSON output"},
 			},
 			Run: runStatusEmit,

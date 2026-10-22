@@ -654,7 +654,7 @@ func runEnhancedVerify(w io.Writer, repoRoot, projectRoot, cwd, feature string, 
 			}
 			rows = append(rows, []string{f, stateDisp, br, wt, art})
 		}
-		richTable(w, "", []string{"Feature", "State", "Branch", "Worktree", "Artifacts"}, nil, rows)
+		rich.HeavyTable(w, "", []string{"Feature", "State", "Branch", "Worktree", "Artifacts"}, nil, rows)
 		if len(all) > 10 {
 			out(w, fmt.Sprintf("   [dim]... and %d more features[/dim]", len(all)-10))
 		}
@@ -1056,7 +1056,7 @@ func printDiagnostics(w io.Writer, d *jsonx.Object, withTools bool, status map[s
 			}
 			rows = append(rows, []string{f.GetString("name"), f.GetString("state"), b, m, wt})
 		}
-		richTable(w, "All Features", []string{"Feature", "State", "Branch", "Merged", "Worktree"}, []byte("llccc"), rows)
+		rich.HeavyTable(w, "All Features", []string{"Feature", "State", "Branch", "Merged", "Worktree"}, []byte("llccc"), rows)
 	} else {
 		out(w, "[yellow]No features found[/yellow]")
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -176,11 +177,11 @@ func runStatusDoctor(ctx *cli.Context) error {
 func renderSimpleTable(ctx *cli.Context, title string, head []string, rows [][]string) {
 	widths := make([]int, len(head))
 	for i, h := range head {
-		widths[i] = cellWidth(h)
+		widths[i] = rich.CellLen(h)
 	}
 	for _, r := range rows {
 		for i, c := range r {
-			widths[i] = max(widths[i], cellWidth(c))
+			widths[i] = max(widths[i], rich.CellLen(c))
 		}
 	}
 	total := 1

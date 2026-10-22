@@ -30,7 +30,7 @@ func init() {
 				"providing immediate feedback on linting and type-checking violations.\n" +
 				"When invoked without a path (the wired hook form), the target file is read\n" +
 				"from the harness JSON payload on stdin.",
-			Args: []*cli.Arg{{Name: "file_path", Metavar: "[file_path]", Help: "File to lint/type-check; omit to read the path from a hook stdin payload"}},
+			Args: []*cli.Arg{{Name: "file_path", Metavar: "[file_path]", Type: "<path>", Help: "File to lint/type-check; omit to read the path from a hook stdin payload"}},
 			Flags: []*cli.Flag{
 				{Name: "json", Kind: cli.Bool, Help: "Output in JSON format for AI agents"},
 				{Name: "fix", Kind: cli.Bool, Help: "Attempt to automatically fix lint errors"},
