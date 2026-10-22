@@ -10,6 +10,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/fm"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/missionart"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 )
 
@@ -89,17 +90,57 @@ func CheckAnalysisReport(root, slug string) AnalysisFreshness {
 	if saved == nil {
 		return AnalysisFreshness{Path: p, Stale: true, Reason: "missing_input_artifacts"}
 	}
-	cur := inputHashes(dir, root)
-	var mism []string
-	for _, k := range []string{"spec.md", "plan.md", "tasks.md", "charter"} {
-		entry := saved.GetObject(k)
-		var savedHash string
-		if entry != nil {
-			if v, ok := entry.Get("sha256"); ok && v != nil {
-				savedHash, _ = v.(string)
-			}
+	if tok, ok := d.Meta.Get("report_transaction"); ok {
+		if !reportIsQualified(root, p, tok) {
+			return AnalysisFreshness{Path: p, Stale: true, Reason: "unqualified_report_transaction"}
 		}
-		if entry == nil || savedHash != cur[k] {
+	}
+	// current input hashes (sha256 or nil per key)
+	cur := map[string]any{}
+	for k, v := range inputHashes(dir, root) {
+		if v == "" {
+			cur[k] = nil
+		} else {
+			cur[k] = v
+		}
+	}
+	keys := []string{"spec.md", "plan.md", "tasks.md", "charter"}
+	if mv, material := d.Meta.Get("material_manifest_version"); material {
+		if n, isInt := mv.(int); !isInt || n != 1 {
+			return AnalysisFreshness{Path: p, Stale: true, Reason: "invalid_material_inputs: Unsupported material manifest version"}
+		}
+		mi, err := missionart.CollectMaterialInputs(dir, root)
+		if err != nil {
+			return AnalysisFreshness{Path: p, Stale: true, Reason: "invalid_material_inputs: " + err.Error()}
+		}
+		for _, kv := range mi.Pairs() {
+			var h any
+			if e, ok := kv.Value.(*jsonx.Object); ok {
+				h, _ = e.Get("sha256")
+			}
+			cur[kv.Key] = h
+		}
+		set := map[string]bool{}
+		for k := range cur {
+			set[k] = true
+		}
+		for _, k := range saved.Keys() {
+			set[k] = true
+		}
+		keys = keys[:0]
+		for k := range set {
+			keys = append(keys, k)
+		}
+	}
+	var mism []string
+	for _, k := range keys {
+		entry := saved.GetObject(k)
+		var savedHash any
+		if entry != nil {
+			savedHash, _ = entry.Get("sha256")
+		}
+		curHash, inCur := cur[k]
+		if !saved.Has(k) || !inCur || savedHash != curHash {
 			mism = append(mism, k)
 		}
 	}

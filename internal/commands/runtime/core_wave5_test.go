@@ -151,6 +151,45 @@ func TestDiffMergeDriverActivation(t *testing.T) {
 	compareGit(t, p)
 }
 
+// reportOnlyPair is the calc mission analysed with a report-only
+// (receipt-qualified, material-manifest) analysis report by the oracle.
+func reportOnlyPair(t *testing.T) *testkit.Pair {
+	p := missionfx.NewOraclePair(t)
+	missionfx.OracleCalcMission(t, p)
+	oracleBoth(t, p, "agent", "mission", "record-analysis", "--mission", "$M", "--report-only", "--input-file", missionfx.AnalysisReport(), "--json")
+	return p
+}
+
+// TestDiffAnalysisFreshnessReportOnly covers the report-only receipt and
+// recorded material inputs of check_analysis_report_current: a qualified
+// report is current; a changed material input or a missing receipt makes it
+// stale for the implement gate.
+func TestDiffAnalysisFreshnessReportOnly(t *testing.T) {
+	t.Run("fresh", func(t *testing.T) {
+		t.Parallel()
+		p := reportOnlyPair(t)
+		steps(t, p, false, []string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M"})
+		compareGit(t, p)
+	})
+	t.Run("stale", func(t *testing.T) {
+		t.Parallel()
+		p := reportOnlyPair(t)
+		p.Both(func(s *testkit.Sandbox) {
+			s.WriteFile(".kittify/config.yaml", s.ReadFile(".kittify/config.yaml")+"# material change\n")
+			s.Git("commit", "-qam", "material change")
+		})
+		steps(t, p, false,
+			[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M"},
+			[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"},
+		)
+		p.Both(func(s *testkit.Sandbox) {
+			s.Git("revert", "--no-edit", "HEAD")
+			s.Exec("", "sh", "-c", `rm -rf "$(git rev-parse --absolute-git-dir)/spec-kitty-report-transactions"`)
+		})
+		steps(t, p, false, []string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M"})
+	})
+}
+
 // TestDiffMissionCloseMerged covers CORE-15: closing a merged mission
 // persists the retrospective (record + RetrospectiveCaptured event,
 // committed) and tears down the coordination worktree with its report line;
