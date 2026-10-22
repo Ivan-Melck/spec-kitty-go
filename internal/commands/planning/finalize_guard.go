@@ -89,7 +89,7 @@ func snapshotWriteScope(dir string) *writeScope {
 
 // restore is _restore_mission_write_scope (plus the meta.json revert when
 // the override was persisted but never committed).
-func (ws *writeScope) restore(revertMeta bool) {
+func (ws *writeScope) restore(revertMeta bool, keep map[string]bool) {
 	all := map[string]bool{}
 	for p := range ws.before {
 		all[p] = true
@@ -103,6 +103,9 @@ func (ws *writeScope) restore(revertMeta bool) {
 	}
 	sort.Strings(paths)
 	for _, p := range paths {
+		if keep[p] {
+			continue
+		}
 		orig, had := ws.before[p]
 		now, err := os.ReadFile(p)
 		exists := err == nil

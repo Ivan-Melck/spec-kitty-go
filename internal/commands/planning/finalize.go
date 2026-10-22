@@ -123,6 +123,7 @@ type finalizeRun struct {
 	pin             *planningPin
 	refreshFindings []string
 	scope           *writeScope
+	statusGuard     *statusGuard
 	commitLanded    bool
 	concernWarns    []string
 	tasksMDStale    bool
@@ -219,7 +220,21 @@ func runFinalizeTasks(ctx *cli.Context) error {
 	}
 	err = f.run()
 	if err != nil && f.scope != nil && !f.commitLanded {
-		f.scope.restore(f.persisted)
+		// _undo_finalize_write_scope: the status commits first, then the
+		// mission directory (leaving what a kept status commit changed).
+		reason, commits, kept := f.statusGuard.restore()
+		f.scope.restore(f.persisted, kept)
+		if reason != "" {
+			if f.json {
+				emitJSON(ctx.Stdout, jsonx.NewObject("warning", "status_commits_not_undone", "branch", f.statusGuard.branch,
+					"detail", strings.TrimPrefix(reason, fmt.Sprintf("status commits on %s were not undone: ", mission.PyRepr(f.statusGuard.branch))), "commits", strList(nonNil(commits))))
+			} else {
+				say(ctx.Stdout, "[yellow]Warning:[/yellow] "+reason)
+				for _, c := range commits {
+					sayPlain(ctx.Stdout, "  "+c)
+				}
+			}
+		}
 	}
 	if err == nil && scope != nil && scope.Confirm != nil {
 		scope.Confirm()
@@ -283,6 +298,9 @@ func (f *finalizeRun) run() error {
 		}
 	}
 	if !f.noWrite() {
+		if f.scope != nil {
+			f.statusGuard = captureStatusSurface(coord.Resolve(f.root, f.slug).StatusDir(), f.dir)
+		}
 		lifecycle.EmitArtifactPhase(statusWriteDir(f.root, f.slug), lifecycle.PhaseInput{EventType: lifecycle.TasksStarted, MissionSlug: f.slug, Actor: finalizeCmd})
 	}
 	if f.validateOnly {
@@ -1248,19 +1266,25 @@ func (f *finalizeRun) metaObj() *jsonx.Object { return mission.ReadMetaOrEmpty(f
 
 func (f *finalizeRun) computeLanes(man map[string]ownManifest, previous *lanes.Manifest, planningSHA *string) (*lanes.Manifest, error) {
 	meta := f.metaObj()
+	laneMan, laneDeps, laneBodies := f.laneMan, f.laneDeps, f.laneBodies
+	if laneMan == nil {
+		// callers without the eligibility projection (agent tasks
+		// finalize-tasks) pass their raw inputs
+		laneMan, laneDeps, laneBodies = man, f.deps, f.bodies
+	}
 	own := map[string]*lanes.Ownership{}
-	for id, m := range f.laneMan {
+	for id, m := range laneMan {
 		own[id] = &lanes.Ownership{ExecutionMode: m.mode, OwnedFiles: m.owned}
 	}
 	graph := map[string][]string{}
-	for k, v := range f.laneDeps {
+	for k, v := range laneDeps {
 		graph[k] = v
 	}
 	var mid *string
 	if s := meta.GetString("mission_id"); s != "" {
 		mid = &s
 	}
-	in := lanes.ComputeInput{DependencyGraph: graph, Ownership: own, MissionSlug: f.slug, TargetBranch: f.target, WPBodies: f.laneBodies,
+	in := lanes.ComputeInput{DependencyGraph: graph, Ownership: own, MissionSlug: f.slug, TargetBranch: f.target, WPBodies: laneBodies,
 		MissionID: mid, Previous: previous, Topology: coord.TopologyFromMeta(meta, f.dir), MissionBranch: meta.GetString("mission_branch"), Frozen: f.frozen}
 	m, err := lanes.Compute(in)
 	if err != nil {
