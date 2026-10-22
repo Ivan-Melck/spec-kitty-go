@@ -11,6 +11,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
+	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/issuematrix"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -829,6 +830,7 @@ func (f *finalizeRun) bootstrapLoop() error {
 	f.ownershipWarn = append([]string{}, f.concernWarns...)
 	f.postIntegWarn = []string{}
 	f.modified, f.unchanged, f.preserved, f.wouldModify = []string{}, []string{}, []string{}, []any{}
+	var contradictIDs, contradictions []string
 	for _, p := range f.wpFiles {
 		m := wpFilePrefix.FindStringSubmatch(filepath.Base(p))
 		if m == nil {
@@ -844,6 +846,9 @@ func (f *finalizeRun) bootstrapLoop() error {
 		if err != nil {
 			f.human(fmt.Sprintf("[yellow]Warning:[/yellow] Could not read %s: %v", filepath.Base(p), err))
 			continue
+		}
+		if err := f.charterActivationGate(w.Meta().GetString("agent_profile"), id); err != nil {
+			return err
 		}
 		hasDepsLine := w.Meta().Has("dependencies")
 		_, depsIsString := func() (any, bool) { v, _ := w.Meta().Get("dependencies"); _, s := v.(string); return v, s }()
@@ -881,14 +886,40 @@ func (f *finalizeRun) bootstrapLoop() error {
 		if len(wp.StringList(dumped, "requirement_refs")) == 0 && len(refs) > 0 {
 			changes.Set("requirement_refs", strList(refs))
 		}
-		// TODO: ownership inference (infer_ownership) for WPs missing
-		// execution_mode / owned_files is not ported.
+		// _apply_ownership_inference
+		rawB, _ := os.ReadFile(p)
+		raw := string(rawB)
+		mode := dumped.GetString("execution_mode")
+		explicitEmpty := ownedFilesExplicitlyEmpty(raw)
+		if mode == "code_change" && explicitEmpty {
+			contradictIDs = append(contradictIDs, id)
+			contradictions = append(contradictions, id+": code_change WP declares no owned files (execution_mode: code_change with an explicit owned_files: [] is an authoring contradiction)")
+			continue
+		}
+		needMode := mode == ""
+		needOwned := len(wp.StringList(dumped, "owned_files")) == 0 && !explicitEmpty
+		if needMode || needOwned {
+			owned, warns := inferOwnedFiles(raw, f.slug)
+			if needMode {
+				changes.Set("execution_mode", inferExecutionMode(raw, nil))
+			}
+			if needOwned {
+				changes.Set("owned_files", strList(owned))
+			}
+			if dumped.GetString("authoritative_surface") == "" {
+				changes.Set("authoritative_surface", inferAuthoritativeSurface(owned))
+			}
+			f.ownershipWarn = append(f.ownershipWarn, warns...)
+		}
 		updated := dumped.Clone()
 		for _, kv := range changes.Pairs() {
 			updated.Set(kv.Key, kv.Value)
 		}
 		f.frontmatter[id] = updated
 		f.bodies[id] = w.Doc.Body
+		for _, warn := range detectPostIntegrationAcceptance(raw, wp.StringList(updated, "owned_files")) {
+			f.postIntegWarn = append(f.postIntegWarn, id+": "+warn)
+		}
 		if changes.Len() > 0 {
 			if !f.validateOnly {
 				f.pending = append(f.pending, pendingWrite{w: w, delta: changes})
@@ -903,11 +934,30 @@ func (f *finalizeRun) bootstrapLoop() error {
 			f.unchanged = append(f.unchanged, id)
 		}
 	}
+	if len(contradictions) > 0 {
+		msg := "Ownership contradiction detected for WP(s) " + strings.Join(contradictIDs, ", ") + ": " + strings.Join(contradictions, "; ")
+		if f.json {
+			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", msg, "error_code", "OWNERSHIP_CONTRADICTION_CODE_CHANGE_EMPTY_OWNED_FILES",
+				"ownership_contradiction_wp_ids", strList(contradictIDs), "ownership_contradictions", strList(contradictions)))
+		} else {
+			say(f.ctx.Stdout, "[red]Error:[/red] "+msg)
+			for _, c := range contradictions {
+				say(f.ctx.Stdout, "  - "+c)
+			}
+		}
+		return cli.Exit(1)
+	}
+	for _, w := range f.postIntegWarn {
+		f.human("[yellow]Warning:[/yellow] " + w)
+	}
 	// owned_files under kitty-specs/ are refused.
 	var invalid []any
 	var invalidHuman []string
 	ids := sortedKeysObj(f.frontmatter)
 	for _, id := range ids {
+		if confinedPlanningWP(f.frontmatter[id]) {
+			continue
+		}
 		for _, of := range wp.StringList(f.frontmatter[id], "owned_files") {
 			n := strings.TrimLeft(strings.TrimSpace(filepath.ToSlash(of)), "")
 			for strings.HasPrefix(n, "./") {
@@ -1062,6 +1112,17 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 				errs = append(errs, fmt.Sprintf("%s: authoritative_surface %s is not a prefix of any owned_files entry: %s", id, mission.PyRepr(m.surface), pyListRepr(m.owned)))
 			}
 		}
+		if m.mode == "planning_artifact" {
+			var bad []string
+			for _, p := range m.owned {
+				if !strings.HasPrefix(p, "kitty-specs/") && !strings.HasPrefix(p, "docs/") {
+					bad = append(bad, p)
+				}
+			}
+			if len(bad) > 0 {
+				warns = append(warns, fmt.Sprintf("%s: planning_artifact WP owns files outside planning paths (kitty-specs/, docs/): %s", id, pyListRepr(bad)))
+			}
+		}
 		if m.mode == "code_change" {
 			has := false
 			for _, p := range m.owned {
@@ -1069,7 +1130,7 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 					has = true
 				}
 			}
-			if !has {
+			if len(m.owned) > 0 && !has {
 				warns = append(warns, fmt.Sprintf("%s: code_change WP does not own any files under src/ or tests/. owned_files: %s", id, pyListRepr(m.owned)))
 			}
 		}
@@ -1111,7 +1172,11 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 					fmt.Fprintln(f.ctx.Stderr, wrapPlain(fmt.Sprintf("INFO: %s: owned_files path '%s' has no match — suppressed by create_intent (planned-new-file).", id, pat)))
 				}
 			default:
-				gerrs = append(gerrs, fmt.Sprintf("%s: owned_files path '%s' is a literal file path that matches zero files in the repository. If this file will be created during implementation, declare it in the WP frontmatter:\n  create_intent:\n    - %s", id, pat, pat))
+				hint := ""
+				if sg := nearestMatchSuggestion(pat, f.root); sg != "" {
+					hint = " " + sg
+				}
+				gerrs = append(gerrs, fmt.Sprintf("%s: owned_files path '%s' is a literal file path that matches zero files in the repository.%s If this file will be created during implementation, declare it in the WP frontmatter:\n  create_intent:\n    - %s", id, pat, hint, pat))
 			}
 		}
 	}
@@ -1233,9 +1298,79 @@ func (f *finalizeRun) laneInputsOK(man map[string]ownManifest) error {
 func (f *finalizeRun) laneError(err error) error {
 	switch e := err.(type) {
 	case *lanes.DependencyCycleError:
-		return f.emitErr(e.Error(), "error_code", e.ErrorCode())
+		if f.json {
+			cl := []any{}
+			for _, l := range e.CycleLanes {
+				cl = append(cl, jsonx.NewObject("lane_id", l.LaneID, "wp_ids", strList(l.WPIDs)))
+			}
+			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", e.Error(), "error_code", e.ErrorCode(), "cycle_path", strList(e.CyclePath), "cycle_lanes", cl))
+			return cli.Exit(1)
+		}
+		say(f.ctx.Stdout, "[red]Error:[/red] "+e.Error())
+		say(f.ctx.Stdout, "  Cycle path: "+strings.Join(e.CyclePath, " -> "))
+		for _, l := range e.CycleLanes {
+			say(f.ctx.Stdout, "  "+l.LaneID+": "+strings.Join(l.WPIDs, ", "))
+		}
+		return cli.Exit(1)
 	}
 	return f.emitErr(err.Error())
+}
+
+// nearestMatchSuggestion is _nearest_match_suggestion.
+func nearestMatchSuggestion(pattern, root string) string {
+	parent := filepath.Dir(filepath.FromSlash(pattern))
+	entries, err := os.ReadDir(filepath.Join(root, parent))
+	if err != nil {
+		return ""
+	}
+	var siblings []string
+	for _, e := range entries {
+		if info, err := os.Stat(filepath.Join(root, parent, e.Name())); err == nil && info.Mode().IsRegular() {
+			siblings = append(siblings, filepath.ToSlash(filepath.Join(parent, e.Name())))
+		}
+	}
+	if m := closestMatch(pattern, siblings, 0.5); m != "" {
+		return "Did you mean '" + m + "'?"
+	}
+	return ""
+}
+
+// confinedPlanningWP is _is_confined_planning_wp.
+func confinedPlanningWP(m *jsonx.Object) bool {
+	if m.GetString("execution_mode") != "planning_artifact" {
+		return false
+	}
+	for _, of := range wp.StringList(m, "owned_files") {
+		n := strings.TrimSpace(filepath.ToSlash(of))
+		for strings.HasPrefix(n, "./") {
+			n = n[2:]
+		}
+		if !strings.HasPrefix(n, "kitty-specs/") && !strings.HasPrefix(n, "docs/") {
+			return false
+		}
+	}
+	return true
+}
+
+// charterActivationGate is _enforce_charter_activation_gate (T044 / FR-017).
+func (f *finalizeRun) charterActivationGate(profile, id string) error {
+	if profile == "" {
+		return nil
+	}
+	act, err := dct.ActivatedProfiles(f.root)
+	if err != nil {
+		return f.emitErr(err.Error())
+	}
+	if act == nil || act[profile] {
+		return nil
+	}
+	list := strings.Join(act.Sorted(), ", ")
+	if list == "" {
+		list = "(none)"
+	}
+	resolution := "spec-kitty charter activate agent-profile " + profile
+	say(f.ctx.Stdout, fmt.Sprintf("[red]✗ Charter activation gate FAILED[/red]\n  WP %s assigns profile: [bold]%s[/bold]\n  '%s' is not in the activated agent-profile set.\n  Currently activated: %s\n  Resolution: %s", id, profile, profile, list, resolution))
+	return f.emitErr(fmt.Sprintf("artifact=%s, activated=%s, resolution=%s", mission.PyRepr(profile), mission.PyRepr(list), mission.PyRepr(resolution)))
 }
 
 func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
