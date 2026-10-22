@@ -494,12 +494,7 @@ func runMissionClose(ctx *cli.Context) error {
 		missionError(ctx, fmt.Sprintf("Error: cannot close: mission %s has not been merged.\nRemediation: this mission has no recorded merge baseline. Use `--discard` to abandon it mid-flight, or consolidate it first (`spec-kitty consolidate`) before closing.", slug), "mission_not_merged", jsonMode)
 		return cli.Exit(1)
 	}
-	if s.CoordWorktree != "" {
-		if _, err := os.Stat(s.CoordWorktree); err == nil {
-			gitx.Run(root, "worktree", "remove", "--force", s.CoordWorktree)
-		}
-		gitx.Run(root, "worktree", "prune")
-	}
+	teardownCoordination(ctx, root, slug, dir, "", jsonMode)
 	if jsonMode {
 		emitJSON(ctx, jsonx.NewObject("ok", true, "result", "closed", "mission_slug", slug))
 	} else {

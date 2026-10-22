@@ -46,6 +46,72 @@ func TestDiffMoveTaskInvocationID(t *testing.T) {
 	compareGit(t, p)
 }
 
+// TestDiffOrphanedEventWarnings covers CORE-02: a legacy lane row without
+// mission_id whose mission_slug has no sibling meta.json logs the
+// "(orphaned event)" warning once per read_events pass (human mode only).
+func TestDiffOrphanedEventWarnings(t *testing.T) {
+	p := newOraclePair(t)
+	g, o := oracleCalcMission(t, p)
+	p.Both(func(s *testkit.Sandbox) {
+		slug := missionSlug(t, s)
+		f := ".worktrees/" + slug + "-coord/kitty-specs/" + slug + "/status.events.jsonl"
+		s.WriteFile(f, s.ReadFile(f)+`{"actor": "x", "at": "2026-01-01T00:00:00+00:00", "event_id": "01JAAAAAAAAAAAAAAAAAAAAAAA", "evidence": null, "execution_mode": "worktree", "force": false, "from_lane": "planned", "mission_slug": "ghost-mission", "reason": null, "review_ref": null, "to_lane": "claimed", "wp_id": "WP09"}`+"\n"+
+			`{"actor": "x", "at": "2026-01-01T00:00:01+00:00", "event_id": "01JAAAAAAAAAAAAAAAAAAAAAAB", "evidence": null, "execution_mode": "worktree", "force": false, "from_lane": "planned", "mission_slug": "../evil", "reason": null, "review_ref": null, "to_lane": "claimed", "wp_id": "WP08"}`+"\n")
+	})
+	comparePairSteps(t, p, g, o, [][]string{
+		{"agent", "status", "validate", "--mission", "$M"},
+		{"agent", "status", "validate", "--mission", "$M", "--json"},
+		{"agent", "status", "lifecycle", "--mission", "$M"},
+		{"agent", "status", "doctor", "--mission", "$M"},
+		{"agent", "tasks", "list-tasks", "--mission", "$M"},
+		{"agent", "tasks", "status", "--mission", "$M"},
+		{"agent", "status", "materialize", "--mission", "$M"},
+	})
+}
+
+// TestDiffStatusDoctorChecks covers CORE-03 (issue-matrix finding), CORE-04
+// (sparse-checkout over lane/coord worktrees) and CORE-05 (the findings
+// table wraps at the console width).
+func TestDiffStatusDoctorChecks(t *testing.T) {
+	for _, topo := range []string{"lanes", "coord"} {
+		topo := topo
+		t.Run(topo, func(t *testing.T) {
+			t.Parallel()
+			p := newOraclePair(t)
+			var g, o string
+			if topo == "lanes" {
+				p.Both(func(s *testkit.Sandbox) { s.Git("switch", "-q", "-c", "feat/x") })
+				g, o = oracleCalcMission(t, p, "--topology", "lanes")
+			} else {
+				g, o = oracleCalcMission(t, p)
+			}
+			p.Both(func(s *testkit.Sandbox) {
+				slug := missionSlug(t, s)
+				for _, dir := range []string{"kitty-specs/" + slug, ".worktrees/" + slug + "-coord/kitty-specs/" + slug} {
+					if s.Exists(dir + "/spec.md") {
+						s.WriteFile(dir+"/spec.md", s.ReadFile(dir+"/spec.md")+"\n## Issues\n\n- Implements #4321 (subtract).\n- Fixes #77 too.\n")
+					}
+				}
+			})
+			comparePairSteps(t, p, g, o, [][]string{
+				{"agent", "status", "doctor", "--mission", "$M"},
+				{"agent", "status", "doctor", "--mission", "$M", "--json"},
+			})
+			oracleBoth(t, p, "agent", "mission", "record-analysis", "--mission", "$M", "--input-file", tdPath("calc/analysis-report.md"), "--json")
+			oracleBoth(t, p, "agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M")
+			p.Both(func(s *testkit.Sandbox) { s.Git("config", "core.sparseCheckout", "true") })
+			comparePairSteps(t, p, g, o, [][]string{
+				{"agent", "status", "doctor", "--mission", "$M"},
+				{"agent", "status", "doctor", "--mission", "$M", "--json"},
+			})
+			p.Both(func(s *testkit.Sandbox) { s.Env = append(s.Env, "COLUMNS=120") })
+			comparePairSteps(t, p, g, o, [][]string{
+				{"agent", "status", "doctor", "--mission", "$M"},
+			})
+		})
+	}
+}
+
 // TestDiffMoveTaskArbiterIssueMatrix covers DOCS-07's ordering: the
 // OLD-timing arbiter persist fires before the issue-matrix guard, so an
 // issue-matrix refusal still leaves the arbiter override on disk.
