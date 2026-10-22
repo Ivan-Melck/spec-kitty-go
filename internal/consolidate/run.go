@@ -46,6 +46,9 @@ type Options struct {
 	SkipLanes      bool     // --skip-lanes: synthesize a no-lane manifest when lanes.json is absent
 	DryRunNotes    []string // "--attest-* is not applied with --dry-run" notices
 	AllowSparse    bool     // --allow-sparse-checkout
+	AttestCanceled []string // --attest-canceled-superseded
+	AttestApproved []string // --attest-approved-reviewed
+	AttestReason   string   // --attest-reason
 }
 
 // synthesizeNoLaneManifest is _synthesize_no_lane_manifest: one planning
@@ -212,7 +215,7 @@ func Run(w io.Writer, root string, o Options) error {
 		}
 		say(w, fmt.Sprintf("Resume requested for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
 	}
-	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck, skipLanes: o.SkipLanes, allowSparse: o.AllowSparse}
+	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck, skipLanes: o.SkipLanes, allowSparse: o.AllowSparse, opts: o}
 	return r.execute()
 }
 
@@ -352,6 +355,8 @@ type run struct {
 	anchorShas    []string
 	windowBase    string
 	allowSparse   bool
+	opts          Options
+	attested      []string
 }
 
 func hasRemote(root, name string) bool {
@@ -529,6 +534,10 @@ func (r *run) execute() error {
 	}
 	if err := r.refuseUnexplainedMoves(); err != nil {
 		return err
+	}
+	var attErr error
+	if r.attested, attErr = r.recordAttestations(r.opts.AttestCanceled, r.opts.AttestApproved, r.opts.AttestReason); attErr != nil {
+		return attErr
 	}
 	// merge-ready precondition
 	snap, err := status.ReduceDir(r.sf.StatusDir())

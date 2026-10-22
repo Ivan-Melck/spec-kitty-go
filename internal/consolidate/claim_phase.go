@@ -111,11 +111,19 @@ func (r *run) refuseClaim(refusal string, st *MergeState) error {
 	}
 	moved := st != nil && st.movedBranches(r.root)
 	before := ", before any change"
-	footer := "No branch, worktree or status record was changed by this run. Fix the cause, then re-run; " +
+	change := "No branch, worktree or status record was changed by this run."
+	if len(r.attested) > 0 {
+		change = "No branch or worktree was changed by this run; only the operator attestation(s) for " + strings.Join(r.attested, ", ") + " were recorded."
+	}
+	footer := change + " Fix the cause, then re-run; " +
 		"if an earlier attempt left partial state, run `" + consolidateAbortCommand + "` first."
 	if moved {
 		before = ""
-		footer = refusedWithEarlierRecord + st.earlierMovesSentences(r.root) + " Then fix the cause and re-run."
+		recorded := ""
+		if len(r.attested) > 0 {
+			recorded = " Only the operator attestation(s) for " + strings.Join(r.attested, ", ") + " were recorded by this run."
+		}
+		footer = refusedWithEarlierRecord + st.earlierMovesSentences(r.root) + recorded + " Then fix the cause and re-run."
 	}
 	fmt.Fprintf(r.w, "\nError: Reconciliation refused (fail-closed) at claim time%s: %s.%s%s\n", before, strings.TrimRight(refusal, "."), sep, footer)
 	return exit(1)

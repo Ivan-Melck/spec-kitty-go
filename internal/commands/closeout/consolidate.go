@@ -191,7 +191,7 @@ func runConsolidate(ctx *cli.Context) error {
 		DeleteBranch: optBool(ctx, "delete-branch"), RemoveWorktree: optBool(ctx, "remove-worktree"),
 		Push: ctx.Bool("push"), DryRun: ctx.Bool("dry-run"), JSON: ctx.Bool("json"), Yes: ctx.Bool("yes"), Resume: ctx.Bool("resume"),
 		OriginCheck: ctx.OptString("origin-check"), SkipLanes: ctx.Bool("skip-lanes"), DryRunNotes: notes,
-		AllowSparse: ctx.Bool("allow-sparse-checkout")}
+		AllowSparse: ctx.Bool("allow-sparse-checkout"), AttestCanceled: canceledWPs, AttestApproved: approvedWPs, AttestReason: attestReason}
 	if err := consolidate.Run(ctx.Stdout, root, o); err != nil {
 		return exitFrom(err)
 	}
