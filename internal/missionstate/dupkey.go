@@ -231,7 +231,7 @@ func RepairDuplicateKeysIn(root, scanRoot string, allowDirty bool, argv []string
 	if err := assertGitSafe(root, rels, allowDirty); err != nil {
 		return nil, err
 	}
-	release, err := acquireRepairLock(root)
+	release, err := acquireRepairLock(root, cliVersion)
 	if err != nil {
 		return nil, err
 	}

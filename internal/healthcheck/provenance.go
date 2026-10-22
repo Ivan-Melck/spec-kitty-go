@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/tracker"
@@ -174,9 +173,7 @@ func sourcePathSnapshot(checkoutRoot string, rel []string) ([]snapEntry, bool) {
 			return nil, false
 		}
 		e := snapEntry{typ: uint32(mode.Type())}
-		if sys, ok := st.Sys().(*syscall.Stat_t); ok {
-			e.dev, e.ino = uint64(sys.Dev), uint64(sys.Ino)
-		}
+		e.dev, e.ino = fileIdentity(st)
 		snap = append(snap, e)
 	}
 	return snap, true

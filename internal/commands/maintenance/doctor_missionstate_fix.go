@@ -31,6 +31,9 @@ func runMissionStateFix(ctx *cli.Context, root, fixtureDir string, jsonOut bool)
 	argv := append([]string(nil), os.Args[1:]...)
 	allowDirty := ctx.Bool("allow-dirty")
 	healed, err := missionstate.RepairDuplicateKeysIn(root, fixtureDir, allowDirty, argv, app.Version)
+	if nf, ok := err.(*missionstate.NoFollowError); ok {
+		return uncaught(ctx, "NoFollowPathError", nf)
+	}
 	if err != nil {
 		if jsonOut {
 			fmt.Fprintln(out, jsonx.Dumps(jsonx.NewObject("error", "DUPLICATE_KEY_REPAIR_FAILED", "message", err.Error()), compactJSON))
@@ -50,6 +53,9 @@ func runMissionStateFix(ctx *cli.Context, root, fixtureDir string, jsonOut bool)
 		Mission: optString(ctx, "mission"), ManifestPath: ctx.String("manifest-path"), AllowDirty: allowDirty,
 		Argv: argv, CLIVersion: app.Version, ScanRoot: fixtureDir,
 	})
+	if nf, ok := err.(*missionstate.NoFollowError); ok {
+		return uncaught(ctx, "NoFollowPathError", nf)
+	}
 	if err != nil {
 		if jsonOut {
 			fmt.Fprintln(out, jsonx.Dumps(jsonx.NewObject("error", "MISSION_STATE_REPAIR_FAILED", "message", err.Error()), compactJSON))

@@ -226,7 +226,7 @@ func RepairRepo(root string, o Options) (*RepairReport, error) {
 	if err := assertGitSafe(root, rels, o.AllowDirty); err != nil {
 		return nil, err
 	}
-	release, err := acquireRepairLock(root)
+	release, err := acquireRepairLock(root, o.CLIVersion)
 	if err != nil {
 		return nil, err
 	}
