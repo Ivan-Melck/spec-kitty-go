@@ -126,7 +126,9 @@ func CliConsoleFor(w io.Writer, width int) *Console {
 func PrintTo(w io.Writer, objs ...any) { CliConsoleFor(w, 0).Print(w, objs...) }
 
 // PrintOpts prints renderables on CliConsole() for w with print options.
-func PrintOpts(w io.Writer, po PrintOptions, objs ...any) { CliConsoleFor(w, 0).PrintWith(w, po, objs...) }
+func PrintOpts(w io.Writer, po PrintOptions, objs ...any) {
+	CliConsoleFor(w, 0).PrintWith(w, po, objs...)
+}
 
 // PrintSoftWrap is console.print(s, soft_wrap=True): markup and
 // highlighting, no wrapping or cropping.
@@ -300,7 +302,7 @@ func (c *Console) RenderStr(text string, so StrOptions) *Text {
 			t = NewStyledText(text, so.Style)
 		}
 	} else {
-		t = NewStyledText(text, so.Style)
+		t = NewStyledText(emojiReplace(text), so.Style)
 	}
 	t.Justify, t.Overflow = so.Justify, so.Overflow
 	if hl {

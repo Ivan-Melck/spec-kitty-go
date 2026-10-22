@@ -14,7 +14,7 @@ import (
 func renderMarkup(s string, style any) (*Text, error) {
 	t := &Text{Style: style, End: "\n"}
 	if !strings.Contains(s, "[") {
-		t.plain = []rune(stripControlCodes(s))
+		t.plain = []rune(stripControlCodes(emojiReplace(s)))
 		return t, nil
 	}
 	type open struct {
@@ -24,7 +24,7 @@ func renderMarkup(s string, style any) (*Text, error) {
 	var stack []open
 	var b []rune
 	pos := 0
-	emit := func(x string) { b = append(b, []rune(stripControlCodes(x))...) }
+	emit := func(x string) { b = append(b, []rune(stripControlCodes(emojiReplace(x)))...) }
 	for _, m := range reTags.FindAllStringSubmatchIndex(s, -1) {
 		start, end := m[0], m[1]
 		escapes := s[m[2]:m[3]]
