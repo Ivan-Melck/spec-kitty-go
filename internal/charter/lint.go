@@ -340,6 +340,7 @@ func lintOrgOverridesBuiltin(repoRoot string) []LintFinding {
 		}
 		org, proj := kindDirs(roots, projectRoot, kind)
 		withOrg := loadKindRepo(kind, rk.label, rk.fields, org, proj)
+		emitCollisionWarnings(withOrg.collisions)
 		_, proj2 := kindDirs(nil, projectRoot, kind)
 		base := loadKindRepo(kind, rk.label, rk.fields, nil, proj2)
 		ids := make([]string, 0, len(withOrg.items))

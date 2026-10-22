@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func charterContextCmd() *cli.Command {
@@ -84,7 +85,22 @@ func runCharterContext(ctx *cli.Context) error {
 	mt := ctx.String("mission-type")
 	res, err := charter.BuildContext(root, ctx.String("action"), charter.Options{MarkLoaded: ctx.Bool("mark-loaded"), MissionType: mt})
 	if err != nil {
+		var ce *dct.ConfigError
+		if !errors.As(err, &ce) && charter.IsUnexpectedError(err) {
+			// A non-ValueError exception: `except Exception` -> "Unexpected error".
+			if jsonMode {
+				emitCharterError(ctx.Stdout, true, err.Error(), "", nil)
+			} else {
+				cprint(ctx.Stdout, "[red]Unexpected error:[/red] %s", uconsoleEscape(err.Error()))
+			}
+			return cli.Exit(1)
+		}
 		return charterErr(ctx, jsonMode, err)
+	}
+	if !jsonMode {
+		for _, w := range res.Warnings {
+			rich.LogWarning(ctx.Stderr, w)
+		}
 	}
 	if jsonMode {
 		jsonOut(ctx.Stdout, charter.ContextJSON(root, res, mt, ctx.Bool("include-all")), jsonx.Pretty)

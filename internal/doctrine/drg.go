@@ -106,9 +106,16 @@ func (g *Graph) Clone() *Graph {
 
 // ParseGraph decodes a graph YAML document.
 func ParseGraph(src []byte, source string) (*Graph, error) {
-	o, err := yamlx.ParseObject(src)
+	// loader.load_graph: YAML(typ="safe").load(path) (binary stream).
+	v, err := yamlx.ParseWith(src, yamlx.ParseOptions{Safe: true, File: source})
 	if err != nil {
 		return nil, fmt.Errorf("YAML parse error in %s: %v", source, err)
+	}
+	o, isObj := v.(*jsonx.Object)
+	if v == nil {
+		o = &jsonx.Object{}
+	} else if !isObj {
+		return nil, fmt.Errorf("YAML parse error in %s: yaml document is not a mapping", source)
 	}
 	g := &Graph{SchemaVersion: pyStr0(o, "schema_version"), GeneratedAt: pyStr0(o, "generated_at"), GeneratedBy: pyStr0(o, "generated_by")}
 	for _, raw := range o.GetList("nodes") {

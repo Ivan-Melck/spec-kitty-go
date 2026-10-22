@@ -1,0 +1,121 @@
+[
+ {
+  "instance": {},
+  "errors": [
+   "root: 'profile-id' is a required property",
+   "root: 'name' is a required property",
+   "root: 'purpose' is a required property",
+   "root: 'specialization' is a required property",
+   "root: {} is not valid under any of the given schemas"
+  ]
+ },
+ {
+  "instance": {
+   "name": "x"
+  },
+  "errors": [
+   "root: 'profile-id' is a required property",
+   "root: 'purpose' is a required property",
+   "root: 'specialization' is a required property",
+   "root: {'name': 'x'} is not valid under any of the given schemas"
+  ]
+ },
+ {
+  "instance": {
+   "profile-id": 5,
+   "name": "",
+   "purpose": "p",
+   "specialization": {
+    "primary-focus": 3,
+    "zzz": 1
+   },
+   "role": "implementer",
+   "bogus": 1,
+   "aaa": 2
+  },
+  "errors": [
+   "root: Additional properties are not allowed ('aaa', 'bogus' were unexpected)",
+   "profile-id: 5 is not of type 'string'",
+   "name: '' should be non-empty",
+   "specialization: Additional properties are not allowed ('zzz' was unexpected)",
+   "specialization.primary-focus: 3 is not of type 'string'"
+  ]
+ },
+ {
+  "instance": {
+   "profile-id": "a",
+   "name": "n",
+   "purpose": "p",
+   "specialization": {
+    "primary-focus": "f"
+   },
+   "roles": [],
+   "routing-priority": 500,
+   "max-concurrent-tasks": 0
+  },
+  "errors": [
+   "roles: [] should be non-empty",
+   "routing-priority: 500 is greater than the maximum of 100",
+   "max-concurrent-tasks: 0 is less than the minimum of 1"
+  ]
+ },
+ {
+  "instance": {
+   "profile-id": "a",
+   "name": "n",
+   "purpose": "p",
+   "specialization": "nope",
+   "roles": [
+    "x",
+    3
+   ],
+   "collaboration": {
+    "handoff-to": "x"
+   },
+   "directive-references": [
+    {
+     "code": "D",
+     "name": 1
+    }
+   ],
+   "mode-defaults": [
+    {
+     "mode": 3
+    }
+   ]
+  },
+  "errors": [
+   "roles.1: 3 is not of type 'string'",
+   "specialization: 'nope' is not of type 'object'",
+   "collaboration.handoff-to: 'x' is not of type 'array'",
+   "mode-defaults.0: 'description' is a required property",
+   "mode-defaults.0: 'use-case' is a required property",
+   "mode-defaults.0.mode: 3 is not of type 'string'",
+   "directive-references.0: 'rationale' is a required property",
+   "directive-references.0.name: 1 is not of type 'string'"
+  ]
+ },
+ {
+  "instance": {
+   "profile-id": "a",
+   "name": "n",
+   "purpose": "p",
+   "specialization": {},
+   "role": "r",
+   "capabilities": [
+    1
+   ],
+   "self-review-protocol": {
+    "steps": [
+     {}
+    ]
+   }
+  },
+  "errors": [
+   "capabilities.0: 1 is not of type 'string'",
+   "specialization: 'primary-focus' is a required property",
+   "self-review-protocol.steps.0: 'name' is a required property",
+   "self-review-protocol.steps.0: 'gate' is a required property"
+  ]
+ }
+]

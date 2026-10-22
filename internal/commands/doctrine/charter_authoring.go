@@ -177,7 +177,7 @@ func validateSingleArtifact(p string) string {
 	if err != nil {
 		return "YAML parse error: " + err.Error()
 	}
-	v, err := yamlx.Parse(b)
+	v, err := yamlx.ParseWith(b, yamlx.ParseOptions{Safe: true})
 	if err != nil {
 		return "YAML parse error: " + err.Error()
 	}

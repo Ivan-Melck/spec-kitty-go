@@ -129,7 +129,7 @@ func LoadPresetFile(path string) (*Preset, error) {
 	if err != nil {
 		return nil, &PresetFormatError{path, "<file>", "cannot be read: " + err.Error()}
 	}
-	v, err := yamlx.Parse(b)
+	v, err := yamlx.ParseWith(b, yamlx.ParseOptions{Safe: true})
 	if err != nil {
 		return nil, &PresetFormatError{path, "<file>", "YAML parse error: " + err.Error()}
 	}

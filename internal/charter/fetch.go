@@ -7,8 +7,10 @@ import (
 	"compress/gzip"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,6 +27,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 )
 
@@ -367,15 +370,42 @@ func (s *httpsSource) get(u string) (*http.Response, error) {
 
 func netErrName(err error) string {
 	if ue, ok := err.(*url.Error); ok {
-		if ue.Timeout() {
-			return "ReadTimeout"
+		if _, isTLS := tlsVerifyReason(ue); isTLS {
+			return "SSLError"
 		}
-		if _, ok := ue.Err.(*net.OpError); ok {
-			return "ConnectionError"
+		if ue.Timeout() {
+			var oe *net.OpError
+			if errors.As(ue.Err, &oe) && oe.Op == "dial" {
+				return "ConnectTimeout"
+			}
+			return "ReadTimeout"
 		}
 		return "ConnectionError"
 	}
 	return "RequestException"
+}
+
+// tlsVerifyReason maps a Go certificate verification failure to OpenSSL's
+// verify-error text (what CPython's ssl module reports).
+func tlsVerifyReason(err error) (string, bool) {
+	var ua x509.UnknownAuthorityError
+	var he x509.HostnameError
+	var ci x509.CertificateInvalidError
+	switch {
+	case errors.As(err, &ua):
+		if c := ua.Cert; c != nil && bytes.Equal(c.RawIssuer, c.RawSubject) && c.CheckSignatureFrom(c) == nil {
+			return "self-signed certificate", true
+		}
+		return "unable to get local issuer certificate", true
+	case errors.As(err, &he):
+		return fmt.Sprintf("Hostname mismatch, certificate is not valid for '%s'.", he.Host), true
+	case errors.As(err, &ci):
+		if ci.Reason == x509.Expired {
+			return "certificate has expired", true
+		}
+		return "certificate verify failed", true
+	}
+	return "", false
 }
 
 type artifactoryItem struct{ aqlURL, repo, path, name string }
@@ -1180,6 +1210,17 @@ func requestsErrorText(endpoint string, err error) string {
 	}
 	msg := err.Error()
 	var cause string
+	if reason, ok := tlsVerifyReason(err); ok {
+		inner := "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: " + reason + " (_ssl.c:1032)"
+		cause = fmt.Sprintf("SSLError(SSLCertVerificationError(1, %s))", pyjson.ReprString(inner))
+		return fmt.Sprintf("%s(host='%s', port=%s): Max retries exceeded with url: %s (Caused by %s)", pool, u.Hostname(), port, path, cause)
+	}
+	if ue, ok := err.(*url.Error); ok && ue.Timeout() {
+		var oe *net.OpError
+		if !(errors.As(ue.Err, &oe) && oe.Op == "dial") {
+			return fmt.Sprintf("%s(host='%s', port=%s): Read timed out. (read timeout=30)", pool, u.Hostname(), port)
+		}
+	}
 	switch {
 	case strings.Contains(msg, "connection refused"):
 		cause = fmt.Sprintf(`NewConnectionError("%s(host='%s', port=%s): Failed to establish a new connection: [Errno 111] Connection refused")`, conn, u.Hostname(), port)

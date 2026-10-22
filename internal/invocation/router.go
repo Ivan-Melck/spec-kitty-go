@@ -4,8 +4,8 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"unicode"
 
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 )
 
@@ -20,6 +20,14 @@ type Registry struct {
 func NewRegistry(root string) *Registry {
 	r := &Registry{merged: map[string]*dct.Profile{}}
 	off := dct.NewOffering(root, dct.OrgRoots(root))
+	// build_active_charter_service: language-scope filter with
+	// active_languages=infer_repo_languages(repo_root) (None admits all).
+	if langs, known := charter.InferRepoLanguages(root, nil, false); known {
+		off.Languages = langs
+		if off.Languages == nil {
+			off.Languages = []string{}
+		}
+	}
 	act, _ := dct.ActivatedProfiles(root)
 	for _, a := range off.Repo(dct.AgentProfile).List() {
 		if act != nil && !act[a.ID] {
@@ -108,15 +116,10 @@ func init() {
 	add("coordinate", "manager", "coordinate manage delegate monitor track")
 }
 
-// isWordRune approximates Python's re \w (str patterns).
-func isWordRune(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Nl, r) || unicode.Is(unicode.No, r)
-}
-
 // NormalizeTokens is _normalize_tokens: lowercase, split on [\s\W]+, drop
 // stop words.
 func NormalizeTokens(text string) []string {
-	parts := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool { return !isWordRune(r) })
+	parts := strings.FieldsFunc(pyLower(text), func(r rune) bool { return !isWordRune(r) })
 	var out []string
 	for _, p := range parts {
 		if p != "" && !stopWords[p] {
@@ -208,7 +211,7 @@ func Route(reg *Registry, text string) (*Decision, error) {
 			}
 		}
 		for _, kw := range kws {
-			if tokSet[strings.ToLower(kw)] {
+			if tokSet[pyLower(kw)] {
 				kwMatches = append(kwMatches, km{p.ID, roleDefaultVerb(p.Role(), "review"), kw})
 			}
 		}

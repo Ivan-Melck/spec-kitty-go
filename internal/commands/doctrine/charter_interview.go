@@ -73,6 +73,20 @@ func runCharterInterview(ctx *cli.Context) error {
 		}
 	}
 	iv := charter.DefaultInterview(mission, profile)
+	// FR-026: pre-fill from org charter packs (best-effort, non-fatal).
+	orgMsgs, orgErr := charter.ApplyOrgCharterToInterview(root, iv)
+	var orgWarning any
+	if orgErr != nil {
+		orgWarning = orgErr.Error()
+		orgMsgs = nil
+		if !jsonMode {
+			cprint(w, "[yellow]Org charter pre-fill skipped:[/yellow] %s", orgErr.Error())
+		}
+	} else if !jsonMode {
+		for _, m := range orgMsgs {
+			cprint(w, "[cyan]Org charter:[/cyan] %s", m)
+		}
+	}
 	paradigms, hasP := parseCSVOpt(ctx.OptString("selected-paradigms"))
 	directives, hasD := parseCSVOpt(ctx.OptString("selected-directives"))
 	tools, hasT := parseCSVOpt(ctx.OptString("available-tools"))
@@ -132,7 +146,7 @@ func runCharterInterview(ctx *cli.Context) error {
 	if jsonMode {
 		jsonOut(w, jsonx.NewObject("result", "success", "success", true, "interview_path", rel, "mission", iv.Mission, "profile", iv.Profile,
 			"selected_paradigms", strs(nzs(iv.SelectedParadigms)), "selected_directives", strs(nzs(iv.SelectedDirectives)),
-			"available_tools", strs(nzs(iv.AvailableTools)), "org_prefill_messages", []any{}, "org_prefill_warning", nil,
+			"available_tools", strs(nzs(iv.AvailableTools)), "org_prefill_messages", strs(nzs(orgMsgs)), "org_prefill_warning", orgWarning,
 			"promotion_warnings", strs(nzs(warnings))), jsonx.Pretty)
 		return nil
 	}

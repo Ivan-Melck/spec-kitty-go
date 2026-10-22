@@ -8,7 +8,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
 
-var reBuiltinRoot = regexp.MustCompile(`/[^"\s]*?/packs/(?:[0-9a-zA-Z]+/)?built-in`)
+var reBuiltinRoot = regexp.MustCompile(`/[^"\s]*?/packs/(?:[0-9a-zA-Z]+/)?built-in|/[^"\s]*?/site-packages/charter/offering`)
 
 // maskBuiltin replaces the built-in pack root (site-packages for the
 // oracle, the materialised cache for Go) with a placeholder.

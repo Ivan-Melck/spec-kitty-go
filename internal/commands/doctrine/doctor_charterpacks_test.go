@@ -47,32 +47,32 @@ func TestParityDoctorCharterPacks(t *testing.T) {
 	p := newOraclePair(t)
 	cp := []string{"doctor", "charter-packs"}
 	cpj := []string{"doctor", "charter-packs", "--json"}
-	compareMasked(t, p, false, cp...)
+	compareDoctorHuman(t, p, cp...)
 	compareMasked(t, p, false, cpj...)
 	// Retired governance key + repo-root doctrine/ fallback.
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile("doctrine/x/keep", "")
 		s.WriteFile(".kittify/charter/charter.yaml", "governance:\n  doctrine:\n    selected_directives: [DIRECTIVE_010]\n")
 	})
-	compareMasked(t, p, false, cp...)
+	compareDoctorHuman(t, p, cp...)
 	compareMasked(t, p, false, cpj...)
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile(".kittify/charter/charter.yaml", "governance:\n  charter:\n    selected_directives: [DIRECTIVE_010, nope]\n    selected_tactics: [acceptance-test-first]\n")
 		writeOrgPack(s, acmeFragment)
 		appendConfig(s, orgPackConfig+"    - name: gone\n      local_path: nowhere\n")
 	})
-	compareMasked(t, p, false, cp...)
+	compareDoctorHuman(t, p, cp...)
 	compareMasked(t, p, false, cpj...)
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile(".kittify/config.yaml", strings.Replace(s.ReadFile(".kittify/config.yaml"), "    - name: gone\n      local_path: nowhere\n", "", 1))
 	})
-	compareMasked(t, p, false, cp...)
+	compareDoctorHuman(t, p, cp...)
 	compareMasked(t, p, false, cpj...)
 	// Consumer sanction + unknown revocation target.
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile(".kittify/charter-packs/replaceable-builtins.yaml", "replaceable_builtins:\n  - urn: directive:DIRECTIVE_010\n    reason: org knows best\nrevoked_pack_sanctions:\n  - pack: ghost\n")
 	})
-	compareMasked(t, p, false, cp...)
+	compareDoctorHuman(t, p, cp...)
 	compareMasked(t, p, false, cpj...)
 }
 
@@ -91,7 +91,7 @@ func TestParityDoctorCharterPacksFragments(t *testing.T) {
 		"nodes:\n  - id: acceptance-test-first\n    kind: directives\n",
 	} {
 		p.Both(func(s *testkit.Sandbox) { s.WriteFile("orgpack/drg/fragment.yaml", frag) })
-		compareMasked(t, p, false, "doctor", "charter-packs")
+		compareDoctorHuman(t, p, "doctor", "charter-packs")
 		compareMasked(t, p, false, "doctor", "charter-packs", "--json")
 	}
 	// Legacy template hint and a project-level pack.yaml (PACK_LEVEL_MISMATCH).
@@ -99,7 +99,7 @@ func TestParityDoctorCharterPacksFragments(t *testing.T) {
 		s.WriteFile("orgpack/drg/fragment.yaml", acmeFragment)
 		s.WriteFile("orgpack/templates/setup/replaceable-builtins.yaml", "replaceable_builtins:\n  - urn: directive:DIRECTIVE_010\n    reason: legacy reason\n")
 	})
-	compareMasked(t, p, false, "doctor", "charter-packs")
+	compareDoctorHuman(t, p, "doctor", "charter-packs")
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile("orgpack/pack.yaml", "pack_id: 01KAAAAAAAAAAAAAAAAAAAAAAA\nname: acme\npack_level: project\n")
 	})

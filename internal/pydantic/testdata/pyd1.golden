@@ -1,0 +1,21 @@
+6 validation errors for M
+name
+  String should have at least 2 characters [type=string_too_short, input_value='x', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.14/v/string_too_short
+kind
+  Input should be 'a', 'b' or 'c' [type=literal_error, input_value='z', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.14/v/literal_error
+items.0.n
+  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='q', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.14/v/int_parsing
+items.1
+  Input should be a valid dictionary or instance of Inner [type=model_type, input_value=5, input_type=int]
+    For further information visit https://errors.pydantic.dev/2.14/v/model_type
+when
+  Input should be a valid string [type=string_type, input_value=datetime.date(2024, 1, 2), input_type=date]
+    For further information visit https://errors.pydantic.dev/2.14/v/string_type
+extra
+  Extra inputs are not permitted [type=extra_forbidden, input_value={'k': 'aaaaaaaaaaaaaaaaaa...aaaaaaaaaaaaaaaaaaaaaa'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.14/v/extra_forbidden
+---
+[{'type': 'string_too_short', 'loc': ('name',), 'msg': 'String should have at least 2 characters', 'input': 'x', 'ctx': {'min_length': 2}, 'url': 'https://errors.pydantic.dev/2.14/v/string_too_short'}, {'type': 'literal_error', 'loc': ('kind',), 'msg': "Input should be 'a', 'b' or 'c'", 'input': 'z', 'ctx': {'expected': "'a', 'b' or 'c'"}, 'url': 'https://errors.pydantic.dev/2.14/v/literal_error'}, {'type': 'int_parsing', 'loc': ('items', 0, 'n'), 'msg': 'Input should be a valid integer, unable to parse string as an integer', 'input': 'q', 'url': 'https://errors.pydantic.dev/2.14/v/int_parsing'}, {'type': 'model_type', 'loc': ('items', 1), 'msg': 'Input should be a valid dictionary or instance of Inner', 'input': 5, 'ctx': {'class_name': 'Inner'}, 'url': 'https://errors.pydantic.dev/2.14/v/model_type'}, {'type': 'string_type', 'loc': ('when',), 'msg': 'Input should be a valid string', 'input': datetime.date(2024, 1, 2), 'url': 'https://errors.pydantic.dev/2.14/v/string_type'}, {'type': 'extra_forbidden', 'loc': ('extra',), 'msg': 'Extra inputs are not permitted', 'input': {'k': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}, 'url': 'https://errors.pydantic.dev/2.14/v/extra_forbidden'}]

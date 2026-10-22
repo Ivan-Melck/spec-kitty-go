@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/pydantic"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -76,10 +77,10 @@ var artifactClasses = []string{"input", "workflow", "output", "evidence", "polic
 
 // manifestValidator validates a parsed manifest mapping like
 // ExpectedArtifactManifest.model_validate (extra="forbid", lax mode).
-type manifestValidator struct{ errs []pydError }
+type manifestValidator struct{ errs []pydantic.ErrorDetail }
 
 func (v *manifestValidator) add(loc []any, msg, typ string, in any) {
-	v.errs = append(v.errs, pydError{loc: loc, msg: msg, typ: typ, input: in})
+	v.errs = append(v.errs, pydantic.ErrorDetail{Loc: loc, Msg: msg, Type: typ, Input: in})
 }
 
 func (v *manifestValidator) str(loc []any, in any, minLen bool) string {
@@ -225,7 +226,7 @@ func validateManifest(o *jsonx.Object) (*artifactManifest, error) {
 	}
 	v.extras(nil, o, "schema_version", "mission_type", "manifest_version", "required_always", "required_by_step", "optional_always")
 	if len(v.errs) > 0 {
-		return nil, &pydValidationError{title: "ExpectedArtifactManifest", errors: v.errs}
+		return nil, pydantic.New("ExpectedArtifactManifest", v.errs...)
 	}
 	return m, nil
 }
@@ -330,14 +331,14 @@ var artifactKeyRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 // validateArtifactKey is ArtifactRef's artifact_key validator.
 func validateArtifactKey(key string) error {
 	if key == "" {
-		return &pydValidationError{title: "ArtifactRef", errors: []pydError{{loc: []any{"artifact_key"}, msg: "String should have at least 1 character", typ: "string_too_short", input: key}}}
+		return pydantic.New("ArtifactRef", pydantic.ErrorDetail{Loc: []any{"artifact_key"}, Msg: pydantic.StringTooShortMsg(1), Type: "string_too_short", Input: key})
 	}
 	// re.match's "$" also accepts one trailing newline.
 	if artifactKeyRe.MatchString(key) || artifactKeyRe.MatchString(strings.TrimSuffix(key, "\n")) && strings.HasSuffix(key, "\n") {
 		return nil
 	}
 	msg := fmt.Sprintf("Value error, artifact_key must contain only alphanumeric characters, dots, underscores, and hyphens; got '%s'", key)
-	return &pydValidationError{title: "ArtifactRef", errors: []pydError{{loc: []any{"artifact_key"}, msg: msg, typ: "value_error", input: key}}}
+	return pydantic.New("ArtifactRef", pydantic.ErrorDetail{Loc: []any{"artifact_key"}, Msg: msg, Type: "value_error", Input: key})
 }
 
 // pyStem is PurePath.stem.

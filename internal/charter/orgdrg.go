@@ -273,6 +273,7 @@ func LoadOrgPack(name, packRoot string, layerIndex int) (*OrgFragment, error) {
 	}
 	if warn != "" {
 		frag.Warnings = append(frag.Warnings, warn)
+		pyWarn("charter/offering/drg/org_pack_loader.py", 624, "UserWarning", warn, "_check_org_pack_level(pack_root)")
 	}
 	fy := filepath.Join(packRoot, "drg", "fragment.yaml")
 	if _, err := os.Stat(fy); err != nil {
@@ -641,6 +642,8 @@ type MergedEdge struct {
 	Source, Target, Relation string
 	Reason                   *string
 	Provenance               string
+	// When is the built-in/project edge's `when` (org edges carry none).
+	When *string
 }
 
 // MergedGraph is the merge_three_layers result.
@@ -901,7 +904,7 @@ func GraphFromDoctrine(g *dct.Graph, provenance string) *MergedGraph {
 		mg.Nodes = append(mg.Nodes, MergedNode{URN: n.URN, Kind: n.Kind, Label: label, Provenance: provenance})
 	}
 	for _, e := range g.Edges {
-		mg.Edges = append(mg.Edges, MergedEdge{Source: e.Source, Target: e.Target, Relation: e.Relation, Reason: e.Reason, Provenance: provenance})
+		mg.Edges = append(mg.Edges, MergedEdge{Source: e.Source, Target: e.Target, Relation: e.Relation, Reason: e.Reason, Provenance: provenance, When: e.When})
 	}
 	return mg
 }
@@ -934,9 +937,10 @@ func MergeThreeLayers(builtIn *MergedGraph, frags []*OrgFragment, proj *MergedGr
 	type contribution struct {
 		edge   MergedEdge
 		source string
+		reason *string // the authored reason (nil for projection edges)
 	}
 	var contribs []contribution
-	kept := map[[3]string]bool{}
+	kept := map[[3]string]int{} // triple -> index in contribs + 1
 	for _, f := range frags {
 		source := "org:" + f.PackName
 		var surviving []OrgNode
@@ -961,6 +965,7 @@ func MergeThreeLayers(builtIn *MergedGraph, frags []*OrgFragment, proj *MergedGr
 				}
 				put(*mn)
 				conflicts = append(conflicts, OrgConflict{Kind: "node_override", ConflictingLayers: []string{dct.LayerBuiltIn, source}, TargetID: urn, BuiltInValue: bi, OrgValue: n.Dump(), ResolutionApplied: "org_override"})
+				warnLog("Org doctrine %s overrides built-in node %s (same-kind override). This is permitted by the merge but visible by design; a per-repo governance test (replaceable-builtins allowlist) decides whether the override is sanctioned.", dct.PyRepr(source), dct.PyRepr(urn))
 				continue
 			}
 			if _, ok := nodes[urn]; !ok {
@@ -990,11 +995,12 @@ func MergeThreeLayers(builtIn *MergedGraph, frags []*OrgFragment, proj *MergedGr
 			}
 			me := MergedEdge{Source: s, Target: t, Relation: rel, Reason: e.Reason, Provenance: source}
 			k := [3]string{s, t, rel}
-			if kept[k] {
+			if i := kept[k]; i > 0 {
+				warnDiscardedEdgeRationale(contribs[i-1].edge, contribs[i-1].source, contribs[i-1].reason, e.Reason, source)
 				continue
 			}
-			kept[k] = true
-			contribs = append(contribs, contribution{me, source})
+			contribs = append(contribs, contribution{me, source, e.Reason})
+			kept[k] = len(contribs)
 			edges = append(edges, me)
 		}
 	}
@@ -1005,12 +1011,33 @@ func MergeThreeLayers(builtIn *MergedGraph, frags []*OrgFragment, proj *MergedGr
 	}
 	if proj != nil {
 		for _, n := range proj.Nodes {
+			if ex, ok := nodes[n.URN]; ok {
+				prov := ex.Provenance
+				if prov == "" {
+					prov = "unknown"
+				}
+				warnLog("Project doctrine overrides %s node %s (was provenance=%s). This is allowed by design (project > org > built-in precedence); flag here for operator visibility.", prov, dct.PyRepr(n.URN), dct.PyRepr(prov))
+			}
 			n.Provenance = dct.LayerProject
 			put(n)
 		}
 		for _, e := range proj.Edges {
 			e.Provenance = dct.LayerProject
 			edges = append(edges, e)
+		}
+	}
+	// _warn_dangling_org_endpoints: one WARNING per org endpoint naming no
+	// merged node (a self-edge's single endpoint counts once).
+	for _, c := range contribs {
+		ends := []string{c.edge.Source}
+		if c.edge.Target != c.edge.Source {
+			ends = append(ends, c.edge.Target)
+		}
+		for _, u := range ends {
+			if _, ok := nodes[u]; ok {
+				continue
+			}
+			warnLog("Org doctrine %s declares an edge endpoint %s that names no node in any merged layer. The edge is kept (the endpoint may belong to a sibling pack this merge did not load) but it resolves to nothing here — check the token for a typo, or configure the pack that declares it. `spec-kitty doctor charter-packs` reports this as an error.", dct.PyRepr(c.source), dct.PyRepr(u))
 		}
 	}
 	// asset/template global uniqueness over the raw per-layer union.

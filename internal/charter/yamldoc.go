@@ -4,24 +4,26 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/atomicfile"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
+	"github.com/spec-kitty/go-kitty3/internal/rtyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
 // topSpan is one top-level mapping entry of a YAML document's source text.
 type topSpan struct {
 	key  string
-	text string // full source lines of the entry (including trailing newline)
+	lead string // comment / blank lines before the entry (not part of its span)
+	body string // the entry's own lines (key line, continuations, inner comments)
 }
 
-// splitTopLevel splits a block-mapping document into its top-level entries
-// (comments / blank lines before an entry belong to that entry; a leading
-// preamble is returned separately).
-func splitTopLevel(src string) (string, []topSpan) {
+// splitTopLevel splits a block-mapping document into its top-level entries.
+// Comment and blank lines between entries are the next entry's lead (they
+// stay in place when the entry is replaced, like upstream's key-indicator
+// spans); those after the last entry are returned as tail.
+func splitTopLevel(src string) (pre string, spans []topSpan, tail string) {
 	lines := strings.SplitAfter(src, "\n")
-	var pre strings.Builder
-	var spans []topSpan
+	var b strings.Builder
 	var pending strings.Builder
 	for _, l := range lines {
 		if l == "" {
@@ -37,10 +39,10 @@ func splitTopLevel(src string) (string, []topSpan) {
 				key = strings.Trim(key, "'\"")
 			}
 			if len(spans) == 0 {
-				pre.WriteString(pending.String())
+				b.WriteString(pending.String())
 				pending.Reset()
 			}
-			spans = append(spans, topSpan{key: key, text: pending.String() + l})
+			spans = append(spans, topSpan{key: key, lead: pending.String(), body: l})
 			pending.Reset()
 			continue
 		}
@@ -48,72 +50,115 @@ func splitTopLevel(src string) (string, []topSpan) {
 			pending.WriteString(l)
 			continue
 		}
-		// continuation (indented / sequence item / comment inside the entry)
 		if trim == "" || trim[0] == '#' {
 			pending.WriteString(l)
 			continue
 		}
-		spans[len(spans)-1].text += pending.String() + l
+		// continuation: comments seen inside the entry belong to it
+		spans[len(spans)-1].body += pending.String() + l
 		pending.Reset()
 	}
-	if len(spans) > 0 {
-		spans[len(spans)-1].text += pending.String()
-	} else {
-		pre.WriteString(pending.String())
+	if len(spans) == 0 {
+		b.WriteString(pending.String())
+		return b.String(), nil, ""
 	}
-	return pre.String(), spans
-}
-
-func emitEntry(key string, v any, width int) string {
-	return yamlx.EmitWith(jsonx.NewObject(key, v), yamlx.Options{Width: width})
+	return b.String(), spans, pending.String()
 }
 
 func valuesEqual(a, b any) bool {
 	return jsonx.Dumps(a, jsonx.Line) == jsonx.Dumps(b, jsonx.Line)
 }
 
+// dumpPlain is _dump_document / _dump_fragment of plain values with a fresh
+// YAML() instance (round-trip emitter at width).
+func dumpPlain(doc *jsonx.Object, width int) string {
+	if out, err := rtyaml.DumpWidth(doc, width); err == nil {
+		return out
+	}
+	return yamlx.EmitWith(doc, yamlx.Options{Width: width})
+}
+
+// renderedSpans renders doc over before through the ruamel round trip
+// (YAML(); load; edit the CommentedMap; dump): the replacement text of each
+// changed top-level entry, keeping the comments ruamel attaches to that key
+// (its line comment and the comment lines inside it). ok is false when the
+// round trip is unavailable.
+func renderedSpans(before []byte, orig, doc *jsonx.Object, width int) (map[string]string, bool) {
+	d, err := rtyaml.Load(pyyaml.StringInput(string(before)))
+	if err != nil {
+		return nil, false
+	}
+	d.Apply(doc, rtyaml.ContentSnapshot(orig))
+	out, err := d.DumpWidth(width)
+	if err != nil {
+		return nil, false
+	}
+	_, spans, _ := splitTopLevel(out)
+	m := map[string]string{}
+	for _, sp := range spans {
+		m[sp.key] = sp.body
+	}
+	return m, true
+}
+
 // RenderYAMLDocument is charter_yaml_io.render_yaml_document: top-level
 // entries whose value is unchanged keep their source text; changed entries
-// are re-emitted in place, new entries are appended, removed entries dropped.
+// are replaced by their round-trip rendering (the comments around the
+// entry stay), new entries are appended, removed entries dropped.
 func RenderYAMLDocument(before []byte, doc *jsonx.Object, width int) string {
 	if before == nil {
 		if doc.Len() == 0 {
 			return "{}\n"
 		}
-		return yamlx.EmitWith(doc, yamlx.Options{Width: width})
+		return dumpPlain(doc, width)
 	}
 	orig, _ := yamlx.ParseObject(before)
 	if orig != nil && valuesEqual(orig, doc) {
 		return string(before)
 	}
-	pre, spans := splitTopLevel(string(before))
+	pre, spans, tail := splitTopLevel(string(before))
 	if orig == nil || len(spans) == 0 {
-		return pre + yamlx.EmitWith(doc, yamlx.Options{Width: width})
+		return pre + dumpPlain(doc, width)
 	}
+	rendered, rtOK := renderedSpans(before, orig, doc, width)
 	var b strings.Builder
 	b.WriteString(pre)
 	seen := map[string]bool{}
 	for _, sp := range spans {
 		seen[sp.key] = true
+		b.WriteString(sp.lead)
 		nv, ok := doc.Get(sp.key)
 		if !ok {
 			continue
 		}
 		ov, _ := orig.Get(sp.key)
 		if valuesEqual(ov, nv) {
-			text := sp.text
+			text := sp.body
 			if !strings.HasSuffix(text, "\n") {
 				text += "\n"
 			}
 			b.WriteString(text)
 			continue
 		}
-		b.WriteString(emitEntry(sp.key, nv, width))
+		if r, ok := rendered[sp.key]; rtOK && ok {
+			b.WriteString(r)
+			continue
+		}
+		b.WriteString(dumpPlain(jsonx.NewObject(sp.key, nv), width))
 	}
+	b.WriteString(tail)
+	additions := &jsonx.Object{}
 	for _, kv := range doc.Pairs() {
 		if !seen[kv.Key] {
-			b.WriteString(emitEntry(kv.Key, kv.Value, width))
+			additions.Set(kv.Key, kv.Value)
 		}
+	}
+	if additions.Len() > 0 {
+		s := b.String()
+		if s != "" && !strings.HasSuffix(s, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString(dumpPlain(additions, width))
 	}
 	return b.String()
 }
@@ -128,5 +173,7 @@ func writeYAMLDocument(path string, doc *jsonx.Object, width int) error {
 	if before != nil && out == string(before) {
 		return nil
 	}
-	return atomicfile.WriteMode(path, []byte(out), 0o644)
+	// charter_yaml_io.apply_yaml_write writes the target in place (O_TRUNC),
+	// not via a temp file + rename.
+	return os.WriteFile(path, []byte(out), 0o644)
 }

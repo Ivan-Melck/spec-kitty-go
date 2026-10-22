@@ -8,8 +8,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
+	"github.com/spec-kitty/go-kitty3/internal/assets"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
+	"github.com/spec-kitty/go-kitty3/internal/jsonschema"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
@@ -23,6 +26,8 @@ type SkippedProfile struct {
 	Layer, Path  string
 	ProfileID    *string
 	ErrorSummary string
+	// RawID is the profile-id value as authored (type preserved), nil when absent.
+	RawID any
 }
 
 // PackHealth is the per-layer agent-profile health.
@@ -40,7 +45,7 @@ func (p PackHealth) Healthy() bool { return p.Valid == p.Discovered && len(p.Inv
 func (p PackHealth) Object() *jsonx.Object {
 	inv := []any{}
 	for _, s := range p.Invalid {
-		inv = append(inv, jsonx.NewObject("layer", s.Layer, "path", s.Path, "profile_id", optAny(s.ProfileID), "error_summary", s.ErrorSummary))
+		inv = append(inv, jsonx.NewObject("layer", s.Layer, "path", s.Path, "profile_id", rawOrOpt(s), "error_summary", s.ErrorSummary))
 	}
 	return jsonx.NewObject("pack_id", p.Layer, "layer", p.Layer, "discovered_count", p.Discovered, "valid_count", p.Valid,
 		"healthy", p.Healthy(), "invalid_profiles", inv)
@@ -110,23 +115,32 @@ func AppendOrgError(o *jsonx.Object, msgs ...string) {
 
 var layerRank = map[string]int{dct.LayerBuiltIn: 0, dct.LayerOrg: 1, dct.LayerProject: 2}
 
-// profileSchemaRequired are the agent-profile JSON schema's top-level
-// required keys (jsonschema messages for a profile with no profile-id).
-var profileSchemaRequired = []string{"profile-id", "name", "purpose", "specialization"}
-
 func profileSchemaErrors(data *jsonx.Object) []string {
+	// agent_profiles.validation.validate_agent_profile_yaml: Draft7Validator
+	// over agent-profile.schema.yaml, "<path>: <message>" per error.
 	var out []string
-	for _, k := range profileSchemaRequired {
-		if _, ok := data.Get(k); !ok {
-			out = append(out, fmt.Sprintf("root: '%s' is a required property", k))
+	if v := agentProfileValidator(); v != nil {
+		for _, e := range v.IterErrors(data) {
+			out = append(out, e.PathString()+": "+e.Message)
 		}
 	}
-	_, hasRole := data.Get("role")
-	_, hasRoles := data.Get("roles")
-	if !hasRole && !hasRoles {
-		out = append(out, "root: "+pyValueRepr(data)+" is not valid under any of the given schemas")
-	}
 	return out
+}
+
+var (
+	agentProfileSchemaOnce sync.Once
+	agentProfileSchema     *jsonschema.Validator
+)
+
+func agentProfileValidator() *jsonschema.Validator {
+	agentProfileSchemaOnce.Do(func() {
+		if b, err := assets.ReadFile("charter/offering/schemas/agent-profile.schema.yaml"); err == nil {
+			if o, err := yamlx.ParseObject(b); err == nil {
+				agentProfileSchema = jsonschema.New(o)
+			}
+		}
+	})
+	return agentProfileSchema
 }
 
 // profileLayerScan loads one agent-profile layer; returns id -> data.
@@ -165,7 +179,7 @@ func loadAgentProfiles(builtInDir string, builtInFS bool, orgDirs []string, proj
 		for _, f := range files {
 			b, err := read(f)
 			if err != nil {
-				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "YAML/read error: " + err.Error()})
+				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "YAML/read error: " + err.Error(), nil})
 				continue
 			}
 			// YAML(typ="safe").load(yaml_file): a binary file stream
@@ -175,11 +189,11 @@ func loadAgentProfiles(builtInDir string, builtInFS bool, orgDirs []string, proj
 			}
 			v, err := yamlx.ParseWith(b, opts)
 			if err != nil {
-				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "YAML/read error: " + err.Error()})
+				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "YAML/read error: " + err.Error(), nil})
 				continue
 			}
 			if v == nil {
-				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "Empty profile file (no YAML document)"})
+				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "Empty profile file (no YAML document)", nil})
 				continue
 			}
 			data, isObj := v.(*jsonx.Object)
@@ -200,7 +214,7 @@ func loadAgentProfiles(builtInDir string, builtInFS bool, orgDirs []string, proj
 						summary = strings.Join(errs, "; ")
 					}
 				}
-				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, summary})
+				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, summary, nil})
 				continue
 			}
 			merged := data
@@ -214,7 +228,14 @@ func loadAgentProfiles(builtInDir string, builtInFS bool, orgDirs []string, proj
 				if errs := profileSchemaErrors(data); len(errs) > 0 {
 					summary = strings.Join(errs, "; ")
 				}
-				pl.skipped = append(pl.skipped, SkippedProfile{name, f, pid, summary})
+				var raw any
+				for _, k := range []string{"profile-id", "profile_id"} {
+					if x, ok := data.Get(k); ok && x != nil && x != "" && x != false {
+						raw = x
+						break
+					}
+				}
+				pl.skipped = append(pl.skipped, SkippedProfile{name, f, pid, summary, raw})
 				continue
 			}
 			if name != dct.LayerBuiltIn {
@@ -256,6 +277,30 @@ func loadAgentProfiles(builtInDir string, builtInFS bool, orgDirs []string, proj
 type LayerCollision struct {
 	Kind, ItemID, Higher, Lower string
 	Replaced, Inherited         int
+	// Line is the warnings.warn attribution line in charter/offering/base.py
+	// (356: overlay merged onto a built-in, 383: inserted overlay item) or,
+	// for agent profiles, agent_profiles/repository.py:558.
+	Line int
+}
+
+// Message is the ArtifactLayerCollisionWarning text.
+func (c LayerCollision) Message() string {
+	return fmt.Sprintf("Artifact override: %s %s from %s shadowed %s (%d field(s) replaced; %d field(s) inherited).", c.Kind, c.ItemID, c.Higher, c.Lower, c.Replaced, c.Inherited)
+}
+
+// emitCollisionWarnings routes the collisions through Python's warnings
+// machinery (captureWarnings -> logging).
+func emitCollisionWarnings(cs []LayerCollision) {
+	for _, c := range cs {
+		switch {
+		case c.Kind == "agent_profile":
+			pyWarn("charter/offering/agent_profiles/repository.py", 558, "ArtifactLayerCollisionWarning", c.Message(), "self._record_profile_collision_if_present(")
+		case c.Line == 383:
+			pyWarn("charter/offering/base.py", 383, "ArtifactLayerCollisionWarning", c.Message(), "self._record_collision_if_present(")
+		default:
+			pyWarn("charter/offering/base.py", 356, "ArtifactLayerCollisionWarning", c.Message(), "self._record_collision_if_present(")
+		}
+	}
 }
 
 // Object renders the collision descriptor.
@@ -277,7 +322,7 @@ func collisionFor(kind, id, higher, lower string, data *jsonx.Object, fields []s
 			inh++
 		}
 	}
-	return LayerCollision{kind, id, higher, lower, rep, inh}
+	return LayerCollision{Kind: kind, ItemID: id, Higher: higher, Lower: lower, Replaced: rep, Inherited: inh}
 }
 
 // repoKinds are LAYERED_REPOSITORY_KIND_PLURALS with their repository
@@ -401,7 +446,12 @@ func loadKindRepo(kind dct.Kind, label string, fields []string, orgDirs []string
 				continue
 			}
 			if lower, ok := rl.provenance[id]; ok {
-				rl.collisions = append(rl.collisions, collisionFor(label, id, layer, lower, data, fields))
+				c := collisionFor(label, id, layer, lower, data, fields)
+				c.Line = 383
+				if _, isBuiltIn := builtIn[id]; isBuiltIn {
+					c.Line = 356
+				}
+				rl.collisions = append(rl.collisions, c)
 			}
 			rl.items[id] = merged
 			rl.provenance[id] = layer
@@ -478,7 +528,8 @@ func CollectCharterPackHealth(repoRoot string) *CharterPackHealthReport {
 	}
 	rep.OrgDRG = CollectOrgLayerData(repoRoot)
 	og, pg := kindDirs(orgRoots, projectRoot, dct.GlossaryPack)
-	gl := loadKindRepo(dct.GlossaryPack, "glossarypack", nil, og, pg)
+	var gl *repoLoad
+	catchWarnings(func() { gl = loadKindRepo(dct.GlossaryPack, "glossarypack", nil, og, pg) })
 	rep.GlossaryCount = len(gl.items)
 	for _, d := range gl.items {
 		rep.TermCount += len(d.GetList("terms"))
@@ -486,8 +537,16 @@ func CollectCharterPackHealth(repoRoot string) *CharterPackHealthReport {
 	for _, s := range gl.skipped {
 		rep.GlossaryBad = append(rep.GlossaryBad, parseSkipped(s))
 	}
+	// _collect_pack_skill_health builds the active charter service, whose
+	// offering service runs infer_repo_languages (a recorded interview read);
+	// a load failure degrades to one synthetic invalid record.
+	if err := CatchLoad(func() { InferRepoLanguages(repoRoot, nil, false) }); err != nil {
+		rep.SkillBad = append(rep.SkillBad, SkippedFile{Layer: "unknown", Path: "unknown", ErrorSummary: "pack-skill health load error: " + ExceptionMessage(err)})
+		return rep
+	}
 	so, sp := kindDirs(orgRoots, projectRoot, dct.Skill)
-	sk := loadKindRepo(dct.Skill, "pack-skill", nil, so, sp)
+	var sk *repoLoad
+	catchWarnings(func() { sk = loadKindRepo(dct.Skill, "pack-skill", nil, so, sp) })
 	rep.SkillCount = len(sk.items)
 	for _, s := range sk.skipped {
 		rep.SkillBad = append(rep.SkillBad, parseSkipped(s))
@@ -824,18 +883,24 @@ func orgCharterSchemaErrors(o *jsonx.Object) []pydErr {
 
 // MergedOrgRequired is load_org_charter_policies' required_<kind> union.
 func MergedOrgRequired(repoRoot string) map[string][]string {
+	if _, err := dct.LoadActivation(repoRoot); err != nil {
+		return legacyMergedOrgRequired(repoRoot)
+	}
+	pols, ok := orgPoliciesWithPackContext(repoRoot)
+	if !ok {
+		return map[string][]string{}
+	}
+	return foldRequired(pols)
+}
+
+var requiredKindPlurals = append(append([]string{}, SelectionKindPlurals...), "glossary_packs", "assets", "skills")
+
+// foldRequired is _fold_policies' required_<kind> union (first-seen order).
+func foldRequired(pols []*jsonx.Object) map[string][]string {
 	out := map[string][]string{}
 	seen := map[string]map[string]bool{}
-	for _, p := range LoadPackRegistry(repoRoot).Packs {
-		root, err := p.EffectiveRoot(repoRoot)
-		if err != nil {
-			return map[string][]string{}
-		}
-		pol, err := LoadOrgCharterPolicy(root)
-		if err != nil || pol == nil {
-			continue
-		}
-		for _, k := range append(append([]string{}, SelectionKindPlurals...), "glossary_packs", "assets", "skills") {
+	for _, pol := range pols {
+		for _, k := range requiredKindPlurals {
 			if seen[k] == nil {
 				seen[k] = map[string]bool{}
 			}
@@ -849,6 +914,106 @@ func MergedOrgRequired(repoRoot string) map[string][]string {
 		}
 	}
 	return out
+}
+
+// legacyMergedOrgRequired is load_org_charter_policies without a pack
+// context: every configured pack's policy, declaration order, no extends.
+func legacyMergedOrgRequired(repoRoot string) map[string][]string {
+	var pols []*jsonx.Object
+	for _, p := range LoadPackRegistry(repoRoot).Packs {
+		root, err := p.EffectiveRoot(repoRoot)
+		if err != nil {
+			return map[string][]string{}
+		}
+		pol, err := LoadOrgCharterPolicy(root)
+		if err != nil || pol == nil {
+			continue
+		}
+		pols = append(pols, pol)
+	}
+	return foldRequired(pols)
+}
+
+func policySchemaVersion(pol *jsonx.Object) int {
+	v, ok := pol.Get("schema_version")
+	if !ok || v == nil {
+		return 2
+	}
+	switch t := v.(type) {
+	case int:
+		return t
+	case int64:
+		return int(t)
+	case string:
+		var n int
+		fmt.Sscanf(strings.TrimSpace(t), "%d", &n)
+		return n
+	}
+	return 2
+}
+
+// orgPoliciesWithPackContext is _load_with_pack_context up to the
+// cross-pack fold: each pack root's (built-in first) extends: chain resolved
+// base-first and merged. ok=false when a chain is broken (cycle, missing
+// base, schema_version mismatch): the caller's diagnostics swallow it.
+func orgPoliciesWithPackContext(repoRoot string) ([]*jsonx.Object, bool) {
+	roots := []string{dct.BuiltInRoot()}
+	for _, p := range LoadPackRegistry(repoRoot).Packs {
+		r, err := p.EffectiveRoot(repoRoot)
+		if err != nil {
+			return nil, false
+		}
+		roots = append(roots, r)
+	}
+	set := map[string]*jsonx.Object{}
+	for _, r := range roots {
+		pol, err := LoadOrgCharterPolicy(r)
+		if err != nil || pol == nil {
+			continue
+		}
+		set[filepath.Base(r)] = pol
+	}
+	var out []*jsonx.Object
+	for _, r := range roots {
+		name := filepath.Base(r)
+		if set[name] == nil {
+			continue
+		}
+		// resolve_extends_order: walk overlay -> base, then reverse.
+		var chain []string
+		visited := map[string]bool{}
+		for cur := name; cur != ""; {
+			if visited[cur] || set[cur] == nil {
+				return nil, false
+			}
+			visited[cur] = true
+			chain = append(chain, cur)
+			cur = set[cur].GetString("extends")
+		}
+		versions := map[int]bool{}
+		var ordered []*jsonx.Object
+		for i := len(chain) - 1; i >= 0; i-- {
+			ordered = append(ordered, set[chain[i]])
+			versions[policySchemaVersion(set[chain[i]])] = true
+		}
+		if len(versions) > 1 {
+			for v := range versions {
+				if v != 1 && v != 2 {
+					return nil, false
+				}
+			}
+		}
+		merged := jsonx.NewObject()
+		for k, ids := range foldRequired(ordered) {
+			l := make([]any, len(ids))
+			for i, id := range ids {
+				l[i] = id
+			}
+			merged.Set("required_"+k, l)
+		}
+		out = append(out, merged)
+	}
+	return out, true
 }
 
 // SelectionEntry is one selection-block entry.
@@ -882,6 +1047,11 @@ func BuildSelectionBlock(repoRoot string) map[string][]SelectionEntry {
 			orgSet[id] = true
 		}
 		repo := off.Repo(kind)
+		if len(ordered) > 0 {
+			// raw_repository(plural) loads the kind's repository once,
+			// emitting its layer-collision warnings.
+			emitCollisionWarnings(selectionRepoCollisions(repoRoot, kind))
+		}
 		entries := []SelectionEntry{}
 		for _, id := range ordered {
 			src := ""
@@ -1033,7 +1203,12 @@ func BuildPackEntries(repoRoot string) ([]*jsonx.Object, error) {
 
 // CollectLayerCollisions is _collect_layer_collisions (sorted by kind,
 // item id).
-func CollectLayerCollisions(repoRoot string) []LayerCollision {
+func CollectLayerCollisions(repoRoot string) (out []LayerCollision) {
+	catchWarnings(func() { out = collectLayerCollisions(repoRoot) })
+	return out
+}
+
+func collectLayerCollisions(repoRoot string) []LayerCollision {
 	orgRoots := ResolvePackChain(repoRoot)
 	projectRoot := ProjectPackRootIfExists(repoRoot)
 	var out []LayerCollision
@@ -1066,3 +1241,27 @@ func SanctionEntrySnippet(urn, reason string) []string {
 }
 
 var _ = pyyaml.SafeLoad
+
+// selectionRepoCollisions loads one kind's layered repository (built-in,
+// org chain, project) and returns its collisions in load order.
+func selectionRepoCollisions(repoRoot string, kind dct.Kind) []LayerCollision {
+	orgRoots := ResolvePackChain(repoRoot)
+	projectRoot := ProjectPackRootIfExists(repoRoot)
+	org, proj := kindDirs(orgRoots, projectRoot, kind)
+	if kind == dct.AgentProfile {
+		return loadAgentProfiles("", true, org, proj).collisions
+	}
+	for _, rk := range repoKinds {
+		if rk.plural == kind.Plural() {
+			return loadKindRepo(kind, rk.label, rk.fields, org, proj).collisions
+		}
+	}
+	return nil
+}
+
+func rawOrOpt(s SkippedProfile) any {
+	if s.RawID != nil {
+		return s.RawID
+	}
+	return optAny(s.ProfileID)
+}
