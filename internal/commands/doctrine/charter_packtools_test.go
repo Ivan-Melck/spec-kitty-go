@@ -101,7 +101,9 @@ func TestParityCharterOrgInitAndValidate(t *testing.T) {
 	comparePackTool(t, p, "charter", "pack", "validate", "out1", "--json")
 	comparePackTool(t, p, "charter", "pack", "validate", "out1")
 	comparePackTool(t, p, "charter", "org", "validate", "out1")
-	p.Both(func(s *testkit.Sandbox) { s.WriteFile("out1/org-charter.yaml", s.ReadFile("out1/org-charter.yaml")+"bogus: 1\n") })
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile("out1/org-charter.yaml", s.ReadFile("out1/org-charter.yaml")+"bogus: 1\n")
+	})
 	comparePackTool(t, p, "charter", "pack", "validate", "out1", "--json")
 }
 
@@ -126,7 +128,9 @@ func TestParityCharterPackAssemble(t *testing.T) {
 	}
 	comparePackTool(t, p, "charter", "pack", "assemble", "out", "a", "b")
 	comparePackTool(t, p, "charter", "pack", "assemble", "out", "a", "b", "--force", "--json")
-	p.Both(func(s *testkit.Sandbox) { s.WriteFile("b/tactics/dup.tactic.yaml", s.ReadFile("a/tactics/ta.tactic.yaml")) })
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile("b/tactics/dup.tactic.yaml", s.ReadFile("a/tactics/ta.tactic.yaml"))
+	})
 	comparePackTool(t, p, "charter", "pack", "assemble", "out2", "a", "b")
 	comparePackTool(t, p, "charter", "pack", "assemble", "out2", "a", "b", "--json", "--conflicts-out", "c.json")
 	compareFileBoth(t, p, "c.json")
