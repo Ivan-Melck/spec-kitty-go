@@ -78,7 +78,7 @@ func TestDiffDoctorMissionStateTeamspaceEnvelopes(t *testing.T) {
 	)
 }
 
-var envelopeHashRe =regexp.MustCompile(`"envelope_sha256": "([0-9a-f]{64})"`)
+var envelopeHashRe = regexp.MustCompile(`"envelope_sha256": "([0-9a-f]{64})"`)
 
 func envelopeHashes(s string) []string {
 	var out []string
