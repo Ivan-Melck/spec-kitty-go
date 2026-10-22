@@ -1,8 +1,10 @@
 package runtime_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -244,6 +246,53 @@ func TestDiffReviewLaneOriginFreshness(t *testing.T) {
 		steps(t, p, false, []string{"agent", "action", "review", "WP01", "--agent", "claude", "--mission", "$M"})
 		compareGit(t, p)
 	})
+}
+
+var reBuiltInRef = regexp.MustCompile(`\((/[^)]*?)(/built-in/[^)]*)\)`)
+
+// TestDiffNextWPPromptGovernance covers CORE-13: the WP prompt carries the
+// mission-type governance payload (when the status surface has meta.json),
+// the WP agent_profile's cited directives/tactics and the mission-type-aware
+// charter context. Built-in asset paths are masked (accepted presentation
+// difference: site-packages vs the Go pack cache).
+func TestDiffNextWPPromptGovernance(t *testing.T) {
+	for _, topo := range []string{"coord", "lanes"} {
+		topo := topo
+		t.Run(topo, func(t *testing.T) {
+			t.Parallel()
+			p := missionfx.NewOraclePair(t)
+			args := []string{"--pr-bound", "--branch-strategy", "already-confirmed", "--start-branch", "feat/calc-ops"}
+			if topo == "lanes" {
+				args = append(args, "--topology", "lanes")
+			}
+			missionfx.OracleCalcMission(t, p, args...)
+			p.Both(func(s *testkit.Sandbox) {
+				missionfx.RunOracle(t, s, "charter", "generate", "--no-from-interview", "--json")
+				missionfx.RunOracle(t, s, "charter", "synthesize", "--json")
+				s.Git("add", "-A")
+				s.Git("commit", "-qm", "charter")
+			})
+			oracleBoth(t, p, "agent", "mission", "record-analysis", "--mission", "$M", "--input-file", missionfx.AnalysisReport(), "--json")
+			prompt := func(s *testkit.Sandbox, exe string) string {
+				r := s.Exec("", exe, "next", "--agent", "claude", "--mission", missionfx.MissionSlug(t, s), "--result", "success", "--json")
+				var d struct {
+					PromptFile string `json:"prompt_file"`
+				}
+				if err := json.Unmarshal([]byte(r.Stdout), &d); err != nil || d.PromptFile == "" {
+					t.Fatalf("next: %v\n%s%s", err, r.Stdout, r.Stderr)
+				}
+				b, err := os.ReadFile(d.PromptFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return s.Normalize(reBuiltInRef.ReplaceAllString(string(b), "(<BUILTIN>$2)"))
+			}
+			g, o := prompt(p.Go, testkit.Binary(t)), prompt(p.Oracle, testkit.Oracle(t))
+			if g != o {
+				t.Errorf("WP prompt differs:\n%s", testkit.Diff(o, g))
+			}
+		})
+	}
 }
 
 // TestDiffMissionCloseMerged covers CORE-15: closing a merged mission
