@@ -1,6 +1,7 @@
 package runtime_test
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -187,6 +188,61 @@ func TestDiffAnalysisFreshnessReportOnly(t *testing.T) {
 			s.Exec("", "sh", "-c", `rm -rf "$(git rev-parse --absolute-git-dir)/spec-kitty-report-transactions"`)
 		})
 		steps(t, p, false, []string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M"})
+	})
+}
+
+// reviewRemotePair is WP01 implemented and moved to for_review by the
+// oracle, with every branch pushed to a local bare origin; teammate pushes
+// one more commit onto the lane on origin.
+func reviewRemotePair(t *testing.T, localCommit bool) *testkit.Pair {
+	p := newAnalyzedPair(t)
+	oracleBoth(t, p, "agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M")
+	laneCommit(t, p, "lane-a", "feat(WP01): subtract", map[string]string{
+		"src/calc.py": "def add(a, b):\n    return a + b\n\n\ndef subtract(a, b):\n    return a - b\n",
+	})
+	oracleBoth(t, p, "agent", "tasks", "mark-status", "T001", "T002", "T003", "--status", "done", "--mission", "$M")
+	oracleBoth(t, p, "agent", "tasks", "move-task", "WP01", "--to", "for_review", "--mission", "$M", "--agent", "claude", "--note", "Ready")
+	p.Both(func(s *testkit.Sandbox) {
+		bare := filepath.Join(s.Base, "remote.git")
+		mate := filepath.Join(s.Base, "teammate")
+		s.Exec("", "git", "init", "-q", "--bare", bare)
+		s.Git("remote", "add", "origin", bare)
+		s.Git("push", "-q", "origin", "--all")
+		lane := "kitty/mission-" + missionfx.MissionSlug(t, s) + "-lane-a"
+		s.Exec("", "git", "clone", "-q", "--branch", lane, bare, mate)
+		os.WriteFile(filepath.Join(mate, "TEAM.md"), []byte("teammate work\n"), 0o644)
+		for _, args := range [][]string{{"add", "TEAM.md"}, {"commit", "-q", "-m", "teammate on lane"}, {"push", "-q", "origin", lane}} {
+			if r := s.Exec(mate, "git", args...); r.Code != 0 {
+				t.Fatalf("teammate git %v: %s", args, r.Stderr)
+			}
+		}
+		if localCommit {
+			wt := filepath.Join(".worktrees", missionfx.MissionSlug(t, s)+"-lane-a")
+			s.WriteFile(filepath.Join(wt, "LOCAL.md"), "local work\n")
+			s.Exec(wt, "git", "add", "LOCAL.md")
+			s.Exec(wt, "git", "commit", "-q", "-m", "local on lane")
+		}
+	})
+	return p
+}
+
+// TestDiffReviewLaneOriginFreshness covers CORE-12: `agent action review`
+// fast-forwards a lane strictly behind its origin copy and refuses a
+// diverged one (warn mode keeps it with a warning).
+func TestDiffReviewLaneOriginFreshness(t *testing.T) {
+	t.Run("behind", func(t *testing.T) {
+		t.Parallel()
+		p := reviewRemotePair(t, false)
+		steps(t, p, false, []string{"agent", "action", "review", "WP01", "--agent", "claude", "--mission", "$M"})
+		compareGit(t, p)
+	})
+	t.Run("diverged", func(t *testing.T) {
+		t.Parallel()
+		p := reviewRemotePair(t, true)
+		steps(t, p, false, []string{"agent", "action", "review", "WP01", "--agent", "claude", "--mission", "$M"})
+		p.Both(func(s *testkit.Sandbox) { s.Env = append(s.Env, "SPEC_KITTY_ORIGIN_CHECK=warn") })
+		steps(t, p, false, []string{"agent", "action", "review", "WP01", "--agent", "claude", "--mission", "$M"})
+		compareGit(t, p)
 	})
 }
 
