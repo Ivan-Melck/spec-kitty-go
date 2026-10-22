@@ -153,6 +153,13 @@ func runStatusLifecycle(ctx *cli.Context) error {
 	for _, r := range rows {
 		fmt.Fprintln(ctx.Stdout, " "+padRight(r[0], w0)+"  "+padRight(r[1], w1)+" ")
 	}
+	if lines := status.FormatPostMissionEvents(lc.GetList("post_mission_events")); len(lines) > 0 {
+		fmt.Fprintln(ctx.Stdout)
+		consolePrint(ctx.Stdout, "Post-mission History")
+		for _, l := range lines {
+			richPrint(ctx.Stdout, "  • "+l)
+		}
+	}
 	return nil
 }
 
