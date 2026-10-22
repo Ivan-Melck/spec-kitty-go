@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/healthcheck"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -410,26 +409,28 @@ func statusEventEnvelope(ev *status.Event, projectUUID string, lamport int, proj
 
 var (
 	eventsULIDRe = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$`)
-	isoDateTime  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$`)
 )
 
-// validateEnvelope approximates spec_kitty_events.Event.model_validate for
-// the fields a synthesized envelope can get wrong (event_id, timestamp).
+// validateEnvelope is str(spec_kitty_events.Event.model_validate(env)'s
+// ValidationError) for the fields a synthesized envelope can get wrong
+// (event_id, aggregate_id, timestamp); "" when valid.
 func validateEnvelope(env *jsonx.Object) string {
-	var errs []string
+	type lineErr struct{ loc, msg, typ, input string }
+	var errs []lineErr
 	id := env.GetString("event_id")
 	switch {
 	case len(id) == 26 && !eventsULIDRe.MatchString(id):
-		errs = append(errs, fmt.Sprintf("event_id\n  Value error, 26-char event_id must be valid Crockford base32 (chars I, L, O, U are not allowed); got %s [type=value_error, input_value=%s, input_type=str]", pyjson.ReprString(id), pyjson.ReprString(id)))
+		errs = append(errs, lineErr{"event_id", fmt.Sprintf("Value error, 26-char event_id must be valid Crockford base32 (chars I, L, O, U are not allowed); got %s", pyjson.ReprString(id)), "value_error", id})
 	case len(id) == 26, len(id) == 36 && uuidHyphenRe.MatchString(id), len(id) == 32 && uuidBareRe.MatchString(id):
 	default:
-		errs = append(errs, fmt.Sprintf("event_id\n  Value error, event_id must be 26-char ULID (Crockford base32), 36-char UUID, or 32-char hex UUID; got %d chars [type=value_error, input_value=%s, input_type=str]", len([]rune(id)), pyjson.ReprString(id)))
+		errs = append(errs, lineErr{"event_id", fmt.Sprintf("Value error, event_id must be 26-char ULID (Crockford base32), 36-char UUID, or 32-char hex UUID; got %d chars", len([]rune(id))), "value_error", id})
+	}
+	if agg := env.GetString("aggregate_id"); agg == "" {
+		errs = append(errs, lineErr{"aggregate_id", "String should have at least 1 character", "string_too_short", agg})
 	}
 	ts := env.GetString("timestamp")
-	if !isoDateTime.MatchString(ts) {
-		errs = append(errs, fmt.Sprintf("timestamp\n  Input should be a valid datetime [type=datetime_parsing, input_value=%s, input_type=str]", pyjson.ReprString(ts)))
-	} else if _, err := time.Parse("2006-01-02", ts[:10]); err != nil {
-		errs = append(errs, fmt.Sprintf("timestamp\n  Input should be a valid datetime [type=datetime_parsing, input_value=%s, input_type=str]", pyjson.ReprString(ts)))
+	if msg := pydanticDatetimeError(ts); msg != "" {
+		errs = append(errs, lineErr{"timestamp", msg, "datetime_from_date_parsing", ts})
 	}
 	if len(errs) == 0 {
 		return ""
@@ -438,7 +439,17 @@ func validateEnvelope(env *jsonx.Object) string {
 	if len(errs) > 1 {
 		noun = "errors"
 	}
-	return fmt.Sprintf("%d validation %s for Event\n%s", len(errs), noun, strings.Join(errs, "\n"))
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d validation %s for Event", len(errs), noun)
+	for _, e := range errs {
+		r := []rune(pyjson.ReprString(e.input))
+		repr := string(r)
+		if len(r) > 50 {
+			repr = string(r[:25]) + "..." + string(r[len(r)-24:])
+		}
+		fmt.Fprintf(&b, "\n%s\n  %s [type=%s, input_value=%s, input_type=str]\n    For further information visit https://errors.pydantic.dev/2.14/v/%s", e.loc, e.msg, e.typ, repr, e.typ)
+	}
+	return b.String()
 }
 
 func violation(field, msg, typ string) *jsonx.Object {
