@@ -70,7 +70,6 @@ func ParseException(line string, frames ...Frame) *Exception {
 	return &Exception{Type: typ, Value: val, Frames: frames}
 }
 
-
 // TracebackRenderable is rich.traceback.Traceback.__rich_console__ for exc:
 // per exception of the chain (root cause first) a red framed panel titled
 // "Traceback (most recent call last)" around its frames, the
