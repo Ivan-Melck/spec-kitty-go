@@ -322,6 +322,39 @@ func validateMissionTypeModel(p *jsonx.Object, layer string) (*MissionType, erro
 	return mt, nil
 }
 
+// BuiltInMissionTypesDir names the built-in layer for ScanMissionTypeIDs.
+const BuiltInMissionTypesDir = ""
+
+// ScanMissionTypeIDs is [mt.id for mt in scan_mission_types_dir(dir)]
+// (pack_context=None): the ids of a layer directory, failing on a
+// malformed file. BuiltInMissionTypesDir scans the built-in layer.
+func ScanMissionTypeIDs(dir, repoRoot string) ([]string, error) {
+	var ids []string
+	if dir == BuiltInMissionTypesDir {
+		bi := BuiltIn()
+		for _, rel := range bi.Walk("missions/mission_types", ".yaml", false) {
+			b, err := bi.ReadFile(rel)
+			if err != nil {
+				continue
+			}
+			mt, err := loadLayeredMissionTypeFile(b, bi.Path(rel), strings.TrimSuffix(path.Base(rel), ".yaml"), LayerBuiltIn, "")
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, mt.ID)
+		}
+		return ids, nil
+	}
+	mts, err := scanMissionTypesDir(dir, LayerProject, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, mt := range mts {
+		ids = append(ids, mt.ID)
+	}
+	return ids, nil
+}
+
 // pydInt is pydantic's lax int validation of v (reporting via fail).
 func pydInt(v any, fail func(typ, msg string)) {
 	switch t := v.(type) {
