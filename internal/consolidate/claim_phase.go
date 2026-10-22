@@ -97,7 +97,7 @@ func (r *run) captureClaim(st *MergeState) error {
 			r.anchorShas = append(r.anchorShas, sha)
 		}
 	}
-	if refusal := c.claimIntegrityRefusal(); refusal != "" {
+	if refusal := c.claimIntegrityRefusal(); refusal != "" && !r.verifiedLanding {
 		return r.refuseClaim(refusal, st)
 	}
 	return nil
@@ -150,6 +150,7 @@ func (r *run) gate() error {
 			}
 		}
 	}
+	verified := liveTip(r.root, r.m.TargetBranch)
 	var res verifyResult
 	if refusal, err := laneTipsMovedRefusal(r.root, r.m, r.validatedTips, r.anchorShas, c.planningPrefix, approvedByLane); err != nil {
 		res = refused("a git probe failed while re-checking the lane tips against their approval: " + err.Error())
@@ -159,6 +160,10 @@ func (r *run) gate() error {
 		res = c.verify(r.root, r.m.TargetBranch)
 	}
 	if res.status == "pass" {
+		if r.state != nil && verified != "" {
+			r.state.ReconPassed = verified
+			r.state.Save(r.root)
+		}
 		return nil
 	}
 	fmt.Fprintln(r.w, "\nError: "+res.guidance())

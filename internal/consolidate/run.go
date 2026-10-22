@@ -359,13 +359,14 @@ type run struct {
 	originGated  bool
 	coordDone    bool
 
-	claim         *claim
-	validatedTips [][2]string
-	anchorShas    []string
-	windowBase    string
-	allowSparse   bool
-	opts          Options
-	attested      []string
+	claim           *claim
+	validatedTips   [][2]string
+	anchorShas      []string
+	windowBase      string
+	allowSparse     bool
+	opts            Options
+	attested        []string
+	verifiedLanding bool
 }
 
 func hasRemote(root, name string) bool {
@@ -611,10 +612,11 @@ func (r *run) execute() error {
 		say(r.w, "\n[red]Error:[/red] Merge gates failed.")
 		return exit(1)
 	}
+	isResume := st != nil
+	r.verifiedLanding = isResume && st.ReconPassed != "" && st.ReconPassed == liveTip(r.root, r.m.TargetBranch)
 	if err := r.captureClaim(st); err != nil {
 		return err
 	}
-	isResume := st != nil
 	if st == nil && mid != "" {
 		st = newState(r.root, r.slug, mid, r.m.TargetBranch, r.strategy, r.m, r.wps, r.ret, r.push, r.coordRef())
 		st.Save(r.root)
@@ -624,7 +626,17 @@ func (r *run) execute() error {
 		for _, b := range missingSnapshotBranches(r.root, r.m, r.coordRef()) {
 			say(r.w, fmt.Sprintf("[yellow]Warning:[/yellow] branch %s does not exist and is not snapshotted; a rollback will not cover it.", pyRepr(b)))
 		}
-		if unexplained := st.beginAttempt(r.root); len(unexplained) > 0 {
+		unexplained := st.beginAttempt(r.root)
+		if len(unexplained) > 0 && r.verifiedLanding {
+			var kept []string
+			for _, b := range unexplained {
+				if b != st.TargetBranch && b != r.coordRef() {
+					kept = append(kept, b)
+				}
+			}
+			unexplained = kept
+		}
+		if len(unexplained) > 0 {
 			if !isResume {
 				ClearState(r.root, mid)
 			}
@@ -643,7 +655,10 @@ func (r *run) execute() error {
 	defer restore()
 	r.baseline = revParse(r.root, "refs/heads/"+m.TargetBranch)
 	r.coordDone = coordDoneOf(r)
-	if err := r.mutationSpan(r.coordDone); err != nil {
+	if r.verifiedLanding {
+		// #5021: this target tip already PASSed reconciliation in an earlier
+		// attempt; finish the teardown without re-running the phases.
+	} else if err := r.mutationSpan(r.coordDone); err != nil {
 		if e, ok := err.(*Exit); ok && e.Code != 0 && r.state != nil {
 			fmt.Fprintln(r.w, r.state.Rollback(r.root).Render())
 		}
