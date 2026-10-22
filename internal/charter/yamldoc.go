@@ -4,7 +4,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/atomicfile"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
@@ -128,5 +127,7 @@ func writeYAMLDocument(path string, doc *jsonx.Object, width int) error {
 	if before != nil && out == string(before) {
 		return nil
 	}
-	return atomicfile.WriteMode(path, []byte(out), 0o644)
+	// charter_yaml_io.apply_yaml_write writes the target in place (O_TRUNC),
+	// not via a temp file + rename.
+	return os.WriteFile(path, []byte(out), 0o644)
 }
