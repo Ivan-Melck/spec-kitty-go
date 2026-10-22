@@ -54,7 +54,9 @@ func (e *ResolveError) Error() string { return e.Message }
 // SelectorAmbiguousCrash is an ambiguous --mission handle. Upstream's
 // read-path seam propagates MissionSelectorAmbiguous unchanged, so every
 // verb crashes with a traceback (stderr, exit 1, no envelope).
-type SelectorAmbiguousCrash struct{ Err *mission.SelectorAmbiguousError }
+type SelectorAmbiguousCrash struct {
+	Err *mission.SelectorAmbiguousError
+}
 
 func (e *SelectorAmbiguousCrash) Error() string { return e.Err.Error() }
 
