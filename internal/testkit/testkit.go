@@ -171,6 +171,7 @@ func (s *Sandbox) Environ() []string {
 		"TMPDIR=" + filepath.Join(s.Base, "tmp"),
 	}
 	os.MkdirAll(filepath.Join(s.Base, "tmp"), 0o755)
+	env = append(env, ColorEnv()...)
 	return append(env, s.Env...)
 }
 

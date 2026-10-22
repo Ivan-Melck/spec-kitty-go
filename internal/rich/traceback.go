@@ -70,17 +70,13 @@ func ParseException(line string, frames ...Frame) *Exception {
 	return &Exception{Type: typ, Value: val, Frames: frames}
 }
 
-const (
-	tracebackTitle = "Traceback (most recent call last)"
-	causeMessage   = "\nThe above exception was the direct cause of the following exception:\n"
-	contextMessage = "\nDuring handling of the above exception, another exception occurred:\n"
-)
 
-// RenderTraceback returns the lines rich prints for exc at the given
-// console width (each line without its newline).
-func RenderTraceback(exc *Exception, width int) []string {
-	// rich's Trace.stacks: the raised exception first, then its causes;
-	// rendered in reverse (root cause first).
+// TracebackRenderable is rich.traceback.Traceback.__rich_console__ for exc:
+// per exception of the chain (root cause first) a red framed panel titled
+// "Traceback (most recent call last)" around its frames, the
+// "<ExcType>: <message>" line (message repr-highlighted), [NOTE] lines and
+// the chaining separator.
+func TracebackRenderable(exc *Exception) Group {
 	type stack struct {
 		e       *Exception
 		isCause bool
@@ -100,63 +96,58 @@ func RenderTraceback(exc *Exception, width int) []string {
 			e = nil
 		}
 	}
-	var out []string
+	hl := ReprHighlighter{}
+	var out Group
 	for i := len(stacks) - 1; i >= 0; i-- {
 		s := stacks[i]
 		if len(s.e.Frames) > 0 {
-			out = append(out, tracebackPanel(s.e.Frames, width)...)
-		}
-		out = append(out, WrapText(s.e.Error(), width, "default", "fold", false)...)
-		for _, n := range s.e.Notes {
-			out = append(out, WrapText("[NOTE] "+n, width, "default", "fold", false)...)
-		}
-		if i > 0 {
-			msg := contextMessage
-			if s.isCause {
-				msg = causeMessage
+			var body Group
+			for k, f := range s.e.Frames {
+				if k > 0 {
+					body = append(body, "")
+				}
+				t := Assemble(AssemblePart{Plain: "in "}, AssemblePart{Plain: f.Name, Style: "pygments.function"},
+					AssemblePart{Plain: ":", Style: "pygments.text"},
+					AssemblePart{Plain: fmt.Sprint(f.Line), Style: "pygments.number"})
+				t.Style = "pygments.text"
+				body = append(body, t)
 			}
-			out = append(out, WrapText(msg, width, "default", "fold", false)...)
+			out = append(out, &Constrain{R: &RichPanel{R: body, Title: "[traceback.title]Traceback [dim](most recent call last)",
+				BorderStyle: "traceback.border", Padding: []int{0, 1}}})
 		}
-	}
-	return out
-}
-
-// tracebackPanel is the expanded Panel(padding=(0, 1)) with a centred title
-// around the frame list.
-func tracebackPanel(frames []Frame, width int) []string {
-	var body []string
-	for i, f := range frames {
+		typ := ShortTypeName(s.e.Type)
+		if s.e.Value != "" {
+			out = append(out, Assemble(AssemblePart{Plain: typ + ": ", Style: "traceback.exc_type"},
+				AssemblePart{Text: Highlight(hl, s.e.Value)}))
+		} else {
+			out = append(out, Assemble(AssemblePart{Plain: typ, Style: "traceback.exc_type"}))
+		}
+		for _, n := range s.e.Notes {
+			out = append(out, Assemble(AssemblePart{Plain: "[NOTE] ", Style: "traceback.note"},
+				AssemblePart{Text: Highlight(hl, n)}))
+		}
 		if i > 0 {
-			body = append(body, "")
-		}
-		body = append(body, fmt.Sprintf("in %s:%d", f.Name, f.Line))
-	}
-	inner := max(0, width-4)
-	var out []string
-	title := " " + tracebackTitle + " "
-	if width <= 4 {
-		out = append(out, "╭"+strings.Repeat("─", max(0, width-2))+"╮")
-	} else {
-		t := truncate(title, width-4, "fold", false)
-		excess := width - 4 - CellLen(t)
-		left := excess / 2
-		out = append(out, "╭─"+strings.Repeat("─", left)+t+strings.Repeat("─", excess-left)+"─╮")
-	}
-	for _, b := range body {
-		for _, l := range WrapText(b, inner, "default", "fold", false) {
-			out = append(out, "│ "+SetCellSize(l, inner)+" │")
+			if s.isCause {
+				out = append(out, FromMarkup("\n[i]The above exception was the direct cause of the following exception:\n"))
+			} else {
+				out = append(out, FromMarkup("\n[i]During handling of the above exception, another exception occurred:\n"))
+			}
 		}
 	}
-	out = append(out, "╰"+strings.Repeat("─", max(0, width-2))+"╯")
 	return out
 }
 
-// PrintTraceback writes exc's rich traceback to w (a stderr console) at
-// the console width.
+// RenderTraceback returns the plain lines rich prints for exc at the given
+// console width.
+func RenderTraceback(exc *Exception, width int) []string {
+	c := &Console{Width: width}
+	s := strings.TrimSuffix(c.Output(c.Segments([]any{TracebackRenderable(exc)}, PrintOptions{})), "\n")
+	return strings.Split(s, "\n")
+}
+
+// PrintTraceback writes exc's rich traceback to w (typer's stderr console).
 func PrintTraceback(w io.Writer, exc *Exception) {
-	for _, l := range RenderTraceback(exc, TyperWidth(true)) {
-		fmt.Fprintln(w, l)
-	}
+	TyperConsole(true).Print(w, TracebackRenderable(exc))
 }
 
 // Traceback is PrintTraceback for a single exception "typ: value".
