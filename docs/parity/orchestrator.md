@@ -69,8 +69,8 @@ General deviations:
 Help text: every verb carries upstream's docstring (first paragraph as the
 listing line, full docstring on its help page, `help_text.go` generated from
 the upstream sources); flags, metavars, defaults and choices follow
-`inventory/help`. Layout (column widths, wrapping of long description lines,
-multi-line listing entries) is the shared `internal/cli` renderer (area M).
+`inventory/help`. All 28 orchestrator-api help pages match the inventory
+byte-for-byte through the shared renderer (`go test ./internal/helpparity`).
 
 ## Exported API (`internal/orchestrator`)
 
