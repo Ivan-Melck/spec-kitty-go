@@ -629,33 +629,62 @@ func CollectSynthesis(root string, includeProvenance bool) (*jsonx.Object, error
 	return jsonx.NewObject("generation_state", gs, "generated_inputs", gen, "manifest", ms, "provenance", ps, "evidence", ev), nil
 }
 
-// CollectOrgLayer is _collect_org_layer_status (fragment nodes/edges as
-// authored; augmentation-derived edges are not counted).
+// CollectOrgLayer is _collect_org_layer_status: the loaded org fragments
+// (artifact-derived nodes and augmentation edges included), the merge's
+// collision records and hard failures, and the dangling endpoints of the
+// complete (shipped built-in + every pack) merged graph.
 func CollectOrgLayer(root string) *jsonx.Object {
-	packs, errs := []any{}, []any{}
-	res := jsonx.NewObject("has_built_in", true, "packs", packs, "collision_warnings", []any{}, "errors", errs)
-	for i, p := range dct.OrgPacks(root) {
-		if st, err := os.Stat(p.Root); err != nil || !st.IsDir() {
-			res.Set("errors", []any{fmt.Sprintf("Org pack %s configured at %s not found. Either fetch the pack (`spec-kitty charter fetch --pack <name>`) or remove the entry from `.kittify/config.yaml`.", dct.PyRepr(p.Name), dct.PyRepr(p.Root))})
-			res.Set("packs", []any{})
-			return res
+	errs := []any{}
+	res := jsonx.NewObject("has_built_in", true, "packs", []any{}, "collision_warnings", []any{}, "errors", errs)
+	frags, err := LoadOrgDRG(root)
+	if err != nil {
+		if _, ok := err.(*OrgPackMissingError); ok {
+			errs = append(errs, err.Error())
+		} else {
+			errs = append(errs, "org-DRG load error: "+err.Error())
 		}
-		fp := filepath.Join(p.Root, "drg", "fragment.yaml")
-		b, err := os.ReadFile(fp)
-		if err != nil {
-			res.Set("errors", []any{fmt.Sprintf("Org pack %s configured at %s not found. Either fetch the pack (`spec-kitty charter fetch --pack <name>`) or remove the entry from `.kittify/config.yaml`.", dct.PyRepr(p.Name), dct.PyRepr(fp))})
-			res.Set("packs", []any{})
-			return res
-		}
-		o, _ := yamlx.ParseObject(b)
-		nodes, edges := 0, 0
-		if o != nil {
-			nodes, edges = len(o.GetList("nodes")), len(o.GetList("edges"))
-		}
-		packs = append(packs, jsonx.NewObject("name", p.Name, "source_kind", "local_path", "source_ref", p.Root, "layer_index", i+1,
-			"fetched", true, "node_count", nodes, "edge_count", edges))
+		res.Set("errors", errs)
+		return res
+	}
+	packs := []any{}
+	for _, f := range frags {
+		packs = append(packs, jsonx.NewObject("name", f.PackName, "source_kind", f.SourceKind, "source_ref", f.SourceRef,
+			"layer_index", f.LayerIndex, "fetched", true, "node_count", len(f.Nodes), "edge_count", len(f.Edges)))
 	}
 	res.Set("packs", packs)
+	if len(frags) == 0 {
+		return res
+	}
+	var merged *MergedGraph
+	bi, err := BuiltInMergedGraph()
+	if err == nil {
+		merged, err = MergeThreeLayers(bi, frags, nil)
+	}
+	if err != nil {
+		if ce, ok := err.(*OrgConflictError); ok {
+			cw := []any{}
+			for _, c := range ce.Conflicts {
+				layers := []any{}
+				for _, l := range c.ConflictingLayers {
+					layers = append(layers, l)
+				}
+				cw = append(cw, jsonx.NewObject("kind", c.Kind, "target_id", c.TargetID, "conflicting_layers", layers, "resolution", c.ResolutionApplied))
+			}
+			res.Set("collision_warnings", cw)
+			for _, m := range ce.HardFailureMessages() {
+				errs = append(errs, m)
+			}
+		} else {
+			errs = append(errs, "org-layer merge check failed: "+err.Error())
+		}
+		merged = nil
+	}
+	if merged != nil {
+		for _, m := range ValidateDanglingReferences(merged) {
+			errs = append(errs, m)
+		}
+	}
+	res.Set("errors", errs)
 	return res
 }
 
