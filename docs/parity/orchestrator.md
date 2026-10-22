@@ -37,14 +37,14 @@ without the oracle.
 | `orchestrator-api list-ready` | done | `TestDiffEnvelopeAndReads`, `TestDiffWPLifecycle` | none known |
 | `orchestrator-api resolve-workspace` | done | `TestDiffEnvelopeAndReads`, `TestDiffWPLifecycle` | none known |
 | `orchestrator-api start-implementation` | done | `TestDiffWPLifecycle`, `TestDiffEnvelopeAndReads` | single_branch write-checkout claim lock (`STATUS_LOCK_HELD`) and the repo-root `WRITE_CHECKOUT_*` refusals are not ported; the claim-ancestry gate checks the recorded planning commit only (approved dependency-lane tips are merged by the allocator but not re-verified) |
-| `orchestrator-api start-review` | done | `TestDiffWPLifecycle` | none known |
-| `orchestrator-api transition` | done | `TestDiffWPLifecycle` | none known |
+| `orchestrator-api start-review` | done | `TestDiffWPLifecycle`, `TestDiffLanesTopologyLoop` | none known |
+| `orchestrator-api transition` (incl. raw `--to claimed` allocation, `--force`/`--note`, review-result / evidence JSON) | done | `TestDiffWPLifecycle`, `TestDiffLanesTopologyLoop` | none known |
 | `orchestrator-api append-history` | done | `TestDiffWPLifecycle` | none known |
 | `orchestrator-api accept-mission` | done | `TestDiffAcceptAndConsolidateMission` (not ready), `TestDiffAcceptMissionAccepted` | origin-freshness gate is a no-op (no remote contact) |
-| `orchestrator-api consolidate-mission` (`merge`/`squash`/`rebase`, preflight, lane merges with stale auto-rebase, done transitions, cleanup) | done | `TestDiffAcceptAndConsolidateMission`, `TestDiffAcceptMissionAccepted` | merge gates, the approved-bound (#5668) refusal, protected-status-target refusal and origin gate are not evaluated; `--push` pushes without the origin checks |
+| `orchestrator-api consolidate-mission` (`merge`/`squash`/`rebase`, preflight, lane merges with stale auto-rebase, done transitions, cleanup) | done | `TestDiffAcceptAndConsolidateMission` (merge, coord), `TestDiffAcceptMissionAccepted` (squash), `TestDiffLanesTopologyLoop` (refusal, lanes topology) | merge gates, the approved-bound (#5668) refusal, protected-status-target refusal and origin gate are not evaluated; `--push` pushes without the origin checks |
 | `orchestrator-api specify` | done | `TestDiffDesignAuthoring` | none known |
 | `orchestrator-api plan` | done | `TestDiffDesignAuthoring`, `TestDiffDesignPhaseNative` | none known |
-| `orchestrator-api tasks` | done | `TestDiffDesignPhaseNative` | inherits finalize-tasks deviations (wps.yaml manifest flow) |
+| `orchestrator-api tasks` | done | `TestDiffDesignPhaseNative` | inherits finalize-tasks deviations (the wps.yaml manifest flow is not ported, so finalizing an API-authored outline without a hand-written tasks.md is untested); receipts are re-stamped after a successful finalize |
 | `orchestrator-api check-prerequisites` | done | `TestDiffEnvelopeAndReads`, `TestDiffDesignPhaseNative` | none known |
 | `orchestrator-api record-analysis` | done | `TestDiffDesignPhaseNative` | `warnings` (refused commit surfaces) not rendered; the write runs through the host command (no 10 s watchdog) |
 | `orchestrator-api open-decision` / `resolve-decision` / `defer-decision` / `cancel-decision` | done | `TestDiffDesignAuthoring` | `--owned-checkout` refused (`DECISION_OPERATION_FAILED`, `OWNED_OPTION_UNSUPPORTED`; a non-existent path mirrors upstream's `OWNERSHIP_BROKEN_POINTER`) |
@@ -65,3 +65,51 @@ General deviations:
 * Lane naming follows upstream exactly: worktree / lane branch / workspace
   context names key on the raw `--mission` handle; status events are stamped
   with the raw handle.
+
+Help text: every verb carries upstream's docstring (first paragraph as the
+listing line, full docstring on its help page, `help_text.go` generated from
+the upstream sources); flags, metavars, defaults and choices follow
+`inventory/help`. Layout (column widths, wrapping of long description lines,
+multi-line listing entries) is the shared `internal/cli` renderer (area M).
+
+## Exported API (`internal/orchestrator`)
+
+* Envelope: `ContractVersion`, `MinProviderVersion`, `JSON` (json.dumps
+  options), `Envelope(command, success, data, errorCode)`, `Emit(w, env)`,
+  `Failure(message, data)`, `Fail(w, command, code, message, data)`,
+  `UsageError(w, message)`, `NewCorrelationID`, `NewHistoryEntryID`.
+* Contract: `Commands` (verb order), `AllowedErrorCodes`,
+  `IsAllowedErrorCode`, `DeliveryProfile()`, authoring limits
+  (`MaxArtifactBytes`, `MaxBatchBytes`, `MaxRequestBytes`, `MaxActorBytes`,
+  `MaxArtifacts`, `ContextBytes`, `InterviewAnswerMax`, `InterviewActorMax`).
+* Policy: `ParsePolicy(raw) (*Policy, error)` (`PolicyError` texts are
+  upstream's ValueError messages), `Policy.Object()` (policy_to_dict),
+  `BannedFlags`.
+* Versions: `ParseVersion(s) (*Version, bool)` (PEP 440), `Version.Less`.
+* Missions: `ResolveMission(root, handle) (*Mission, error)` (traversal guard
+  -> `INVALID_MISSION`, handle resolution, coordination-aware status dir;
+  `*ResolveError{Code, Message, Data}`), `Mission{Root, Slug, PrimaryDir,
+  StatusDir}`, `Identity(dir)` (mission_slug / mission_number / mission_type
+  from that dir's meta.json), `UnsafeSegmentReason`, `MissionNotFoundMessage`,
+  `ResolveWPFile`, `WPIDPrefix`.
+* Design authoring: `DesignError` / `NewDesignError`, `Absent`, `SHA256Hex`,
+  `AuthoringEnabled`, `ReadReceipts`, `EnableAuthoring`, `SaveReceipts`,
+  `ReceiptSet` / `Receipt` (pydantic JSON), `TouchAuthoringLock`,
+  `TasksFinalized` (with the status.json snapshot-drift check),
+  `LoadWpsManifest` / `ParseWpsManifest` (`WpsManifest`, `WPEntry`).
+
+## Extensions to other areas' packages (additive, new files)
+
+* `internal/cli/cli.go` (foundation): `Command.UsageErrorHandler`; a usage
+  error raised for a command whose ancestor sets it is rendered by the
+  handler instead of the boxed click message (backwards compatible: nil for
+  every other command).
+* `internal/commands/planning/orchestrator_export.go`:
+  `RecordAnalysisDirtyPreflight`, `ParseAnalysisVerdict`.
+* `internal/commands/agentcore/orchestrator_export.go`:
+  `ParseReviewResultJSON`, `BuildDoneEvidence`.
+* `internal/workflow/orchestrator_export.go`: `AllocateLaneWorktreeFor`
+  (handle-keyed lane naming), `RefreshReusedLaneContext`, `StartReviewRef`.
+* `internal/consolidate/lane_merge.go`: `MergePreflight`, `RunLaneMerge`
+  (`LaneMergeOptions`, `LaneMergeError`, `DestructiveRefusal`).
+* `internal/charter/orchestrator_export.go`: `ActionGovernanceDisclosure`.

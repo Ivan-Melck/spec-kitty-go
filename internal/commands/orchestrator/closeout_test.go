@@ -164,3 +164,26 @@ func TestDiffAcceptMissionAccepted(t *testing.T) {
 	stepM(t, p, api, "consolidate-mission", "--mission", "$M", "--strategy", "squash")
 	compareGit(t, p, "after squash consolidate-mission")
 }
+
+// TestDiffLanesTopologyLoop runs the orchestrated loop on a lanes (no
+// coordination branch) mission: a raw `--to claimed` transition, a forced
+// review exit, a rework rewind and a refused consolidation.
+func TestDiffLanesTopologyLoop(t *testing.T) {
+	t.Parallel()
+	p := missionfx.NewOraclePair(t)
+	missionfx.OracleCalcMission(t, p, "--pr-bound", "--branch-strategy", "already-confirmed", "--start-branch", "feat/calc-ops", "--topology", "lanes")
+	m := "calc-ops"
+	step(t, p, api, "mission-state", "--mission", m)
+	step(t, p, api, "transition", "--mission", m, "--wp", "WP01", "--to", "claimed", "--actor", "claude", "--policy", testPolicy)
+	compareGit(t, p, "after raw claim")
+	step(t, p, api, "transition", "--mission", m, "--wp", "WP01", "--to", "in_progress", "--actor", "claude", "--policy", testPolicy)
+	step(t, p, api, "transition", "--mission", m, "--wp", "WP01", "--to", "for_review", "--actor", "claude", "--policy", testPolicy, "--force", "--note", "nothing to commit")
+	step(t, p, api, "start-review", "--mission", m, "--wp", "WP01", "--actor", "rev", "--policy", testPolicy, "--review-ref", "PR#7")
+	step(t, p, api, "transition", "--mission", m, "--wp", "WP01", "--to", "planned", "--actor", "rev", "--force")
+	step(t, p, api, "transition", "--mission", m, "--wp", "WP01", "--to", "planned", "--actor", "rev", "--force", "--note", "rework")
+	step(t, p, api, "mission-state", "--mission", m)
+	compareGit(t, p, "after rework")
+	compareFiles(t, p, missionfx.MissionSlug(t, p.Go), missionfx.MissionSlug(t, p.Oracle), "kitty-specs/{slug}/status.events.jsonl")
+	step(t, p, api, "consolidate-mission", "--mission", m, "--strategy", "rebase")
+	compareGit(t, p, "after refused consolidate")
+}
