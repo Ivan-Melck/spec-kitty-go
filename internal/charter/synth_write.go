@@ -626,27 +626,14 @@ func LoadSynthManifest(p string) (*SynthManifest, error) {
 }
 
 func parseSynthManifest(b []byte) (*SynthManifest, error) {
-	o, err := yamlx.ParseObject(b)
+	raw, err := yamlx.Parse(b)
 	if err != nil {
 		return nil, err
 	}
-	if o == nil {
-		return nil, fmt.Errorf("1 validation error for SynthesisManifest\n  Input should be a valid dictionary or instance of SynthesisManifest [type=model_type, input_value=None, input_type=NoneType]")
+	if ve := validatePyd(synthesisManifestModel, raw, true); ve != nil {
+		return nil, ve
 	}
-	var missing []string
-	for _, k := range []string{"created_at", "run_id", "adapter_id", "adapter_version", "synthesizer_version", "manifest_hash"} {
-		if v, ok := o.Get(k); !ok || v == nil {
-			missing = append(missing, k)
-		}
-	}
-	if len(missing) > 0 {
-		lines := []string{fmt.Sprintf("%d validation error%s for SynthesisManifest", len(missing), plural1(len(missing)))}
-		for _, k := range missing {
-			lines = append(lines, k, fmt.Sprintf("  Field required [type=missing, input_value=%s, input_type=dict]", truncRepr(pyValueRepr(o))),
-				"    For further information visit https://errors.pydantic.dev/2.14/v/missing")
-		}
-		return nil, fmt.Errorf("%s", strings.Join(lines, "\n"))
-	}
+	o := raw.(*jsonx.Object)
 	m := &SynthManifest{SchemaVersion: "3", raw: o, CreatedAt: pyStrOf(mustGetAny(o, "created_at")), RunID: pyStrOf(mustGetAny(o, "run_id")),
 		AdapterID: pyStrOf(mustGetAny(o, "adapter_id")), AdapterVersion: pyStrOf(mustGetAny(o, "adapter_version")),
 		SynthesizerVersion: pyStrOf(mustGetAny(o, "synthesizer_version")), ManifestHash: pyStrOf(mustGetAny(o, "manifest_hash"))}

@@ -182,16 +182,15 @@ func loadManifest(p string) (*synthesisManifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	o, err := yamlx.ParseObject(b)
+	raw, err := yamlx.Parse(b)
 	if err != nil {
 		return nil, err
 	}
-	m := &synthesisManifest{}
-	for _, k := range []string{"created_at", "run_id", "adapter_id", "adapter_version", "synthesizer_version", "manifest_hash"} {
-		if v, ok := o.Get(k); !ok || v == nil {
-			return nil, fmt.Errorf("1 validation error for SynthesisManifest\n%s\n  Field required [type=missing, input_value=..., input_type=dict]", k)
-		}
+	if ve := validatePyd(synthesisManifestModel, raw, true); ve != nil {
+		return nil, ve
 	}
+	o := raw.(*jsonx.Object)
+	m := &synthesisManifest{}
 	m.runID, m.createdAt = pyStrOf(mustGetAny(o, "run_id")), pyStrOf(mustGetAny(o, "created_at"))
 	m.adapterID, m.adapterVersion = pyStrOf(mustGetAny(o, "adapter_id")), pyStrOf(mustGetAny(o, "adapter_version"))
 	if v, ok := o.Get("built_in_only"); ok {
@@ -316,22 +315,21 @@ func collectProvenanceStatus(root string, m *synthesisManifest, includeEntries b
 	corpus, adapters := map[string]bool{}, map[string]bool{}
 	for _, p := range paths {
 		rel := displayPath(p, root)
-		o := readYAMLObject(p)
-		if o == nil {
-			warnings = append(warnings, rel+": invalid provenance sidecar")
-			continue
-		}
-		missingField := ""
-		for _, k := range []string{"artifact_urn", "artifact_kind", "artifact_slug", "adapter_id", "adapter_version"} {
-			if v, ok := o.Get(k); !ok || v == nil {
-				missingField = k
-				break
+		b, rerr := os.ReadFile(p)
+		raw, perr := yamlx.Parse(b)
+		if rerr != nil || perr != nil {
+			msg := "invalid provenance sidecar"
+			if perr != nil {
+				msg = perr.Error()
 			}
-		}
-		if missingField != "" {
-			warnings = append(warnings, fmt.Sprintf("%s: 1 validation error for ProvenanceEntry\n%s\n  Field required", rel, missingField))
+			warnings = append(warnings, rel+": "+msg)
 			continue
 		}
+		if err := ValidateProvenanceEntry(raw, true); err != nil {
+			warnings = append(warnings, rel+": "+err.Error())
+			continue
+		}
+		o := raw.(*jsonx.Object)
 		if s := o.GetString("corpus_snapshot_id"); s != "" {
 			corpus[s] = true
 		}

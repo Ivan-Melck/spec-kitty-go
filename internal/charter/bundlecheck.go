@@ -264,11 +264,8 @@ func ProvenanceValidationErrors(root string) []string {
 			errs = append(errs, n+": provenance sidecar must be a YAML mapping")
 			continue
 		}
-		for _, k := range []string{"artifact_urn", "artifact_kind", "artifact_slug", "adapter_id", "adapter_version"} {
-			if x, has := o.Get(k); !has || x == nil {
-				errs = append(errs, fmt.Sprintf("%s: 1 validation error for ProvenanceEntry\n%s\n  Field required [type=missing, input_value=%s, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/missing", n, k, truncRepr(pyValueRepr(o))))
-				break
-			}
+		if err := ValidateProvenanceEntry(o, false); err != nil {
+			errs = append(errs, n+": "+err.Error())
 		}
 	}
 	mp := Path(root, ManifestPath)

@@ -35,6 +35,8 @@ type ErrorDetail struct {
 	Ctx *jsonx.Object
 	// HideInput omits input_value/input_type (hide_input_in_errors).
 	HideInput bool
+	// InputType overrides type(input).__name__ (e.g. ruamel's CommentedMap).
+	InputType string
 }
 
 // Detail builds an ErrorDetail from a dotted location ("a.0.b"): numeric
@@ -110,7 +112,11 @@ func Format(title string, errs []ErrorDetail) string {
 		if d.HideInput {
 			fmt.Fprintf(&b, "  %s [type=%s]\n", d.Msg, d.Type)
 		} else {
-			fmt.Fprintf(&b, "  %s [type=%s, input_value=%s, input_type=%s]\n", d.Msg, d.Type, InputRepr(d.Input), TypeName(d.Input))
+			it := d.InputType
+			if it == "" {
+				it = TypeName(d.Input)
+			}
+			fmt.Fprintf(&b, "  %s [type=%s, input_value=%s, input_type=%s]\n", d.Msg, d.Type, InputRepr(d.Input), it)
 		}
 		fmt.Fprintf(&b, "    For further information visit %s", URL(d.Type))
 	}
@@ -259,4 +265,18 @@ func ReprDatetime(iso string) string {
 		}
 	}
 	return "datetime.datetime(" + strings.Join(parts, ", ") + ")"
+}
+
+// RuamelTypeName is type(v).__name__ for a value ruamel.yaml's round-trip
+// loader produced (CommentedMap / CommentedSeq containers, ScalarFloat).
+func RuamelTypeName(v any) string {
+	switch v.(type) {
+	case *jsonx.Object:
+		return "CommentedMap"
+	case []any:
+		return "CommentedSeq"
+	case float64:
+		return "ScalarFloat"
+	}
+	return TypeName(v)
 }
