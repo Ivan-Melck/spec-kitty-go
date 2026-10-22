@@ -36,8 +36,8 @@ every `*WithoutOracle` test runs in plain `go test ./...`.
 | `doctor channel` | done | `TestDoctorSetupLeavesMatchOracle` | |
 | `doctor bytecode` | done (trivial) | — | No `.pyc` files exist in the Go port: always clean; `root` is the executable's directory. |
 | `regen` | done (refusal path) | — | Outside an upstream source checkout it refuses like upstream (exit 2); inside one it reports that fixture regeneration is a Python maintainer tool. |
-| `materialize` | missing | — | Derived status views belong to the status model (area A). |
-| `migrate` (group + 12 leaves) | missing | — | One-time mission-data backfills (area A data model); `upgrade` covers routine migration. |
+| `materialize` | done | see maintenance.md | Owned by the maintenance area (`internal/commands/maintenance`). |
+| `migrate` (group + 12 leaves) | done | see maintenance.md | Owned by the maintenance area (`internal/commands/maintenance`). |
 
 ## Upgrade
 
