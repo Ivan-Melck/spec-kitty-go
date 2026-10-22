@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/glossary"
@@ -322,9 +323,22 @@ func runGlossaryShow(ctx *cli.Context) error {
 	root := cwd()
 	term := ctx.Arg("term")
 	surface := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(term, "glossary:")))
-	// Compiled entity pages (.kittify/charter-packs/graph.yaml DRG) are not
-	// supported; fall through to the seed/event-backed store like upstream
-	// does when no page exists.
+	// Compiled entity page from the project DRG (glossary:<surface>, then
+	// the bare surface when no prefix was given).
+	cands := []string{"glossary:" + surface}
+	if !strings.HasPrefix(term, "glossary:") {
+		cands = append(cands, surface)
+	}
+	for _, c := range cands {
+		p, err := charter.GenerateEntityPage(root, c)
+		if err != nil {
+			continue
+		}
+		b, _ := os.ReadFile(p)
+		renderEntityMarkdown(ctx.Stdout, string(b))
+		return nil
+	}
+	// Compiled entity pages need not exist for a seed/event-backed term.
 	all, err := glossary.LoadStore(root)
 	if err != nil {
 		return err

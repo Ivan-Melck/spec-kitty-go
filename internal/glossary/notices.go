@@ -18,7 +18,12 @@ import (
 // SemanticConflict is SemanticConflictRecord.
 type SemanticConflict struct {
 	Term, TermID, Severity, ConflictType string
+	Timestamp, Resolution                string
 }
+
+// IterSemanticConflictRecords is iter_semantic_conflicts(repo_root) (no
+// invocation filter).
+func IterSemanticConflictRecords(root string) []SemanticConflict { return IterSemanticConflicts(root, "") }
 
 func eventStr(o *jsonx.Object, k string) string {
 	v, ok := o.Get(k)
@@ -82,6 +87,10 @@ func IterSemanticConflicts(root, invocationID string) []SemanticConflict {
 			}
 			switch eventStr(ev, "event_type") {
 			case "SemanticCheckEvaluated":
+				ts := eventStr(ev, "timestamp")
+				if ts == "" {
+					ts = eventStr(ev, "checked_at")
+				}
 				for _, x := range ev.GetList("findings") {
 					fo, ok := x.(*jsonx.Object)
 					if !ok {
@@ -110,7 +119,7 @@ func IterSemanticConflicts(root, invocationID string) []SemanticConflict {
 					if sev == "" {
 						sev = eventStr(ev, "overall_severity")
 					}
-					out = append(out, SemanticConflict{term, id, strings.ToLower(sev), eventStr(fo, "conflict_type")})
+					out = append(out, SemanticConflict{term, id, strings.ToLower(sev), eventStr(fo, "conflict_type"), ts, eventStr(fo, "resolution")})
 				}
 			case "semantic_check_evaluated":
 				term := strings.TrimSpace(eventStr(ev, "term"))
@@ -118,7 +127,11 @@ func IterSemanticConflicts(root, invocationID string) []SemanticConflict {
 				if term == "" || id == "" {
 					continue
 				}
-				out = append(out, SemanticConflict{term, id, strings.ToLower(eventStr(ev, "severity")), eventStr(ev, "conflict_type")})
+				ts := eventStr(ev, "checked_at")
+				if ts == "" {
+					ts = eventStr(ev, "timestamp")
+				}
+				out = append(out, SemanticConflict{term, id, strings.ToLower(eventStr(ev, "severity")), eventStr(ev, "conflict_type"), ts, eventStr(ev, "resolution")})
 			}
 		}
 	}
