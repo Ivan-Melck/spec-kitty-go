@@ -1214,7 +1214,7 @@ func mSafeGlobalizeCommands() migrationImpl {
 		canApply: func(string) (bool, string) { return ok() },
 		applyE: func(root string, dryRun bool) (migrationResult, error) {
 			var ch, warn, preserved []string
-			runtimePresent := len(subdirs(filepath.Join(project.UserHome(), "missions"))) > 0
+			runtimePresent := len(subdirs(filepath.Join(project.GlobalKittify(), "missions"))) > 0
 			verbKeep := "Kept"
 			if dryRun {
 				verbKeep = "Would keep"

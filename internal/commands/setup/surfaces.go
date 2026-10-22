@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,9 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/app"
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 )
 
@@ -33,6 +36,9 @@ type SurfaceSummary struct {
 	Repaired []string
 	Drifted  []string
 	Skipped  int
+	// Pruned are de-admitted profile projections removed by the repair
+	// (project-relative; the profile manifest is rewritten with them).
+	Pruned []string
 }
 
 // Lines is render_surface_summary_lines (rich markup).
@@ -162,7 +168,84 @@ func RunSurfaceRepair(root string) (SurfaceSummary, error) {
 	sum.Created = append(sum.Created, pr.Created...)
 	sum.Repaired = append(sum.Repaired, pr.Repaired...)
 	sum.Drifted = append(sum.Drifted, pr.Drifted...)
+	sum.Pruned = append(sum.Pruned, pr.Pruned...)
 	return sum, nil
+}
+
+func init() { agents.ProfileAdmit = admitProfile }
+
+// provisionMissionTypeActivations is
+// charter.activation.compiler.provision_mission_type_activations: seed the
+// default preset's mission types into the activation write target
+// (charter.yaml behind a `charter:` pointer, else config.yaml) when the key
+// is entirely absent.
+func provisionMissionTypeActivations(root string) error {
+	t, err := charter.LoadWriteTarget(root)
+	if err != nil {
+		return err
+	}
+	if t.Data.Has("mission_type_activations") {
+		return nil
+	}
+	types, err := kittify.DefaultPresetMissionTypes()
+	if err != nil {
+		return err
+	}
+	if !t.IsCharter {
+		_, err := kittify.ProvisionDefaultMissionTypeActivations(root)
+		return err
+	}
+	l := make([]any, len(types))
+	for i, x := range types {
+		l[i] = x
+	}
+	t.Data.Set("mission_type_activations", l)
+	return t.Save()
+}
+
+// activationProvisioningPending is _mission_type_activation_provisioning_pending.
+func activationProvisioningPending(root string) bool {
+	t, err := charter.LoadWriteTarget(root)
+	if err != nil {
+		var ce *dct.ConfigError
+		if errors.As(err, &ce) {
+			return true
+		}
+		return false
+	}
+	return !t.Data.Has("mission_type_activations")
+}
+
+// admitProfile is the active charter service's profile gate: the activation
+// list (activated_agent_profiles) when present, then the language scope
+// (applies_to_languages against infer_repo_languages; no signal admits all).
+func admitProfile(root string, p agents.Profile) bool {
+	if lists, present, err := charter.ListActivated(root); err == nil && present["agent-profile"] {
+		found := false
+		for _, id := range lists["agent-profile"] {
+			found = found || id == p.ID
+		}
+		if !found {
+			return false
+		}
+	}
+	if len(p.AppliesToLanguages) == 0 {
+		return true
+	}
+	langs, known := charter.InferRepoLanguages(root, nil, false)
+	if !known {
+		return true
+	}
+	have := map[string]bool{}
+	for _, l := range charter.NormalizeLanguages(langs) {
+		have[l] = true
+	}
+	for _, l := range charter.NormalizeLanguages(p.AppliesToLanguages) {
+		if have[l] {
+			return true
+		}
+	}
+	return false
 }
 
 // presenceContent builds the orientation content for root.

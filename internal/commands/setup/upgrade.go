@@ -645,7 +645,7 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 				plain(w, n)
 			}
 		} else {
-			if _, err := kittify.ProvisionDefaultMissionTypeActivations(root); err != nil {
+			if err := provisionMissionTypeActivations(root); err != nil {
 				o.activationErrors = append(o.activationErrors, provisionErrorText(err))
 			}
 			if len(o.activationErrors) == 0 {
@@ -810,6 +810,12 @@ func applyUpgradeRepairs(root string, o *upgradeOutcome) {
 	}
 	o.created = append(o.created, sum.Created...)
 	o.repaired = append(o.repaired, sum.Repaired...)
+	for _, p := range sum.Pruned {
+		o.repaired = append(o.repaired, filepath.Join(root, filepath.FromSlash(p)))
+	}
+	if len(sum.Pruned) > 0 {
+		o.repaired = append(o.repaired, agents.ProfileManifestPath(root))
+	}
 	now := clock.NowUTCISO()
 	for _, a := range ac.Available {
 		if !agents.IsCommandSkillAgent(a) {
@@ -881,7 +887,7 @@ func supportingRepairNotice(root string) string {
 			}
 		}
 	}
-	if kittify.ConfigExists(root) && !kittify.ReadConfig(root).Has("mission_type_activations") {
+	if kittify.ConfigExists(root) && activationProvisioningPending(root) {
 		effects++
 	}
 	if effects == 0 {
@@ -894,7 +900,7 @@ func printDryRunProvisioningNotice(w io.Writer, root string, dryRun bool) {
 	if !dryRun {
 		return
 	}
-	if kittify.ConfigExists(root) && !kittify.ReadConfig(root).Has("mission_type_activations") {
+	if kittify.ConfigExists(root) && activationProvisioningPending(root) {
 		out(w, "[dim]Would provision missing mission_type_activations (seeded on a real upgrade).[/dim]")
 	}
 }

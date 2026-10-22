@@ -729,7 +729,7 @@ func migrationAgentDirs(root string) ([]agentDir, error) {
 
 // globalRuntimeConfigured is upgrade.compat.global_runtime_configured.
 func globalRuntimeConfigured() bool {
-	return isFile(filepath.Join(project.UserHome(), "cache", "version.lock"))
+	return isFile(filepath.Join(project.GlobalKittify(), "cache", "version.lock"))
 }
 
 // usesCentralizedRuntime is upgrade.compat.uses_centralized_runtime.
