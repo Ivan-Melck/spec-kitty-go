@@ -417,6 +417,7 @@ type profileBatch struct {
 	contents     map[string][]byte
 	tools        []string
 	observed     map[string]FileState
+	dests        map[string]nodeSig
 }
 
 func (b *profileBatch) selectedTools() []string {
@@ -474,11 +475,19 @@ func (b *profileBatch) observe(path string) (FileState, error) {
 	if st, ok := b.observed[path]; ok {
 		return st, nil
 	}
+	for d := filepath.Dir(path); d != b.in.Root.Path && strings.HasPrefix(d, b.in.Root.Path+string(filepath.Separator)); d = filepath.Dir(d) {
+		if _, ok := b.dests[d]; !ok {
+			b.dests[d] = observeSig(d, false, false)
+		}
+	}
 	st, err := observeNode(path)
 	if err != nil {
 		return FileState{}, err
 	}
 	b.observed[path] = st
+	if _, ok := b.dests[path]; !ok {
+		b.dests[path] = observeSig(path, false, false)
+	}
 	return st, nil
 }
 
@@ -721,7 +730,7 @@ func assessProfiles(c *collectCtx, in AssessInputs, sels []Selection, only map[s
 		return fail(err)
 	}
 	b := &profileBatch{in: in, sels: dedupeSelections(sels), manifest: &profileManifest{path: manifest.path, root: root, entries: map[string]nativeProfile{}},
-		original: manifest.all(), contents: map[string][]byte{}, observed: map[string]FileState{}}
+		original: manifest.all(), contents: map[string][]byte{}, observed: map[string]FileState{}, dests: map[string]nodeSig{}}
 	for k, v := range manifest.entries {
 		b.manifest.entries[k] = v
 	}
@@ -743,6 +752,7 @@ func assessProfiles(c *collectCtx, in AssessInputs, sels []Selection, only map[s
 			return b.finish(nil)
 		}
 	}
+	inputsUnchanged := treeSnapshot(profileInputRoots(root))
 	var projected []preparedProjection
 	for _, t := range eligible {
 		projected = append(projected, m.prepare(t, root)...)
@@ -782,7 +792,56 @@ func assessProfiles(c *collectCtx, in AssessInputs, sels []Selection, only map[s
 	if _, err := b.observe(b.manifest.path); err != nil {
 		return fail(err)
 	}
-	return b.finish(projected)
+	a := b.finish(projected)
+	a.Recheck = func() []Diagnostic {
+		planned := map[string]FileState{}
+		for _, e := range a.Effects {
+			if e.Action == "create" && e.After.Kind == "directory" {
+				planned[e.Destination()] = e.After
+			}
+		}
+		paths := make([]string, 0, len(b.dests))
+		for p := range b.dests {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		for _, p := range paths {
+			old := b.dests[p]
+			now := observeSig(p, false, false)
+			if pl, ok := planned[p]; ok && old.kind == "absent" && now.kind == "directory" && now.mode == pl.Mode {
+				continue
+			}
+			if now != old {
+				return []Diagnostic{Diag("precondition_changed", "agent_profiles", "error", "Profile destination changed: "+p)}
+			}
+		}
+		if !inputsUnchanged() {
+			return []Diagnostic{Diag("precondition_changed", "agent_profiles", "error", "Profile source/config input root changed")}
+		}
+		return nil
+	}
+	return a
+}
+
+// profileInputRoots is agent_profiles._profile_input_roots (project side;
+// the package-side roots never change during a run).
+func profileInputRoots(root string) []string {
+	roots := []string{
+		filepath.Join(root, ".kittify", "config.yaml"), filepath.Join(root, ".kittify", "charter"), filepath.Join(root, ".kittify", "agent_profiles"),
+		filepath.Join(root, "pyproject.toml"), filepath.Join(root, ".kittify", "charter-packs"), profileManifestPath(root),
+	}
+	if cfg, err := kittify.LoadConfig(root); err == nil {
+		if v, ok := cfg.Get("charter"); ok {
+			if s, isStr := v.(string); isStr && s != "" {
+				if !filepath.IsAbs(s) {
+					s = filepath.Join(root, s)
+				}
+				roots = append(roots, s)
+			}
+		}
+	}
+	sort.Strings(roots)
+	return uniqueSorted(roots)
 }
 
 func dedupeSelections(sels []Selection) []Selection {

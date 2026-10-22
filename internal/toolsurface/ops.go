@@ -317,6 +317,9 @@ type Assessment struct {
 	Artifacts    []Artifact
 	// Prepared is the owner's retained payload (owner-specific type).
 	Prepared any
+	// Recheck is the owner's pre-write recheck of every retained input
+	// (nil = nothing to recheck); it returns the error diagnostics.
+	Recheck func() []Diagnostic
 }
 
 // Incomplete builds a failed assessment carrying one error diagnostic.

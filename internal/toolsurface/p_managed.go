@@ -209,7 +209,11 @@ func (p managedSkillsProvider) repair(c *collectCtx, root string, statuses []Sta
 }
 
 // ApplyProjectSkills is installer.apply_project_skills for a fresh batch.
-func ApplyProjectSkills(a *Assessment) ApplyResult {
+func ApplyProjectSkills(a *Assessment) ApplyResult { return applyProjectSkillsDelegated(a, nil) }
+
+// applyProjectSkillsDelegated skips (and does not report) the writes whose
+// destinations the paired command owner already created.
+func applyProjectSkillsDelegated(a *Assessment, delegated map[string]bool) ApplyResult {
 	prep, ok := a.Prepared.(*PreparedProjectSkills)
 	if !ok || !a.Complete {
 		return ApplyResult{Owner: "managed_skills", Skipped: a.EffectIDs(), Outcome: "precondition_changed",
@@ -217,6 +221,9 @@ func ApplyProjectSkills(a *Assessment) ApplyResult {
 	}
 	var succeeded []string
 	for i, w := range prep.Writes {
+		if delegated[w.Effect.Destination()] {
+			continue
+		}
 		if err := applyProjectSkillWrite(w); err != nil {
 			var rest []string
 			for _, x := range prep.Writes[i+1:] {

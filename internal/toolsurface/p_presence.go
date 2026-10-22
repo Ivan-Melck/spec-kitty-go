@@ -414,6 +414,7 @@ func (p sessionPresenceProvider) prepare(in AssessInputs, statuses []Status, sel
 		return nil, err
 	}
 	a.Effects, a.Artifacts, a.Prepared = co, artifacts, batch
+	a.Recheck = presenceRecheck(root, observations, "Session input changed: %s", false)
 	return a, nil
 }
 
@@ -551,4 +552,47 @@ func (p sessionPresenceProvider) repair(c *collectCtx, root string, statuses []S
 		failed = append(failed, "Preserved drift: "+p)
 	}
 	return RepairResult{Repaired: repaired, Skipped: skipped, Failed: failed}
+}
+
+// presenceRecheck snapshots the observed presence nodes (files keep their
+// mtime, directories their identity) and returns the owner recheck.
+func presenceRecheck(root string, observations [][2]any, msg string, fixed bool) func() []Diagnostic {
+	var names []string
+	seen := map[string]bool{}
+	for _, o := range observations {
+		n := o[0].(string)
+		if !seen[n] {
+			seen[n] = true
+			names = append(names, n)
+		}
+	}
+	abs := func(n string) string {
+		if n == "." {
+			return root
+		}
+		return filepath.Join(root, filepath.FromSlash(n))
+	}
+	before := make([]nodeSig, len(names))
+	for i, n := range names {
+		before[i] = observeSig(abs(n), false, true)
+	}
+	owner := "session_presence"
+	if fixed {
+		owner = "native_config"
+	}
+	return func() []Diagnostic {
+		for i, n := range names {
+			if _, err := observePresencePath(root, n); err != nil {
+				return []Diagnostic{Diag("precondition_changed", owner, "error", err.Error())}
+			}
+			if observeSig(abs(n), false, true) != before[i] {
+				m := msg
+				if !fixed {
+					m = fmt.Sprintf(msg, n)
+				}
+				return []Diagnostic{Diag("precondition_changed", owner, "error", m)}
+			}
+		}
+		return nil
+	}
 }

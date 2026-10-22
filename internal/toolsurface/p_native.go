@@ -85,7 +85,8 @@ func (p nativeConfigProvider) assess(c *collectCtx, in AssessInputs, statuses []
 	if prep.Exists {
 		before = FileOf(Digest(prep.Before), prep.Mode)
 	}
-	a := &Assessment{OwnerKey: "native_config", Root: in.Root, Complete: true, Prepared: &prep}
+	a := &Assessment{OwnerKey: "native_config", Root: in.Root, Complete: true, Prepared: &prep,
+		Recheck: presenceRecheck(root, append(append([][2]any(nil), vobs...), obs...), "Native config inputs changed", true)}
 	if prep.Changed() {
 		ids := idsOf(statuses)
 		proof := []Proof{{"managed_path", ".vibe/config.toml#skill_paths"}}

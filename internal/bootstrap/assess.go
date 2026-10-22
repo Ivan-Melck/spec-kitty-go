@@ -196,3 +196,27 @@ func assessSkillsSelection(agentKeys []string) (*prep, []string, string, error) 
 	}
 	return p, sel, anchor, nil
 }
+
+// ApplySelectedFamilies applies the upgrade finalizer's coordinated global
+// batch: runtime, the slash commands of commandKeys (no stamps) and the
+// built-in skill selection of skillAgents.
+func ApplySelectedFamilies(commandKeys, skillAgents []string) error {
+	p, err := AssessRuntime()
+	if err == nil {
+		err = p.apply()
+	}
+	if err != nil {
+		return err
+	}
+	if commandKeys == nil {
+		commandKeys = []string{}
+	}
+	cp, _, err := AssessGlobalCommands(commandKeys)
+	if err == nil {
+		err = cp.apply()
+	}
+	if err != nil {
+		return err
+	}
+	return EnsureSkillsSelection(skillAgents)
+}

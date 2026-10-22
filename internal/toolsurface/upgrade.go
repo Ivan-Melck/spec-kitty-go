@@ -19,6 +19,7 @@ type UpgradeRepairs struct {
 	HasComp      bool
 	Remaining    []*Assessment
 	Diagnostics  []Diagnostic
+	commandKeys  []string
 }
 
 // Owners is PreparedUpgradeRepairs.owners.
@@ -222,7 +223,7 @@ func PrepareUpgradeRepairs(projectPath string) (*UpgradeRepairs, error) {
 		}
 	}
 	remaining := builderAssess(c, ps, reg, append(append([]string(nil), agentKeys...), PluginBundleToolKey), AssessInputs{Root: root}, remainingKinds, agentKeys)
-	u := &UpgradeRepairs{Root: root, Provisioning: prov, Installation: inst, Commands: commands, Remaining: remaining}
+	u := &UpgradeRepairs{Root: root, Provisioning: prov, Installation: inst, Commands: commands, Remaining: remaining, commandKeys: slash}
 	owners := []*Assessment{inst.Global, inst.Project}
 	owners = append(owners, managed...)
 	owners = append(owners, commands...)
