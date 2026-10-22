@@ -601,6 +601,13 @@ func generatePureGraph(root string) (*dct.Graph, error) {
 	var tmplEdges []regenEdge
 	seenT := map[string]bool{}
 	for _, mt := range mts {
+		if _, isStr := mt.rawID.(string); !isStr {
+			// MissionStepRepository joins the id onto a Path.
+			return nil, graphCrash("TypeError", fmt.Sprintf("unsupported operand type(s) for /: 'PosixPath' and '%s'", pyTpName(mt.rawID)),
+				fr{Name: "generate_graph", Line: 1826}, fr{Name: "extract_template_instantiation_edges", Line: 1757},
+				fr{Name: "resolve_all_for_mission_type", Line: 499}, fr{Name: "_resolve_all_for_mission_type_cached", Line: 650},
+				fr{Name: "_resolve_all_for_mission_type_uncached", Line: 527})
+		}
 		for _, s := range builtinSteps(root, mt.id) {
 			if !s.hasTemplate {
 				continue
