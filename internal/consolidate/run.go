@@ -705,6 +705,10 @@ func (r *run) mutationSpan(coordDone bool) error {
 			}
 		}
 		if r.number > 0 {
+			if r.state != nil {
+				r.state.MissionNumberBaked = true
+				r.state.Save(r.root)
+			}
 			say(r.w, fmt.Sprintf("Assigned mission_number=%d to mission %s", r.number, r.slug))
 		}
 		return nil
@@ -1047,9 +1051,30 @@ func (r *run) recordDone() error {
 	if err != nil {
 		return err
 	}
+	completed := map[string]bool{}
+	if r.state != nil {
+		// _reconcile_completed_wps_for_resume: the record's completed WPs are a
+		// hint, confirmed against the durable done lane.
+		var confirmed []string
+		for _, id := range r.state.CompletedWPs {
+			if st := snap.WP(id); st != nil && st.GetString("lane") == "done" {
+				confirmed = append(confirmed, id)
+				completed[id] = true
+			}
+		}
+		if len(confirmed) != len(r.state.CompletedWPs) {
+			r.state.CompletedWPs = confirmed
+			r.state.Save(r.root)
+		}
+	}
 	for _, id := range r.wps {
+		if completed[id] {
+			say(r.w, fmt.Sprintf("  [dim]Skipping %s (already recorded as done)[/dim]", id))
+			continue
+		}
 		st := snap.WP(id)
 		if st == nil || st.GetString("lane") == "done" {
+			r.markComplete(id)
 			continue
 		}
 		reviewer := ""
@@ -1070,9 +1095,21 @@ func (r *run) recordDone() error {
 			sayErr(r.w, err.Error())
 			return exit(1)
 		}
+		r.markComplete(id)
 	}
 	r.clearTerminalLaneTips(sf)
 	return nil
+}
+
+// markComplete is ConsolidationState.mark_wp_complete + save.
+func (r *run) markComplete(id string) {
+	if r.state == nil {
+		return
+	}
+	if !contains(r.state.CompletedWPs, id) {
+		r.state.CompletedWPs = append(r.state.CompletedWPs, id)
+	}
+	r.state.Save(r.root)
 }
 
 // clearTerminalLaneTips is the on_wp_terminal hook of the done transitions:
