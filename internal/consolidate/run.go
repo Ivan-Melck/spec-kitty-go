@@ -45,6 +45,7 @@ type Options struct {
 	OriginCheck    *string  // --origin-check (nil = environment/default)
 	SkipLanes      bool     // --skip-lanes: synthesize a no-lane manifest when lanes.json is absent
 	DryRunNotes    []string // "--attest-* is not applied with --dry-run" notices
+	AllowSparse    bool     // --allow-sparse-checkout
 }
 
 // synthesizeNoLaneManifest is _synthesize_no_lane_manifest: one planning
@@ -211,7 +212,7 @@ func Run(w io.Writer, root string, o Options) error {
 		}
 		say(w, fmt.Sprintf("Resume requested for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
 	}
-	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck, skipLanes: o.SkipLanes}
+	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck, skipLanes: o.SkipLanes, allowSparse: o.AllowSparse}
 	return r.execute()
 }
 
@@ -350,6 +351,7 @@ type run struct {
 	validatedTips [][2]string
 	anchorShas    []string
 	windowBase    string
+	allowSparse   bool
 }
 
 func hasRemote(root, name string) bool {
@@ -464,6 +466,12 @@ func (r *run) execute() error {
 			fmt.Fprintln(r.w, w)
 		}
 	}
+	if !r.allowSparse {
+		if msg := SparseCheckoutRefusal(r.root, "spec-kitty consolidate"); msg != "" {
+			sayErr(r.w, msg)
+			return exit(1)
+		}
+	}
 	m, msg := requireLanes(r.sf.PrimaryDir)
 	if m == nil && r.skipLanes {
 		if _, err := os.Stat(filepath.Join(r.sf.PrimaryDir, lanes.File)); os.IsNotExist(err) {
@@ -504,6 +512,16 @@ func (r *run) execute() error {
 			}
 		}
 		sayErr(r.w, fmt.Sprintf("Missing mission branch: %s. Run: git branch %s %s", m.MissionBranch, m.MissionBranch, base))
+		return exit(1)
+	}
+	if pr := ProtectedStatusTargetRefusal(r.root, r.slug, m, map[string]bool{}); pr != nil {
+		sayErr(r.w, pr.Code+": "+pr.Message)
+		fmt.Fprintln(r.w, rich.Wrap("  Next step: "+pr.NextStep, rich.Width()))
+		footer := "Consolidation refused before any branch moved."
+		if LoadState(r.root, missionIDOf(r.root, r.slug)) != nil {
+			footer = refusedWithEarlierRecord
+		}
+		fmt.Fprintln(r.w, rich.Wrap(footer, rich.Width()))
 		return exit(1)
 	}
 	if err := r.preflight(); err != nil {

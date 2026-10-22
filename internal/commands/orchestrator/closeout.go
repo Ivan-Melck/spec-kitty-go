@@ -127,6 +127,11 @@ func runConsolidateMission(ctx *cli.Context) error {
 		if errors.As(err, &le) && le.TeardownCode != "" {
 			data.Set("teardown_error_code", le.TeardownCode)
 		}
+		var be *consolidate.ApprovedBoundError
+		if errors.As(err, &be) && len(be.Codes) > 0 {
+			data.Set("preflight_error_code", be.Codes[0])
+			data.Set("preflight_error_codes", strList(be.Codes))
+		}
 		return v.fail("PREFLIGHT_FAILED", "Merge failed", data)
 	}
 	data := identity(m.StatusDir, "merged", true, "target_branch", target, "strategy", strategy, "worktree_removed", false)
