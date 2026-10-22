@@ -207,7 +207,11 @@ func runTasks(ctx *cli.Context) error {
 		return err
 	}
 	slug := filepath.Base(m.StatusDir)
-	orch.TouchAuthoringLock(root, slug)
+	release, lerr := orch.AcquireAuthoringLock(root, slug)
+	if lerr != nil {
+		return v.designErr(lerr, nil)
+	}
+	defer release()
 	receipts, err := orch.ReadReceipts(root, slug)
 	if err != nil {
 		return v.designErr(err, nil)

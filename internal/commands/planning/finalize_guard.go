@@ -17,21 +17,27 @@ type ScopeRefusal struct {
 	Details       *jsonx.Object
 }
 
+// FinalizeScope is the entered native_finalization_scope: Confirm
+// re-stamps the work-package receipts after a successful finalize (nil when
+// nothing is enforced); Close releases the authoring lock.
+type FinalizeScope struct {
+	Confirm, Close func()
+}
+
 // APIAuthoredFinalizeScope is native_finalization_scope (#5879), installed
-// by the orchestrator-api package: for an API-authored Mission whose tasks
-// are not finalized yet it proves the planning content is current (a
-// refusal otherwise) and returns the receipt re-stamp to run once finalize
-// succeeded; (nil, nil) when nothing is enforced.
-var APIAuthoredFinalizeScope func(root, slug string) (restamp func(), refusal *ScopeRefusal)
+// by the orchestrator-api package: for an API-authored Mission it holds the
+// authoring lock across the finalize and, while tasks are not finalized
+// yet, proves the planning content is current (a refusal otherwise).
+var APIAuthoredFinalizeScope func(root, slug string) (*FinalizeScope, *ScopeRefusal)
 
 // enterAPIAuthoredScope is _enter_api_authored_finalize_scope.
-func (f *finalizeRun) enterAPIAuthoredScope() (func(), error) {
+func (f *finalizeRun) enterAPIAuthoredScope() (*FinalizeScope, error) {
 	if f.validateOnly || APIAuthoredFinalizeScope == nil {
 		return nil, nil
 	}
-	restamp, ref := APIAuthoredFinalizeScope(f.root, f.slug)
+	scope, ref := APIAuthoredFinalizeScope(f.root, f.slug)
 	if ref == nil {
-		return restamp, nil
+		return scope, nil
 	}
 	if f.json {
 		p := jsonx.NewObject("result", "error", "error", ref.Message, "error_code", ref.Code)

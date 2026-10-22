@@ -198,10 +198,13 @@ func runFinalizeTasks(ctx *cli.Context) error {
 	f.slug = filepath.Base(dir)
 	f.dir = project.Specs(f.root, f.slug)
 	f.missionType = missionart.MissionTypeFor(f.dir)
-	var restamp func()
+	var scope *FinalizeScope
 	if !f.refresh {
-		if restamp, err = f.enterAPIAuthoredScope(); err != nil {
+		if scope, err = f.enterAPIAuthoredScope(); err != nil {
 			return err
+		}
+		if scope != nil && scope.Close != nil {
+			defer scope.Close()
 		}
 	}
 	if !f.validateOnly && !f.refresh {
@@ -211,8 +214,8 @@ func runFinalizeTasks(ctx *cli.Context) error {
 	if err != nil && f.scope != nil && !f.commitLanded {
 		f.scope.restore(f.persisted)
 	}
-	if err == nil && restamp != nil {
-		restamp()
+	if err == nil && scope != nil && scope.Confirm != nil {
+		scope.Confirm()
 	}
 	return err
 }

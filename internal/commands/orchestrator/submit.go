@@ -250,7 +250,11 @@ func (d *design) submitArtifacts(raw, actor string) (*jsonx.Object, error) {
 	if actor == "" || len(actor) > orch.MaxActorBytes || isBlank(actor) {
 		return nil, derr("DESIGN_REQUEST_INVALID", "An attributable bounded actor is required")
 	}
-	orch.TouchAuthoringLock(d.root, d.slug)
+	release, lerr := orch.AcquireAuthoringLock(d.root, d.slug)
+	if lerr != nil {
+		return nil, lerr
+	}
+	defer release()
 	if err := requireUnfinalized(d.m); err != nil {
 		return nil, err
 	}
