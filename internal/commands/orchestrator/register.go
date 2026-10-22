@@ -142,6 +142,10 @@ func (v *verb) root() string {
 func (v *verb) mission(root, handle string) (*orch.Mission, error) {
 	m, err := orch.ResolveMission(root, handle)
 	if err != nil {
+		if crash, ok := err.(*orch.SelectorAmbiguousCrash); ok {
+			fmt.Fprintf(v.ctx.Stderr, "Traceback (most recent call last):\n%s\n", crash.Traceback())
+			return nil, cli.Exit(1)
+		}
 		re := err.(*orch.ResolveError)
 		return nil, v.fail(re.Code, re.Message, re.Data)
 	}

@@ -86,7 +86,20 @@ func runTopImplement(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	o.Console("")
-	workflow.EmitCharterPreflight(ctx.Stderr, root, "implement")
+	if err := workflow.CharterPreflightOrAbort(ctx.Stderr, root, "implement"); err != nil {
+		// The preflight's typer.Exit(1) is caught by the detect phase.
+		tr := workflow.NewTracker("Implement " + wpID)
+		tr.Add("detect", "Detect mission context")
+		tr.Add("validate", "Validate planning state")
+		tr.Add("create", "Resolve execution workspace")
+		tr.Start("detect")
+		tr.Error("detect", "1")
+		o.Console(tr.Render())
+		if jsonMode {
+			emitJSONError(summary())
+		}
+		return cli.Exit(1)
+	}
 	slug, err := resolveMission(ctx.Stdout, ctx.Stderr, root, ctx.String("mission"), jsonMode)
 	if err != nil {
 		return err

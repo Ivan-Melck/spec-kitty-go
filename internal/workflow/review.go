@@ -256,6 +256,13 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 		o.Printf("Move it first: spec-kitty agent tasks move-task %s --to for_review --mission %s", wpID, slug)
 		return ExitErr(1)
 	}
+	// #5758: the lane is brought to the remote's view before the review
+	// claim, so a refusal leaves the WP status untouched.
+	createFrom, rerr := reconcileReviewLane(o, ws, root, wpID, agent)
+	if rerr != nil {
+		o.Console(rerr.Error())
+		return ExitErr(1)
+	}
 
 	if req != nil {
 		b, err := req.Resolve(root, slug, wpID, "review")
@@ -333,14 +340,22 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 			return ExitErr(1)
 		}
 		args := []string{"worktree", "add", wsPath, ws.BranchName}
+		created := false
 		if git(root, "rev-parse", "--verify", ws.BranchName).Code != 0 {
 			args = []string{"worktree", "add", wsPath, "-b", ws.BranchName}
+			if createFrom != "" {
+				args = append(args, createFrom)
+			}
+			created = true
 		}
 		if r := git(root, args...); r.Code != 0 {
 			o.Printf("Error: could not create review workspace %s for %s: `git %s` failed: %s", wsPath, wpID, strings.Join(args, " "), strings.TrimSpace(r.Stderr))
 			return ExitErr(1)
 		}
 		o.Printf("✓ Created workspace: %s", wsPath)
+		if created && createFrom != "" {
+			o.Printf("Created review workspace from %s", strings.TrimPrefix(createFrom, "refs/remotes/"))
+		}
 	}
 	if err := acquireReviewLock(wsPath, wpID, agentOr(agent, "unknown")); err != nil {
 		o.Console(err.Error())

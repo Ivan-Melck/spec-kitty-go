@@ -118,7 +118,8 @@ func runStatusDoctor(ctx *cli.Context) error {
 			globalIssues = true
 		}
 	}
-	findings, err := status.RunDoctor(m.ReadDir(), m.Slug, m.Root, ctx.Int("stale-claimed-days"), ctx.Int("stale-in-progress-days"))
+	findings, err := status.RunDoctor(m.ReadDir(), m.Slug, m.Root, ctx.Int("stale-claimed-days"), ctx.Int("stale-in-progress-days"), doctorHooks(m))
+	slugResolverWarn(ctx, jsonMode, m.ReadDir(), 2)
 	if err != nil {
 		if jsonMode {
 			printJSON(ctx.Stdout, jsonx.NewObject("error", err.Error(), "healthy", false))
@@ -163,39 +164,11 @@ func runStatusDoctor(ctx *cli.Context) error {
 				}
 				rows = append(rows, []string{f.Severity, f.Category, wpID, f.Message, f.Action})
 			}
-			renderSimpleTable(ctx, "Doctor Findings", []string{"Severity", "Category", "WP", "Message", "Action"}, rows)
+			rich.TableWidth(ctx.Stdout, "Doctor Findings", []string{"Severity", "Category", "WP", "Message", "Action"}, rows, cli.Width())
 		}
 	}
 	if !healthy {
 		return cli.Exit(1)
 	}
 	return nil
-}
-
-// renderSimpleTable draws a rich heavy-head table (no wrapping) with a
-// centered title.
-func renderSimpleTable(ctx *cli.Context, title string, head []string, rows [][]string) {
-	widths := make([]int, len(head))
-	for i, h := range head {
-		widths[i] = rich.CellLen(h)
-	}
-	for _, r := range rows {
-		for i, c := range r {
-			widths[i] = max(widths[i], rich.CellLen(c))
-		}
-	}
-	total := 1
-	for _, w := range widths {
-		total += w + 3
-	}
-	if title != "" {
-		fmt.Fprintln(ctx.Stdout, center(title, total))
-	}
-	fmt.Fprintln(ctx.Stdout, boxLine("┏", "━", "┳", "┓", widths))
-	fmt.Fprintln(ctx.Stdout, boxRow("┃", head, widths))
-	fmt.Fprintln(ctx.Stdout, boxLine("┡", "━", "╇", "┩", widths))
-	for _, r := range rows {
-		fmt.Fprintln(ctx.Stdout, boxRow("│", r, widths))
-	}
-	fmt.Fprintln(ctx.Stdout, boxLine("└", "─", "┴", "┘", widths))
 }
