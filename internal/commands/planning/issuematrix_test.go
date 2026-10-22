@@ -11,6 +11,7 @@ import (
 // TestDiffIssueMatrix covers the finalize scaffold, `agent issue-verdict`,
 // `issue-matrix migrate` and the move-task approval blocker.
 func TestDiffIssueMatrix(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	g, o := oracleCreate(t, p)
 	p.Both(func(s *testkit.Sandbox) {
@@ -42,6 +43,7 @@ func TestDiffIssueMatrix(t *testing.T) {
 
 // TestDiffIssueMatrixMigrate migrates a legacy issue-matrix.md (lanes topology).
 func TestDiffIssueMatrixMigrate(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	g, o := oracleCreate(t, p, "--topology", "lanes")
 	shellSteps(t, p, g, o,

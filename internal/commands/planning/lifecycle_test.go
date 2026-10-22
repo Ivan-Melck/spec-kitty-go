@@ -9,6 +9,7 @@ import (
 // TestDiffLifecycle covers the top-level specify / plan / tasks wrappers
 // (incl. the non-interactive widen interviews) and research.
 func TestDiffLifecycle(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	other := `M=$(ls kitty-specs | grep other); `
 	deep := `M=$(ls kitty-specs | grep deep); `
@@ -54,6 +55,7 @@ func TestDiffLifecycle(t *testing.T) {
 // prompt path (forced interactive, answers piped on stdin) and the
 // name-validation errors under --json.
 func TestDiffLifecycleInteractive(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	fi := `export SPEC_KITTY_FORCE_INTERACTIVE=1; `
 	shellSteps(t, p, "", "",

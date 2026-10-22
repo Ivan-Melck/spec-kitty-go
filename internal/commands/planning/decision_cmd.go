@@ -3,10 +3,12 @@ package planning
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/decision"
+	"github.com/spec-kitty/go-kitty3/internal/healthcheck"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
@@ -296,9 +298,35 @@ func runDecisionVerify(ctx *cli.Context) error {
 	if len(findings) > 0 {
 		st = "drift"
 	}
-	// TODO: DECISION_LOG_FORKED (primary vs coordination decision-event
-	// stream divergence, decisions/fork.py) is not detected.
+	// FR-010a: a decision-event stream forked between the PRIMARY and
+	// coordination surfaces is its own finding and always exits 1.
+	fork := healthcheck.DetectDecisionForks(dc.Root, dc.Slug)
+	if fork.Forked {
+		set := map[string]bool{}
+		for _, s := range fork.Streams {
+			if s.State == "forked" {
+				for _, id := range append(append([]string{}, s.OnlyPrimary...), s.OnlyCoord...) {
+					set[id] = true
+				}
+			}
+		}
+		ids := make([]string, 0, len(set))
+		for id := range set {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		var ref any
+		if len(ids) > 0 {
+			ref = strings.Join(ids, ", ")
+		}
+		findings = append(findings, jsonx.NewObject("kind", "DECISION_LOG_FORKED", "decision_id_or_ref", ref, "location", nil,
+			"detail", "A decision-event stream diverges between the PRIMARY and coordination surfaces (never auto-merged, C-003): "+strings.Join(fork.ReconcileSteps, "; ")))
+		st = "drift"
+	}
 	echoSorted(ctx, false, jsonx.NewObject("status", st, "deferred_count", res.DeferredCount, "marker_count", res.MarkerCount, "findings", findings))
+	if fork.Forked {
+		return cli.Exit(1)
+	}
 	if len(res.Findings) > 0 && ctx.Bool("fail-on-stale") {
 		return cli.Exit(1)
 	}
