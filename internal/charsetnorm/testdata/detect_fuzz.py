@@ -79,8 +79,31 @@ def describe(data):
     return {"data": data.hex(), "results": out, "best": best.encoding if best else None}
 
 
+def describe_recover(data):
+    from charter.encoding_recovery import recover
+
+    out = {"data": data.hex()}
+    for unsafe in (False, True):
+        try:
+            r = recover(data, unsafe=unsafe)
+            out["unsafe" if unsafe else "safe"] = {
+                "text": [ord(c) for c in r.text] if r.text is not None else None,
+                "source_encoding": r.source_encoding,
+                "confidence": r.confidence,
+                "ambiguous": r.ambiguous,
+                "candidates": [[e, c] for e, c in r.candidates],
+                "normalization_applied": r.normalization_applied,
+                "bypass_used": r.bypass_used,
+            }
+        except UnicodeDecodeError as exc:
+            out["unsafe" if unsafe else "safe"] = {"error": str(exc)}
+    return out
+
+
+fn = describe_recover if "--recover" in files else describe
+files = [f for f in files if f != "--recover"]
 for f in files:
     with open(f, "rb") as fh:
-        print(json.dumps(describe(fh.read())))
+        print(json.dumps(fn(fh.read())))
 for _ in range(n):
-    print(json.dumps(describe(sample())))
+    print(json.dumps(fn(sample())))
