@@ -823,7 +823,7 @@ func repairFeature(feature, root string, dryRun bool) ([]string, []string) {
 	if orphanStatusSnapshot(feature) {
 		backup := status.SnapshotFile + ".orphan.bak." + compactStamp()
 		if !dryRun {
-			os.Rename(sp, filepath.Join(feature, backup))
+			mvRename(sp, filepath.Join(feature, backup))
 		}
 		ch = append(ch, fmt.Sprintf("%s: archived orphan %s to %s", name, status.SnapshotFile, backup))
 	} else if pathExists(sp) && !pathExists(filepath.Join(feature, status.EventsFile)) && !pathExists(filepath.Join(feature, "tasks")) {
@@ -841,7 +841,7 @@ func repairFeature(feature, root string, dryRun bool) ([]string, []string) {
 			}
 			backup := status.EventsFile + ".unreadable.bak." + compactStamp()
 			if !dryRun {
-				os.Rename(filepath.Join(feature, status.EventsFile), filepath.Join(feature, backup))
+				mvRename(filepath.Join(feature, status.EventsFile), filepath.Join(feature, backup))
 			}
 			unreadable = true
 			ch = append(ch, fmt.Sprintf("%s: archived unreadable %s to %s", name, status.EventsFile, backup))

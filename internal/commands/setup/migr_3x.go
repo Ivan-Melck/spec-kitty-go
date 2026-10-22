@@ -964,7 +964,7 @@ func mCharterRename() migrationImpl {
 					ch = append(ch, "Would move .kittify/memory/constitution.md -> .kittify/charter/charter.md")
 				} else {
 					os.MkdirAll(cd, 0o755)
-					if err := os.Rename(memC, filepath.Join(cd, "charter.md")); err != nil {
+					if err := mvRename(memC, filepath.Join(cd, "charter.md")); err != nil {
 						errs = append(errs, "Failed to move memory/constitution.md: "+pyOSError(err))
 					} else {
 						ch = append(ch, "Moved .kittify/memory/constitution.md -> .kittify/charter/charter.md")
@@ -980,7 +980,7 @@ func mCharterRename() migrationImpl {
 						for _, item := range listDir(consD) {
 							dest := filepath.Join(cd, filepath.Base(item))
 							if !pathExists(dest) {
-								os.Rename(item, dest)
+								mvRename(item, dest)
 								ch = append(ch, fmt.Sprintf("Merged %s from constitution/ to charter/", filepath.Base(item)))
 							} else {
 								v, _ := guardDestructiveRemoval(item, root, pr, isDir(item), k, false)
@@ -995,7 +995,7 @@ func mCharterRename() migrationImpl {
 					}
 				} else if dryRun {
 					ch = append(ch, "Would rename .kittify/constitution/ -> .kittify/charter/")
-				} else if err := os.Rename(consD, cd); err != nil {
+				} else if err := mvRename(consD, cd); err != nil {
 					errs = append(errs, "Failed to rename constitution/ -> charter/: "+pyOSError(err))
 				} else {
 					ch = append(ch, "Renamed .kittify/constitution/ -> .kittify/charter/")
@@ -1006,7 +1006,7 @@ func mCharterRename() migrationImpl {
 				if pathExists(oldMD) && !pathExists(newMD) {
 					if dryRun {
 						ch = append(ch, "Would rename charter/constitution.md -> charter/charter.md")
-					} else if err := os.Rename(oldMD, newMD); err != nil {
+					} else if err := mvRename(oldMD, newMD); err != nil {
 						errs = append(errs, "Failed to rename constitution.md -> charter.md: "+pyOSError(err))
 					} else {
 						ch = append(ch, "Renamed charter/constitution.md -> charter/charter.md")
@@ -1066,7 +1066,7 @@ func mCharterRename() migrationImpl {
 				if pathExists(oc) && !pathExists(nc) {
 					if dryRun {
 						ch = append(ch, fmt.Sprintf("Would rename %s/%s/spec-kitty.constitution.md", d.root, d.subdir))
-					} else if err := os.Rename(oc, nc); err != nil {
+					} else if err := mvRename(oc, nc); err != nil {
 						errs = append(errs, fmt.Sprintf("Failed to rename %s/%s/spec-kitty.constitution.md: %s", d.root, d.subdir, pyOSError(err)))
 					} else {
 						ch = append(ch, fmt.Sprintf("Renamed %s/%s/spec-kitty.constitution.md -> spec-kitty.charter.md", d.root, d.subdir))
@@ -1708,7 +1708,7 @@ func mCodexToSkills() migrationImpl {
 							}
 							continue
 						}
-						if err := os.Rename(p, t); err != nil {
+						if err := mvRename(p, t); err != nil {
 							moveErrs = append(moveErrs, filepath.Base(p)+": "+pyOSError(err))
 						} else {
 							moved = append(moved, t)

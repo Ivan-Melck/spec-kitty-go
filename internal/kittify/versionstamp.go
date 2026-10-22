@@ -124,6 +124,27 @@ func withoutVersionTrio(d *jsonx.Object) *jsonx.Object {
 	return rest
 }
 
+// Version is VersionStamp.version: the captured spec_kitty.version ("" when
+// absent or unreadable).
+func (s VersionStamp) Version() string {
+	d := parseMappingRaw(s.Raw)
+	if d == nil {
+		return ""
+	}
+	b := d.GetObject("spec_kitty")
+	if b == nil {
+		return ""
+	}
+	v, ok := b.Get("version")
+	if !ok || v == nil {
+		return ""
+	}
+	if str, ok := v.(string); ok {
+		return str
+	}
+	return fmt.Sprint(v)
+}
+
 // Restore is VersionStamp.restore.
 func (s VersionStamp) Restore(root string) bool {
 	if s.Raw == nil {

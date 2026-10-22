@@ -114,7 +114,7 @@ func mSpecifyToKittify() migrationImpl {
 			if pathExists(sp) {
 				if dryRun {
 					ch = append(ch, fmt.Sprintf("Would rename %s to %s", sp, kd))
-				} else if err := os.Rename(sp, kd); err != nil {
+				} else if err := mvRename(sp, kd); err != nil {
 					errs = append(errs, "Failed to rename .specify/ to .kittify/: "+pyOSError(err))
 				} else {
 					ch = append(ch, fmt.Sprintf("Renamed %s to %s", sp, kd))
@@ -123,7 +123,7 @@ func mSpecifyToKittify() migrationImpl {
 			if pathExists(ss) && !pathExists(ks) {
 				if dryRun {
 					ch = append(ch, fmt.Sprintf("Would rename %s to %s", ss, ks))
-				} else if err := os.Rename(ss, ks); err != nil {
+				} else if err := mvRename(ss, ks); err != nil {
 					errs = append(errs, "Failed to rename /specs/ to /kitty-specs/: "+pyOSError(err))
 				} else {
 					ch = append(ch, fmt.Sprintf("Renamed %s to %s", ss, ks))
@@ -262,7 +262,7 @@ func mCommandsRename() migrationImpl {
 				if pathExists(old) && !pathExists(nw) {
 					if dryRun {
 						ch = append(ch, fmt.Sprintf("Would rename %s: commands/ -> command-templates/", context))
-					} else if err := os.Rename(old, nw); err != nil {
+					} else if err := mvRename(old, nw); err != nil {
 						errs = append(errs, fmt.Sprintf("Failed to rename %s: %s", context, pyOSError(err)))
 					} else {
 						ch = append(ch, fmt.Sprintf("Renamed %s: commands/ -> command-templates/", context))
@@ -1642,7 +1642,7 @@ func mFixMemoryStructure() migrationImpl {
 				if !pathExists(km) {
 					if dryRun {
 						ch = append(ch, fmt.Sprintf("Would move %s -> %s", rm, km))
-					} else if err := os.Rename(rm, km); err != nil {
+					} else if err := mvRename(rm, km); err != nil {
 						if cerr := copyTree(rm, km); cerr != nil {
 							return migrationResult{Changes: ch, Warnings: warn, Errors: []string{"Failed to move or copy memory/: " + pyOSError(cerr)}}
 						}

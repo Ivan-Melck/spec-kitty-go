@@ -117,6 +117,71 @@ func maskTree(s string) string {
 	return s
 }
 
+const legacyImplementTemplate = `---
+description: Implement a work package
+---
+# Implement
+
+## Work Package Selection
+
+Run ` + "`.kittify/scripts/bash/check-prerequisites.sh --json`" + ` first.
+Then move the prompt from tasks/planned/ to tasks/doing/.
+Use spec-kitty agent workflow implement WP01
+`
+
+const legacyReviewTemplate = `---
+description: Review a work package
+---
+# Review
+
+## Location Pre-flight Check
+
+Conduct the review: read tasks/for_review/ and run scripts/bash/tasks-move-to-lane.sh.
+`
+
+func writeLegacy09(s *testkit.Sandbox) {
+	for _, n := range []string{"implement", "review", "specify", "plan", "tasks", "charter"} {
+		body := "# " + n + "\n\nRun `.kittify/scripts/bash/create-new-feature.sh` from the main repository root.\n"
+		switch n {
+		case "implement":
+			body = legacyImplementTemplate
+		case "review":
+			body = legacyReviewTemplate
+		}
+		s.WriteFile(".kittify/missions/software-dev/command-templates/"+n+".md", body)
+	}
+	s.WriteFile(".kittify/missions/software-dev/mission.yaml", "name: software-dev\n")
+	s.WriteFile(".kittify/templates/command-templates/specify.md", "Use scripts/bash/create-new-feature.sh and tasks_cli.py move WP01\n")
+	s.WriteFile(".kittify/scripts/bash/create-new-feature.sh", "#!/bin/bash\necho legacy\n")
+	s.WriteFile(".kittify/scripts/bash/common.sh", "#!/bin/bash\n")
+	s.WriteFile(".kittify/active-mission", "software-dev\n")
+	s.WriteFile("memory/constitution.md", "# Project Constitution\n\nThe constitution governs.\n")
+	s.WriteFile(".claude/commands/spec-kitty.implement.md", legacyImplementTemplate)
+	s.WriteFile(".claude/commands/spec-kitty.review.md", legacyReviewTemplate)
+	s.WriteFile(".claude/commands/spec-kitty.clarify.md", "<!-- spec-kitty-command-version: 0.9.0 -->\nclarify\n")
+	s.WriteFile("kitty-specs/001-demo-feature/spec.md", "# Demo\n\n**Target Branch**: main\n")
+	s.WriteFile("kitty-specs/001-demo-feature/meta.json", "{\n  \"feature_number\": \"001\",\n  \"slug\": \"001-demo-feature\",\n  \"friendly_name\": \"demo feature\",\n  \"mission\": \"software-dev\"\n}\n")
+	s.WriteFile("kitty-specs/001-demo-feature/tasks/planned/WP01-setup.md", "---\nwork_package_id: WP01\ntitle: Setup\nlane: planned\nhistory: []\n---\n# WP01\n\nCreate src/app.py\n")
+	s.WriteFile("kitty-specs/001-demo-feature/tasks/done/WP02-docs.md", "---\nwork_package_id: WP02\ntitle: Docs\n---\n# WP02\n\nWrite docs/index.md\n")
+	s.WriteFile("kitty-specs/001-demo-feature/tasks/doing/.gitkeep", "")
+	s.WriteFile("kitty-specs/001-demo-feature/tasks.md", "# Tasks\n\n**Prompt**: `tasks/planned/WP01-setup.md`\n")
+	gi := s.ReadFile(".gitignore")
+	s.WriteFile(".gitignore", "kitty-specs/\n"+gi)
+}
+
+func TestUpgradeLegacyLayoutCorporaMatchOracle(t *testing.T) {
+	for _, c := range []corpus{
+		{name: "v0.9-claude", ai: "claude", version: "0.9.0", noStamp: true, mutate: writeLegacy09},
+		{name: "v0.9-codex", ai: "claude,codex", version: "0.9.0", noStamp: true, mutate: writeLegacy09},
+	} {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			runCorpus(t, c)
+		})
+	}
+}
+
 func TestUpgradeFreshProjectCorporaMatchOracle(t *testing.T) {
 	for _, v := range []string{"0.1.0", "2.0.0", "3.0.0", "3.2.0", "3.2.6", "4.0.0rc1"} {
 		v := v

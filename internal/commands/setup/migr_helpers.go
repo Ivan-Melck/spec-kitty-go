@@ -580,6 +580,7 @@ func copyFile2(src, dest string) error {
 	if fi, err := os.Stat(dest); err == nil && fi.IsDir() {
 		dest = filepath.Join(dest, filepath.Base(src))
 	}
+	recordUpgradeMutation(src, dest, false)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil && !pathExists(filepath.Dir(dest)) {
 		return err
 	}
@@ -595,6 +596,7 @@ func copyFile2(src, dest string) error {
 
 // copyTree is shutil.copytree(src, dest) for an on-disk source.
 func copyTree(src, dest string) error {
+	recordUpgradeMutation(src, dest, false)
 	if lexists(dest) {
 		return &os.PathError{Op: "mkdir", Path: dest, Err: fs.ErrExist}
 	}
