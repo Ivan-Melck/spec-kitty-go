@@ -200,11 +200,12 @@ func runAgentMerge(ctx *cli.Context) error {
 		n := !*v
 		return &n
 	}
-	if target == "" {
-		target = consolidate.PrimaryBranch(root)
-	}
 	if ctx.Bool("auto-retry") && os.Getenv("SPEC_KITTY_AUTORETRY") == "" {
-		if code, err := autoRetry(ctx, root, slug, target); err != nil {
+		retryTarget := target
+		if retryTarget == "" {
+			retryTarget = consolidate.PrimaryBranch(root)
+		}
+		if code, err := autoRetry(ctx, root, slug, retryTarget); err != nil {
 			printJSON(ctx.Stdout, jsonx.NewObject("error", err.Error(), "success", false))
 			return cli.Exit(1)
 		} else if code >= 0 {
