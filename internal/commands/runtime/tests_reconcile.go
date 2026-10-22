@@ -1,18 +1,16 @@
 package runtime
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
+	"github.com/spec-kitty/go-kitty3/internal/dossier"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
@@ -150,23 +148,6 @@ func rightJustifyColumn(table string, col int) string {
 // reconcile (dossier parity against .kittify/dossiers/<slug>/snapshot-latest.json)
 // ---------------------------------------------------------------------------
 
-type projEntry struct{ path, hash string }
-
-func snapshotHash(entries []projEntry) string {
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].path != entries[j].path {
-			return entries[i].path < entries[j].path
-		}
-		return entries[i].hash < entries[j].hash
-	})
-	var lines []string
-	for _, e := range entries {
-		lines = append(lines, e.path+"\t"+e.hash)
-	}
-	s := sha256.Sum256([]byte(strings.Join(lines, "\n")))
-	return "sha256:" + hex.EncodeToString(s[:])
-}
-
 func runReconcile(ctx *cli.Context) error {
 	slug := ctx.String("mission")
 	jsonMode := ctx.Bool("json")
@@ -221,48 +202,28 @@ func runReconcile(ctx *cli.Context) error {
 		result.Set("error", fmt.Sprintf("could not load recorded snapshot for %s: %v", slug, err))
 		return finish()
 	}
-	var recorded, rebuilt []projEntry
-	v, _ := snap.Get("artifact_summaries")
-	list, _ := v.([]any)
-	for _, x := range list {
-		o, ok := x.(*jsonx.Object)
-		if !ok {
-			continue
-		}
-		pres, _ := o.Get("is_present")
-		h := o.GetString("content_hash_sha256")
-		if pres != true || h == "" {
-			continue
-		}
-		rel := o.GetString("relative_path")
-		recorded = append(recorded, projEntry{rel, h})
-		if fb, err := os.ReadFile(filepath.Join(dir, rel)); err == nil {
-			s := sha256.Sum256(fb)
-			rebuilt = append(rebuilt, projEntry{rel, hex.EncodeToString(s[:])})
-		}
-	}
-	rh, ch := snapshotHash(append([]projEntry{}, rebuilt...)), snapshotHash(append([]projEntry{}, recorded...))
-	result.Set("rebuilt_hash", rh)
-	result.Set("recorded_hash", ch)
-	if rh == ch {
-		result.Set("status", "parity")
+	source, err := dossier.SourceProjection(dir)
+	if err != nil {
+		result.Set("error", fmt.Sprintf("could not rebuild dossier from source for %s: %v", slug, err))
 		return finish()
 	}
-	src := map[string]string{}
-	for _, e := range rebuilt {
-		src[e.path] = e.hash
-	}
-	var diffs []any
-	for _, e := range recorded {
-		h, ok := src[e.path]
-		switch {
-		case !ok:
-			diffs = append(diffs, jsonx.NewObject("artifact_path", e.path, "kind", "missing_in_source", "source_hash", nil, "recorded_hash", e.hash))
-		case h != e.hash:
-			diffs = append(diffs, jsonx.NewObject("artifact_path", e.path, "kind", "content_mismatch", "source_hash", h, "recorded_hash", e.hash))
+	res := dossier.Reconcile(source, dossier.RecordedProjection(snap))
+	opt := func(p *string) any {
+		if p == nil {
+			return nil
 		}
+		return *p
 	}
-	result.Set("status", "divergence")
+	result.Set("status", res.Status)
+	result.Set("rebuilt_hash", opt(res.RebuiltHash))
+	result.Set("recorded_hash", opt(res.RecordedHash))
+	diffs := []any{}
+	for _, d := range res.Differing {
+		diffs = append(diffs, jsonx.NewObject("artifact_path", d.Path, "kind", d.Kind, "source_hash", opt(d.SourceHash), "recorded_hash", opt(d.Record)))
+	}
 	result.Set("differing_artifacts", diffs)
+	if res.Error != "" {
+		result.Set("error", res.Error)
+	}
 	return finish()
 }
