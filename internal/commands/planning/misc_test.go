@@ -9,6 +9,7 @@ import (
 // TestDiffTracerAndRepair covers `agent tracer-append` (coord surface) and
 // `agent mission repair` (clean / fast-forward / divergent / no coord).
 func TestDiffTracerAndRepair(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	g, o := oracleCreate(t, p)
 	shellSteps(t, p, g, o,
@@ -33,6 +34,7 @@ func TestDiffTracerAndRepair(t *testing.T) {
 // TestDiffIntake covers `intake` (path, stdin, handoff packet, --show,
 // --force, --auto and the refusals).
 func TestDiffIntake(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	shellSteps(t, p, "", "",
 		`$SK intake`,

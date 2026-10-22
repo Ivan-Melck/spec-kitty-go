@@ -23,6 +23,7 @@ func oracleCreate(t *testing.T, p *testkit.Pair, args ...string) (string, string
 // TestDiffSetupPlan covers TRACE 2.3/2.4 plus the spec gate, the
 // requirement-ID lint and detection errors.
 func TestDiffSetupPlan(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	shellSteps(t, p, "", "",
 		`$SK agent mission setup-plan --json`,

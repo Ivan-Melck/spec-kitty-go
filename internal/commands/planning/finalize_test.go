@@ -12,6 +12,7 @@ import (
 // status bootstrap commits on the coordination branch, acceptance matrix)
 // and an idempotent re-run.
 func TestDiffFinalizeTasks(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	g, o := oracleCreate(t, p)
 	p.Both(func(s *testkit.Sandbox) {
@@ -43,6 +44,7 @@ func TestDiffFinalizeTasks(t *testing.T) {
 // TestDiffFinalizeTasksHuman runs the human-mode finalize on a fresh mission
 // and the main refusal paths.
 func TestDiffFinalizeTasksHuman(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	g, o := oracleCreate(t, p)
 	p.Both(func(s *testkit.Sandbox) { missionfx.AuthorCalc(t, s, missionfx.MissionSlug(t, s)) })
@@ -62,6 +64,7 @@ func TestDiffFinalizeTasksHuman(t *testing.T) {
 
 // TestDiffTasksFinalizeTasks covers the legacy `agent tasks finalize-tasks`.
 func TestDiffTasksFinalizeTasks(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	g, o := oracleCreate(t, p)
 	p.Both(func(s *testkit.Sandbox) { missionfx.AuthorCalc(t, s, missionfx.MissionSlug(t, s)) })
