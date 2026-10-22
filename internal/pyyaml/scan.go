@@ -62,9 +62,12 @@ type token struct {
 	// tags: handle (hasHandle=false is None) and suffix
 	hasHandle bool
 	suffix    string
-	// comment: the round-trip scanner attached a comment to the token
-	comment bool
+	// cmt is the round-trip comment list ([post, pre, ...]; nil = none)
+	cmt *PyList
 }
+
+// commentToken converts a scanned comment token.
+func (t *token) commentToken() *CommentToken { return newCommentToken(t.value, t.start, t.end) }
 
 func (t *token) id() string { return tokenIDs[t.kind] }
 
@@ -359,14 +362,28 @@ func (s *scanner) getToken() *token {
 		t0, t1 := s.tokens[0], s.tokens[1]
 		sameLine := t0.end.Line == t1.start.Line
 		postKinds := t0.kind == tScalar || t0.kind == tValue || t0.kind == tFlowSequenceEnd || t0.kind == tFlowMappingEnd
-		if (postKinds && sameLine) || (t0.kind == tScalar && !sameLine) {
-			t0.comment = true
+		switch {
+		case postKinds && sameLine:
 			s.tokensTaken++
-			s.popToken(1)
+			c := s.popToken(1).commentToken()
 			s.fetchMoreTokens()
 			for len(s.tokens) > 1 && s.tokens[1].kind == tComment {
 				s.tokensTaken++
-				s.popToken(1)
+				c1 := s.popToken(1)
+				c.Value += strings.Repeat(" ", c1.start.Column) + c1.value
+				s.fetchMoreTokens()
+			}
+			s.tokens[0].addPostComment(c)
+		case t0.kind == tScalar && !sameLine:
+			s.tokensTaken++
+			c := s.popToken(1).commentToken()
+			c.Value = strings.Repeat("\n", c.Start.Line-t0.end.Line) + strings.Repeat(" ", c.Start.Column) + c.Value
+			t0.addPostComment(c)
+			s.fetchMoreTokens()
+			for len(s.tokens) > 1 && s.tokens[1].kind == tComment {
+				s.tokensTaken++
+				c1 := s.popToken(1)
+				c.Value += strings.Repeat(" ", c1.start.Column) + c1.value
 				s.fetchMoreTokens()
 			}
 		}
@@ -381,11 +398,10 @@ func (s *scanner) gatherComments() {
 	if len(s.tokens) == 0 {
 		return
 	}
-	gathered := false
+	comments := NewList()
 	if s.tokens[0].kind == tComment {
-		s.popToken(0)
+		comments.Append(s.popToken(0).commentToken())
 		s.tokensTaken++
-		gathered = true
 	}
 	for s.needMoreTokens() {
 		s.fetchMoreTokens()
@@ -394,12 +410,11 @@ func (s *scanner) gatherComments() {
 		}
 		if s.tokens[0].kind == tComment {
 			s.tokensTaken++
-			s.popToken(0)
-			gathered = true
+			comments.Append(s.popToken(0).commentToken())
 		}
 	}
-	if gathered {
-		s.tokens[0].comment = true // add_pre_comments
+	if comments.Len() > 0 {
+		s.tokens[0].addPreComments(comments)
 	}
 	if !s.done && len(s.tokens) < 2 {
 		s.fetchMoreTokens()
@@ -420,7 +435,8 @@ func (s *scanner) needMoreTokens() bool {
 
 func (s *scanner) fetchMoreTokens() {
 	if c := s.scanToNextToken(); c != nil {
-		// RoundTripScanner.fetch_comment
+		// RoundTripScanner.fetch_comment (trailing spaces stripped)
+		c.value = strings.TrimRight(c.value, " ")
 		s.tokens = append(s.tokens, c)
 		return
 	}
@@ -825,7 +841,7 @@ func (s *scanner) scanToNextToken() *token {
 				if s.flowLevel == 0 {
 					s.allowSimpleKey = true
 				}
-				return &token{kind: tComment, value: strings.TrimRight(comment, " "), start: start, end: end}
+				return &token{kind: tComment, value: comment, start: start, end: end}
 			}
 			if s.scanLineBreakRT(false) != "" {
 				start := s.getMark()
@@ -844,7 +860,7 @@ func (s *scanner) scanToNextToken() *token {
 							comment = comment[:i] + "\n"
 						}
 					}
-					return &token{kind: tComment, value: strings.TrimRight(comment, " "), start: start, end: s.getMark()}
+					return &token{kind: tComment, value: comment, start: start, end: s.getMark()}
 				}
 				continue
 			}
@@ -1069,7 +1085,7 @@ func (s *scanner) scanBlockScalar(style rune) *token {
 	start := s.getMark()
 	s.forward(1)
 	chomping, increment := s.scanBlockScalarIndicators(start)
-	s.scanBlockScalarIgnoredLine(start)
+	blockComment, hasBlockComment := s.scanBlockScalarIgnoredLine(start)
 	minIndent := s.indent + 1
 	var brks []string
 	var end *Mark
@@ -1123,19 +1139,26 @@ func (s *scanner) scanBlockScalar(style rune) *token {
 	if chomping != 'F' {
 		chunks.WriteString(lineBreak)
 	}
-	trailing := false
+	var trailing []string
 	if chomping == 'T' {
 		for _, b := range brks {
 			chunks.WriteString(b)
 		}
 	} else {
-		trailing = len(brks) > 0
+		trailing = brks
 	}
 	tok := &token{kind: tScalar, value: chunks.String(), style: style, start: start, end: end}
-	if s.dialect.ruamel() && trailing {
-		// ruamel scans on to the next token, collecting comments into the
-		// scalar's post comment.
-		for s.scanToNextToken() != nil {
+	if s.dialect.ruamel() {
+		if hasBlockComment {
+			tok.addPreComments(NewList(&CommentToken{Value: blockComment, Raw: true}))
+		}
+		if len(trailing) > 0 {
+			// ruamel scans on to the next token, collecting comments into
+			// the scalar's post comment.
+			for c := s.scanToNextToken(); c != nil; c = s.scanToNextToken() {
+				trailing = append(trailing, strings.Repeat(" ", c.start.Column)+c.value)
+			}
+			tok.addPostComment(newCommentToken(strings.Join(trailing, ""), end, s.getMark()))
 		}
 	}
 	return tok
@@ -1185,12 +1208,19 @@ func (s *scanner) scanBlockScalarIndicators(start *Mark) (rune, int) {
 	return chomping, increment
 }
 
-func (s *scanner) scanBlockScalarIgnoredLine(start *Mark) {
+// scanBlockScalarIgnoredLine returns the comment on the indicator line
+// (with its leading spaces) for ruamel.
+func (s *scanner) scanBlockScalarIgnoredLine(start *Mark) (string, bool) {
+	prefix := ""
 	for s.peek(0) == ' ' {
+		prefix += " "
 		s.forward(1)
 	}
+	comment, has := "", false
 	if s.peek(0) == '#' {
+		comment, has = prefix, true
 		for !in(s.peek(0), breakZ) {
+			comment += string(s.peek(0))
 			s.forward(1)
 		}
 	}
@@ -1198,6 +1228,7 @@ func (s *scanner) scanBlockScalarIgnoredLine(start *Mark) {
 		s.fail("while scanning a block scalar", start, "expected a comment or a line break, but found "+repr(ch), s.getMark())
 	}
 	s.scanLineBreak()
+	return comment, has
 }
 
 func (s *scanner) scanBlockScalarIndentation() ([]string, int, *Mark) {
@@ -1422,7 +1453,12 @@ func (s *scanner) scanPlain() *token {
 			break
 		}
 	}
-	return &token{kind: tScalar, value: chunks.String(), plain: true, start: start, end: end}
+	tok := &token{kind: tScalar, value: chunks.String(), plain: true, start: start, end: end}
+	if s.dialect.ruamel() && len(spaces) > 0 && spaces[0] == "\n" {
+		// blank lines after the scalar become its post comment
+		tok.addPostComment(newCommentToken(strings.Join(spaces, "")+"\n", start, end))
+	}
+	return tok
 }
 
 // scanPlainSpaces returns ok=false where Python returns None.

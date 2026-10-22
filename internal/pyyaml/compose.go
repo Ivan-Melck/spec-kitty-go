@@ -33,6 +33,8 @@ type Node struct {
 	FlowStyle bool
 	Start     *Mark
 	End       *Mark
+	Anchor    string  // the source anchor name ("" = none)
+	Comment   *PyList // ruamel round-trip comments (Ruamel dialect)
 }
 
 const (
@@ -116,7 +118,7 @@ func (c *composer) composeNode() *Node {
 		if !ev.hasTag || tag == "!" {
 			tag = c.resolveTag(ScalarNode, ev.value, ev.implicit)
 		}
-		n = &Node{Kind: ScalarNode, Tag: tag, TagHandle: ev.tagHandle, Value: ev.value, Style: ev.style, Start: ev.start, End: ev.end}
+		n = &Node{Kind: ScalarNode, Tag: tag, TagHandle: ev.tagHandle, Value: ev.value, Style: ev.style, Start: ev.start, End: ev.end, Comment: ev.cmt, Anchor: ev.anchor}
 		if ev.hasAnchor {
 			c.anchors[ev.anchor] = n
 		}
@@ -126,21 +128,23 @@ func (c *composer) composeNode() *Node {
 		if !start.hasTag || tag == "!" {
 			tag = c.resolveTag(SequenceNode, "", start.implicit)
 		}
-		n = &Node{Kind: SequenceNode, Tag: tag, TagHandle: start.tagHandle, FlowStyle: start.flowStyle, Start: start.start}
+		n = &Node{Kind: SequenceNode, Tag: tag, TagHandle: start.tagHandle, FlowStyle: start.flowStyle, Start: start.start, Comment: start.cmt, Anchor: start.anchor}
 		if start.hasAnchor {
 			c.anchors[start.anchor] = n
 		}
 		for !c.checkEvent(eSequenceEnd) {
 			n.Items = append(n.Items, c.composeNode())
 		}
-		n.End = c.getEvent().end
+		end := c.getEvent()
+		c.endComment(n, end)
+		n.End = end.end
 	case c.checkEvent(eMappingStart):
 		start := c.getEvent()
 		tag := start.tag
 		if !start.hasTag || tag == "!" {
 			tag = c.resolveTag(MappingNode, "", start.implicit)
 		}
-		n = &Node{Kind: MappingNode, Tag: tag, TagHandle: start.tagHandle, FlowStyle: start.flowStyle, Start: start.start}
+		n = &Node{Kind: MappingNode, Tag: tag, TagHandle: start.tagHandle, FlowStyle: start.flowStyle, Start: start.start, Comment: start.cmt, Anchor: start.anchor}
 		if start.hasAnchor {
 			c.anchors[start.anchor] = n
 		}
@@ -149,9 +153,27 @@ func (c *composer) composeNode() *Node {
 			v := c.composeNode()
 			n.Pairs = append(n.Pairs, [2]*Node{k, v})
 		}
-		n.End = c.getEvent().end
+		end := c.getEvent()
+		c.endComment(n, end)
+		n.End = end.end
 	}
 	return n
+}
+
+// endComment is the composer's end-event comment handling: a flow
+// collection takes the end event's comment; the end event's pre comments
+// are appended as the node's third comment slot (check_end_doc_comment).
+func (c *composer) endComment(n *Node, end *event) {
+	if n.FlowStyle && end.cmt != nil {
+		n.Comment = end.cmt
+	}
+	if end.cmt != nil && Truthy(end.cmt.Get(1)) {
+		if n.Comment == nil {
+			n.Comment = NewList(nil, nil)
+		}
+		n.Comment.Append(end.cmt.Get(1))
+		end.cmt.Set(1, nil)
+	}
 }
 
 // resolve11 is PyYAML's Resolver.resolve (YAML 1.1 implicit types).

@@ -39,6 +39,7 @@ type event struct {
 	style      rune
 	flowStyle  bool
 	explicit   bool
+	cmt        *PyList // ruamel round-trip comment list
 }
 
 type stateFn func() *event
@@ -283,6 +284,17 @@ func (p *parser) parseNode(block, indentlessSequence bool) *event {
 		ev.tagHandle = tagT.tagHandle
 	}
 	if indentlessSequence && p.checkToken(tBlockEntry) {
+		pt := p.peekToken()
+		if pc := pt.cmt; pc != nil {
+			// the first entry's comment moves onto the sequence
+			if Truthy(pc.Get(0)) {
+				ev.cmt = NewList(pc.Get(0), NewList())
+				pc.Set(0, nil)
+			} else if pc.Get(0) == nil && Truthy(pc.Get(1)) {
+				ev.cmt = NewList(nil, pc.Get(1))
+				pc.Set(1, nil)
+			}
+		}
 		ev.end = p.peekToken().end
 		ev.kind = eSequenceStart
 		ev.implicit[0] = implicit
@@ -304,26 +316,35 @@ func (p *parser) parseNode(block, indentlessSequence bool) *event {
 		ev.kind = eScalar
 		ev.value = t.value
 		ev.style = t.style
+		ev.cmt = t.cmt
 		p.state = p.popState()
 	case p.checkToken(tFlowSequenceStart):
 		ev.end = p.peekToken().end
+		ev.cmt = p.peekToken().cmt
 		ev.kind = eSequenceStart
 		ev.implicit[0] = implicit
 		ev.flowStyle = true
 		p.state = p.parseFlowSequenceFirstEntry
 	case p.checkToken(tFlowMappingStart):
 		ev.end = p.peekToken().end
+		ev.cmt = p.peekToken().cmt
 		ev.kind = eMappingStart
 		ev.implicit[0] = implicit
 		ev.flowStyle = true
 		p.state = p.parseFlowMappingFirstKey
 	case block && p.checkToken(tBlockSequenceStart):
 		ev.end = p.peekToken().start
+		pt := p.peekToken()
+		ev.cmt = pt.cmt
+		if ev.cmt == nil || ev.cmt.Get(1) == nil {
+			ev.cmt = pt.splitOldComment()
+		}
 		ev.kind = eSequenceStart
 		ev.implicit[0] = implicit
 		p.state = p.parseBlockSequenceFirstEntry
 	case block && p.checkToken(tBlockMappingStart):
 		ev.end = p.peekToken().start
+		ev.cmt = p.peekToken().cmt
 		ev.kind = eMappingStart
 		ev.implicit[0] = implicit
 		p.state = p.parseBlockMappingFirstKey
@@ -367,7 +388,7 @@ func (p *parser) parseBlockSequenceEntry() *event {
 	t := p.getToken()
 	p.state = p.popState()
 	p.popMark()
-	return &event{kind: eSequenceEnd, start: t.start, end: t.end}
+	return &event{kind: eSequenceEnd, start: t.start, end: t.end, cmt: t.cmt}
 }
 
 func (p *parser) parseIndentlessSequenceEntry() *event {
@@ -383,7 +404,7 @@ func (p *parser) parseIndentlessSequenceEntry() *event {
 	}
 	t := p.peekToken()
 	p.state = p.popState()
-	return &event{kind: eSequenceEnd, start: t.start, end: t.start}
+	return &event{kind: eSequenceEnd, start: t.start, end: t.start, cmt: t.cmt}
 }
 
 func (p *parser) parseBlockMappingFirstKey() *event {
@@ -415,7 +436,7 @@ func (p *parser) parseBlockMappingKey() *event {
 	p.moveComment(t, false)
 	p.state = p.popState()
 	p.popMark()
-	return &event{kind: eMappingEnd, start: t.start, end: t.end}
+	return &event{kind: eMappingEnd, start: t.start, end: t.end, cmt: t.cmt}
 }
 
 func (p *parser) parseBlockMappingValue() *event {
@@ -433,12 +454,23 @@ func (p *parser) parseBlockMappingValue() *event {
 			return p.parseBlockNodeOrIndentlessSequence()
 		}
 		p.state = p.parseBlockMappingKey
-		if p.dialect.ruamel() && !t.comment {
-			// ruamel marks the empty value at the next token (unless the
-			// value indicator kept a comment)
-			t = p.peekToken()
+		var cmt *PyList
+		if p.dialect.ruamel() {
+			// the empty value is marked at the next token (unless the value
+			// indicator kept a comment), whose post comment it takes over
+			cmt = t.cmt
+			if cmt == nil {
+				t = p.peekToken()
+				cmt = t.cmt
+				if cmt.Len() > 0 {
+					t.cmt = NewList(nil, cmt.Get(1))
+					cmt = NewList(cmt.Get(0), nil)
+				}
+			}
 		}
-		return p.processEmptyScalar(t.end)
+		ev := p.processEmptyScalar(t.end)
+		ev.cmt = cmt
+		return ev
 	}
 	p.state = p.parseBlockMappingKey
 	return p.processEmptyScalar(p.peekToken().start)
@@ -474,7 +506,7 @@ func (p *parser) parseFlowSequenceEntry(first bool) *event {
 	t := p.getToken()
 	p.state = p.popState()
 	p.popMark()
-	return &event{kind: eSequenceEnd, start: t.start, end: t.end}
+	return &event{kind: eSequenceEnd, start: t.start, end: t.end, cmt: t.cmt}
 }
 
 func (p *parser) parseFlowSequenceEntryMappingKey() *event {
@@ -544,7 +576,7 @@ func (p *parser) parseFlowMappingKey(first bool) *event {
 	t := p.getToken()
 	p.state = p.popState()
 	p.popMark()
-	return &event{kind: eMappingEnd, start: t.start, end: t.end}
+	return &event{kind: eMappingEnd, start: t.start, end: t.end, cmt: t.cmt}
 }
 
 func (p *parser) parseFlowMappingValue() *event {
@@ -572,12 +604,7 @@ func (p *parser) moveComment(t *token, empty bool) {
 	if p.dialect != Ruamel {
 		return
 	}
-	target := p.peekToken()
-	if !t.comment || target == nil || target.kind == tStreamEnd || target.kind == tDocumentStart {
-		return
-	}
-	t.comment = false
-	target.comment = true
+	t.moveOldComment(p.peekToken(), empty)
 }
 
 func (p *parser) processEmptyScalar(m *Mark) *event {
