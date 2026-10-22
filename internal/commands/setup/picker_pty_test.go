@@ -47,12 +47,28 @@ func runPicker(t *testing.T, keys ...string) (string, *testkit.Sandbox, int) {
 }
 
 func runPickerWith(t *testing.T, bin string, keys ...string) (string, *testkit.Sandbox, int) {
+	return runPickerEnv(t, bin, false, keys...)
+}
+
+// runPickerEnv drives init's picker in a PTY; colour=true drops NO_COLOR so
+// rich renders colours as on a real terminal.
+func runPickerEnv(t *testing.T, bin string, colour bool, keys ...string) (string, *testkit.Sandbox, int) {
 	s := testkit.NewSandbox(t)
 	m, sl := openPTY(t)
 	defer m.Close()
 	cmd := exec.Command(bin, "init", "proj")
 	cmd.Dir = s.Dir
-	cmd.Env = append(s.Environ(), "TERM=xterm", "COLUMNS=80", "SPEC_KITTY_GO_SKIP_BOOTSTRAP=1")
+	env := s.Environ()
+	if colour {
+		var kept []string
+		for _, e := range env {
+			if !strings.HasPrefix(e, "NO_COLOR=") {
+				kept = append(kept, e)
+			}
+		}
+		env = kept
+	}
+	cmd.Env = append(env, "TERM=xterm", "COLUMNS=80", "SPEC_KITTY_GO_SKIP_BOOTSTRAP=1")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = sl, sl, sl
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := cmd.Start(); err != nil {
@@ -115,9 +131,10 @@ func TestInitArrowKeyPicker(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "╭──────────────────────── Choose your AI assistant(s): ────────────────────────╮") ||
-		!strings.Contains(out, "│  ▶    ☑ copilot (GitHub Copilot)") ||
-		!strings.Contains(out, "Use ↑/↓ to move, Space to toggle, Enter to confirm, Esc to cancel") {
+	plainOut := reCSI.ReplaceAllString(out, "")
+	if !strings.Contains(plainOut, "╭──────────────────────── Choose your AI assistant(s): ────────────────────────╮") ||
+		!strings.Contains(plainOut, "│  ▶    ☑ copilot (GitHub Copilot)") ||
+		!strings.Contains(plainOut, "Use ↑/↓ to move, Space to toggle, Enter to confirm, Esc to cancel") {
 		t.Errorf("panel not drawn:\n%s", out)
 	}
 	// On a terminal rich highlights "assistant(s)" (bold call and parens),
@@ -175,5 +192,50 @@ func TestInitArrowKeyPickerFramesMatchOracle(t *testing.T) {
 	}
 	if len(gf) != len(keys)+1 {
 		t.Errorf("go drew %d frames, want %d", len(gf), len(keys)+1)
+	}
+}
+
+var reNonSGR = regexp.MustCompile("\x1b\\[[0-9;?]*[A-Za-ln-z]")
+
+// colourFrames returns the panel frames with their SGR styling kept
+// (cursor controls removed).
+func colourFrames(out string) []string {
+	clean := strings.ReplaceAll(reNonSGR.ReplaceAllString(out, ""), "\r", "")
+	var frames []string
+	for {
+		i := strings.Index(clean, "Choose your AI")
+		if i < 0 {
+			return frames
+		}
+		start := strings.LastIndex(clean[:i], "╭")
+		if p := strings.LastIndex(clean[:start], "\x1b["); p >= 0 && !strings.ContainsAny(clean[p:start], "\n╯") {
+			start = p
+		}
+		j := strings.Index(clean[i:], "╯")
+		if j < 0 {
+			return frames
+		}
+		end := i + j + len("╯")
+		if strings.HasPrefix(clean[end:], "\x1b[0m") {
+			end += len("\x1b[0m")
+		}
+		frames = append(frames, clean[start:end])
+		clean = clean[end:]
+	}
+}
+
+// PYF-14 follow-up: on a colour terminal the picker panel carries rich's
+// segment styles (cyan border, bold title, cyan/bright_black rows, dim help).
+func TestInitArrowKeyPickerColourFramesMatchOracle(t *testing.T) {
+	oracle := testkit.Oracle(t)
+	keys := []string{"down", "space", "up", "enter"}
+	gout, _, gcode := runPickerEnv(t, testkit.Binary(t), true, keys...)
+	oout, _, ocode := runPickerEnv(t, oracle, true, keys...)
+	if gcode != ocode {
+		t.Errorf("exit go=%d oracle=%d", gcode, ocode)
+	}
+	gf, of := colourFrames(gout), colourFrames(oout)
+	if len(of) == 0 || strings.Join(gf, "\n=====\n") != strings.Join(of, "\n=====\n") {
+		t.Errorf("colour frames differ:\n%s", testkit.Diff(strings.Join(of, "\n=====\n"), strings.Join(gf, "\n=====\n")))
 	}
 }
