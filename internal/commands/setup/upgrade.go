@@ -553,6 +553,7 @@ func strList(s []string) []any {
 
 func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions) error {
 	w := ctx.Stdout
+	migrationStdout = w
 	baseline := captureGitBaseline(root)
 	current := detectProjectVersion(root)
 	if verr := validateUpgradeTarget(current, target); verr != "" {
@@ -686,7 +687,10 @@ func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOu
 	if md == nil {
 		md = kittify.NewMetadata(o.from)
 	}
-	pre, _ := os.ReadFile(kittify.MetadataPath(root))
+	if !o.dryRun {
+		o.warnings = append(o.warnings, md.NormalizeAndSaveLegacyIDs(root)...)
+	}
+	pre := kittify.CaptureVersionStamp(root)
 	record := func(id, result string, notes *string) {
 		if o.dryRun {
 			return
@@ -698,11 +702,21 @@ func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOu
 	for _, m := range migrations {
 		var res migrationResult
 		status := ""
+		needed, derr := false, error(nil)
+		recorded := md.HasMigration(m.ID) && !m.reselectWhenRecorded(root)
+		if !recorded {
+			needed, derr = m.detectErr(root)
+		}
 		switch {
-		case md.HasMigration(m.ID):
+		case recorded:
 			res = migrationResult{Success: true, Warnings: []string{fmt.Sprintf("Migration %s already applied, skipping", m.ID)}}
 			status = "skipped"
-		case !m.detect(root):
+		case derr != nil:
+			n := "Cannot safely detect: " + derr.Error()
+			record(m.ID, "failed", &n)
+			res = migrationResult{Errors: []string{fmt.Sprintf("Cannot safely detect %s: %s", m.ID, derr.Error())}}
+			status = "failed"
+		case !needed:
 			n := "Not applicable"
 			record(m.ID, "skipped", &n)
 			res = migrationResult{Success: true, Warnings: []string{fmt.Sprintf("Migration %s not needed (project already in target state)", m.ID)}}
@@ -713,7 +727,13 @@ func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOu
 				status = "failed"
 				break
 			}
-			res = m.apply(root, o.dryRun)
+			var aerr error
+			res, aerr = m.applyErr(root, o.dryRun)
+			if aerr != nil {
+				res = migrationResult{Errors: []string{fmt.Sprintf("Cannot apply %s: %s", m.ID, aerr.Error())}}
+				status = "failed"
+				break
+			}
 			if res.Success || !m.RunsFirst {
 				var notes *string
 				if len(res.Changes) > 0 {
@@ -754,8 +774,8 @@ func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOu
 		md.LastUpgradedAt = clock.NowUTCISO()
 		md.Save(root)
 		kittify.StampSchemaVersion(root)
-	} else if pre != nil {
-		os.WriteFile(kittify.MetadataPath(root), pre, 0o644)
+	} else {
+		pre.Restore(root)
 	}
 }
 
