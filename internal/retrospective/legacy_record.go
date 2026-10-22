@@ -1,6 +1,7 @@
 package retrospective
 
 import (
+	"math/big"
 	"os"
 	"regexp"
 	"strconv"
@@ -296,15 +297,15 @@ func (v *lv) proposal(x any) LegacyProposal {
 func ParseLegacyRecord(data *jsonx.Object) (*LegacyRecord, bool) {
 	o := data.Clone()
 	if sv, ok := o.Get("schema_version"); ok {
-		if n, isInt := sv.(int); isInt {
-			o.Set("schema_version", itoa(n))
+		if n, isInt := pyIntStr(sv); isInt {
+			o.Set("schema_version", n)
 		}
 	}
 	if pr, ok := obj(mustGet(o, "provenance")); ok {
 		if sv, ok := pr.Get("schema_version"); ok {
-			if n, isInt := sv.(int); isInt {
+			if n, isInt := pyIntStr(sv); isInt {
 				c := pr.Clone()
-				c.Set("schema_version", itoa(n))
+				c.Set("schema_version", n)
 				o.Set("provenance", c)
 			}
 		}
@@ -395,7 +396,18 @@ func ParseLegacyRecord(data *jsonx.Object) (*LegacyRecord, bool) {
 	return rec, true
 }
 
-func itoa(n int) string { return strconv.Itoa(n) }
+// pyIntStr is str(x) for a YAML int (type(x) is int).
+func pyIntStr(x any) (string, bool) {
+	switch n := x.(type) {
+	case int:
+		return strconv.Itoa(n), true
+	case int64:
+		return strconv.FormatInt(n, 10), true
+	case *big.Int:
+		return n.String(), true
+	}
+	return "", false
+}
 
 func mustGet(o *jsonx.Object, k string) any { v, _ := o.Get(k); return v }
 

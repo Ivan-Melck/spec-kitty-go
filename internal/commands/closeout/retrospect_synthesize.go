@@ -8,6 +8,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/retrospective"
@@ -38,7 +39,7 @@ func retroRecordPath(root, slug, missionID string) string {
 }
 
 // artifactsSufficientForEmptyRecord is _mission_artifacts_sufficient_for_empty_record.
-func artifactsSufficientForEmptyRecord(dir string) bool {
+func artifactsSufficientForEmptyRecord(root, slug, dir string) bool {
 	for _, f := range []string{"spec.md", "plan.md", "tasks.md"} {
 		if st, err := os.Stat(filepath.Join(dir, f)); err != nil || !st.Mode().IsRegular() {
 			return false
@@ -47,7 +48,7 @@ func artifactsSufficientForEmptyRecord(dir string) bool {
 	if m, _ := filepath.Glob(filepath.Join(dir, "tasks", "WP*.md")); len(m) == 0 {
 		return false
 	}
-	snap, err := status.ReduceDir(dir)
+	snap, err := status.ReduceDir(coord.Resolve(root, slug).StatusDir())
 	if err != nil || snap == nil || snap.EventCount == 0 || snap.WorkPackages == nil || snap.WorkPackages.Len() == 0 {
 		return false
 	}
@@ -62,7 +63,7 @@ func artifactsSufficientForEmptyRecord(dir string) bool {
 // fabricateEmptyRecord is _create_empty_retrospective_record.
 func fabricateEmptyRecord(root, slug, missionID, actorID string) (string, error) {
 	now := clock.NowUTCISO()
-	actor := jsonx.NewObject("kind", "agent", "id", actorID, "display", nil)
+	actor := jsonx.NewObject("kind", "agent", "id", actorID)
 	rec := jsonx.NewObject("schema_version", 1, "mission_id", missionID, "mission_slug", slug, "mission_number", nil,
 		"friendly_name", "", "mission_type", "software-dev", "target_branch", "main", "created_at", now, "created_by", actor,
 		"provenance", jsonx.NewObject("kind", "synthesize_fabricate", "invoked_at", now, "policy_resolved_from", jsonx.NewObject(),
@@ -77,13 +78,16 @@ func fabricateEmptyRecord(root, slug, missionID, actorID string) (string, error)
 	if err := os.WriteFile(path, []byte(retrospective.Serialize(rec)), 0o644); err != nil {
 		return path, err
 	}
-	ev := jsonx.NewObject("type", "RetrospectiveCaptured", "schema_version", 1, "event_id", ulid.New(), "lamport", 0,
+	wd, werr := coord.Resolve(root, slug).WriteDir()
+	ev := jsonx.NewObject("type", "RetrospectiveCaptured", "schema_version", 1, "event_id", ulid.New(), "lamport", retrospective.NextLamport(wd),
 		"at", clock.NowUTCISO(), "actor", jsonx.NewObject("kind", "agent", "id", actorID, "display", "agent retrospect synthesize"),
 		"mission_id", missionID, "mission_slug", slug, "wp_id", nil, "force", false, "execution_mode", "main",
 		"findings_status", "ran_no_findings", "record_path", "kitty-specs/"+slug+"/"+retrospective.FileName,
 		"generator_version", "spec-kitty-cli", "policy_source", jsonx.NewObject(), "provenance_kind", "explicit_create",
 		"proposal_count", 0, "evidence_ref_count", 0)
-	status.AppendRows(status.EventsPath(dir), ev)
+	if werr == nil {
+		status.AppendRows(status.EventsPath(wd), ev)
+	}
 	return path, nil
 }
 
@@ -131,7 +135,7 @@ func runRetroSynthesize(ctx *cli.Context) error {
 			return cli.Exit(1)
 		}
 		dir := projectSpecs(root, r.Slug)
-		if !artifactsSufficientForEmptyRecord(dir) {
+		if !artifactsSufficientForEmptyRecord(root, r.Slug, dir) {
 			if jsonMode {
 				printJSON(ctx.Stdout, jsonx.NewObject("schema_version", "1", "command", "agent.retrospect.synthesize", "status", "error",
 					"outcome", "insufficient_mission_artifacts", "mission_id", r.MissionID, "mission_slug", r.Slug, "error", "record_not_found",
@@ -282,7 +286,7 @@ func renderSynthesis(ctx *cli.Context, res *retrospective.SynthResult, dry bool)
 	if len(res.Planned) > 0 {
 		var rows [][]string
 		for _, p := range res.Planned {
-			rows = append(rows, []string{p.ProposalID, p.Kind, p.DiffPreview})
+			rows = append(rows, markupCells(p.ProposalID, p.Kind, p.DiffPreview))
 		}
 		rich.Table(w, "Planned Applications", []string{"proposal_id", "kind", "diff_preview"}, rows)
 	} else {
@@ -295,24 +299,34 @@ func renderSynthesis(ctx *cli.Context, res *retrospective.SynthResult, dry bool)
 			if a.ReApplied {
 				re = "True"
 			}
-			rows = append(rows, []string{a.ProposalID, a.TargetURN, a.ArtifactPath, re})
+			rows = append(rows, markupCells(a.ProposalID, a.TargetURN, a.ArtifactPath, re))
 		}
 		rich.Table(w, "Applied Changes", []string{"proposal_id", "target_urn", "artifact_path", "re_applied"}, rows)
 	}
 	if len(res.Conflicts) > 0 {
 		var rows [][]string
 		for _, c := range res.Conflicts {
-			rows = append(rows, []string{strings.Join(c.ProposalIDs, ", "), c.Reason})
+			rows = append(rows, markupCells(strings.Join(c.ProposalIDs, ", "), c.Reason))
 		}
 		rich.Table(w, "Conflicts", []string{"proposal_ids", "reason"}, rows)
 	}
 	if len(res.Rejected) > 0 {
 		var rows [][]string
 		for _, x := range res.Rejected {
-			rows = append(rows, []string{x.ProposalID, x.Reason, x.Detail})
+			rows = append(rows, markupCells(x.ProposalID, x.Reason, x.Detail))
 		}
 		rich.Table(w, "Rejections", []string{"proposal_id", "reason", "detail"}, rows)
 	}
 	say(w, fmt.Sprintf("\n[bold]Summary:[/bold] planned=%d applied=%d conflicts=%d rejected=%d events_emitted=%d",
 		len(res.Planned), len(res.Applied), len(res.Conflicts), len(res.Rejected), len(res.EventsEmitted)))
+}
+
+// markupCells renders str cells the way rich.Table does: as console markup
+// (so "--[requires]-->" loses its tag-shaped segment).
+func markupCells(cells ...string) []string {
+	out := make([]string, len(cells))
+	for i, c := range cells {
+		out[i] = rich.Strip(c)
+	}
+	return out
 }

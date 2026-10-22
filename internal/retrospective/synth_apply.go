@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
@@ -221,7 +222,7 @@ func DetectConflicts(ps []LegacyProposal) []ConflictGroup {
 }
 
 // missionDirByID is _resolve_mission_by_id: the kitty-specs mission whose
-// meta.json carries mission_id.
+// meta.json carries mission_id (its primary feature dir and dir name).
 func missionDirByID(root, missionID string) (string, string) {
 	ents, _ := os.ReadDir(filepath.Join(root, "kitty-specs"))
 	for _, e := range ents {
@@ -238,14 +239,23 @@ func missionDirByID(root, missionID string) (string, string) {
 			continue
 		}
 		if o, ok := v.(*jsonx.Object); ok && o.GetString("mission_id") == missionID {
-			slug := o.GetString("mission_slug")
-			if slug == "" {
-				slug = e.Name()
-			}
-			return dir, slug
+			return dir, e.Name()
 		}
 	}
 	return "", ""
+}
+
+// NextLamport is lifecycle_events._next_lamport for the event log in dir.
+func NextLamport(dir string) int { return nextLamport(dir) }
+
+// statusDirByID is _feature_dir(_slug_for_mission(...)): the mission's
+// STATUS read surface (the coordination mission dir when routed).
+func statusDirByID(root, missionID string) (string, string) {
+	dir, slug := missionDirByID(root, missionID)
+	if dir == "" {
+		return "", ""
+	}
+	return coord.Resolve(root, slug).StatusDir(), slug
 }
 
 func eventIDs(dir string) map[string]bool {
@@ -510,7 +520,7 @@ func applyOne(p LegacyProposal, missionID, root string, actor LegacyActor) (Appl
 	if already {
 		return ap, "", nil
 	}
-	dir, slug := missionDirByID(root, missionID)
+	dir, slug := statusDirByID(root, missionID)
 	if dir == "" {
 		return ap, "", nil
 	}
@@ -561,7 +571,7 @@ func emitRetroEvent(dir, slug, missionID string, actor LegacyActor, name string,
 }
 
 func emitConflictRejections(missionID, root string, effective []LegacyProposal, groups []ConflictGroup, actor LegacyActor) []string {
-	dir, slug := missionDirByID(root, missionID)
+	dir, slug := statusDirByID(root, missionID)
 	if dir == "" {
 		return []string{}
 	}
