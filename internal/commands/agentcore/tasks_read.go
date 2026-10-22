@@ -195,10 +195,10 @@ func runListTasks(ctx *cli.Context) error {
 		in = " in lane " + filter
 	}
 	if len(rows) == 0 {
-		consolePrint(ctx.Stdout, "No tasks found"+in)
+		consolePrint(ctx.Stdout, "[yellow]No tasks found"+in+"[/yellow]")
 		return nil
 	}
-	consolePrint(ctx.Stdout, "Tasks"+in+":\n")
+	consolePrint(ctx.Stdout, "[bold]Tasks"+in+":[/bold]\n")
 	for _, r := range rows {
 		consolePrint(ctx.Stdout, fmt.Sprintf("  %s: %s [%s]", r.id, r.title, r.lane))
 	}
@@ -511,7 +511,7 @@ func runTasksStatus(ctx *cli.Context) error {
 		return nil
 	}
 	if len(rows) == 0 {
-		consolePrint(ctx.Stdout, "No work packages found in "+tasksDir)
+		consolePrint(ctx.Stdout, "[yellow]No work packages found in "+tasksDir+"[/yellow]")
 		return nil
 	}
 	pctText := "0"

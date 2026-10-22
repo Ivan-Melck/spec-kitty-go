@@ -168,7 +168,7 @@ func runAddHistory(ctx *cli.Context) error {
 	if jsonMode {
 		printJSON(ctx.Stdout, jsonx.NewObject("result", "success", "task_id", taskID, "note", ctx.String("note")))
 	} else {
-		consolePrint(ctx.Stdout, "✓ Added history entry to "+taskID)
+		consolePrint(ctx.Stdout, "[green]✓[/green] Added history entry to "+taskID)
 	}
 	return nil
 }
@@ -565,15 +565,15 @@ func runMarkStatus(ctx *cli.Context) error {
 		return nil
 	}
 	if len(notFound) > 0 {
-		consolePrint(ctx.Stdout, "Warning: Not found: "+strings.Join(notFound, ", "))
+		consolePrint(ctx.Stdout, "[yellow]Warning:[/yellow] Not found: "+strings.Join(notFound, ", "))
 	}
 	switch {
 	case len(updated) == 1:
-		consolePrint(ctx.Stdout, fmt.Sprintf("✓ Marked %s as %s", updated[0], st))
+		consolePrint(ctx.Stdout, fmt.Sprintf("[green]✓[/green] Marked %s as %s", updated[0], st))
 	case len(updated) == 0:
-		consolePrint(ctx.Stdout, "✓ Requested status already satisfied for: "+strings.Join(resolved, ", "))
+		consolePrint(ctx.Stdout, "[green]✓[/green] Requested status already satisfied for: "+strings.Join(resolved, ", "))
 	default:
-		consolePrint(ctx.Stdout, fmt.Sprintf("✓ Marked %d subtasks as %s: %s", len(updated), st, strings.Join(updated, ", ")))
+		consolePrint(ctx.Stdout, fmt.Sprintf("[green]✓[/green] Marked %d subtasks as %s: %s", len(updated), st, strings.Join(updated, ", ")))
 	}
 	return nil
 }

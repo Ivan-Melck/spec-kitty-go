@@ -378,7 +378,7 @@ func (st *moveState) warnWorktreeKittySpecs() {
 	for cur := cwd; cur != filepath.Dir(cur) && strings.Contains(cur, project.WorktreesDir); cur = filepath.Dir(cur) {
 		if isDir(filepath.Join(cur, project.SpecsDir)) {
 			if mission.SafePathSegment(st.m.Slug) && isDir(filepath.Join(cur, project.SpecsDir, st.m.Slug, "tasks")) {
-				st.console(fmt.Sprintf("Note: Using planning repo's kitty-specs/ on %s (worktree copy ignored)", st.targetBranch))
+				st.console(fmt.Sprintf("[dim]Note: Using planning repo's kitty-specs/ on %s (worktree copy ignored)[/dim]", st.targetBranch))
 			}
 			return
 		}
@@ -1243,8 +1243,8 @@ func (st *moveState) runArbiterOverride() error {
 	if err := st.persistReviewOverride(actor, fmt.Sprintf("[%s] %s", cat, expl)); err != nil {
 		return err
 	}
-	st.console(fmt.Sprintf("Arbiter override recorded: %s — %s", cat, expl))
-	st.console("  Decision persisted: " + path)
+	st.console(fmt.Sprintf("[yellow]Arbiter override recorded:[/yellow] [bold]%s[/bold] — %s", cat, expl))
+	st.console("[dim]  Decision persisted: " + path + "[/dim]")
 	return nil
 }
 
@@ -1398,7 +1398,7 @@ func (st *moveState) commitLaneDeliverables() {
 		return
 	}
 	if ws.ResolutionKind == "repo_root" {
-		st.console(fmt.Sprintf("Note: %s runs in the repository root checkout; commit your WP work yourself before moving to for_review (no auto-commit).", st.taskID))
+		st.console(fmt.Sprintf("[yellow]Note:[/yellow] %s runs in the repository root checkout; commit your WP work yourself before moving to for_review (no auto-commit).", st.taskID))
 		return
 	}
 	if !isDir(ws.WorktreePath) {
@@ -1422,11 +1422,11 @@ func (st *moveState) commitLaneDeliverables() {
 		return
 	}
 	if err := safeCommitPaths(ws.WorktreePath, fmt.Sprintf("chore(%s): commit lane deliverables for review", st.taskID), paths, st.logWarn); err != nil {
-		st.console(fmt.Sprintf("Warning: could not auto-commit lane deliverables for %s: %v", st.taskID, err))
+		st.console(fmt.Sprintf("[yellow]Warning:[/yellow] could not auto-commit lane deliverables for %s: %v", st.taskID, err))
 		return
 	}
 	lanes.RecordTip(st.root, ws.BranchName)
-	st.console(fmt.Sprintf("Committed lane deliverables for %s on %s before review.", st.taskID, ws.BranchName))
+	st.console(fmt.Sprintf("[cyan]Committed lane deliverables for %s on %s before review.[/cyan]", st.taskID, ws.BranchName))
 }
 
 func isCoordResidue(rel string) bool { return mission.IsCoordResidue(rel) }
@@ -1542,7 +1542,7 @@ func (st *moveState) finalizePlan() error {
 		}
 	}
 	if st.doneOverrideNote {
-		st.console("⚠️  Proceeding with done override; reason recorded in history/events.")
+		st.console("[yellow]⚠️  Proceeding with done override; reason recorded in history/events.[/yellow]")
 	}
 	st.planReviewResult = st.planReview()
 	if isRejection || st.isArbiter {
@@ -1598,7 +1598,7 @@ func (st *moveState) announceDurabilityGap(c *review.Cycle) {
 		return
 	}
 	if *c.Outcome.Reason == "no_auto_commit" {
-		st.console(fmt.Sprintf("Note: review-cycle verdict for %s was written but NOT committed (--no-auto-commit).", st.taskID))
+		st.console(fmt.Sprintf("[yellow]Note:[/yellow] review-cycle verdict for %s was written but NOT committed (--no-auto-commit).", st.taskID))
 	}
 }
 
@@ -2094,7 +2094,7 @@ func (st *moveState) dependentWarnings() {
 		return
 	}
 	out := st.ctx.Stdout
-	consolePrint(out, "\n⚠️  Dependency Alert")
+	consolePrint(out, "\n[yellow]⚠️  Dependency Alert[/yellow]")
 	consolePrint(out, fmt.Sprintf("%s depend on %s (not yet done)", strings.Join(incomplete, ", "), st.taskID))
 	consolePrint(out, "\nIf changes are requested during review:")
 	consolePrint(out, "  1. Notify dependent WP agents")
