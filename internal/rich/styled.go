@@ -1,6 +1,9 @@
 package rich
 
-import "io"
+import (
+	"fmt"
+	"io"
+)
 
 // Segment is one styled run of a hand-laid-out renderable (rich.Segment).
 type Segment struct {
@@ -34,4 +37,18 @@ func RenderSegments(segs []Segment, sys ColorSystem) string {
 		out += st.Render(s.Text, sys)
 	}
 	return out
+}
+
+// PrintNoMarkup is console.print(s, markup=False): wrapped at the console
+// width and, on a colour terminal, repr-highlighted.
+func PrintNoMarkup(w io.Writer, s string) {
+	width := Width()
+	if width <= 0 {
+		return
+	}
+	if sys := DetectColorSystem(fdOf(w)); sys != NoColor {
+		writeHighlighted(w, &richText{plain: []rune(s)}, width, sys)
+		return
+	}
+	fmt.Fprintln(w, Wrap(s, width))
 }

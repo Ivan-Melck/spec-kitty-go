@@ -23,7 +23,7 @@ func raw(w io.Writer, s string) { fmt.Fprintln(w, s) }
 
 // plain prints text without markup processing but wrapped at the console
 // width (console.print(..., markup=False)).
-func plain(w io.Writer, s string) { fmt.Fprintln(w, rich.Wrap(s, cli.Width())) }
+func plain(w io.Writer, s string) { rich.PrintNoMarkup(w, s) }
 
 func runeLen(s string) int { return utf8.RuneCountInString(s) }
 
