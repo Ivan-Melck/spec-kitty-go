@@ -376,7 +376,7 @@ type Record struct {
 func Generate(root, slug, invokedAt string) (*Record, error) {
 	dir := project.Specs(root, slug)
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-		return nil, fmt.Errorf("Mission %s not found under %s. Check the mission handle (slug, mission_id, or directory name).", mission.PyRepr(slug), project.Specs(root))
+		return nil, &NotFoundError{fmt.Sprintf("Mission %s not found under %s. Check the mission handle (slug, mission_id, or directory name).", mission.PyRepr(slug), project.Specs(root))}
 	}
 	meta := mission.ReadMetaOrEmpty(dir)
 	spec, _ := readOptional(filepath.Join(dir, "spec.md"))

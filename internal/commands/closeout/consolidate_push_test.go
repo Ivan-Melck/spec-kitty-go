@@ -1,6 +1,7 @@
 package closeout_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,6 +32,30 @@ func remoteLog(s *testkit.Sandbox) string {
 	bare := filepath.Join(s.Base, "origin.git")
 	r := s.Exec(bare, "git", "log", "--all", "--topo-order", "--format=%s%n[%D]")
 	return s.Normalize(r.Stdout)
+}
+
+// TestDiffConsolidatePushRejectedResume covers the reconciliation PASS
+// anchor: a push the remote rejects after the verified landing keeps the
+// record, and --resume finishes the teardown without re-running the phases
+// (#5021 verified landing).
+func TestDiffConsolidatePushRejectedResume(t *testing.T) {
+	p := acceptedPair(t, "--pr-bound", "--branch-strategy", "already-confirmed", "--start-branch", "feat/calc-ops", "--topology", "lanes")
+	addBareRemote(t, p, "feat/calc-ops")
+	hook := func(s *testkit.Sandbox) string { return filepath.Join(s.Base, "origin.git", "hooks", "pre-receive") }
+	p.Both(func(s *testkit.Sandbox) {
+		if err := os.WriteFile(hook(s), []byte("#!/bin/sh\necho 'remote: push refused by policy' >&2\nexit 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+	comparePair(t, p, "consolidate", "--mission", "$M", "--yes", "--push")
+	compareGit(t, p)
+	p.CompareTree(".kittify/runtime", true)
+	p.Both(func(s *testkit.Sandbox) { os.Remove(hook(s)) })
+	comparePair(t, p, "consolidate", "--mission", "$M", "--resume")
+	compareGit(t, p)
+	if g, o := remoteLog(p.Go), remoteLog(p.Oracle); g != o {
+		t.Errorf("remote differs:\n%s", testkit.Diff(o, g))
+	}
 }
 
 // TestDiffConsolidatePush covers the origin freshness gate (a lane branch

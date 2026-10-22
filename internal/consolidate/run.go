@@ -42,9 +42,14 @@ type Options struct {
 	Push, DryRun   bool
 	JSON, Yes      bool
 	Resume         bool
-	OriginCheck    *string  // --origin-check (nil = environment/default)
-	SkipLanes      bool     // --skip-lanes: synthesize a no-lane manifest when lanes.json is absent
-	DryRunNotes    []string // "--attest-* is not applied with --dry-run" notices
+	OriginCheck    *string   // --origin-check (nil = environment/default)
+	SkipLanes      bool      // --skip-lanes: synthesize a no-lane manifest when lanes.json is absent
+	DryRunNotes    []string  // "--attest-* is not applied with --dry-run" notices
+	AllowSparse    bool      // --allow-sparse-checkout
+	AttestCanceled []string  // --attest-canceled-superseded
+	AttestApproved []string  // --attest-approved-reviewed
+	AttestReason   string    // --attest-reason
+	Stderr         io.Writer // logging records (RichHandler on stderr)
 }
 
 // synthesizeNoLaneManifest is _synthesize_no_lane_manifest: one planning
@@ -211,7 +216,7 @@ func Run(w io.Writer, root string, o Options) error {
 		}
 		say(w, fmt.Sprintf("Resume requested for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
 	}
-	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck, skipLanes: o.SkipLanes}
+	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck, skipLanes: o.SkipLanes, allowSparse: o.AllowSparse, opts: o}
 	return r.execute()
 }
 
@@ -293,6 +298,15 @@ func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o O
 	if m == nil {
 		return errOut(msg)
 	}
+	if pr := ProtectedStatusTargetRefusal(root, slug, m, nil); pr != nil {
+		text := fmt.Sprintf("%s: %s Next step: %s", pr.Code, pr.Message, pr.NextStep)
+		if o.JSON {
+			fmt.Fprintln(w, jsonx.Dumps(jsonx.NewObject("spec_kitty_version", app.Version, "error", text, "error_code", pr.Code), compact))
+		} else {
+			sayErr(w, text)
+		}
+		return exit(1)
+	}
 	var would any
 	if needsNumber(primary) {
 		would = NextMissionNumber(root)
@@ -345,6 +359,17 @@ type run struct {
 	originCheck  *string
 	originGated  bool
 	coordDone    bool
+
+	claim           *claim
+	validatedTips   [][2]string
+	anchorShas      []string
+	windowBase      string
+	allowSparse     bool
+	opts            Options
+	attested        []string
+	verifiedLanding bool
+	excluded        map[string]bool
+	checkpoint      *coordCheckpoint
 }
 
 func hasRemote(root, name string) bool {
@@ -459,6 +484,16 @@ func (r *run) execute() error {
 			fmt.Fprintln(r.w, w)
 		}
 	}
+	if !r.allowSparse {
+		if msg := SparseCheckoutRefusal(r.root, "spec-kitty consolidate"); msg != "" {
+			sayErr(r.w, msg)
+			return exit(1)
+		}
+	} else if r.opts.Stderr != nil {
+		if msg := SparseOverrideWarning(r.root, "spec-kitty consolidate", r.slug, missionIDOf(r.root, r.slug), mergeActor(r.root)); msg != "" {
+			rich.LogWarning(r.opts.Stderr, msg)
+		}
+	}
 	m, msg := requireLanes(r.sf.PrimaryDir)
 	if m == nil && r.skipLanes {
 		if _, err := os.Stat(filepath.Join(r.sf.PrimaryDir, lanes.File)); os.IsNotExist(err) {
@@ -501,8 +536,25 @@ func (r *run) execute() error {
 		sayErr(r.w, fmt.Sprintf("Missing mission branch: %s. Run: git branch %s %s", m.MissionBranch, m.MissionBranch, base))
 		return exit(1)
 	}
+	if pr := ProtectedStatusTargetRefusal(r.root, r.slug, m, nil); pr != nil {
+		sayErr(r.w, pr.Code+": "+pr.Message)
+		fmt.Fprintln(r.w, rich.Wrap("  Next step: "+pr.NextStep, rich.Width()))
+		footer := "Consolidation refused before any branch moved."
+		if LoadState(r.root, missionIDOf(r.root, r.slug)) != nil {
+			footer = refusedWithEarlierRecord
+		}
+		fmt.Fprintln(r.w, rich.Wrap(footer, rich.Width()))
+		return exit(1)
+	}
 	if err := r.preflight(); err != nil {
 		return err
+	}
+	if err := r.refuseUnexplainedMoves(); err != nil {
+		return err
+	}
+	var attErr error
+	if r.attested, attErr = r.recordAttestations(r.opts.AttestCanceled, r.opts.AttestApproved, r.opts.AttestReason); attErr != nil {
+		return attErr
 	}
 	// merge-ready precondition
 	snap, err := status.ReduceDir(r.sf.StatusDir())
@@ -511,8 +563,13 @@ func (r *run) execute() error {
 		return exit(1)
 	}
 	r.snap = snap
+	r.excluded = r.acceptablyCanceled()
 	for _, l := range m.Lanes {
-		r.wps = append(r.wps, l.WPIDs...)
+		for _, id := range l.WPIDs {
+			if !r.excluded[id] {
+				r.wps = append(r.wps, id)
+			}
+		}
 	}
 	var missing []string
 	for _, id := range r.wps {
@@ -567,17 +624,42 @@ func (r *run) execute() error {
 		say(r.w, "\n[red]Error:[/red] Merge gates failed.")
 		return exit(1)
 	}
+	isResume := st != nil
+	r.verifiedLanding = isResume && st.ReconPassed != "" && st.ReconPassed == liveTip(r.root, r.m.TargetBranch)
+	if err := r.captureClaim(st); err != nil {
+		return err
+	}
 	if st == nil && mid != "" {
-		coordRef := r.m.TargetBranch
-		if r.sf.Routed() {
-			coordRef = r.m.MissionBranch
-		}
-		st = newState(r.root, r.slug, mid, r.m.TargetBranch, r.strategy, r.m, r.wps, r.ret, r.push, coordRef)
+		st = newState(r.root, r.slug, mid, r.m.TargetBranch, r.strategy, r.m, r.wps, r.ret, r.push, r.coordRef(), r.excluded)
 		st.Save(r.root)
 	}
 	if st != nil {
-		st.BeginAttempt(r.root)
-		st.Save(r.root)
+		st.captureSnapshot(r.root, r.m, r.coordRef(), isResume)
+		for _, b := range missingSnapshotBranches(r.root, r.m, r.coordRef()) {
+			say(r.w, fmt.Sprintf("[yellow]Warning:[/yellow] branch %s does not exist and is not snapshotted; a rollback will not cover it.", pyRepr(b)))
+		}
+		unexplained := st.beginAttempt(r.root)
+		if len(unexplained) > 0 && r.verifiedLanding {
+			var kept []string
+			for _, b := range unexplained {
+				if b != st.TargetBranch && b != r.coordRef() {
+					kept = append(kept, b)
+				}
+			}
+			unexplained = kept
+		}
+		if len(unexplained) > 0 {
+			if !isResume {
+				ClearState(r.root, mid)
+			}
+			var rows [][3]string
+			tips := st.movableTips(r.root)
+			for _, b := range unexplained {
+				live, _ := tips.get(b)
+				rows = append(rows, [3]string{b, st.restoreTarget(b), live})
+			}
+			return exitUnexplained(r.w, rows)
+		}
 	}
 	r.state = st
 
@@ -585,11 +667,17 @@ func (r *run) execute() error {
 	defer restore()
 	r.baseline = revParse(r.root, "refs/heads/"+m.TargetBranch)
 	r.coordDone = coordDoneOf(r)
-	if err := r.mutationSpan(r.coordDone); err != nil {
+	if r.verifiedLanding {
+		// #5021: this target tip already PASSed reconciliation in an earlier
+		// attempt; finish the teardown without re-running the phases.
+	} else if err := r.mutationSpan(r.coordDone); err != nil {
 		if e, ok := err.(*Exit); ok && e.Code != 0 && r.state != nil {
-			fmt.Fprintln(r.w, r.state.Rollback(r.root))
+			fmt.Fprintln(r.w, r.state.Rollback(r.root).Render())
 		}
 		return err
+	}
+	if r.state != nil {
+		r.state.settle(r.root, r.m.TargetBranch)
 	}
 	if r.strategy == "squash" {
 		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP claim integrity and squash content attribution verified (no un-attributable content on the target); per-SHA approved-reachability deferred under squash strategy.")
@@ -605,32 +693,64 @@ func coordDoneOf(r *run) bool { return r.sf.Routed() && dirExists(r.sf.CoordWork
 // through the reconciliation gate. A failure inside it rolls every
 // snapshotted branch back.
 func (r *run) mutationSpan(coordDone bool) error {
-	if err := r.mergeLanes(); err != nil {
+	if err := r.phase(r.mergeLanes); err != nil {
 		return err
 	}
-	if err := r.bake(); err != nil {
-		return err
-	}
-	if coordDone {
-		if err := r.recordDone(); err != nil {
+	if err := r.phase(func() error {
+		if err := r.bake(); err != nil {
 			return err
 		}
-	}
-	if err := r.squashIntoTarget(); err != nil {
+		if coordDone {
+			return r.recordDone()
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
-	if !coordDone {
-		if err := r.recordDone(); err != nil {
-			return err
+	if err := r.phase(r.squashIntoTarget); err != nil {
+		return err
+	}
+	if err := r.phase(func() error {
+		if !coordDone {
+			if err := r.recordDone(); err != nil {
+				return err
+			}
 		}
+		if r.number > 0 {
+			if r.state != nil {
+				r.state.MissionNumberBaked = true
+				r.state.Save(r.root)
+			}
+			say(r.w, fmt.Sprintf("Assigned mission_number=%d to mission %s", r.number, r.slug))
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	if r.number > 0 {
-		say(r.w, fmt.Sprintf("Assigned mission_number=%d to mission %s", r.number, r.slug))
-	}
-	if err := r.doneBookkeeping(coordDone); err != nil {
+	if err := r.phase(func() error { return r.doneBookkeeping(coordDone) }); err != nil {
 		return err
 	}
 	return r.reconcile()
+}
+
+// phase runs one ref-moving phase under the post-mutation tip recorder
+// (_records_post_mutation_tips).
+func (r *run) phase(fn func() error) error {
+	if r.state == nil {
+		return fn()
+	}
+	entry, expected := r.state.movableTips(r.root), r.state.expectedTips()
+	err := fn()
+	r.state.recordPostTips(r.root, entry, expected)
+	return err
+}
+
+// advance moves branch to sha, persisting the advance intent first.
+func (r *run) advance(branch, sha string) error {
+	if r.state != nil {
+		r.state.noteIntent(r.root, branch, liveTip(r.root, branch), sha)
+	}
+	return advanceBranch(r.root, branch, sha)
 }
 
 // afterReconcile is the post-gate phases: stale check, push, teardown and
@@ -707,51 +827,7 @@ func missionIDOf(root, slug string) string {
 // reconcile is the merge/rebase reconciliation gate: every approved lane
 // commit must be reachable from the landed target; otherwise every branch
 // the run moved is rolled back and the merge refuses.
-func (r *run) reconcile() error {
-	if r.strategy == "squash" || r.state == nil {
-		return nil
-	}
-	base := ""
-	for _, p := range r.state.PreRefs {
-		if p[0] == r.m.MissionBranch {
-			base = p[1]
-		}
-	}
-	tips := map[string]string{}
-	for _, p := range r.state.LaneTips {
-		tips[p[0]] = p[1]
-	}
-	var failures []string
-	for _, l := range r.m.Lanes {
-		tip := tips[lanes.LaneBranchName(r.slug, l.LaneID, r.m.TargetBranch)]
-		if tip == "" || base == "" {
-			continue
-		}
-		out, err := gitx.Run(r.root, "rev-list", "--no-merges", base+".."+tip)
-		if err != nil {
-			continue
-		}
-		commits := strings.Fields(out)
-		for _, id := range l.WPIDs {
-			st := r.snap.WP(id)
-			if st == nil || (st.GetString("lane") != "approved" && st.GetString("lane") != "done") {
-				continue
-			}
-			for _, c := range commits {
-				if res, _ := gitx.Exec(r.root, nil, nil, "merge-base", "--is-ancestor", c, "refs/heads/"+r.m.TargetBranch); res.Code != 0 {
-					failures = append(failures, fmt.Sprintf("approved %s commit %s is NOT reachable from the target — approved work would be dropped", id, c[:10]))
-				}
-			}
-		}
-	}
-	if len(failures) == 0 {
-		return nil
-	}
-	fmt.Fprintln(r.w, "\nError: Reconciliation FAILED: "+strings.Join(failures, "; ")+". Every branch this consolidation moved (target, mission and coordination branches) is being restored to its pre-consolidation commit; the rollback report below names each branch, and a branch marked NOT restored still carries this run's commits. nothing was torn down. Inspect the target branch and the lane tips, then re-run the merge.")
-	r.state.UpdatedAt = clock.NowUTCISO()
-	r.state.Save(r.root)
-	return exit(1)
-}
+func (r *run) reconcile() error { return r.gate() }
 
 // ---------------------------------------------------------------------------
 // preflight
@@ -883,6 +959,10 @@ func (r *run) mergeLanes() error {
 			say(r.w, fmt.Sprintf("  [green]✓[/green] %s already on %s", l.LaneID, r.m.TargetBranch))
 			continue
 		}
+		if laneFullyCanceled(l, r.excluded) {
+			say(r.w, fmt.Sprintf("  [dim]Skipping %s (all WPs canceled with provenance — acceptable ending, no branch to integrate)[/dim]", l.LaneID))
+			continue
+		}
 		branch := lanes.LaneBranchName(r.m.MissionSlug, l.LaneID, r.m.TargetBranch)
 		if !gitx.BranchExists(r.root, branch) || gitx.IsAncestor(r.root, branch, r.m.MissionBranch) {
 			say(r.w, fmt.Sprintf("  [dim]Skipping %s (already integrated into %s)[/dim]", l.LaneID, r.m.MissionBranch))
@@ -918,7 +998,7 @@ func (r *run) mergeInto(source, target string) error {
 		}
 		return fmt.Errorf("Merge of %s into %s failed: %s", source, target, msg)
 	}
-	return advanceBranch(r.root, target, revParse(dir, "HEAD"))
+	return r.advance(target, revParse(dir, "HEAD"))
 }
 
 // ---------------------------------------------------------------------------
@@ -960,7 +1040,7 @@ func (r *run) bake() error {
 		fmt.Sprintf("chore(%s): assign mission_number=%d", r.slug, r.number), "--", rel); err != nil {
 		return err
 	}
-	return advanceBranch(r.root, r.m.MissionBranch, revParse(dir, "HEAD"))
+	return r.advance(r.m.MissionBranch, revParse(dir, "HEAD"))
 }
 
 func (r *run) bakeOnPrimary() error {
@@ -987,9 +1067,38 @@ func (r *run) recordDone() error {
 	if err != nil {
 		return err
 	}
-	for _, id := range r.wps {
+	completed := map[string]bool{}
+	if r.state != nil {
+		// _reconcile_completed_wps_for_resume: the record's completed WPs are a
+		// hint, confirmed against the durable done lane.
+		var confirmed []string
+		for _, id := range r.state.CompletedWPs {
+			if st := snap.WP(id); st != nil && st.GetString("lane") == "done" {
+				confirmed = append(confirmed, id)
+				completed[id] = true
+			}
+		}
+		if len(confirmed) != len(r.state.CompletedWPs) {
+			r.state.CompletedWPs = confirmed
+			r.state.Save(r.root)
+		}
+	}
+	var order []string
+	for _, l := range r.m.Lanes {
+		order = append(order, l.WPIDs...)
+	}
+	for _, id := range order {
+		if r.excluded[id] {
+			say(r.w, fmt.Sprintf("  [dim]Skipping %s (canceled with provenance — acceptable ending, excluded from done)[/dim]", id))
+			continue
+		}
+		if completed[id] {
+			say(r.w, fmt.Sprintf("  [dim]Skipping %s (already recorded as done)[/dim]", id))
+			continue
+		}
 		st := snap.WP(id)
 		if st == nil || st.GetString("lane") == "done" {
+			r.markComplete(id)
 			continue
 		}
 		reviewer := ""
@@ -1010,9 +1119,21 @@ func (r *run) recordDone() error {
 			sayErr(r.w, err.Error())
 			return exit(1)
 		}
+		r.markComplete(id)
 	}
 	r.clearTerminalLaneTips(sf)
 	return nil
+}
+
+// markComplete is ConsolidationState.mark_wp_complete + save.
+func (r *run) markComplete(id string) {
+	if r.state == nil {
+		return
+	}
+	if !contains(r.state.CompletedWPs, id) {
+		r.state.CompletedWPs = append(r.state.CompletedWPs, id)
+	}
+	r.state.Save(r.root)
 }
 
 // clearTerminalLaneTips is the on_wp_terminal hook of the done transitions:
@@ -1107,7 +1228,7 @@ func (r *run) squashIntoTarget() error {
 		return exit(1)
 	}
 	r.squash = revParse(dir, "HEAD")
-	if err := advanceBranch(r.root, r.m.TargetBranch, r.squash); err != nil {
+	if err := r.advance(r.m.TargetBranch, r.squash); err != nil {
 		sayErr(r.w, err.Error())
 		return exit(1)
 	}
@@ -1119,7 +1240,7 @@ func (r *run) squashIntoTarget() error {
 // landed advances the target to sha and prints the success lines.
 func (r *run) landed(sha string) error {
 	r.squash = sha
-	if err := advanceBranch(r.root, r.m.TargetBranch, sha); err != nil {
+	if err := r.advance(r.m.TargetBranch, sha); err != nil {
 		sayErr(r.w, err.Error())
 		return exit(1)
 	}
@@ -1190,6 +1311,11 @@ func (r *run) doneBookkeeping(coordDone bool) error {
 			}
 		}
 		paths = append(paths, dst, filepath.Join(primary, "status.json"))
+		if r.checkpoint != nil {
+			// S-B/FR-004: carry concurrent post-checkpoint coordination commits
+			// forward (written, not staged: upstream commits only the status pair).
+			projectPostCheckpoint(r.root, r.slug, r.checkpoint.ref, r.checkpoint.sha, primary)
+		}
 	}
 	meta, err := mission.ReadMeta(primary)
 	if err != nil {
