@@ -136,7 +136,6 @@ func (b *ActionBundle) actionNodeDeclared(action string) bool {
 	return b != nil && b.Merged != nil && b.Merged.NodeURNs()["action:"+b.Mission+"/"+action]
 }
 
-
 // ErrConfig wraps activation config errors surfaced by BuildContext.
 var ErrConfig = errors.New("config")
 
