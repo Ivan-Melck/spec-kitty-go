@@ -17,9 +17,10 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
+	"github.com/spec-kitty/go-kitty3/internal/rtyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
-	"gopkg.in/yaml.v3"
 )
 
 // Provider classification (config.LOCAL_PROVIDERS / REMOVED_PROVIDERS).
@@ -115,6 +116,10 @@ type ProjectConfig struct {
 	// loaded ('"', '\'' or 0), preserved on save (ruamel preserve_quotes).
 	EgressStyle byte
 	Extra       *jsonx.Object
+	// loaded / rtBlock are the tracker block as loaded (plain and round
+	// trip): _extra and egress values keep their ruamel types on save.
+	loaded  *jsonx.Object
+	rtBlock *rtyaml.Map
 }
 
 // NewProjectConfig returns the defaults.
@@ -252,6 +257,16 @@ func readPayload(root string) (any, []byte, bool, error) {
 	return v, b, true, err
 }
 
+// loadDoc is the round-trip load (YAML() with preserve_quotes) of a
+// config.yaml whose plain parse already succeeded.
+func loadDoc(root string, src []byte) (*rtyaml.Doc, error) {
+	in, err := pyyaml.TextFileInput(src, ConfigPath(root))
+	if err != nil {
+		return nil, err
+	}
+	return rtyaml.Load(in)
+}
+
 // LoadConfig mirrors load_tracker_config.
 func LoadConfig(root string) (ProjectConfig, error) {
 	v, src, exists, err := readPayload(root)
@@ -273,85 +288,89 @@ func LoadConfig(root string) (ProjectConfig, error) {
 	t, _ := tb.(*jsonx.Object)
 	c := FromDict(t)
 	if t != nil {
-		c.EgressStyle = egressStyle(src)
-	}
-	return c, nil
-}
-
-// egressStyle returns the quote style of tracker.egress in the YAML source.
-func egressStyle(src []byte) byte {
-	var n yaml.Node
-	if yaml.Unmarshal(src, &n) != nil || len(n.Content) == 0 {
-		return 0
-	}
-	root := n.Content[0]
-	if root.Kind != yaml.MappingNode {
-		return 0
-	}
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value != "tracker" || root.Content[i+1].Kind != yaml.MappingNode {
-			continue
+		c.loaded = t
+		if doc, err := loadDoc(root, src); err == nil {
+			if m, ok := doc.Root.(*rtyaml.Map); ok {
+				if b, ok := m.Get("tracker"); ok {
+					c.rtBlock, _ = b.(*rtyaml.Map)
+				}
+			}
 		}
-		tb := root.Content[i+1]
-		for j := 0; j+1 < len(tb.Content); j += 2 {
-			if tb.Content[j].Value == "egress" && tb.Content[j+1].Kind == yaml.ScalarNode {
-				switch tb.Content[j+1].Style {
-				case yaml.DoubleQuotedStyle:
-					return '"'
-				case yaml.SingleQuotedStyle:
-					return '\''
+		if c.rtBlock != nil {
+			if e, ok := c.rtBlock.Get("egress"); ok {
+				if q, ok := e.(*rtyaml.Str); ok && (q.Style == '"' || q.Style == '\'') {
+					c.EgressStyle = byte(q.Style)
 				}
 			}
 		}
 	}
-	return 0
+	return c, nil
 }
 
-// renderPayload emits config.yaml, restoring the quote style of a string
-// tracker.egress value.
-func renderPayload(payload *jsonx.Object, egress any, style byte) string {
-	out := yamlx.Emit(payload)
-	s, ok := egress.(string)
-	if !ok || style == 0 {
-		return out
+// rtValue is the value to_dict() carries for a tracker key taken over from
+// the loaded block (_extra entries and egress keep their ruamel types:
+// quote style, comments), unless the value was changed since loading.
+func (c ProjectConfig) rtValue(key string, v any) any {
+	if c.rtBlock == nil || c.loaded == nil {
+		return v
 	}
-	plain := "  egress: " + yamlx.FormatScalar(s) + "\n"
-	var quoted string
-	if style == '"' {
-		quoted = "  egress: " + jsonx.QuoteString(s, false) + "\n"
-	} else {
-		quoted = "  egress: '" + strings.ReplaceAll(s, "'", "''") + "'\n"
+	lv, ok := c.loaded.Get(key)
+	if !ok || !rtyaml.PlainEqual(lv, v) {
+		return v
 	}
-	lines := strings.SplitAfter(out, "\n")
-	in := false
-	for i, l := range lines {
-		if l == "tracker:\n" || strings.HasPrefix(l, "tracker:") {
-			in = true
-			continue
-		}
-		if in && l != "" && !strings.HasPrefix(l, " ") {
-			in = false
-		}
-		if in && l == plain {
-			lines[i] = quoted
-			break
-		}
+	if rv, ok := c.rtBlock.Get(key); ok {
+		return rv
 	}
-	return strings.Join(lines, "")
+	return v
 }
 
-// SaveConfig mirrors save_tracker_config (atomic write, other sections kept).
+// toRT is to_dict() for dumping: a plain mapping holding the loaded
+// round-trip values of _extra and egress.
+func (c ProjectConfig) toRT() *rtyaml.Map {
+	m := rtyaml.NewMap()
+	for _, kv := range c.ToDict().Pairs() {
+		v := kv.Value
+		if !knownKeys[kv.Key] || kv.Key == "egress" {
+			v = c.rtValue(kv.Key, v)
+		}
+		m.Set(kv.Key, v)
+	}
+	return m
+}
+
+// rootMap is `payload = yaml.load(handle) or {}` + `if not isinstance(
+// payload, dict): payload = {}`.
+func rootMap(doc *rtyaml.Doc) *rtyaml.Map {
+	if doc != nil {
+		if m, ok := doc.Root.(*rtyaml.Map); ok && m.Len() > 0 {
+			return m
+		}
+	}
+	return rtyaml.NewMap()
+}
+
+// SaveConfig mirrors save_tracker_config: the round-trip document gets
+// payload["tracker"] = config.to_dict() and is dumped back (comments, quote
+// styles and formatting elsewhere kept), written atomically.
 func SaveConfig(root string, c ProjectConfig) error {
-	v, _, _, err := readPayload(root)
+	_, src, exists, err := readPayload(root)
 	if err != nil {
 		return err
 	}
-	payload, ok := v.(*jsonx.Object)
-	if !ok || payload == nil {
-		payload = &jsonx.Object{}
+	doc := &rtyaml.Doc{}
+	if exists {
+		if doc, err = loadDoc(root, src); err != nil {
+			return err
+		}
 	}
-	payload.Set("tracker", c.ToDict())
-	return atomicfile.Write(ConfigPath(root), []byte(renderPayload(payload, c.Egress, c.EgressStyle)))
+	payload := rootMap(doc)
+	payload.Set("tracker", c.toRT())
+	doc.Root = payload
+	out, err := doc.Dump()
+	if err != nil {
+		return err
+	}
+	return atomicfile.Write(ConfigPath(root), []byte(out))
 }
 
 // ClearConfig mirrors clear_tracker_config: the tracker block is removed,
@@ -368,23 +387,40 @@ func ClearConfig(root string) error {
 	if !ok || payload == nil || !payload.Has("tracker") {
 		return nil
 	}
-	tb, _ := payload.Get("tracker")
-	t, _ := tb.(*jsonx.Object)
-	recorded := FromDict(t).Egress
-	style := byte(0)
-	if recorded == EgressAbsent {
-		payload.Delete("tracker")
-	} else {
-		payload.Set("tracker", jsonx.NewObject("egress", recorded))
-		style = egressStyle(src)
-	}
-	p := ConfigPath(root)
-	mode := os.FileMode(0o644)
-	f, err := os.OpenFile(p, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, mode)
+	doc, err := loadDoc(root, src)
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(renderPayload(payload, recorded, style)); err != nil {
+	rt := rootMap(doc)
+	tb, _ := payload.Get("tracker")
+	t, _ := tb.(*jsonx.Object)
+	recorded := FromDict(t).Egress
+	if recorded == EgressAbsent {
+		rt.Delete("tracker")
+	} else {
+		raw := recorded
+		if b, ok := rt.Get("tracker"); ok {
+			if bm, ok := b.(*rtyaml.Map); ok {
+				if e, ok := bm.Get("egress"); ok {
+					raw = e
+				}
+			}
+		}
+		block := rtyaml.NewMap()
+		block.Set("egress", raw)
+		rt.Set("tracker", block)
+	}
+	doc.Root = rt
+	out, err := doc.Dump()
+	if err != nil {
+		return err
+	}
+	p := ConfigPath(root)
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(out); err != nil {
 		f.Close()
 		return err
 	}

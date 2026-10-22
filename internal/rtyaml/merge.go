@@ -181,6 +181,9 @@ func reorder(m *Map, after *jsonx.Object) {
 	}
 }
 
+// PlainEqual compares two jsonx values (order-sensitive for mappings).
+func PlainEqual(a, b any) bool { return plainEqual(a, b) }
+
 // plainEqual compares two jsonx values (order-sensitive for mappings).
 func plainEqual(a, b any) bool {
 	switch x := a.(type) {
