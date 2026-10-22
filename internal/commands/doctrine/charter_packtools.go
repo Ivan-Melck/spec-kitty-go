@@ -85,31 +85,46 @@ func runRegenerateGraph(ctx *cli.Context) error {
 		}
 		root = *pr
 	}
-	emit := func(status string) {
+	emit := func(st charter.RegenStatus) {
 		if jsonMode {
-			fmt.Fprintln(w, jsonx.Dumps(jsonx.NewObject("status", status, "path", root), jsonx.Options{Indent: -1, EnsureASCII: true}))
+			o := jsonx.NewObject("status", st.Status, "path", root)
+			if st.Status == "invalid" {
+				o.Set("detail", st.Detail)
+			}
+			fmt.Fprintln(w, jsonx.Dumps(o, jsonx.Options{Indent: -1, EnsureASCII: true}))
 			return
 		}
-		switch status {
+		switch st.Status {
 		case "written":
 			cprint(w, "[green]Regenerated DRG graph:[/green] %s", root)
 		case "fresh":
 			cprint(w, "[green]DRG graph is fresh:[/green] %s", root)
 		case "stale":
 			cprint(w, "[red]DRG graph is stale:[/red] %s\nRun [bold]spec-kitty charter pack regenerate-graph[/bold] and commit the result.", root)
+		case "invalid":
+			d := st.Detail
+			if d == "" {
+				d = "(no detail)"
+			}
+			cprint(w, "[red]DRG graph failed validation:[/red] %s", d)
 		}
 	}
+	var st charter.RegenStatus
+	var err error
 	if ctx.Bool("check") {
-		if charter.BuiltInGraphIsFresh(root) {
-			emit("fresh")
-			return nil
-		}
-		emit("stale")
-		return cli.Exit(1)
+		st, err = charter.CheckBuiltInGraph(root)
+	} else {
+		st, err = charter.WriteBuiltInGraph(root)
 	}
-	if err := charter.WriteBuiltInGraph(root); err != nil {
+	if err != nil {
+		if c, ok := err.(*charter.RegenCrash); ok {
+			return pyCrash(ctx, c.Type, c.Msg)
+		}
 		return err
 	}
-	emit("written")
+	emit(st)
+	if st.Status == "stale" || st.Status == "invalid" {
+		return cli.Exit(1)
+	}
 	return nil
 }
