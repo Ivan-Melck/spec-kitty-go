@@ -66,7 +66,9 @@ func runGit(args ...string) (string, string, int) {
 
 var reOAuthToken = regexp.MustCompile(`oauth2:[^\s'"]+@([^@\s/'"]+(?::\d+)?(?:/|$))`)
 
-func redactGitTokens(s string) string { return reOAuthToken.ReplaceAllString(s, "oauth2:<redacted>@$1") }
+func redactGitTokens(s string) string {
+	return reOAuthToken.ReplaceAllString(s, "oauth2:<redacted>@$1")
+}
 
 func (g *gitSource) injectToken(u string) string {
 	tok := os.Getenv("GIT_TOKEN")
