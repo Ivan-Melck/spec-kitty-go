@@ -8,13 +8,15 @@ consolidation of duplicated rich table / cell-width code into
 `internal/rich`.
 
 Upstream renders help with typer 0.27's `rich_utils` (a fork of rich-click)
-on its vendored click 8.5, with rich 15. `internal/rich/layout.go` is a
-plain-text port of the parts of rich's layout engine involved (Text
-wrapping/`divide_line`, Padding, Align, Group, Columns, box-less Table with
-`_calculate_column_widths` / `_collapse_widths` / ratio distribution, Panel),
-and `internal/cli/help.go` composes them exactly like
-`rich_format_help`. Without a terminal the output is unstyled, so it matches
-byte for byte, including the trailing spaces rich pads every line with.
+on its vendored click 8.5, with rich 15. `internal/rich` is a segment-level
+port of rich's rendering engine (Segment, Text with style spans, Console
+render / render_lines / render_str / print / _render_buffer, Padding, Align,
+Constrain, Group, Styled, Columns, Table, Panel, Tree, Markdown subset, box
+definitions) and `internal/cli/help.go` composes typer's renderables with
+typer's styles, theme and highlighters exactly like `rich_format_help` /
+`rich_format_error`. Without a terminal the output is unstyled (byte for
+byte, including the trailing spaces rich pads every line with); on a colour
+terminal every segment carries the SGR sequence rich writes for it.
 
 ## Tests
 
@@ -24,6 +26,11 @@ byte for byte, including the trailing spaces rich pads every line with.
 | `internal/helpparity` `TestHelpWidthsOracle` (oracle) | every implemented path at COLUMNS=60/80/100, `SPEC_KITTY_SIMPLE_HELP=1` at 160 and `=0` at 60, vs the oracle. All pass. Also surveyed by hand at 40 and 211. |
 | `internal/testkit` `TestNormalizeShortSHAs` | short-SHA masking incl. all-digit abbreviations. |
 | existing oracle suites of every package | usage-error and help changes, the rich consolidation (setup/agentcore tables, wrapping) and the Normalize change keep them green. |
+| `internal/colorparity` `TestHelpColour` (oracle) | `--help` of all 276 paths under `FORCE_COLOR=1` with the standard, 256-colour and truecolor systems: byte-identical. |
+| `internal/colorparity` `TestHelpPlainVariants` (oracle) | the same with `NO_COLOR=1` (attributes only), `TERM=dumb` and a non-terminal: byte-identical. |
+| `internal/colorparity` `TestUsageErrorColour` (oracle) | an unknown option on every path plus unknown subcommands / missing arguments (typer's Error panel, usage and "Try ... --help" lines on stderr) under all six environments: byte-identical. |
+| `internal/colorparity` `TestPTYSpotCheck` (oracle) | help, usage errors and command output under a real pseudo-terminal (`script(1)`, no FORCE_COLOR). |
+| `internal/colorparity` `TestNoProjectColour` (oracle) | every leaf command run bare in an empty directory, coloured. |
 
 Usage errors were checked against the oracle with a 694-probe survey (every
 path with an unknown option, a near-miss option, missing required
@@ -370,17 +377,22 @@ its `Metavar` stripped of `{}`/`[]` (or its name with `-` -> `_`), usage shows
 column text; `Default: false` on a negatable flag shows `[default: no-x]`,
 `Default: nil` shows nothing (typer `Optional[bool] = None`).
 
-`internal/rich`:
+`internal/rich` (rendering engine, see also util.md):
 
 | Symbol | Purpose |
 |---|---|
-| `Measurement`, `Options`, `Renderable`, `Measure`, `RenderLines` | rich measuring/rendering protocol (plain text) |
-| `Text` (`NewText`, `FromMarkup`), `WrapText` | rich Text wrapping (justify, overflow fold/crop/ellipsis/ignore, tabs) |
-| `Group`, `Padding` (`Pad`), `AlignLeft`, `Columns`, `Grid` (+`Column`, `AddRow`), `BoxPanel` | rich renderables used by help and error output |
+| `Seg`, `Console` (`NewConsole`, `NewCliConsole`, `ForWriter`, `CliConsoleFor`, `TyperConsole`), `Options`, `PrintOptions`, `StrOptions` | rich Console: `Render`, `RenderLines`, `RenderStr`, `Measure`, `Segments`, `Output` (`_render_buffer`), `Print`, `PrintWith`, `GetStyle` |
+| `PrintTo`, `PrintOpts`, `PrintPlain`, `PrintSoftWrap`, `PrintPlainSoftWrap`, `Print`, `PrintNoMarkup` | console.print on CliConsole() for a writer (markup / soft_wrap variants) |
+| `Renderable`, `Measurable`, `Measurement`, `Highlighter` | rich protocols |
+| `Text` (`NewText`, `NewStyledText`, `TextStyled`, `FromMarkup`, `FromMarkupStyle`, `Assemble`, `Append`, `AppendText`, `Stylize`, `StylizeBefore`), `Span` | rich.text.Text with spans: wrap, justify, truncate, divide, render |
+| `Group`, `Padding` (`Pad`), `Align` (`AlignLeft`), `Constrain`, `Styled`, `Columns`, `RichTable` (`NewTable`, `NewGrid`, `Column`, `AddColumn`, `AddRow`, `AddRowStyled`, `AddSection`, `IntP`), `RichPanel`, `Tree`, `Markdown`, `StepTracker`, `Box*` | rich renderables |
+| `ReprHighlighter`, `OptionHighlighter`, `NegativeOptionHighlighter`, `TypesHighlighter`, `Highlight`, `HighlightText`, `TyperStyle*` | highlighters, typer styles and theme |
+| `EscapeMarkup`, `SanitizeTerminalText`, `BoolP` | rich.markup.escape, CliConsole sanitizing |
+| `LogRenderable`, `Log`, `LogWarning`, `TracebackRenderable`, `RenderTraceback`, `PrintTraceback` | RichHandler log records, rich tracebacks |
+| `Table`, `TableWidth`, `HeavyTable`, `TableX`, `BoxTable`, `GridTable`, `GridTableStyled`, `NewPaddedGrid`, `Panel`, `PanelStyled`, `FitPanel`, `FitPanelStyled` | older convenience helpers; `BoxTable`, `GridTable`, `Panel`, `FitPanel` now render through the engine (markup cells, rich default styles) |
 | `RatioReduce`, `RatioDistribute`, `CollapseWidths` | rich `_ratio` / table width algorithms |
 | `CellLen`, `CharWidth`, `SetCellSize` | rich cell widths from rich's unicode 17 table (`celltable.go`, generated) incl. ZWJ/VS16 handling |
-| `HeavyTable`, `TableSpec`, `TableX`, `AlignText` | the HEAVY_HEAD tables formerly in `internal/commands/setup/richtable*.go` |
-| `Width`, `StderrWidth`, `TyperWidth`, `IsTerminal` | console width and terminal detection as rich computes them (COLUMNS, TIOCGWINSZ on fds 0/1/2, dumb terminal 80, TTY_COMPATIBLE / FORCE_COLOR); `cli.Width` delegates to `TyperWidth(false)` |
+| `Width`, `StderrWidth`, `TyperWidth`, `IsTerminal`, `DetectColorSystem` | console width, terminal and colour-system detection as rich computes them |
 
 `internal/testkit`: `NormalizeValues` now masks all-digit 7-12 digit short
 SHAs (not when part of a decimal/version or list number); `"pid"` values are
@@ -395,16 +407,22 @@ removes directories of finished test processes (12 GB of leftovers had filled
 None known for help text: all 276 paths are byte-identical without a
 terminal.
 
+## Colour
+
+On a terminal (or with `FORCE_COLOR` / `PY_COLORS` / `GITHUB_ACTIONS`
+non-empty, typer's `FORCE_TERMINAL`; `_TYPER_FORCE_DISABLE_TERMINAL`
+disables it) help and usage errors are styled exactly like typer:
+`bold` usage line with the `usage` / `option` / `switch` / `types` theme
+styles from typer's `OptionHighlighter`, dim panel borders with left-aligned
+titles, `bold cyan` command column, `dim` default / help paragraphs,
+`dim red` `[required]`, `red` required asterisk, `bold yellow` type column
+with `dim` brackets (`TypesHighlighter`), `bold magenta` / `bold red`
+negative options, `red` Error panel border, `dim` "Try ..." line with the
+command in `blue`. Colour systems: `COLORTERM=truecolor|24bit` -> truecolor,
+`TERM=*-256color|*-kitty` -> 256 colours, otherwise standard; `TERM=dumb` or
+`unknown` -> no colour (and width 80); `NO_COLOR` keeps attributes and drops
+colours. Verified for all 276 paths by `internal/colorparity`.
+
 ## Remaining work
 
-- Help colours/styles: on a terminal (or with `FORCE_COLOR`) typer's
-  rich help is styled (bold/cyan option names, dim panels, yellow
-  metavars). `internal/rich` now has rich's colour engine (colour systems,
-  styles, theme, markup spans, `ReprHighlighter`; see util.md) and
-  `console.print` output is coloured, but the help renderer
-  (`internal/cli/help.go`) still emits plain text: wiring typer's
-  `rich_utils` styles through the layout renderables is open (PYF-14).
-- Terminal width now follows rich (COLUMNS, then the terminal size of
-  stdin/stdout/stderr, 80 for a dumb terminal; `TERMINAL_WIDTH` for typer
-  consoles: `rich.TyperWidth`), and the `merge` stub wraps at the console
-  width (PYF-12/13, util area).
+- None for help and usage errors.
