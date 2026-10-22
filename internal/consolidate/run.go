@@ -345,6 +345,11 @@ type run struct {
 	originCheck  *string
 	originGated  bool
 	coordDone    bool
+
+	claim         *claim
+	validatedTips [][2]string
+	anchorShas    []string
+	windowBase    string
 }
 
 func hasRemote(root, name string) bool {
@@ -504,6 +509,9 @@ func (r *run) execute() error {
 	if err := r.preflight(); err != nil {
 		return err
 	}
+	if err := r.refuseUnexplainedMoves(); err != nil {
+		return err
+	}
 	// merge-ready precondition
 	snap, err := status.ReduceDir(r.sf.StatusDir())
 	if err != nil {
@@ -567,17 +575,31 @@ func (r *run) execute() error {
 		say(r.w, "\n[red]Error:[/red] Merge gates failed.")
 		return exit(1)
 	}
+	if err := r.captureClaim(st); err != nil {
+		return err
+	}
+	isResume := st != nil
 	if st == nil && mid != "" {
-		coordRef := r.m.TargetBranch
-		if r.sf.Routed() {
-			coordRef = r.m.MissionBranch
-		}
-		st = newState(r.root, r.slug, mid, r.m.TargetBranch, r.strategy, r.m, r.wps, r.ret, r.push, coordRef)
+		st = newState(r.root, r.slug, mid, r.m.TargetBranch, r.strategy, r.m, r.wps, r.ret, r.push, r.coordRef())
 		st.Save(r.root)
 	}
 	if st != nil {
-		st.BeginAttempt(r.root)
-		st.Save(r.root)
+		st.captureSnapshot(r.root, r.m, r.coordRef(), isResume)
+		for _, b := range missingSnapshotBranches(r.root, r.m, r.coordRef()) {
+			say(r.w, fmt.Sprintf("[yellow]Warning:[/yellow] branch %s does not exist and is not snapshotted; a rollback will not cover it.", pyRepr(b)))
+		}
+		if unexplained := st.beginAttempt(r.root); len(unexplained) > 0 {
+			if !isResume {
+				ClearState(r.root, mid)
+			}
+			var rows [][3]string
+			tips := st.movableTips(r.root)
+			for _, b := range unexplained {
+				live, _ := tips.get(b)
+				rows = append(rows, [3]string{b, st.restoreTarget(b), live})
+			}
+			return exitUnexplained(r.w, rows)
+		}
 	}
 	r.state = st
 
@@ -587,9 +609,12 @@ func (r *run) execute() error {
 	r.coordDone = coordDoneOf(r)
 	if err := r.mutationSpan(r.coordDone); err != nil {
 		if e, ok := err.(*Exit); ok && e.Code != 0 && r.state != nil {
-			fmt.Fprintln(r.w, r.state.Rollback(r.root))
+			fmt.Fprintln(r.w, r.state.Rollback(r.root).Render())
 		}
 		return err
+	}
+	if r.state != nil {
+		r.state.settle(r.root, r.m.TargetBranch)
 	}
 	if r.strategy == "squash" {
 		say(r.w, "  [green]✓[/green] Reconciliation verified: approved-WP claim integrity and squash content attribution verified (no un-attributable content on the target); per-SHA approved-reachability deferred under squash strategy.")
@@ -605,32 +630,60 @@ func coordDoneOf(r *run) bool { return r.sf.Routed() && dirExists(r.sf.CoordWork
 // through the reconciliation gate. A failure inside it rolls every
 // snapshotted branch back.
 func (r *run) mutationSpan(coordDone bool) error {
-	if err := r.mergeLanes(); err != nil {
+	if err := r.phase(r.mergeLanes); err != nil {
 		return err
 	}
-	if err := r.bake(); err != nil {
-		return err
-	}
-	if coordDone {
-		if err := r.recordDone(); err != nil {
+	if err := r.phase(func() error {
+		if err := r.bake(); err != nil {
 			return err
 		}
-	}
-	if err := r.squashIntoTarget(); err != nil {
+		if coordDone {
+			return r.recordDone()
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
-	if !coordDone {
-		if err := r.recordDone(); err != nil {
-			return err
+	if err := r.phase(r.squashIntoTarget); err != nil {
+		return err
+	}
+	if err := r.phase(func() error {
+		if !coordDone {
+			if err := r.recordDone(); err != nil {
+				return err
+			}
 		}
+		if r.number > 0 {
+			say(r.w, fmt.Sprintf("Assigned mission_number=%d to mission %s", r.number, r.slug))
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	if r.number > 0 {
-		say(r.w, fmt.Sprintf("Assigned mission_number=%d to mission %s", r.number, r.slug))
-	}
-	if err := r.doneBookkeeping(coordDone); err != nil {
+	if err := r.phase(func() error { return r.doneBookkeeping(coordDone) }); err != nil {
 		return err
 	}
 	return r.reconcile()
+}
+
+// phase runs one ref-moving phase under the post-mutation tip recorder
+// (_records_post_mutation_tips).
+func (r *run) phase(fn func() error) error {
+	if r.state == nil {
+		return fn()
+	}
+	entry, expected := r.state.movableTips(r.root), r.state.expectedTips()
+	err := fn()
+	r.state.recordPostTips(r.root, entry, expected)
+	return err
+}
+
+// advance moves branch to sha, persisting the advance intent first.
+func (r *run) advance(branch, sha string) error {
+	if r.state != nil {
+		r.state.noteIntent(r.root, branch, liveTip(r.root, branch), sha)
+	}
+	return advanceBranch(r.root, branch, sha)
 }
 
 // afterReconcile is the post-gate phases: stale check, push, teardown and
@@ -707,51 +760,7 @@ func missionIDOf(root, slug string) string {
 // reconcile is the merge/rebase reconciliation gate: every approved lane
 // commit must be reachable from the landed target; otherwise every branch
 // the run moved is rolled back and the merge refuses.
-func (r *run) reconcile() error {
-	if r.strategy == "squash" || r.state == nil {
-		return nil
-	}
-	base := ""
-	for _, p := range r.state.PreRefs {
-		if p[0] == r.m.MissionBranch {
-			base = p[1]
-		}
-	}
-	tips := map[string]string{}
-	for _, p := range r.state.LaneTips {
-		tips[p[0]] = p[1]
-	}
-	var failures []string
-	for _, l := range r.m.Lanes {
-		tip := tips[lanes.LaneBranchName(r.slug, l.LaneID, r.m.TargetBranch)]
-		if tip == "" || base == "" {
-			continue
-		}
-		out, err := gitx.Run(r.root, "rev-list", "--no-merges", base+".."+tip)
-		if err != nil {
-			continue
-		}
-		commits := strings.Fields(out)
-		for _, id := range l.WPIDs {
-			st := r.snap.WP(id)
-			if st == nil || (st.GetString("lane") != "approved" && st.GetString("lane") != "done") {
-				continue
-			}
-			for _, c := range commits {
-				if res, _ := gitx.Exec(r.root, nil, nil, "merge-base", "--is-ancestor", c, "refs/heads/"+r.m.TargetBranch); res.Code != 0 {
-					failures = append(failures, fmt.Sprintf("approved %s commit %s is NOT reachable from the target — approved work would be dropped", id, c[:10]))
-				}
-			}
-		}
-	}
-	if len(failures) == 0 {
-		return nil
-	}
-	fmt.Fprintln(r.w, "\nError: Reconciliation FAILED: "+strings.Join(failures, "; ")+". Every branch this consolidation moved (target, mission and coordination branches) is being restored to its pre-consolidation commit; the rollback report below names each branch, and a branch marked NOT restored still carries this run's commits. nothing was torn down. Inspect the target branch and the lane tips, then re-run the merge.")
-	r.state.UpdatedAt = clock.NowUTCISO()
-	r.state.Save(r.root)
-	return exit(1)
-}
+func (r *run) reconcile() error { return r.gate() }
 
 // ---------------------------------------------------------------------------
 // preflight
@@ -918,7 +927,7 @@ func (r *run) mergeInto(source, target string) error {
 		}
 		return fmt.Errorf("Merge of %s into %s failed: %s", source, target, msg)
 	}
-	return advanceBranch(r.root, target, revParse(dir, "HEAD"))
+	return r.advance(target, revParse(dir, "HEAD"))
 }
 
 // ---------------------------------------------------------------------------
@@ -960,7 +969,7 @@ func (r *run) bake() error {
 		fmt.Sprintf("chore(%s): assign mission_number=%d", r.slug, r.number), "--", rel); err != nil {
 		return err
 	}
-	return advanceBranch(r.root, r.m.MissionBranch, revParse(dir, "HEAD"))
+	return r.advance(r.m.MissionBranch, revParse(dir, "HEAD"))
 }
 
 func (r *run) bakeOnPrimary() error {
@@ -1107,7 +1116,7 @@ func (r *run) squashIntoTarget() error {
 		return exit(1)
 	}
 	r.squash = revParse(dir, "HEAD")
-	if err := advanceBranch(r.root, r.m.TargetBranch, r.squash); err != nil {
+	if err := r.advance(r.m.TargetBranch, r.squash); err != nil {
 		sayErr(r.w, err.Error())
 		return exit(1)
 	}
@@ -1119,7 +1128,7 @@ func (r *run) squashIntoTarget() error {
 // landed advances the target to sha and prints the success lines.
 func (r *run) landed(sha string) error {
 	r.squash = sha
-	if err := advanceBranch(r.root, r.m.TargetBranch, sha); err != nil {
+	if err := r.advance(r.m.TargetBranch, sha); err != nil {
 		sayErr(r.w, err.Error())
 		return exit(1)
 	}

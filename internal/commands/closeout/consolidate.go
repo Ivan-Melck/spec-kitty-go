@@ -176,7 +176,7 @@ func runConsolidate(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	if ctx.Bool("abort") {
-		return exitFrom(consolidate.Abort(ctx.Stdout, root, ctx.String("mission"), release))
+		return exitFrom(consolidate.Abort(ctx.Stdout, root, ctx.String("mission"), release, releaseReason))
 	}
 	var notes []string
 	if ctx.Bool("dry-run") && !ctx.Bool("json") {
