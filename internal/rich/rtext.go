@@ -808,6 +808,9 @@ func divideLineRunes(text []rune, width int, fold bool) []int {
 
 func boolp(b bool) *bool { return &b }
 
+// BoolP returns a pointer to b (optional print/render flags).
+func BoolP(b bool) *bool { return &b }
+
 // equal reports whether two styles render identically (Style.__eq__).
 func (s *Style) equal(o *Style) bool {
 	if s == nil || o == nil {

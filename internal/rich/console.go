@@ -107,6 +107,24 @@ func ForWriter(w io.Writer) *Console {
 	return c
 }
 
+// CliConsoleFor is specify_cli's CliConsole(width=width) for the stream w
+// writes to (width 0 = auto-detect; a dumb terminal is 80 wide).
+func CliConsoleFor(w io.Writer, width int) *Console {
+	c := ForWriter(w)
+	c.Sanitize = true
+	if width > 0 {
+		fd := fdOf(w)
+		if fd == 0 {
+			fd = 1
+		}
+		c.Width = consoleWidth(fd, &width)
+	}
+	return c
+}
+
+// PrintTo prints renderables on CliConsole() for w.
+func PrintTo(w io.Writer, objs ...any) { CliConsoleFor(w, 0).Print(w, objs...) }
+
 func termEnvForced() bool {
 	switch os.Getenv("TTY_COMPATIBLE") {
 	case "0":

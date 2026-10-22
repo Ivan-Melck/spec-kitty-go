@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -92,6 +93,13 @@ func run(t *testing.T, bin, home, cwd string, env []string, args ...string) (str
 	return out.String(), code
 }
 
+var reCorr = regexp.MustCompile(`corr-[0-9a-f]{32}`)
+
+// normalize masks volatile values (timestamps, ids).
+func normalize(s string) string {
+	return testkit.NormalizeValues(reCorr.ReplaceAllString(s, "corr-<ID>"))
+}
+
 // visible shows escape sequences for failure messages.
 func visible(s string) string { return strings.ReplaceAll(s, "\x1b", "␛") }
 
@@ -142,6 +150,7 @@ func compareAll(t *testing.T, probes []probe, envs []struct {
 					for p := range ch {
 						got, gc := run(t, bin, goHome, cwd, v.env, p.args...)
 						want, wc := run(t, oracle, oHome, cwd, v.env, p.args...)
+						got, want = normalize(got), normalize(want)
 						if got != want || gc != wc {
 							mu.Lock()
 							bad = append(bad, p.name)

@@ -265,11 +265,16 @@ func runQuery(ctx *cli.Context) error {
 	}
 
 	if len(matches) == 0 {
-		fmt.Fprintln(ctx.Stdout, rich.Wrap(rich.Strip(fmt.Sprintf("[dim]No docs pages match '%s'.[/dim]", term)), tableWidth))
+		rich.CliConsoleFor(ctx.Stdout, tableWidth).Print(ctx.Stdout, fmt.Sprintf("[dim]No docs pages match '%s'.[/dim]", term))
 		return nil
 	}
 	lower := strings.ToLower(strings.TrimSpace(term))
-	var rows [][]string
+	tbl := rich.NewTable()
+	tbl.Title = fmt.Sprintf("Docs matching '%s'", term)
+	tbl.AddColumn("Path", rich.Column{Style: "cyan"})
+	tbl.AddColumn("Title", rich.Column{Style: "bold"})
+	tbl.AddColumn("Type", rich.Column{Style: "yellow"})
+	tbl.AddColumn("Matching anchors", rich.Column{})
 	for _, e := range matches {
 		var slugs []string
 		for _, a := range matchingAnchors(e, lower, section) {
@@ -279,8 +284,8 @@ func runQuery(ctx *cli.Context) error {
 		if len(slugs) > 0 {
 			anchorText = strings.Join(slugs, ", ")
 		}
-		rows = append(rows, []string{e.Path, e.Title, e.DivioType, anchorText})
+		tbl.AddRow(e.Path, e.Title, e.DivioType, anchorText)
 	}
-	rich.TableWidth(ctx.Stdout, rich.Strip(fmt.Sprintf("Docs matching '%s'", term)), []string{"Path", "Title", "Type", "Matching anchors"}, rows, tableWidth)
+	rich.CliConsoleFor(ctx.Stdout, tableWidth).Print(ctx.Stdout, tbl)
 	return nil
 }
