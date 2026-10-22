@@ -67,7 +67,9 @@ var configKeyFindings = map[string]bool{"legacy_org_packs_key": true, "legacy_or
 
 // --- legacy layout detection (migration/legacy_charter_layout.py) -----------------
 
-func governanceFilePath(root string) string { return filepath.Join(root, ".kittify", "charter", "governance.yaml") }
+func governanceFilePath(root string) string {
+	return filepath.Join(root, ".kittify", "charter", "governance.yaml")
+}
 
 func loadPrefiltered(p string) (bool, any) {
 	b, err := os.ReadFile(p)
@@ -164,7 +166,7 @@ func detectLegacyCharterLayout(root string) []string {
 
 type cutoverReport struct {
 	moved, rewritten, reset, keptForReview, matchesMinimal, skillsRemoved, skillsKept, errors []string
-	restoreHints, preserved                                                                 []string
+	restoreHints, preserved                                                                   []string
 }
 
 func (r *cutoverReport) actionable() bool {
@@ -211,7 +213,7 @@ func (r *cutoverReport) result(dryRun bool) migrationResult {
 	}
 	var warn []string
 	for _, v := range []struct {
-		l          []string
+		l         []string
 		lab, dryL string
 	}{{r.keptForReview, "Kept for review", "Would keep for review"}, {r.matchesMinimal, "Matches preset minimal, kept", "Would keep (matches preset minimal)"},
 		{r.skillsKept, "Kept edited skill copy", "Would keep edited skill copy"}} {
@@ -238,8 +240,10 @@ type cutoverRun struct {
 
 type cutoverStep func(r *cutoverRun) error
 
-func (r *cutoverRun) legacy() string { return filepath.Join(r.root, filepath.FromSlash(legacyProjectRoot)) }
-func (r *cutoverRun) pack() string   { return filepath.Join(r.root, filepath.FromSlash(packRootRel)) }
+func (r *cutoverRun) legacy() string {
+	return filepath.Join(r.root, filepath.FromSlash(legacyProjectRoot))
+}
+func (r *cutoverRun) pack() string { return filepath.Join(r.root, filepath.FromSlash(packRootRel)) }
 func (r *cutoverRun) rel(p string) string {
 	if x, ok := relPosix(p, r.root); ok {
 		return x
