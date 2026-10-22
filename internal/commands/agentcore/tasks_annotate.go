@@ -76,19 +76,8 @@ func emitAnnotation(dir, wpID string, delta status.Delta, actor string) (*status
 	return a, nil
 }
 
-// warnLog renders a Python logging WARNING through rich's log handler
-// (level column + message wrapped and padded to the console width).
-func warnLog(w io.Writer, msg string) {
-	width := cli.Width()
-	inner := width - 9
-	for i, l := range rich.WrapWords(msg, inner) {
-		prefix := "         "
-		if i == 0 {
-			prefix = "WARNING  "
-		}
-		fmt.Fprintln(w, prefix+padRight(l, inner))
-	}
-}
+// warnLog renders a Python logging WARNING through rich's log handler.
+func warnLog(w io.Writer, msg string) { rich.LogWarning(w, msg) }
 
 func materializeWarning(ctx *cli.Context, jsonMode bool, a *status.Annotation) {
 	if a != nil && a.MaterializeFailed && !jsonMode {
