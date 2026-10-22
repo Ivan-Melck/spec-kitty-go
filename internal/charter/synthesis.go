@@ -142,48 +142,6 @@ func MaterializeFreshProjectLayer(root, version string) ([]string, error) {
 	return PlannedFreshPaths(), nil
 }
 
-// SynthesisRequest is the subset of SynthesisRequest the CLI needs.
-type SynthesisRequest struct {
-	InterviewSections []string
-	DRGNodes          []string
-}
-
-// RequestError is the TaskCliError raised by _build_synthesis_request.
-type RequestError struct{ Msg string }
-
-func (e *RequestError) Error() string { return e.Msg }
-
-// BuildSynthesisRequest is _build_synthesis_request (validation + snapshot keys).
-func BuildSynthesisRequest(root, adapter string) (*SynthesisRequest, error) {
-	iv := ReadInterview(InterviewPath(root))
-	if iv == nil {
-		return nil, &RequestError{"No interview answers found. Run 'spec-kitty charter interview' first."}
-	}
-	cr, err := resolveConfigRoots(root, nil)
-	if err != nil {
-		return nil, err
-	}
-	req := &SynthesisRequest{}
-	sections := map[string]bool{"mission_id": true, "selected_directives": true, "selected_paradigms": true}
-	for _, kv := range iv.Answers.Pairs() {
-		sections[kv.Key] = true
-	}
-	req.InterviewSections = dct.SortedKeys(sections)
-	if t, err := LoadWriteTarget(root); err == nil {
-		if v, ok := t.Data.Get("activated_directives"); ok && v != nil {
-			for _, d := range cr.byKind[dct.Directive] {
-				req.DRGNodes = append(req.DRGNodes, "directive:"+d)
-			}
-		}
-	}
-	switch adapter {
-	case "generated", "fixture":
-	default:
-		return nil, &RequestError{"Unknown adapter '" + adapter + "'. Supported adapters are '--adapter generated' and '--adapter fixture'. Doctrine generation is performed by the LLM harness (Claude Code, Codex, Cursor, etc.) via the spk-charter-governance skill. spec-kitty never calls an LLM itself."}
-	}
-	return req, nil
-}
-
 // ResynthesisTopics is _list_resynthesis_topics.
 func ResynthesisTopics(root string, req *SynthesisRequest) *jsonx.Object {
 	var artifacts []string
