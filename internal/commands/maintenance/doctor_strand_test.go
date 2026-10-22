@@ -100,6 +100,32 @@ func TestDiffDoctorCoordinationStrandRefusals(t *testing.T) {
 	)
 }
 
+// TestDiffDoctorCoordinationStrandBranchMismatch: --fix refuses to revert
+// in a coordination worktree checked out on a foreign branch, and refuses
+// a range holding a status commit the marker did not record.
+func TestDiffDoctorCoordinationStrandBranchMismatch(t *testing.T) {
+	p := newOraclePair(t)
+	g, o := missionfx.OracleCalcMission(t, p)
+	strandMission(t, p.Go, g, true, "")
+	strandMission(t, p.Oracle, o, true, "")
+	p.Both(func(s *testkit.Sandbox) { s.Exec(coordWorktree(t, s), "git", "switch", "-q", "-c", "scratch") })
+	compareSteps(t, p, g, o,
+		step{"doctor", "coordination", "--fix", "--json"},
+	)
+	p.Both(func(s *testkit.Sandbox) {
+		wt := coordWorktree(t, s)
+		s.Exec(wt, "git", "switch", "-q", "-")
+		slug := missionfx.MissionSlug(t, s)
+		f := filepath.Join(wt, "kitty-specs", slug, "status.events.jsonl")
+		b, _ := os.ReadFile(f)
+		os.WriteFile(f, append(b, []byte(`{"actor": "reviewer", "at": "2026-01-02T00:00:00+00:00", "event_id": "01KZZZZZZZZZZZZZZZZZZZZZZ2", "evidence": null, "execution_mode": "worktree", "force": true, "from_lane": "done", "mission_slug": "`+slug+`", "reason": "reopen", "review_ref": null, "to_lane": "done", "wp_id": "WP01"}`+"\n")...), 0o644)
+		s.Exec(wt, "git", "commit", "-qam", "later status event")
+	})
+	compareSteps(t, p, g, o,
+		step{"doctor", "coordination", "--fix", "--json"},
+	)
+}
+
 func stateMarker(t *testing.T, s *testkit.Sandbox, slug string) string {
 	meta, _ := jsonx.DecodeObject([]byte(s.ReadFile("kitty-specs/" + slug + "/meta.json")))
 	st, err := jsonx.DecodeObject([]byte(s.ReadFile(".kittify/runtime/merge/" + meta.GetString("mission_id") + "/state.json")))
