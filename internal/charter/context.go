@@ -147,6 +147,7 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 	if _, err := dct.LoadActivation(root); err != nil {
 		return nil, err
 	}
+	EnsureBundleFresh(root)
 	norm := strings.ToLower(strings.TrimSpace(action))
 	st := prepareState(root, norm, opt.Depth)
 	if !BootstrapActions[norm] && !actionNodeDeclared(root, opt.MissionType, norm) {

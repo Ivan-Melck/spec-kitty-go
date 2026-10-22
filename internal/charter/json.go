@@ -9,6 +9,7 @@ import (
 
 // ProjectCharterBlock is upstream _project_charter_json_block.
 func ProjectCharterBlock(root string) *jsonx.Object {
+	EnsureBundleFresh(root) // _bundle_root_for_json
 	y := Path(root, CharterYAML)
 	o := jsonx.NewObject("present", exists(y), "path", CharterYAML, "charter_md_present", exists(Path(root, CharterMD)), "charter_md_path", CharterMD)
 	st, err := os.Stat(y)

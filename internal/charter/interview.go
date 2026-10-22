@@ -257,8 +257,12 @@ func WriteInterview(path string, iv *Interview) error {
 
 // ReadInterview is read_interview_answers (nil when missing/invalid).
 func ReadInterview(path string) *Interview {
-	b, err := os.ReadFile(path)
-	if err != nil {
+	if !exists(path) {
+		return nil
+	}
+	// Decoded through the encoding chokepoint (provenance record per load).
+	b, ok := loadCharterText(path)
+	if !ok {
 		return nil
 	}
 	o, err := yamlx.ParseObject(b)

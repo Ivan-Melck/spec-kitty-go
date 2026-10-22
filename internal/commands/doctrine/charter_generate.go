@@ -109,6 +109,7 @@ func runCharterGenerate(ctx *cli.Context) error {
 	if _, err := os.Stat(mdPath); err != nil {
 		os.WriteFile(mdPath, []byte(charterMDSeed), 0o644)
 	}
+	charter.SyncCharterIfPresent(root) // staleness check through the encoding chokepoint
 	for _, f := range []string{".kittify/charter/charter.md", ".kittify/charter/charter.yaml", ".gitignore"} {
 		if _, err := os.Stat(filepath.Join(root, f)); err != nil {
 			continue
