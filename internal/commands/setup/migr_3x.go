@@ -2572,7 +2572,7 @@ func mSurfaceRepairWiring() migrationImpl {
 			}
 			n := 0
 			if ac, err := kittify.LoadAgentConfig(root); err == nil && len(ac.Available) > 0 {
-				n = len(CollectToolSurfaces(root, ac.Available, true, nil))
+				n = CollectToolSurfaceCount(root, ac.Available)
 			}
 			return migrationResult{Success: true, Changes: []string{fmt.Sprintf("surface_repair_wiring: probed %d tool surface(s)", n)}}
 		},

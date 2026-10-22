@@ -91,9 +91,9 @@ library goldens (`internal/pydantic`, `internal/pydifflib`, `internal/jsonschema
 
 ## Remaining work
 
-- Mission-type activation step-removal warnings (FR-008) and
-  `reproject_pack_skills` after skill (de)activation (needs the pack skill
-  installer, MAINT territory).
+- Mission-type activation step-removal warnings (FR-008).
+  (`reproject_pack_skills` after skill (de)activation is done by area TSE,
+  see setup.md.)
 - Preset anti-pattern DRG validation at `charter activate --preset` (rare
   authoring error path).
 - `charter pack regenerate-graph` extractor edge cases: YAML 1.2 typing of

@@ -292,8 +292,10 @@ func Activate(root, token, id string) (*ActivationResult, error) {
 	if !present {
 		switch {
 		case token == "skill":
-			act, _ := dct.LoadActivation(root)
-			preserved = act.Activated(dct.Skill).Sorted()
+			// PackContext.activated_skills: an absent key puts the org
+			// packs' required_skills in force (built-in defaults: none).
+			preserved = OrgRequiredIDs(root, "skills")
+			sort.Strings(preserved)
 		default:
 			if eff, ok := EffectiveIDs(root, token); ok {
 				preserved = eff

@@ -47,12 +47,41 @@ func runPicker(t *testing.T, keys ...string) (string, *testkit.Sandbox, int) {
 }
 
 func runPickerWith(t *testing.T, bin string, keys ...string) (string, *testkit.Sandbox, int) {
-	s := testkit.NewSandbox(t)
+	return runPickerEnv(t, bin, false, keys...)
+}
+
+// runPickerEnv drives init's picker in a PTY; colour=true drops NO_COLOR so
+// rich renders colours as on a real terminal.
+func runPickerEnv(t *testing.T, bin string, colour bool, keys ...string) (string, *testkit.Sandbox, int) {
+	return runPTY(t, bin, colour, true, []string{"init", "proj"}, keys...)
+}
+
+// runPTY runs bin args in a PTY (NO_COLOR dropped when colour); picker
+// waits for the agent picker before sending keys.
+func runPTY(t *testing.T, bin string, colour, picker bool, args []string, keys ...string) (string, *testkit.Sandbox, int) {
+	return runPTYIn(t, testkit.NewSandbox(t), bin, colour, picker, args, keys...)
+}
+
+func runPTYIn(t *testing.T, s *testkit.Sandbox, bin string, colour, picker bool, args []string, keys ...string) (string, *testkit.Sandbox, int) {
 	m, sl := openPTY(t)
 	defer m.Close()
-	cmd := exec.Command(bin, "init", "proj")
+	cmd := exec.Command(bin, args...)
 	cmd.Dir = s.Dir
-	cmd.Env = append(s.Environ(), "TERM=xterm", "COLUMNS=80", "SPEC_KITTY_GO_SKIP_BOOTSTRAP=1")
+	env := s.Environ()
+	if colour {
+		var kept []string
+		for _, e := range env {
+			if !strings.HasPrefix(e, "NO_COLOR=") {
+				kept = append(kept, e)
+			}
+		}
+		env = kept
+	}
+	env = append(env, "TERM=xterm", "COLUMNS=80")
+	if picker {
+		env = append(env, "SPEC_KITTY_GO_SKIP_BOOTSTRAP=1")
+	}
+	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = sl, sl, sl
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
 	if err := cmd.Start(); err != nil {
@@ -83,7 +112,7 @@ func runPickerWith(t *testing.T, bin string, keys ...string) (string, *testkit.S
 		defer mu.Unlock()
 		return strings.Count(string(live), "Use ↑/↓ to move")
 	}
-	for deadline := time.Now().Add(60 * time.Second); frames() == 0 && time.Now().Before(deadline); {
+	for deadline := time.Now().Add(60 * time.Second); picker && frames() == 0 && time.Now().Before(deadline); {
 		time.Sleep(100 * time.Millisecond)
 	}
 	codes := map[string]string{"up": "\x1b[A", "down": "\x1b[B", "space": " ", "enter": "\r", "esc": "\x1b\x1b", "ctrlc": "\x03"}
@@ -115,9 +144,10 @@ func TestInitArrowKeyPicker(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
-	if !strings.Contains(out, "╭──────────────────────── Choose your AI assistant(s): ────────────────────────╮") ||
-		!strings.Contains(out, "│  ▶    ☑ copilot (GitHub Copilot)") ||
-		!strings.Contains(out, "Use ↑/↓ to move, Space to toggle, Enter to confirm, Esc to cancel") {
+	plainOut := reCSI.ReplaceAllString(out, "")
+	if !strings.Contains(plainOut, "╭──────────────────────── Choose your AI assistant(s): ────────────────────────╮") ||
+		!strings.Contains(plainOut, "│  ▶    ☑ copilot (GitHub Copilot)") ||
+		!strings.Contains(plainOut, "Use ↑/↓ to move, Space to toggle, Enter to confirm, Esc to cancel") {
 		t.Errorf("panel not drawn:\n%s", out)
 	}
 	// On a terminal rich highlights "assistant(s)" (bold call and parens),
@@ -175,5 +205,165 @@ func TestInitArrowKeyPickerFramesMatchOracle(t *testing.T) {
 	}
 	if len(gf) != len(keys)+1 {
 		t.Errorf("go drew %d frames, want %d", len(gf), len(keys)+1)
+	}
+}
+
+var reNonSGR = regexp.MustCompile("\x1b\\[[0-9;?]*[A-Za-ln-z]")
+
+// colourFrames returns the panel frames with their SGR styling kept
+// (cursor controls removed).
+func colourFrames(out string) []string {
+	clean := strings.ReplaceAll(reNonSGR.ReplaceAllString(out, ""), "\r", "")
+	var frames []string
+	for {
+		i := strings.Index(clean, "Choose your AI")
+		if i < 0 {
+			return frames
+		}
+		start := strings.LastIndex(clean[:i], "╭")
+		if p := strings.LastIndex(clean[:start], "\x1b["); p >= 0 && !strings.ContainsAny(clean[p:start], "\n╯") {
+			start = p
+		}
+		j := strings.Index(clean[i:], "╯")
+		if j < 0 {
+			return frames
+		}
+		end := i + j + len("╯")
+		if strings.HasPrefix(clean[end:], "\x1b[0m") {
+			end += len("\x1b[0m")
+		}
+		frames = append(frames, clean[start:end])
+		clean = clean[end:]
+	}
+}
+
+// PYF-14 follow-up: on a colour terminal the picker panel carries rich's
+// segment styles (cyan border, bold title, cyan/bright_black rows, dim help).
+func TestInitArrowKeyPickerColourFramesMatchOracle(t *testing.T) {
+	oracle := testkit.Oracle(t)
+	keys := []string{"down", "space", "up", "enter"}
+	gout, _, gcode := runPickerEnv(t, testkit.Binary(t), true, keys...)
+	oout, _, ocode := runPickerEnv(t, oracle, true, keys...)
+	if gcode != ocode {
+		t.Errorf("exit go=%d oracle=%d", gcode, ocode)
+	}
+	gf, of := colourFrames(gout), colourFrames(oout)
+	if len(of) == 0 || strings.Join(gf, "\n=====\n") != strings.Join(of, "\n=====\n") {
+		t.Errorf("colour frames differ:\n%s", testkit.Diff(strings.Join(of, "\n=====\n"), strings.Join(gf, "\n=====\n")))
+	}
+}
+
+// nagTranscript runs `doctor skills` in a PTY with a fresh nag cache that
+// reports a newer release, returning the nag text (the output up to the
+// end of its last line).
+func nagTranscript(t *testing.T, bin string) string {
+	s := testkit.NewSandbox(t)
+	s.Env = append(s.Env, "HTTPS_PROXY=http://127.0.0.1:9", "HTTP_PROXY=http://127.0.0.1:9")
+	dir := filepath.Join(s.Home, ".cache", "spec-kitty")
+	os.MkdirAll(dir, 0o700)
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000+00:00")
+	rec := `{"always_upgrade": false, "cli_version_key": "4.0.0rc8", "fetched_at": "` + now + `", "last_shown_at": null, ` +
+		`"latest_source": "pypi", "latest_version": "99.1.0", "never_ask": false, "remote_version_seen": null, "snooze_step": null, "snoozed_until": null}`
+	if err := os.WriteFile(filepath.Join(dir, "upgrade-nag.json"), []byte(rec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := runPTYIn(t, s, bin, true, false, []string{"doctor", "skills"})
+	out = strings.ReplaceAll(out, "\r", "")
+	end := strings.Index(out, "for guidance.")
+	if end < 0 {
+		return out
+	}
+	return out[:end+len("for guidance.")]
+}
+
+// The upgrade nag is CliConsole(stderr).print(message): highlighted and
+// wrapped on a colour terminal; doctor subcommands are classified by
+// safety_modes (read-only doctor skills is safe, so it nags).
+func TestNagColourMatchesOracle(t *testing.T) {
+	oracle := testkit.Oracle(t)
+	g, o := nagTranscript(t, testkit.Binary(t)), nagTranscript(t, oracle)
+	if !strings.Contains(o, "\x1b[1;36m99.1\x1b[0m") {
+		t.Fatalf("oracle did not nag:\n%q", o)
+	}
+	if g != o {
+		t.Errorf("nag differs:\n%s", testkit.Diff(o, g))
+	}
+}
+
+// Doctor tables on an 80-column colour terminal: rich's column collapse,
+// ellipsis and crop, bold header, cyan first column, markup cells, and the
+// highlighted markup=False issue lines.
+func TestDoctorColourTablesMatchOracle(t *testing.T) {
+	oracle := testkit.Oracle(t)
+	s := testkit.NewSandbox(t)
+	if r := s.Run("init", ".", "--ai", "claude,codex", "--non-interactive"); r.Code != 0 {
+		t.Fatalf("init: %s", r.Stderr)
+	}
+	os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty.plan"))
+	for _, args := range [][]string{{"doctor", "state-roots"}, {"doctor", "skills"}, {"doctor", "command-files"}} {
+		g, _, gc := runPTYIn(t, s, testkit.Binary(t), true, false, args)
+		o, _, oc := runPTYIn(t, s, oracle, true, false, args)
+		if gc != oc {
+			t.Errorf("%v: exit go=%d oracle=%d", args, gc, oc)
+		}
+		g, o = strings.ReplaceAll(g, "\r", ""), strings.ReplaceAll(o, "\r", "")
+		if !strings.Contains(o, "\x1b[") {
+			t.Fatalf("%v: oracle not coloured:\n%q", args, o)
+		}
+		if g != o {
+			t.Errorf("%v differs:\n%s", args, testkit.Diff(o, g))
+		}
+	}
+}
+
+var reSpaces = regexp.MustCompile(" {2,}")
+
+// initColourParts splits a coloured `init --ai` transcript into the part
+// before the progress tree and the final tree onwards (rich's transient
+// Live frames in between are timing-dependent), sandbox paths masked.
+func initColourParts(out, dir string) (head, tail string) {
+	clean := strings.ReplaceAll(reNonSGR.ReplaceAllString(out, ""), "\r", "")
+	var lines []string
+	for _, l := range strings.Split(clean, "\n") {
+		if strings.Contains(l, dir) {
+			l = reSpaces.ReplaceAllString(strings.ReplaceAll(l, dir, "<D>"), "  ")
+		}
+		lines = append(lines, l)
+	}
+	clean = strings.Join(lines, "\n")
+	title := "\x1b[36mInitialize Specify Project\x1b[0m"
+	i, j := strings.Index(clean, title), strings.LastIndex(clean, title)
+	if i < 0 {
+		return clean, ""
+	}
+	head = clean[:i]
+	// Go prints the ignore-file notice before the tree; rich prints it
+	// above the live region (between transient frames).
+	if k := strings.Index(head, "\x1b[36mUpdated ."); k >= 0 {
+		head = head[:k]
+	}
+	return head, clean[j:]
+}
+
+// PYF-14 follow-up: on a colour terminal init's banner gradient, setup
+// panel, final step tree and closing panels carry rich's styles.
+func TestInitColourOutputMatchesOracle(t *testing.T) {
+	oracle := testkit.Oracle(t)
+	args := []string{"init", "proj", "--ai", "claude,vibe"}
+	gout, gs, gcode := runPTY(t, testkit.Binary(t), true, false, args)
+	oout, osb, ocode := runPTY(t, oracle, true, false, args)
+	if gcode != ocode {
+		t.Errorf("exit go=%d oracle=%d", gcode, ocode)
+	}
+	gh, gt := initColourParts(gout, gs.Dir)
+	oh, ot := initColourParts(oout, osb.Dir)
+	if ot == "" || !strings.Contains(oh, "\x1b[3;93mSpec Kitty") {
+		t.Fatalf("oracle transcript not coloured:\n%q", oout)
+	}
+	if gh != oh {
+		t.Errorf("head differs:\n%s", testkit.Diff(oh, gh))
+	}
+	if gt != ot {
+		t.Errorf("tail differs:\n%s", testkit.Diff(ot, gt))
 	}
 }

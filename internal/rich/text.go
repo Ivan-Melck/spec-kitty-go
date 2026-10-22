@@ -380,6 +380,12 @@ func printColor(w io.Writer, s string, width int, sys ColorSystem) bool {
 	if err != nil {
 		return false
 	}
+	writeHighlighted(w, t, width, sys)
+	return true
+}
+
+// writeHighlighted writes t highlighted (render_str), wrapped at width.
+func writeHighlighted(w io.Writer, t *richText, width int, sys ColorSystem) {
 	// render_str: highlighter(str(text)) then copy_styles(markup text): the
 	// markup spans follow (and override) the highlight spans
 	markup := t.spans
@@ -417,7 +423,6 @@ func printColor(w io.Writer, s string, width int, sys ColorSystem) bool {
 	}
 	b.WriteString("\n")
 	io.WriteString(w, b.String())
-	return true
 }
 
 func hasPrefixAt(text []rune, i int, p []rune) bool {

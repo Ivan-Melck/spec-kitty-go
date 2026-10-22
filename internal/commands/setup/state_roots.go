@@ -155,11 +155,15 @@ func runDoctorStateRoots(ctx *cli.Context) error {
 			if c.s.root != rk {
 				continue
 			}
-			pres := "N"
+			pres := "[dim]N[/dim]"
 			if c.present {
-				pres = "Y"
+				pres = "[green]Y[/green]"
 			}
-			rows = append(rows, []string{c.s.name, c.s.authority, c.s.gitClass, pres})
+			authority, gitClass := c.s.authority, c.s.gitClass
+			if c.warning != "" {
+				authority, gitClass = "[yellow]"+authority+"[/yellow]", "[yellow]"+gitClass+"[/yellow]"
+			}
+			rows = append(rows, []string{c.s.name, authority, gitClass, pres})
 		}
 		if len(rows) == 0 {
 			continue
