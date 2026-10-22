@@ -47,6 +47,57 @@ func TestDiffNextGuardFailurePaths(t *testing.T) {
 	)
 }
 
+// charterPair is an analyzed calc mission whose project charter was
+// generated and synthesized by the oracle (committed).
+func charterPair(t *testing.T) *testkit.Pair {
+	p := newAnalyzedPair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		missionfx.RunOracle(t, s, "charter", "generate", "--no-from-interview", "--json")
+		missionfx.RunOracle(t, s, "charter", "synthesize", "--json")
+		s.Git("add", "-A")
+		s.Git("commit", "-qm", "charter")
+	})
+	return p
+}
+
+// TestDiffCharterPreflightFreshness covers CORE-17: a stale charter bundle
+// blocks advancing `next` (human and JSON envelope) and both implement
+// surfaces, while query mode logs and continues.
+func TestDiffCharterPreflightFreshness(t *testing.T) {
+	p := charterPair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		s.Exec("", "rm", "-f", ".kittify/charter/synthesis-manifest.yaml")
+		s.WriteFile(".kittify/charter-packs/graph.yaml", "nodes: []\nedges: []\n")
+		s.Git("add", "-A")
+		s.Git("commit", "-qm", "stale drg")
+	})
+	steps(t, p, true,
+		[]string{"next", "--agent", "claude", "--mission", "$M"},
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"},
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success"},
+		[]string{"implement", "WP01", "--mission", "$M"},
+		[]string{"implement", "WP01", "--mission", "$M", "--json"},
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M"},
+	)
+	compareGit(t, p)
+}
+
+// TestDiffCharterPreflightDefaultProfile covers the deactivated
+// mission-default-profile advisories of the passing preflight.
+func TestDiffCharterPreflightDefaultProfile(t *testing.T) {
+	p := charterPair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		missionfx.RunOracle(t, s, "charter", "activate", "agent-profile", "python-pedro")
+		missionfx.RunOracle(t, s, "charter", "deactivate", "agent-profile", "reviewer-renata")
+		s.Git("add", "-A")
+		s.Git("commit", "-qm", "deactivate")
+	})
+	steps(t, p, true,
+		[]string{"next", "--agent", "claude", "--mission", "$M"},
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"},
+	)
+}
+
 // TestDiffMissionCloseMerged covers CORE-15: closing a merged mission
 // persists the retrospective (record + RetrospectiveCaptured event,
 // committed) and tears down the coordination worktree with its report line;

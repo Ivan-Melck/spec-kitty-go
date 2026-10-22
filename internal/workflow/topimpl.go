@@ -257,7 +257,14 @@ func TopImplement(o *Out, opt ImplementOptions) (*ImplementResult, error) {
 	tracker.Add("create", "Resolve execution workspace")
 	if !opt.SkipPreamble {
 		o.Console("")
-		EmitCharterPreflight(o.Err, root, "implement")
+		if err := CharterPreflightOrAbort(o.Err, root, "implement"); err != nil {
+			// The preflight's typer.Exit(1) lands in the detect phase's
+			// error handler (str(Exit(1)) == "1").
+			tracker.Start("detect")
+			tracker.Error("detect", "1")
+			o.Console(tracker.Render())
+			return nil, err
+		}
 	}
 	tracker.Start("detect")
 	autoCommit := mission.AutoCommit(root)
