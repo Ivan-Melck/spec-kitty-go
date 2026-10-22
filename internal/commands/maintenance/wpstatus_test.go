@@ -41,6 +41,22 @@ func wpStatusCorpus(s *testkit.Sandbox) {
 	s.Git("commit", "-q", "-m", "wp-status corpus")
 }
 
+// TestDiffMigrateBackfillWPStatusTypeError: WPMetadata's shell_pid
+// coercion raises TypeError for a sequence, which upstream does not catch.
+func TestDiffMigrateBackfillWPStatusTypeError(t *testing.T) {
+	p := newOraclePair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile("kitty-specs/070-x/meta.json", `{"slug": "070-x"}`+"\n")
+		s.WriteFile("kitty-specs/070-x/tasks/WP01-a.md", "---\nwork_package_id: WP01\nshell_pid: [1]\n---\n")
+	})
+	for _, args := range [][]string{{"migrate", "backfill-wp-status"}, {"migrate", "backfill-wp-status", "--json"}} {
+		g, o := p.Run(args...)
+		if g.Code != o.Code || g.Stdout != o.Stdout || lastLine(g.Stderr) != lastLine(o.Stderr) {
+			t.Errorf("%v: go=%d %q %q oracle=%d %q %q", args, g.Code, g.Stdout, lastLine(g.Stderr), o.Code, o.Stdout, lastLine(o.Stderr))
+		}
+	}
+}
+
 func TestDiffMigrateBackfillWPStatus(t *testing.T) {
 	p := newOraclePair(t)
 	p.Both(wpStatusCorpus)

@@ -31,6 +31,7 @@ const (
 // WPStatusResult is WpStatusBackfillResult.
 type WPStatusResult struct {
 	Slug                                            string
+	crash                                           error
 	Seeded, WouldSeed                               int
 	FilesOnly, SnapshotOnly, Malformed              []string
 	TerminalReason, RefreshError, SkipReason, Error *string
@@ -60,14 +61,17 @@ func wpTaskFiles(tasks string) []string {
 
 // authoredWPID is read_authored_wp_frontmatter (strict WPMetadata
 // validation): the work_package_id, or ok=false for a malformed file.
-func authoredWPID(path string) (string, bool) {
-	proj, ok := dossier.ReadAuthoredWP(path)
+func authoredWPID(path string) (string, bool, error) {
+	proj, ok, err := dossier.ReadAuthoredWP(path)
+	if err != nil {
+		return "", false, &UncaughtError{Type: "TypeError", Msg: err.Error()}
+	}
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
 	id, _ := proj.Get("work_package_id")
 	s, _ := id.(string)
-	return s, s != ""
+	return s, s != "", nil
 }
 
 func seedTimestamp(meta *jsonx.Object) string {
@@ -103,7 +107,10 @@ func planWPStatus(dir string, manifest map[string]string) (*wpPlan, error) {
 	files := map[string]bool{}
 	var malformed []string
 	for _, f := range wpTaskFiles(filepath.Join(dir, "tasks")) {
-		id, ok := authoredWPID(f)
+		id, ok, err := authoredWPID(f)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			warnf("Skipping %s: malformed frontmatter", filepath.Base(f))
 			malformed = append(malformed, filepath.Base(f))
@@ -213,7 +220,11 @@ func ApplyWPStatusBackfill(root, dir string, dryRun bool, manifest map[string]st
 		return WPStatusResult{Slug: slug, SkipReason: strPtr("no tasks/ directory")}
 	}
 	probed := false
-	if pre, err := planWPStatus(dir, nil); err == nil && len(pre.filesOnly) > 0 {
+	pre, err := planWPStatus(dir, nil)
+	if u, isCrash := err.(*UncaughtError); isCrash {
+		return WPStatusResult{Slug: slug, crash: u}
+	}
+	if err == nil && len(pre.filesOnly) > 0 {
 		probed = true
 		if CoordinationSurfaceIsLive(root, dir) {
 			return WPStatusResult{Slug: slug, SkipReason: strPtr(CoordSurfaceLive)}
@@ -281,7 +292,11 @@ func ApplyWPStatusBackfillRepo(root string, mission *string, dryRun bool, manife
 	}
 	var out []WPStatusResult
 	for _, n := range names {
-		out = append(out, ApplyWPStatusBackfill(root, project.Specs(root, n), dryRun, manifest))
+		r := ApplyWPStatusBackfill(root, project.Specs(root, n), dryRun, manifest)
+		if r.crash != nil {
+			return nil, r.crash
+		}
+		out = append(out, r)
 	}
 	return out, nil
 }

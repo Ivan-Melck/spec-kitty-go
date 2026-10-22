@@ -45,18 +45,24 @@ func WPProjectionHash(path string) (hash string, verr error, ok bool) {
 // strict WPMetadata schema. It returns the static projection (which carries
 // the validated work_package_id); ok=false covers every failure upstream
 // raises (FrontmatterError, ValidationError, UnicodeDecodeError, OSError).
-func ReadAuthoredWP(path string) (*jsonx.Object, bool) {
+//
+// A *PyTypeError (the shell_pid coercion's TypeError, which upstream does
+// not catch) is returned as err.
+func ReadAuthoredWP(path string) (*jsonx.Object, bool, error) {
 	b, err := os.ReadFile(path)
 	if err != nil || !utf8.Valid(b) {
-		return nil, false
+		return nil, false, nil
 	}
 	src, meta, ok := readFrontmatter(path)
 	if !ok {
-		return nil, false
+		return nil, false, nil
+	}
+	if te := WPMetadataTypeError(src, meta); te != "" {
+		return nil, false, &PyTypeError{te}
 	}
 	proj, err := validateWP(meta, timestampKeys(src))
 	if err != nil {
-		return nil, false
+		return nil, false, nil
 	}
-	return proj, true
+	return proj, true, nil
 }
