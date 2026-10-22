@@ -60,21 +60,21 @@ func (e *DivergedError) ToObject() *jsonx.Object {
 
 // Options are the create inputs.
 type Options struct {
-	Root                 string // repository root
-	Cwd                  string // process working directory
-	Slug                 string
-	MissionType          string // "" → software-dev
-	TargetBranch         string
-	FriendlyName         *string
-	PurposeTLDR          *string
-	PurposeContext       *string
-	PRBound              bool
-	Topology             string
-	ForceRecreateCoord   bool
-	RetainBranches       bool
-	RetainWorktrees      bool
-	CommitToTarget       bool
-	AllowDuplicate       bool
+	Root               string // repository root
+	Cwd                string // process working directory
+	Slug               string
+	MissionType        string // "" → software-dev
+	TargetBranch       string
+	FriendlyName       *string
+	PurposeTLDR        *string
+	PurposeContext     *string
+	PRBound            bool
+	Topology           string
+	ForceRecreateCoord bool
+	RetainBranches     bool
+	RetainWorktrees    bool
+	CommitToTarget     bool
+	AllowDuplicate     bool
 	// Owned is the validated owned create root (--owned-checkout); nil for
 	// an unowned (repository root) create.
 	Owned                *ownedcheckout.CreateRoot
