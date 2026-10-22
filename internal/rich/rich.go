@@ -105,6 +105,9 @@ func Print(w io.Writer, s string) {
 	if width <= 0 {
 		return // a zero-width console renders nothing
 	}
+	if sys := DetectColorSystem(fdOf(w)); sys != NoColor && printColor(w, s, width, sys) {
+		return
+	}
 	fmt.Fprintln(w, Wrap(Strip(s), width))
 }
 
