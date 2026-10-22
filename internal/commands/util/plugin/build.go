@@ -12,6 +12,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/app"
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
@@ -116,6 +117,11 @@ func prepFail(err error) error {
 	return &BuildError{err.Error()}
 }
 
+// ProfileRepositoryPath stands in for the installed
+// charter/offering/agent_profiles/repository.py (a site-packages path a Go
+// binary does not have) in the warnings that module emits.
+const ProfileRepositoryPath = "<spec-kitty>/charter/offering/agent_profiles/repository.py"
+
 // BuildClaude is ClaudeBundleProjector(outputDir).build minus validation;
 // it returns the bundle directory as displayed upstream.
 func BuildClaude(stderr io.Writer, outputDir string) (string, error) {
@@ -130,9 +136,23 @@ func BuildClaude(stderr io.Writer, outputDir string) (string, error) {
 		if err != nil {
 			return nil, err
 		}
-		profiles, err := agents.BuiltinProfiles()
-		if err != nil {
-			return nil, err
+		// _build_active_charter_service(staging root, org_roots=[]): the
+		// built-in profiles plus the staging root's project-layer profiles.
+		set := charter.LoadAgentProfileSet(root)
+		for _, c := range set.Collisions {
+			// warnings.warn routed through logging (captureWarnings); the
+			// reporting frame is repository.py:558 in the installed package.
+			rich.LogWarning(stderr, ProfileRepositoryPath+":558: ArtifactLayerCollisionWarning: "+c.WarningMessage()+
+				"\n  self._record_profile_collision_if_present(\n")
+		}
+		if len(set.Skipped) > 0 {
+			return nil, &BuildError{"Invalid built-in profile sources: " + charter.SkippedReprList(set.Skipped)}
+		}
+		var profiles []agents.Profile
+		for _, o := range set.Profiles {
+			if p := agents.ProfileFromObject(o); !p.Sentinel {
+				profiles = append(profiles, p)
+			}
 		}
 		if len(profiles) == 0 {
 			return nil, errorf("No built-in agent profiles found under %s. Bundle must include profiles per FR-020.", agents.ProfilesAssetDir)
