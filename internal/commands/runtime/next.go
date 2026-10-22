@@ -215,6 +215,9 @@ func runNext(ctx *cli.Context) error {
 	nextrt.EmitMissionNextInvoked(root, slug, agent, *result, d)
 	nextrt.WriteIssuanceRecord(root, slug, agent, d)
 	printDecision(ctx, d, jsonMode, answeredID, answer)
+	if !jsonMode {
+		printStalledInterventions(ctx, root, slug)
+	}
 	if d.Kind == nextrt.KindBlocked {
 		return cli.Exit(1)
 	}

@@ -156,11 +156,15 @@ func inferReviewGates(req *TransitionRequest, in PrepareInput, resolved string, 
 		case len(roster) == 0:
 			sub = Bool(true)
 		default:
+			// unchecked_subtask_ids_from_snapshot reads the log.
+			ExtraReadPasses(in.WriteDir, 1)
 			snap := Reduce(stream.Transitions, stream.Annotations, true)
 			sub = Bool(len(UncheckedSubtasks(snap, req.WPID, roster)) == 0)
 		}
 	}
 	if impl == nil && handoff {
+		// _infer_implementation_evidence reads the log.
+		ExtraReadPasses(in.WriteDir, 1)
 		found := false
 		for _, e := range stream.Transitions {
 			if e.WPID == req.WPID {
@@ -192,7 +196,11 @@ func Prepare(req *TransitionRequest, in PrepareInput) (*Prepared, error) {
 		}
 		wsCtx = req.execMode() + ":" + root
 	}
-	stream, err := ReadStream(in.WriteDir, "")
+	// prepare_transition reads the log only inside the review-gate
+	// inference (which logs its own passes).
+	var stream *Stream
+	var err error
+	Quietly(func() { stream, err = ReadStream(in.WriteDir, "") })
 	if err != nil {
 		return nil, err
 	}
