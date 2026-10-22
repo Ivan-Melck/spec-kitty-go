@@ -140,6 +140,7 @@ Exported API (`internal/charsetnorm`): `FromBytes(seq) *Matches`,
 
 ## Remaining work
 
+- Charset detection (ENC): a charter-read encoding failure inside a runtime command that renders charter context (`next`, `agent action implement/review` prompts) unwinds to `encguard`'s uncaught-exception line; those commands' own upstream handlers for `CharterEncodingError` were not individually compared (`charter context` / `charter generate` were). Rich's framed traceback for these and for the `migrate charter-encoding` BOM decode errors is PYF-01's sweep (its helper was not yet in functional-parity at 608d3f50).
 - `migrate rewrite-opposed-by`: byte parity for non-canonically formatted artifacts needs a ruamel round-trip (comment-preserving) emitter, which is PYF-04's yamlx work; switch `internal/migrate/opposedby.go` to it once it lands.
 - `migrate backfill-runtime-state`: the `_flip_phase` PlacementMismatchError (placement port resolving a different PRIMARY home than the write target) needs OWN's placement port (OWN-01/OWN-10); without it the flip writes the canonical mission dir, which is the port's answer for every mission dir the CLI hands it.
 
