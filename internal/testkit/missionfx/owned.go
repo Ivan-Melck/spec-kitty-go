@@ -57,9 +57,27 @@ func GitIn(t testing.TB, s *testkit.Sandbox, dir string, args ...string) string 
 // directory names (go, oracle).
 func OracleOwnedMission(t testing.TB, p *testkit.Pair) (goSlug, oracleSlug string) {
 	t.Helper()
+	return OracleOwnedMissionNamed(t, p, "demo")
+}
+
+// OwnedCalcMission creates the owned single_branch "calc-ops" mission in P
+// with the oracle in both sandboxes and authors the calc spec / plan / tasks
+// / WP files there (committed on OwnedBranch; not finalized).
+func OwnedCalcMission(t testing.TB, p *testkit.Pair) (goSlug, oracleSlug string) {
+	t.Helper()
+	g, o := OracleOwnedMissionNamed(t, p, "calc-ops")
+	p.Both(func(s *testkit.Sandbox) {
+		AuthorCalc(t, OwnedSandbox(s), OwnedMissionSlug(t, s))
+	})
+	return g, o
+}
+
+// OracleOwnedMissionNamed is OracleOwnedMission for mission name.
+func OracleOwnedMissionNamed(t testing.TB, p *testkit.Pair, name string) (goSlug, oracleSlug string) {
+	t.Helper()
 	var slugs []string
 	p.Both(func(s *testkit.Sandbox) {
-		RunOracle(t, s, "agent", "mission", "create", "demo", "--mission-type", "software-dev", "--owned-checkout", OwnedRel,
+		RunOracle(t, s, "agent", "mission", "create", name, "--mission-type", "software-dev", "--owned-checkout", OwnedRel,
 			"--target-branch", OwnedBranch, "--topology", "single_branch", "--branch-strategy", "already-confirmed", "--json")
 		slugs = append(slugs, OwnedMissionSlug(t, s))
 	})
