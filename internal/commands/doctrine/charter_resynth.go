@@ -111,3 +111,19 @@ func renderTensionWarnings(ctx *cli.Context, root string) {
 		cprint(ctx.Stdout, "[yellow]Warning[/yellow]: %s is in tension with %s. Resolve by: (1) deactivating one side, or (2) activating a reconciler that bridges both.", f.A, f.B)
 	}
 }
+
+// loadCascadeGraph is the activate/deactivate cascade's
+// load_validated_graph(repo_root, org_roots=chain, org_fragments=...): a
+// DRGValidationError is not caught upstream (an uncaught traceback); a load
+// failure skips the cascade render (nil graph, nil error).
+func loadCascadeGraph(ctx *cli.Context, root string) (*dct.Graph, error) {
+	g, err := dct.LoadValidatedGraph(root, dct.OrgRoots(root))
+	if err != nil {
+		var ve *dct.DRGValidationError
+		if errors.As(err, &ve) {
+			return nil, pyCrash(ctx, "DRGValidationError", ve.Error())
+		}
+		return nil, nil
+	}
+	return g, nil
+}

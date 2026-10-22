@@ -52,6 +52,8 @@ type Result struct {
 	Text            string
 	ReferencesCount int
 	Depth           int
+	// Warnings are logger.warning records emitted while resolving.
+	Warnings []string
 }
 
 // Options tunes BuildContext.
@@ -161,6 +163,13 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 		return &Result{Action: norm, Mode: "missing", FirstLoad: st.firstLoad, Text: MissingText, Depth: st.depth}, nil
 	}
 	b := ResolveActionBundle(root, norm, opt.MissionType, st.depth)
+	if b.Err != nil {
+		return nil, b.Err
+	}
+	var warns []string
+	if b.Warning != "" {
+		warns = append(warns, b.Warning)
+	}
 	if st.depth < minEffectiveDepth {
 		if opt.MarkLoaded && st.firstLoad {
 			st.markLoaded(norm)
@@ -170,12 +179,12 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 			in.Directives, in.Tactics, in.Styleguides, in.Toolguides, in.Procedures, in.Assets =
 				b.IDs[dct.Directive], b.IDs[dct.Tactic], b.IDs[dct.Styleguide], b.IDs[dct.Toolguide], b.IDs[dct.Procedure], b.IDs[dct.Asset]
 		}
-		return &Result{Action: norm, Mode: "compact", FirstLoad: st.firstLoad, Depth: st.depth, Text: RenderCompact(root, in)}, nil
+		return &Result{Action: norm, Mode: "compact", FirstLoad: st.firstLoad, Depth: st.depth, Text: RenderCompact(root, in), Warnings: warns}, nil
 	}
 	refs := LoadReferences(root)
 	text := renderBootstrap(root, norm, b, refs, opt.Profile)
 	if opt.MarkLoaded && st.firstLoad {
 		st.markLoaded(norm)
 	}
-	return &Result{Action: norm, Mode: "bootstrap", FirstLoad: st.firstLoad, Text: text, ReferencesCount: len(refs), Depth: st.depth}, nil
+	return &Result{Action: norm, Mode: "bootstrap", FirstLoad: st.firstLoad, Text: text, ReferencesCount: len(refs), Depth: st.depth, Warnings: warns}, nil
 }

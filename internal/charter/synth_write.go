@@ -151,120 +151,12 @@ func loadGraphOrDir(p string) (*dct.Graph, error) {
 
 func edgeLabel(e dct.Edge) string { return e.Source + "--" + e.Relation + "-->" + e.Target }
 
-func danglingEndpoints(g *dct.Graph) []dct.Edge {
-	urns := g.NodeURNs()
-	var out []dct.Edge
-	for _, e := range g.Edges {
-		if !urns[e.Source] || !urns[e.Target] {
-			out = append(out, e)
-		}
-	}
-	return out
-}
+func danglingEndpoints(g *dct.Graph) []dct.Edge { return dct.DanglingEndpoints(g) }
 
-func duplicateEdgeTriples(g *dct.Graph) []dct.Edge {
-	seen := map[string]bool{}
-	var out []dct.Edge
-	for _, e := range g.Edges {
-		k := e.Source + "\x00" + e.Target + "\x00" + e.Relation
-		if seen[k] {
-			out = append(out, e)
-		}
-		seen[k] = true
-	}
-	return out
-}
-
-func cycleErrors(g *dct.Graph, relation, prefix string) []string {
-	adj := map[string][]string{}
-	all := map[string]bool{}
-	for _, e := range g.Edges {
-		if e.Relation == relation {
-			adj[e.Source] = append(adj[e.Source], e.Target)
-			all[e.Source], all[e.Target] = true, true
-		}
-	}
-	color := map[string]int{}
-	var errs []string
-	var dfs func(n string, path []string) []string
-	dfs = func(n string, path []string) []string {
-		color[n] = 1
-		path = append(path, n)
-		for _, nb := range adj[n] {
-			switch color[nb] {
-			case 1:
-				start := 0
-				for i, p := range path {
-					if p == nb {
-						start = i
-						break
-					}
-				}
-				cyc := append(append([]string{}, path[start:]...), nb)
-				errs = append(errs, prefix+strings.Join(cyc, " -> "))
-			case 0:
-				path = dfs(nb, path)
-			}
-		}
-		path = path[:len(path)-1]
-		color[n] = 2
-		return path
-	}
-	for _, n := range dct.SortedKeys(all) {
-		if color[n] == 0 {
-			dfs(n, nil)
-		}
-	}
-	return errs
-}
+func duplicateEdgeTriples(g *dct.Graph) []dct.Edge { return dct.DuplicateEdgeTriples(g) }
 
 // validateGraph is drg.validator.validate_graph.
-func validateGraph(g *dct.Graph) []string {
-	var errs []string
-	urns := g.NodeURNs()
-	for _, e := range danglingEndpoints(g) {
-		if !urns[e.Source] {
-			errs = append(errs, fmt.Sprintf("Dangling source: edge (%s --%s--> %s) references non-existent node %s", e.Source, e.Relation, e.Target, dct.PyRepr(e.Source)))
-		}
-		if !urns[e.Target] {
-			errs = append(errs, fmt.Sprintf("Dangling target: edge (%s --%s--> %s) references non-existent node %s", e.Source, e.Relation, e.Target, dct.PyRepr(e.Target)))
-		}
-	}
-	for _, e := range duplicateEdgeTriples(g) {
-		errs = append(errs, fmt.Sprintf("Duplicate edge: (%s --%s--> %s)", e.Source, e.Relation, e.Target))
-	}
-	errs = append(errs, cycleErrors(g, dct.RelRequires, "Cycle in requires: ")...)
-	kind := map[string]string{}
-	for _, n := range g.Nodes {
-		kind[n.URN] = n.Kind
-	}
-	for _, e := range g.Edges {
-		if e.Relation != dct.RelSpecializesFrom && e.Relation != dct.RelDelegatesTo {
-			continue
-		}
-		for _, ep := range [][2]string{{"source", e.Source}, {"target", e.Target}} {
-			k, ok := kind[ep[1]]
-			if ok && k != "agent_profile" {
-				errs = append(errs, fmt.Sprintf("Profile-edge %s must be an agent_profile: edge (%s --%s--> %s) has %s %s of kind %s", ep[0], e.Source, e.Relation, e.Target, ep[0], dct.PyRepr(ep[1]), dct.PyRepr(k)))
-			}
-		}
-	}
-	errs = append(errs, cycleErrors(g, dct.RelSpecializesFrom, "Cycle in specializes_from lineage: ")...)
-	for _, e := range g.Edges {
-		if e.Relation != dct.RelRejects {
-			continue
-		}
-		if k, ok := kind[e.Target]; ok && k != "anti_pattern" {
-			errs = append(errs, fmt.Sprintf("Rejects-edge target must be an anti_pattern node: edge (%s --%s--> %s) has target %s of kind %s", e.Source, e.Relation, e.Target, dct.PyRepr(e.Target), dct.PyRepr(k)))
-		}
-	}
-	for _, n := range g.Nodes {
-		if n.Kind == "anti_pattern" && len(g.EdgesTo(n.URN, dct.RelRejects)) == 0 {
-			errs = append(errs, fmt.Sprintf("Orphaned anti_pattern node: %s is marked anti_pattern but has no inbound rejects edge", dct.PyRepr(n.URN)))
-		}
-	}
-	return errs
-}
+func validateGraph(g *dct.Graph) []string { return dct.ValidateGraph(g) }
 
 // walkProjectProfileNodes is project_scan.walk_project_agent_profile_nodes.
 func walkProjectProfileNodes(root string) ([]dct.Node, error) {

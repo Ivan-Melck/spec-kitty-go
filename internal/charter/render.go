@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
@@ -91,8 +92,35 @@ func RenderCompact(root string, in CompactInput) string {
 	if len(diags) > 0 {
 		lines = append(lines, "  - Diagnostics: "+strings.Join(diags, " | "))
 	}
+	// _append_language_lines
+	if langs, known := InferRepoLanguages(root, nil, false); known && len(langs) > 0 {
+		sorted := append([]string(nil), langs...)
+		sort.Strings(sorted)
+		lines = append(lines, "  - Languages: "+strings.Join(sorted, ", "))
+		if LacksSpecialistGuidance(langs, known, root) {
+			lines = append(lines, "  - Advisory: "+CharterExtensionAdvisory)
+		}
+	}
+	if pr := resolveProjectRoot(root); pr != "" && pr != root {
+		lines = append(lines, "  - Project layer root: "+pr)
+	}
 	text := strings.Join(lines, "\n")
+	// compact_governance._render_compact_governance augmented blocks.
 	var blocks []string
+	sel := LoadSelection(root)
+	if b := renderAuthorityPaths(root, sel); b != "" {
+		blocks = append(blocks, b)
+	}
+	if b := renderGovernanceReferences(root, sel.GovernanceReferences); b != "" {
+		blocks = append(blocks, b)
+	}
+	sectionBlock := ""
+	if in.Action != "" && md != nil {
+		sectionBlock = renderCriticalSectionBodies(string(md), in.Action)
+		if sectionBlock != "" {
+			blocks = append(blocks, sectionBlock)
+		}
+	}
 	profileBlock := RenderProfileSections(root, in.Profile)
 	if profileBlock != "" {
 		blocks = append(blocks, profileBlock)
@@ -100,7 +128,18 @@ func RenderCompact(root string, in CompactInput) string {
 	if len(blocks) == 0 {
 		return text
 	}
-	return enforceTokenBudget(text+"\n\n"+strings.Join(blocks, "\n\n"), in.Action, profileBlock, "")
+	return enforceTokenBudget(text+"\n\n"+strings.Join(blocks, "\n\n"), in.Action, profileBlock, sectionBlock)
+}
+
+// resolveProjectRoot is _project_root_candidates.resolve_project_root: the
+// first existing project-layer candidate directory ("" when none).
+func resolveProjectRoot(root string) string {
+	for _, c := range []string{filepath.Join(root, filepath.FromSlash(dct.ProjectPackRoot)), filepath.Join(root, "src", "charter", "offering")} {
+		if isDir(c) {
+			return c
+		}
+	}
+	return ""
 }
 
 // Reference is one charter.yaml catalog.references entry.

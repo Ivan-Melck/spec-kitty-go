@@ -307,9 +307,16 @@ func CompileCharterWith(root, mission string, iv *Interview, templateSet string,
 	}
 	buckets := map[string][]string{}
 	if len(start) > 0 {
-		g, err := dct.LoadGraph(root, dct.OrgRoots(root))
+		// compile_charter's load_validated_graph(repo_root) is org-inert.
+		g, err := dct.LoadValidatedGraph(root, nil)
 		if err != nil {
-			c.Diagnostics = append(c.Diagnostics, fmt.Sprintf("Graph load failed: %v. Transitive closure not resolved; direct-root ids only.", err))
+			summary := dct.DRGErrorClass(err) + ": " + err.Error()
+			c.Diagnostics = append(c.Diagnostics, fmt.Sprintf("Graph load failed: %s. Transitive closure not resolved; direct-root ids only.", summary))
+			c.Unresolved = append(c.Unresolved, jsonx.NewObject("kind", "_graph", "id", "_load_failure", "cause", "graph_load_failed", "detail", summary))
+			buckets[string(dct.Directive)] = append([]string(nil), c.Directives...)
+			for _, k := range []dct.Kind{dct.Tactic, dct.Styleguide, dct.Toolguide, dct.Procedure, dct.AgentProfile} {
+				buckets[string(k)] = append([]string(nil), cr.byKind[k]...)
+			}
 		} else {
 			var st []string
 			for u := range start {

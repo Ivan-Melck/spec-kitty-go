@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func charterContextCmd() *cli.Command {
@@ -84,7 +85,16 @@ func runCharterContext(ctx *cli.Context) error {
 	mt := ctx.String("mission-type")
 	res, err := charter.BuildContext(root, ctx.String("action"), charter.Options{MarkLoaded: ctx.Bool("mark-loaded"), MissionType: mt})
 	if err != nil {
+		var ve *dct.DRGValidationError
+		if errors.As(err, &ve) {
+			return pyCrash(ctx, "DRGValidationError", ve.Error())
+		}
 		return charterErr(ctx, jsonMode, err)
+	}
+	if !jsonMode {
+		for _, w := range res.Warnings {
+			rich.LogWarning(ctx.Stderr, w)
+		}
 	}
 	if jsonMode {
 		jsonOut(ctx.Stdout, charter.ContextJSON(root, res, mt, ctx.Bool("include-all")), jsonx.Pretty)

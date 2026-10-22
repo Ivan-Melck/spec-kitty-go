@@ -170,6 +170,10 @@ func runCharterActivate(ctx *cli.Context) error {
 	}
 	reg, err := charter.PlanProjectRegistration(root, app.Version)
 	if err != nil {
+		var ve *dct.DRGValidationError
+		if errors.As(err, &ve) {
+			return pyCrash(ctx, "DRGValidationError", ve.Error())
+		}
 		cprint(w, "[red]Error:[/red] %s", err.Error())
 		return cli.Exit(1)
 	}
@@ -196,16 +200,18 @@ func runCharterActivate(ctx *cli.Context) error {
 	}
 	renderTensionWarnings(ctx, root)
 	if src := charter.SourceURN(root, kind, id); src != "" {
-		renderActivationCascade(ctx, root, src, scope)
+		if err := renderActivationCascade(ctx, root, src, scope); err != nil {
+			return err
+		}
 	}
 	return recompileOrNotify(ctx, root)
 }
 
-func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeScope) {
+func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeScope) error {
 	w := ctx.Stdout
-	g, err := dct.LoadGraph(root, dct.OrgRoots(root))
-	if err != nil {
-		return
+	g, err := loadCascadeGraph(ctx, root)
+	if g == nil {
+		return err
 	}
 	act, filtered := charter.CascadeRefs(g, src)
 	ix := charter.NewConfigIDIndex(root)
@@ -262,6 +268,7 @@ func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeS
 			cprint(w, "[dim]Not cascaded[/dim]: %s/%s (kind not charter-activatable)", tok(k), ix.ConfigID(k+":"+id))
 		}
 	}
+	return nil
 }
 
 // recompileOrNotify is recompile_or_notify (the catalog recompile is a
@@ -360,17 +367,19 @@ func runCharterDeactivate(ctx *cli.Context) error {
 	}
 	if scope != nil && len(res.Deactivated) > 0 {
 		if src := charter.SourceURN(root, kind, id); src != "" {
-			renderDeactivationCascade(ctx, root, src, scope)
+			if err := renderDeactivationCascade(ctx, root, src, scope); err != nil {
+				return err
+			}
 		}
 	}
 	return recompileOrNotify(ctx, root)
 }
 
-func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cascadeScope) {
+func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cascadeScope) error {
 	w := ctx.Stdout
-	g, err := dct.LoadGraph(root, dct.OrgRoots(root))
-	if err != nil {
-		return
+	g, err := loadCascadeGraph(ctx, root)
+	if g == nil {
+		return err
 	}
 	act, filtered := charter.CascadeRefs(g, target)
 	ix := charter.NewConfigIDIndex(root)
@@ -444,6 +453,7 @@ func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cas
 			cprint(w, "[dim]Not cascaded[/dim]: %s/%s (kind not charter-activatable)", strings.ReplaceAll(k, "_", "-"), ix.ConfigID(k+":"+id))
 		}
 	}
+	return nil
 }
 
 // ---- charter list -----------------------------------------------------------

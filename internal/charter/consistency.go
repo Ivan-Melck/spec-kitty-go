@@ -160,7 +160,8 @@ func newGateRes(root string) *gateRes {
 	g := &gateRes{root: root}
 	orgs := dct.OrgRoots(root)
 	g.off = dct.NewOffering(root, orgs)
-	g.full, g.err = dct.LoadGraph(root, orgs)
+	// consistency_check is org-inert: load_validated_graph(repo_root).
+	g.full, g.err = dct.LoadValidatedGraph(root, nil)
 	if g.err == nil {
 		act, err := dct.LoadActivation(root)
 		if err != nil {
@@ -186,6 +187,8 @@ func errTypeName(err error) string {
 	switch err.(type) {
 	case *dct.ConfigError:
 		return "ActiveCharterConfigError"
+	case *dct.DRGValidationError:
+		return "DRGValidationError"
 	}
 	return "DRGLoadError"
 }
@@ -387,7 +390,7 @@ func RunConsistencyCheck(repoRoot string) *ConsistencyReport {
 	// cross-kind DRG refs
 	orgRoots := dct.OrgRoots(repoRoot)
 	off := dct.NewOffering(repoRoot, orgRoots)
-	if full, err := dct.LoadGraph(repoRoot, orgRoots); err == nil {
+	if full, err := dct.LoadValidatedGraph(repoRoot, nil); err == nil {
 		if act, err := dct.LoadActivation(repoRoot); err == nil {
 			activated := dct.FilterByActivation(full, act, off)
 			reported := map[[2]string]bool{}
@@ -598,7 +601,7 @@ func loadRawActivationSourceConfigOnly(repoRoot string) (*jsonx.Object, error) {
 }
 
 func checkGraphKindParity(repoRoot string, raw *rawLists, rep *ConsistencyReport, orgRoots []string, off *dct.Offering) {
-	full, err := dct.LoadGraph(repoRoot, orgRoots)
+	full, err := dct.LoadValidatedGraph(repoRoot, nil)
 	var act *dct.Activation
 	if err == nil {
 		act, err = dct.LoadActivation(repoRoot)
