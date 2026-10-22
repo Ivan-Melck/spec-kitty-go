@@ -130,7 +130,7 @@ func resolveConfigRootsFrom(root string, t *WriteTarget, langs []string) (*confi
 			case off.Repo(k).Get(stem) != nil:
 				set[off.Repo(k).Get(stem).ID] = true
 			default:
-				return nil, fmt.Errorf("Unknown %s ID %s: no artifact declares it in the built-in, org or project layer. Activation store: %s.", k.OperatorToken(), dct.PyRepr(stem), t.Path)
+				return nil, fmt.Errorf("%s Activation store: %s.", unknownConfigIDMessage(k, stem, chain, filepath.Join(root, filepath.FromSlash(dct.ProjectPackRoot))), t.Path)
 			}
 		}
 		var ids []string
@@ -564,4 +564,31 @@ func init() {
 		_, err = WriteCompiled(root, c)
 		return err
 	}
+}
+
+// unknownConfigIDMessage is kind_vocabulary's UnknownArtifactIdError text
+// for resolve_artifact_urn with layer_roots={"project": projectRoot}.
+func unknownConfigIDMessage(k dct.Kind, stem string, orgRoots []string, projectRoot string) string {
+	clause := ""
+	if len(orgRoots) > 0 {
+		q := make([]string, len(orgRoots))
+		for i, r := range orgRoots {
+			q[i] = dct.PyRepr(r)
+		}
+		clause = " or org/project pack roots [" + strings.Join(q, ", ") + "]"
+	}
+	var layers []string
+	if projectRoot != "" {
+		layers = append(layers, "project: "+filepath.Join(projectRoot, dct.ProjectKindDir(k)))
+	}
+	for _, r := range orgRoots {
+		layers = append(layers, "org: "+filepath.Join(r, k.Plural()))
+	}
+	biDir := k.Plural()
+	if k == dct.MissionStepContract {
+		biDir = "missions/built_in_step_contracts"
+	}
+	layers = append(layers, "built-in: "+filepath.Join(dct.BuiltInRoot(), biDir))
+	return fmt.Sprintf("No %s artifact with config ID %s found under doctrine root %s%s. Searched layers: %s. Check activated_%s in the charter.yaml activation store selected by `.kittify/config.yaml` (or its legacy inline activations) for a stale or misspelled entry, or run `spec-kitty doctor charter-packs` to verify the doctrine corpus (including any org packs) is intact.",
+		string(k), dct.PyRepr(stem), dct.BuiltInRoot(), clause, strings.Join(layers, "; "), k.Plural())
 }
