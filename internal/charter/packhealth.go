@@ -8,8 +8,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
+	"github.com/spec-kitty/go-kitty3/internal/assets"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
+	"github.com/spec-kitty/go-kitty3/internal/jsonschema"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
@@ -23,6 +26,8 @@ type SkippedProfile struct {
 	Layer, Path  string
 	ProfileID    *string
 	ErrorSummary string
+	// RawID is the profile-id value as authored (type preserved), nil when absent.
+	RawID any
 }
 
 // PackHealth is the per-layer agent-profile health.
@@ -40,7 +45,7 @@ func (p PackHealth) Healthy() bool { return p.Valid == p.Discovered && len(p.Inv
 func (p PackHealth) Object() *jsonx.Object {
 	inv := []any{}
 	for _, s := range p.Invalid {
-		inv = append(inv, jsonx.NewObject("layer", s.Layer, "path", s.Path, "profile_id", optAny(s.ProfileID), "error_summary", s.ErrorSummary))
+		inv = append(inv, jsonx.NewObject("layer", s.Layer, "path", s.Path, "profile_id", rawOrOpt(s), "error_summary", s.ErrorSummary))
 	}
 	return jsonx.NewObject("pack_id", p.Layer, "layer", p.Layer, "discovered_count", p.Discovered, "valid_count", p.Valid,
 		"healthy", p.Healthy(), "invalid_profiles", inv)
@@ -110,23 +115,32 @@ func AppendOrgError(o *jsonx.Object, msgs ...string) {
 
 var layerRank = map[string]int{dct.LayerBuiltIn: 0, dct.LayerOrg: 1, dct.LayerProject: 2}
 
-// profileSchemaRequired are the agent-profile JSON schema's top-level
-// required keys (jsonschema messages for a profile with no profile-id).
-var profileSchemaRequired = []string{"profile-id", "name", "purpose", "specialization"}
-
 func profileSchemaErrors(data *jsonx.Object) []string {
+	// agent_profiles.validation.validate_agent_profile_yaml: Draft7Validator
+	// over agent-profile.schema.yaml, "<path>: <message>" per error.
 	var out []string
-	for _, k := range profileSchemaRequired {
-		if _, ok := data.Get(k); !ok {
-			out = append(out, fmt.Sprintf("root: '%s' is a required property", k))
+	if v := agentProfileValidator(); v != nil {
+		for _, e := range v.IterErrors(data) {
+			out = append(out, e.PathString()+": "+e.Message)
 		}
 	}
-	_, hasRole := data.Get("role")
-	_, hasRoles := data.Get("roles")
-	if !hasRole && !hasRoles {
-		out = append(out, "root: "+pyValueRepr(data)+" is not valid under any of the given schemas")
-	}
 	return out
+}
+
+var (
+	agentProfileSchemaOnce sync.Once
+	agentProfileSchema     *jsonschema.Validator
+)
+
+func agentProfileValidator() *jsonschema.Validator {
+	agentProfileSchemaOnce.Do(func() {
+		if b, err := assets.ReadFile("charter/offering/schemas/agent-profile.schema.yaml"); err == nil {
+			if o, err := yamlx.ParseObject(b); err == nil {
+				agentProfileSchema = jsonschema.New(o)
+			}
+		}
+	})
+	return agentProfileSchema
 }
 
 // profileLayerScan loads one agent-profile layer; returns id -> data.
@@ -165,16 +179,16 @@ func loadAgentProfiles(builtInDir string, builtInFS bool, orgDirs []string, proj
 		for _, f := range files {
 			b, err := read(f)
 			if err != nil {
-				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "YAML/read error: " + err.Error()})
+				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "YAML/read error: " + err.Error(), nil})
 				continue
 			}
 			v, err := yamlx.Parse(b)
 			if err != nil {
-				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "YAML/read error: " + err.Error()})
+				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "YAML/read error: " + err.Error(), nil})
 				continue
 			}
 			if v == nil {
-				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "Empty profile file (no YAML document)"})
+				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, "Empty profile file (no YAML document)", nil})
 				continue
 			}
 			data, isObj := v.(*jsonx.Object)
@@ -195,7 +209,7 @@ func loadAgentProfiles(builtInDir string, builtInFS bool, orgDirs []string, proj
 						summary = strings.Join(errs, "; ")
 					}
 				}
-				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, summary})
+				pl.skipped = append(pl.skipped, SkippedProfile{name, f, nil, summary, nil})
 				continue
 			}
 			merged := data
@@ -209,7 +223,14 @@ func loadAgentProfiles(builtInDir string, builtInFS bool, orgDirs []string, proj
 				if errs := profileSchemaErrors(data); len(errs) > 0 {
 					summary = strings.Join(errs, "; ")
 				}
-				pl.skipped = append(pl.skipped, SkippedProfile{name, f, pid, summary})
+				var raw any
+				for _, k := range []string{"profile-id", "profile_id"} {
+					if x, ok := data.Get(k); ok && x != nil && x != "" && x != false {
+						raw = x
+						break
+					}
+				}
+				pl.skipped = append(pl.skipped, SkippedProfile{name, f, pid, summary, raw})
 				continue
 			}
 			if name != dct.LayerBuiltIn {
@@ -1224,4 +1245,11 @@ func selectionRepoCollisions(repoRoot string, kind dct.Kind) []LayerCollision {
 		}
 	}
 	return nil
+}
+
+func rawOrOpt(s SkippedProfile) any {
+	if s.RawID != nil {
+		return s.RawID
+	}
+	return optAny(s.ProfileID)
 }
