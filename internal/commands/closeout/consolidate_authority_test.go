@@ -109,6 +109,8 @@ func TestDiffConsolidateAttestApproved(t *testing.T) {
 	comparePair(t, p, "consolidate", "--mission", "$M", "--attest-canceled-superseded", "WP02", "--attest-reason", "checked")
 	p.Both(func(s *testkit.Sandbox) { s.Git("config", "core.sparseCheckout", "true") })
 	comparePair(t, p, "consolidate", "--mission", "$M", "--yes")
+	// the override proceeds (to the claim refusal); its WARNING log record goes to stderr
+	comparePair(t, p, "consolidate", "--mission", "$M", "--yes", "--allow-sparse-checkout")
 	p.Both(func(s *testkit.Sandbox) { s.Git("config", "--unset", "core.sparseCheckout") })
 	comparePair(t, p, "consolidate", "--mission", "$M", "--attest-approved-reviewed", "WP01", "--attest-reason", "checked by hand")
 	compareGit(t, p)

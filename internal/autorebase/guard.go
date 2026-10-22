@@ -10,10 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/spec-kitty/go-kitty3/internal/acceptance"
-	"github.com/spec-kitty/go-kitty3/internal/mission"
-	"github.com/spec-kitty/go-kitty3/internal/project"
 )
 
 // AbortRefused is DestructiveOpRefused(DESTRUCTIVE_OP_ONLY_COPY).
@@ -176,28 +172,5 @@ func isConflicted(xy string) bool {
 	return false
 }
 
-// LaneResidue is ResidueContext.for_mission(root, slug, LANE).is_disposable:
-// spec-kitty's own bookkeeping, and (under a coordination topology) the
-// mission's stale coordination-partition copies; another mission's files
-// never. A mission without meta.json has no residue at all.
-func LaneResidue(root, slug string) func(string) bool {
-	if slug == "" {
-		return nil
-	}
-	meta, err := mission.ReadMeta(project.Specs(root, slug))
-	if err != nil || meta == nil {
-		return nil
-	}
-	topo := meta.GetString("topology")
-	coordTopo := topo != "lanes" && topo != "single_branch"
-	return func(p string) bool {
-		n := filepath.ToSlash(p)
-		if parts := strings.Split(n, "/"); len(parts) > 2 && parts[0] == "kitty-specs" && parts[1] != slug && !strings.HasPrefix(parts[1], slug+"-") {
-			return false
-		}
-		if acceptance.IsSelfBookkeeping(n) {
-			return true
-		}
-		return coordTopo && acceptance.IsCoordResidueFor(n, slug)
-	}
-}
+// LaneResidue is ResidueContext.for_mission(root, slug, LANE).is_disposable.
+func LaneResidue(root, slug string) func(string) bool { return Residue(root, slug, RoleLane) }

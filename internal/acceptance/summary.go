@@ -321,15 +321,16 @@ var (
 	reStateAudit  = regexp.MustCompile(`(?:^|/)\.kittify/mission-state-audit(?:/|$)`)
 	reMissionMeta = regexp.MustCompile(`(?:^|/)kitty-specs/[^/]+/meta\.json$`)
 	reLegacyMeta  = regexp.MustCompile(`(?:^|/)\.kittify/meta\.json$`)
-	reEncProv     = regexp.MustCompile(`(?:^|/)\.kittify/encoding-provenance/[^/]*\.jsonl$`)
-	reDossier     = regexp.MustCompile(`(?:^|/)\.kittify/dossiers/[^/]+/snapshot-latest\.json$`)
+	reEncProv     = regexp.MustCompile(`\.kittify/encoding-provenance/global\.jsonl$`)
+	reDerivedView = regexp.MustCompile(`(?:^|/)\.kittify/derived/[^/]+/[^/]+$`)
+	reDossier     = regexp.MustCompile(`(?:^|/)\.kittify/dossiers/.+/snapshot-latest\.json$`)
 )
 
 // IsSelfBookkeeping is coherence.is_self_bookkeeping_churn.
 func IsSelfBookkeeping(p string) bool {
 	n := strings.TrimRight(filepath.ToSlash(p), "/")
 	return reMissionMeta.MatchString(n) || reLegacyMeta.MatchString(n) || reOpRecord.MatchString(n) ||
-		reStateAudit.MatchString(n) || reEncProv.MatchString(n) || reDossier.MatchString(n)
+		reStateAudit.MatchString(n) || reEncProv.MatchString(n) || reDerivedView.MatchString(n) || reDossier.MatchString(n)
 }
 
 // isAcceptOwnWrite is _is_accept_pipeline_own_write.

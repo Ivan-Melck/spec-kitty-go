@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/autorebase"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
@@ -841,7 +842,7 @@ func worktreesOf(root, branch string) []string {
 
 // residue reports whether a dirty path in a checkout is the run's own
 // disposable bookkeeping (the mission's status pair).
-func residue(slug string) func(string) bool {
+func ownStatusFile(slug string) func(string) bool {
 	return func(p string) bool {
 		parts := strings.Split(p, "/")
 		for i, s := range parts {
@@ -852,6 +853,29 @@ func residue(slug string) func(string) bool {
 		}
 		return false
 	}
+}
+
+func samePath(a, b string) bool {
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	if err1 != nil || err2 != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ra == rb
+}
+
+// runResidue is _RunResidue for the checkout wt: the mission's own status
+// pair, or the residue context of the checkout's role.
+func runResidue(root, slug, wt string) func(string) bool {
+	role := autorebase.RoleLane
+	if samePath(wt, root) {
+		role = autorebase.RoleRepositoryRoot
+	} else if sf := coord.Resolve(root, slug); sf.CoordWorktree != "" && samePath(wt, sf.CoordWorktree) {
+		role = autorebase.RoleCoordination
+	}
+	ctx := autorebase.Residue(root, slug, role)
+	own := ownStatusFile(slug)
+	return func(p string) bool { return own(p) || (ctx != nil && ctx(p)) }
 }
 
 // dirtyForReset lists the entries a `reset --hard` to sha would destroy.
@@ -898,7 +922,7 @@ func checkoutEquals(wt, sha string) bool {
 func restoreBranchRef(root, slug, branch, to, expected string) error {
 	wts := worktreesOf(root, branch)
 	for _, wt := range wts {
-		d := dirtyForReset(wt, to, residue(slug))
+		d := dirtyForReset(wt, to, runResidue(root, slug, wt))
 		if len(d) > 0 && checkoutEquals(wt, to) {
 			var kept []string
 			for _, x := range d {
@@ -1008,7 +1032,7 @@ func (s *MergeState) Rollback(root string) *RollbackReport {
 			if o.branch == cr && (o.kind == okNotRestored || o.kind == okKept) && o.observed != "" {
 				tip := liveTip(root, cr)
 				for _, wt := range worktreesOf(root, cr) {
-					if d := dirtyForReset(wt, tip, residue(s.MissionSlug)); len(d) > 0 {
+					if d := dirtyForReset(wt, tip, runResidue(root, s.MissionSlug, wt)); len(d) > 0 {
 						abs, _ := filepath.Abs(wt)
 						var ls []string
 						for _, x := range d {
