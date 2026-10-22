@@ -295,6 +295,33 @@ func TestDiffNextWPPromptGovernance(t *testing.T) {
 	}
 }
 
+// TestDiffMissionCloseDiscard covers `mission close --discard`: the loss
+// announcement, coordination teardown with a runtime_abandoned
+// retrospective, guarded lane worktree / branch deletion (a lane holding
+// the only copy of commits is refused), the kept discarded tip, the
+// residual-artifact verification, flatten + discarded_at marker and the
+// bookkeeping commit.
+func TestDiffMissionCloseDiscard(t *testing.T) {
+	t.Run("clean", func(t *testing.T) {
+		t.Parallel()
+		p := newAnalyzedPair(t)
+		steps(t, p, false, []string{"mission", "close", "--mission", "$M", "--discard", "--force"})
+		compareGit(t, p)
+		compareTree(t, p, "kitty-specs", "analysis-report.md", "meta.json")
+	})
+	t.Run("unique-lane-commits", func(t *testing.T) {
+		t.Parallel()
+		p := newAnalyzedPair(t)
+		oracleBoth(t, p, "agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M")
+		laneCommit(t, p, "lane-a", "feat(WP01): subtract", map[string]string{"src/calc.py": "def sub(a, b):\n    return a - b\n"})
+		steps(t, p, false,
+			[]string{"mission", "close", "--mission", "$M", "--discard", "--force"},
+			[]string{"mission", "close", "--mission", "$M", "--discard", "--force", "--json"},
+		)
+		compareGit(t, p)
+	})
+}
+
 // TestDiffMissionCloseMerged covers CORE-15: closing a merged mission
 // persists the retrospective (record + RetrospectiveCaptured event,
 // committed) and tears down the coordination worktree with its report line;

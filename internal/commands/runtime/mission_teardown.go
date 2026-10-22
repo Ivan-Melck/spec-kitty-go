@@ -39,7 +39,7 @@ func teardownCoordination(ctx *cli.Context, root, slug, dir, provenance string, 
 		return
 	}
 	if _, err := os.Stat(filepath.Join(dir, retrospective.FileName)); err != nil {
-		retrospective.Author(root, slug, provenance, "")
+		retrospective.AuthorRuntime(root, slug, provenance)
 	}
 	var dirty []string
 	for _, p := range []string{filepath.Join(dir, retrospective.FileName), status.EventsPath(dir)} {
