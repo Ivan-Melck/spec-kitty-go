@@ -17,6 +17,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/refadvance"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
@@ -173,35 +174,16 @@ func selfBookkeeping(p string) bool {
 // destroy (tracked changes and untracked files), net of spec-kitty's own
 // bookkeeping and (for a lane checkout) coordination residue.
 func worktreeLocalState(wt string, lane bool) []string {
-	r := gitRun(wt, "status", "--porcelain=v1", "-z")
-	var out []string
-	parts := strings.Split(r.Stdout, "\x00")
-	for i := 0; i < len(parts); i++ {
-		p := parts[i]
-		if len(p) < 4 {
-			continue
-		}
-		xy, path := p[:2], p[3:]
-		orig := ""
-		if xy[0] == 'R' || xy[0] == 'C' {
-			if i+1 < len(parts) {
-				orig = parts[i+1]
-				i++
-			}
-		}
-		if selfBookkeeping(path) || (lane && mission.IsCoordResidue(strings.TrimRight(path, "/"))) {
-			continue
-		}
-		disp := xy + " " + path
-		if orig != "" {
-			disp = xy + " " + orig + " -> " + path
-		}
-		if xy == "??" {
-			disp += " (untracked local file would be discarded by worktree removal)"
-		}
-		out = append(out, disp)
+	// guarded_worktree_remove -> _dirty_entries(treat_untracked_as_dirty=True)
+	// with no reset target: untracked files are listed one by one, ignored
+	// entries never count, a VCS-lock-only meta.json is exempt.
+	vs, err := refadvance.DirtyVerdicts(wt, refadvance.Options{UntrackedDirty: true, IsDisposable: func(p string) bool {
+		return selfBookkeeping(p) || (lane && mission.IsCoordResidue(strings.TrimRight(p, "/")))
+	}})
+	if err != nil {
+		return nil
 	}
-	return out
+	return refadvance.Lines(vs)
 }
 
 // guardedWorktreeRemove is guarded_worktree_remove(retain=False).
