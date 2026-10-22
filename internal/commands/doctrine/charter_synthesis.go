@@ -28,7 +28,6 @@ func init() {
 
 const adapterHelp = "Adapter to use. 'generated' (default) validates agent-authored YAML under .kittify/charter/generated/. 'fixture' is offline/testing only."
 
-
 // writeRootError is resolve_charter_write_root's LinkedWorktreeCharterWriteError.
 func writeRootError() error {
 	cwd, _ := os.Getwd()

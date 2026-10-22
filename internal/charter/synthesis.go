@@ -96,7 +96,6 @@ func CatalogIsEstablished(root string) bool {
 	return prior && ReadInterview(InterviewPath(root)) != nil
 }
 
-
 // PlannedFreshPaths / PlannedFreshDeletes are _planned_fresh_project_layer_*.
 func PlannedFreshPaths() []string {
 	return []string{dct.ProjectPackRoot + "/PROVENANCE.md", ".kittify/charter/synthesis-manifest.yaml"}
