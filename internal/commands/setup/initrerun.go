@@ -283,13 +283,13 @@ func initRerun(ctx *cli.Context, root, aiRaw string, fromOption []string) error 
 	if resumed {
 		return nil
 	}
-	panel(w, "[yellow]Already initialized.[/yellow]\n"+
+	panelStyled(w, "[yellow]Already initialized.[/yellow]\n"+
 		"Agent skill surfaces were verified on this re-run: missing per-agent\n"+
 		"skill roots were restored. A missing or unusable managed surface exits 1\n"+
 		"naming the affected paths — shared command skills with the recovery command\n"+
 		"[cyan]spec-kitty agent config sync --create-missing --keep-orphaned[/cyan];\n"+
 		"an unusable per-agent skill file is preserved untouched, so rename or\n"+
 		"remove it and re-run init.\n"+
-		"Run [cyan]spec-kitty upgrade[/cyan] to migrate to the latest version.", "Already Initialized")
+		"Run [cyan]spec-kitty upgrade[/cyan] to migrate to the latest version.", "[yellow]Already Initialized[/yellow]", "yellow", 1, 2)
 	return nil
 }

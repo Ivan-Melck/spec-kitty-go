@@ -34,68 +34,21 @@ func padRight(s string, n int) string {
 	return s
 }
 
-// wrapWords wraps on spaces at width (long words split), like rich.
-func wrapWords(line string, width int) []string {
-	if width <= 0 || runeLen(line) <= width {
-		return []string{line}
-	}
-	indent := ""
-	for _, r := range line {
-		if r != ' ' {
-			break
-		}
-		indent += " "
-	}
-	words := strings.Fields(line)
-	var lines []string
-	cur := indent
-	for _, w := range words {
-		for runeLen(w) > width {
-			if strings.TrimSpace(cur) != "" {
-				lines = append(lines, strings.TrimRight(cur, " "))
-				cur = ""
-			}
-			r := []rune(w)
-			lines = append(lines, string(r[:width]))
-			w = string(r[width:])
-		}
-		switch {
-		case strings.TrimSpace(cur) == "":
-			cur += w
-		case runeLen(cur)+1+runeLen(w) <= width:
-			cur += " " + w
-		default:
-			lines = append(lines, cur)
-			cur = w
-		}
-	}
-	if cur != "" {
-		lines = append(lines, cur)
-	}
-	return lines
-}
-
 // panel renders an expanded rich Panel (ROUNDED, padding (1, 2)).
 func panel(w io.Writer, content, title string) {
-	width := cli.Width()
-	inner := width - 6
-	top := strings.Repeat("─", width-2)
-	if title != "" {
-		t := " " + rich.Strip(title) + " "
-		left := (width - 2 - runeLen(t)) / 2
-		right := width - 2 - runeLen(t) - left
-		top = strings.Repeat("─", left) + t + strings.Repeat("─", right)
+	panelStyled(w, content, title, "cyan", 1, 2)
+}
+
+// panelStyled renders an expanded rich Panel (ROUNDED) with a markup title
+// and content, border_style and padding; on a colour terminal the border,
+// title and content carry rich's segment styles.
+func panelStyled(w io.Writer, content, title, border string, padY, padX int) {
+	for _, l := range rich.StyledPanelLines(rich.PanelSpec{
+		Content: content, Title: title, BorderStyle: border, Width: cli.Width(),
+		PadY: padY, PadX: padX, Wrap: rich.WrapWords,
+	}, rich.ColorSystemOf(w)) {
+		fmt.Fprintln(w, l)
 	}
-	fmt.Fprintln(w, "╭"+top+"╮")
-	blank := "│" + strings.Repeat(" ", width-2) + "│"
-	fmt.Fprintln(w, blank)
-	for _, l := range strings.Split(rich.Strip(content), "\n") {
-		for _, wl := range wrapWords(l, inner) {
-			fmt.Fprintln(w, "│  "+padRight(wl, inner)+"  │")
-		}
-	}
-	fmt.Fprintln(w, blank)
-	fmt.Fprintln(w, "╰"+strings.Repeat("─", width-2)+"╯")
 }
 
 // center prints text centered at the console width (rich Align.center pads
@@ -166,13 +119,30 @@ func showBanner(w io.Writer) {
 			maxw = n
 		}
 	}
-	for _, l := range lines {
-		center(w, padRight(l, maxw))
+	// Text gradient (bright_blue..bright_white), then the italic
+	// bright_yellow tagline and dim cyan version, each Align.center'ed.
+	sys := rich.ColorSystemOf(w)
+	colors := []string{"bright_blue", "blue", "cyan", "bright_cyan", "white", "bright_white"}
+	for i, l := range lines {
+		centerStyled(w, padRight(l, maxw), colors[i%len(colors)], sys)
 	}
 	center(w, padRight("", maxw))
-	center(w, Tagline)
-	center(w, "v"+app.Version)
+	centerStyled(w, Tagline, "italic bright_yellow", sys)
+	centerStyled(w, "v"+app.Version, "dim cyan", sys)
 	fmt.Fprintln(w)
+}
+
+// centerStyled is center for one styled text (the padding stays unstyled).
+func centerStyled(w io.Writer, s, style string, sys rich.ColorSystem) {
+	width := cli.Width()
+	n := runeLen(s)
+	body := rich.RenderSegments([]rich.Segment{{Text: s, Style: style}}, sys)
+	if n >= width {
+		fmt.Fprintln(w, body)
+		return
+	}
+	left := (width - n) / 2
+	fmt.Fprintln(w, strings.Repeat(" ", left)+body+strings.Repeat(" ", width-n-left))
 }
 
 // isInteractive is core.env.is_interactive.
@@ -214,35 +184,49 @@ func (t *tracker) set(key, status, detail string) {
 func (t *tracker) complete(key, detail string) { t.set(key, "done", detail) }
 func (t *tracker) fail(key, detail string)     { t.set(key, "error", detail) }
 
+// render prints StepTracker.render()'s Tree: a cyan title and one
+// markup label per step under grey50 guides.
 func (t *tracker) render(w io.Writer) {
-	fmt.Fprintln(w, t.title)
+	sys := rich.ColorSystemOf(w)
+	guide := func(g string) string { return rich.RenderStyled(g, "grey50", sys) }
+	fmt.Fprintln(w, rich.RenderStyled(t.title, "cyan", sys))
 	for i, s := range t.steps {
-		branch := "├── "
+		branch, cont := "├── ", "│   "
 		if i == len(t.steps)-1 {
-			branch = "└── "
+			branch, cont = "└── ", "    "
 		}
-		sym := "○"
+		symbol := " "
 		switch s.status {
-		case "done", "error":
-			sym = "●"
+		case "done":
+			symbol = "[green]●[/green]"
+		case "pending":
+			symbol = "[green dim]○[/green dim]"
 		case "running":
-			sym = "○"
+			symbol = "[cyan]○[/cyan]"
+		case "error":
+			symbol = "[red]●[/red]"
+		case "skipped":
+			symbol = "[yellow]○[/yellow]"
 		}
-		line := sym + " " + s.label
-		if s.detail != "" {
-			line += " (" + s.detail + ")"
-		}
-		cont := "│   "
-		if i == len(t.steps)-1 {
-			cont = "    "
+		detail := strings.TrimSpace(s.detail)
+		var line string
+		switch {
+		case s.status == "pending" && detail != "":
+			line = fmt.Sprintf("%s [bright_black]%s (%s)[/bright_black]", symbol, s.label, detail)
+		case s.status == "pending":
+			line = fmt.Sprintf("%s [bright_black]%s[/bright_black]", symbol, s.label)
+		case detail != "":
+			line = fmt.Sprintf("%s [white]%s[/white] [bright_black](%s)[/bright_black]", symbol, s.label, detail)
+		default:
+			line = fmt.Sprintf("%s [white]%s[/white]", symbol, s.label)
 		}
 		// rich Tree wraps each label at the width left after the guide.
-		for j, l := range rich.WrapWords(line, cli.Width()-4) {
-			if j == 0 {
-				fmt.Fprintln(w, branch+l)
-			} else {
-				fmt.Fprintln(w, cont+l)
+		for j, l := range rich.StyledMarkupLines(line, cli.Width()-4, rich.WrapWords, sys) {
+			g := branch
+			if j > 0 {
+				g = cont
 			}
+			fmt.Fprintln(w, guide(g)+l.Styled)
 		}
 	}
 }

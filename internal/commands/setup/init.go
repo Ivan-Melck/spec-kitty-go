@@ -286,7 +286,7 @@ func runInit(ctx *cli.Context) error {
 		projectPath = abs
 		if _, err := os.Stat(projectPath); err == nil {
 			fmt.Fprintln(w)
-			panel(w, fmt.Sprintf("Directory '%s' already exists\nPlease choose a different project name or remove the existing directory.", projectName), "Directory Conflict")
+			panelStyled(w, fmt.Sprintf("Directory '[cyan]%s[/cyan]' already exists\nPlease choose a different project name or remove the existing directory.", projectName), "[red]Directory Conflict[/red]", "red", 1, 2)
 			return cli.Exit(1)
 		}
 	}
@@ -383,7 +383,7 @@ func runInit(ctx *cli.Context) error {
 	var commandSkillAgents []string
 	fail := func(err error) error {
 		tr.fail("final", err.Error())
-		panel(w, "Initialization failed: "+err.Error(), "Failure")
+		panelStyled(w, "Initialization failed: "+err.Error(), "Failure", "red", 0, 1)
 		if createdDir {
 			os.RemoveAll(projectPath)
 		}
@@ -487,7 +487,7 @@ func runInit(ctx *cli.Context) error {
 			"",
 		}, notice...)
 		fmt.Fprintln(w)
-		panel(w, strings.Join(body, "\n"), "Agent Folder Security")
+		panelStyled(w, strings.Join(body, "\n"), "[yellow]Agent Folder Security[/yellow]", "yellow", 1, 2)
 	}
 	printNextSteps(w, projectPath, projectName, here, selected)
 
