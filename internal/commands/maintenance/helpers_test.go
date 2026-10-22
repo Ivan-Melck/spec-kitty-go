@@ -104,6 +104,8 @@ func join(parts ...string) string { return filepath.Join(parts...) }
 // diffIndexRe matches git-diff "index a..b" headers. Blob ids hash content
 // that embeds per-side ULIDs, and all-letter abbreviations escape the
 // testkit SHA mask, so they are masked here.
-var diffIndexRe = regexp.MustCompile(`(?m)^index [0-9a-f<>A-Z]+\.\.[0-9a-f<>A-Z]+`)
+// It also matches inside JSON strings, where a line break is the two
+// characters `\n`.
+var diffIndexRe = regexp.MustCompile(`(?m)(^|\\n)index [0-9a-f<>A-Z]+\.\.[0-9a-f<>A-Z]+`)
 
-func normDiffIndex(s string) string { return diffIndexRe.ReplaceAllString(s, "index <IDX>") }
+func normDiffIndex(s string) string { return diffIndexRe.ReplaceAllString(s, "${1}index <IDX>") }

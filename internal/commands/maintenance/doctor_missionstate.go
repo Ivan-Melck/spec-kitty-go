@@ -67,34 +67,45 @@ func runDoctorMissionState(ctx *cli.Context) error {
 			return cli.Exit(2)
 		}
 	}
+	// _resolve_audit_root: --fixture-dir / --include-fixtures override the
+	// scan root; without a project the fixture tree's parent is the root.
+	fixtureDir := ""
+	if ctx.IsSet("fixture-dir") {
+		fixtureDir = ctx.String("fixture-dir")
+	}
 	if ctx.Bool("include-fixtures") {
-		if ctx.IsSet("fixture-dir") {
+		if fixtureDir != "" {
 			fmt.Fprintln(ctx.Stderr, "Use only one of --include-fixtures or --fixture-dir.")
 			return cli.Exit(2)
 		}
-		fmt.Fprintln(ctx.Stderr, "Bundled audit fixtures not found: <spec-kitty>/specify_cli/audit/fixtures")
-		return cli.Exit(2)
-	}
-	if root == "" && !ctx.IsSet("fixture-dir") {
-		if jsonOut {
-			emitJSON(out, jsonError("not_in_project", "Not in a spec-kitty project"))
-		} else {
-			cprint(out, "[red]Error:[/red] Not in a spec-kitty project")
+		fixtureDir = healthcheck.BundledAuditFixtures()
+		if st, err := os.Stat(fixtureDir); err != nil || !st.IsDir() {
+			fmt.Fprintf(ctx.Stderr, "Bundled audit fixtures not found: %s\n", fixtureDir)
+			return cli.Exit(2)
 		}
-		return cli.Exit(1)
 	}
-	if ctx.IsSet("fixture-dir") {
-		fmt.Fprintln(ctx.Stderr, "Error: --fixture-dir is not supported by this build.")
-		return cli.Exit(2)
+	if root == "" {
+		if fixtureDir == "" {
+			if jsonOut {
+				emitJSON(out, jsonError("not_in_project", "Not in a spec-kitty project"))
+			} else {
+				cprint(out, "[red]Error:[/red] Not in a spec-kitty project")
+			}
+			return cli.Exit(1)
+		}
+		root = absPath(filepath.Dir(filepath.Clean(fixtureDir)))
 	}
 	if ctx.Bool("fix") {
-		return runMissionStateFix(ctx, root, jsonOut)
+		return runMissionStateFix(ctx, root, fixtureDir, jsonOut)
 	}
 	if ctx.Bool("teamspace-dry-run") {
-		return runTeamspaceDryRun(ctx, root, jsonOut)
+		return runTeamspaceDryRun(ctx, root, fixtureDir, jsonOut)
 	}
 	cwd, _ := os.Getwd()
-	disagreements := missionstate.AuditDisagreements(cwd, root, optString(ctx, "mission"))
+	var disagreements []missionstate.Disagreement
+	if fixtureDir == "" {
+		disagreements = missionstate.AuditDisagreements(cwd, root, optString(ctx, "mission"))
+	}
 	if len(disagreements) > 0 {
 		if jsonOut {
 			var ds []any
@@ -109,7 +120,7 @@ func runDoctorMissionState(ctx *cli.Context) error {
 			}
 		}
 	}
-	if err := runMissionStateAudit(ctx, root, jsonOut, failSev, failBlocker); err != nil {
+	if err := runMissionStateAudit(ctx, root, fixtureDir, jsonOut, failSev, failBlocker); err != nil {
 		return err
 	}
 	if len(disagreements) > 0 {
@@ -126,7 +137,19 @@ func optString(ctx *cli.Context, name string) *string {
 	return &v
 }
 
-func runMissionStateAudit(ctx *cli.Context, root string, jsonOut bool, failSev string, failBlocker bool) error {
+// absPath is Path.resolve() for a possibly relative path.
+func absPath(p string) string {
+	a, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	if r, err := filepath.EvalSymlinks(a); err == nil {
+		return r
+	}
+	return a
+}
+
+func runMissionStateAudit(ctx *cli.Context, root, fixtureDir string, jsonOut bool, failSev string, failBlocker bool) error {
 	out := ctx.Stdout
 	var only *string
 	if ctx.IsSet("mission") {
@@ -145,14 +168,22 @@ func runMissionStateAudit(ctx *cli.Context, root string, jsonOut bool, failSev s
 			return cli.Exit(1)
 		}
 		slug := r.Slug
-		if st, err := os.Stat(filepath.Join(root, "kitty-specs", slug)); err != nil || !st.IsDir() {
+		scan := filepath.Join(root, "kitty-specs")
+		if fixtureDir != "" {
+			scan = fixtureDir
+		}
+		if st, err := os.Stat(filepath.Join(scan, slug)); err != nil || !st.IsDir() {
 			slug = "\x00none"
 		}
 		only = &slug
 	}
-	rep := healthcheck.RunAudit(root, only)
+	rep := healthcheck.RunAuditIn(root, fixtureDir, only)
 	cwd, _ := os.Getwd()
-	for _, d := range missionstate.AuditDisagreements(cwd, root, only) {
+	var disagreements []missionstate.Disagreement
+	if fixtureDir == "" {
+		disagreements = missionstate.AuditDisagreements(cwd, root, only)
+	}
+	for _, d := range disagreements {
 		miss := func(p *string) string {
 			if p == nil {
 				return "missing"

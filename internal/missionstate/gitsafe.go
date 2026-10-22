@@ -7,7 +7,9 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
+	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 )
 
 func gitOK(root string, args ...string) (string, bool) {
@@ -155,9 +157,27 @@ func assertGitSafe(root string, relPaths []string, allowDirty bool) error {
 	return nil
 }
 
-// acquireRepairLock is _git_lock: a per-repository non-blocking lock file in
-// the git common dir. The returned release func is never nil.
-func acquireRepairLock(root string) (func(), error) {
+// NoFollowError is kernel.no_follow.NoFollowPathError (a symlink planted at
+// the lock path); upstream does not catch it.
+type NoFollowError struct{ Msg string }
+
+func (e *NoFollowError) Error() string { return e.Msg }
+
+// lockRecordJSON is kernel.locks._record_to_json(_build_record()).
+func lockRecordJSON(cliVersion string) string {
+	host, _ := os.Hostname()
+	if cliVersion == "" {
+		cliVersion = "unknown"
+	}
+	return jsonx.Dumps(jsonx.NewObject("host", host, "pid", os.Getpid(), "schema_version", 1,
+		"started_at", clock.NowUTCISO(), "version", cliVersion), jsonx.Line)
+}
+
+// acquireRepairLock is _git_lock: kernel.locks.machine_file_lock on
+// <git-common-dir>/spec-kitty-mission-state.lock (O_NOFOLLOW open, one
+// non-blocking advisory flock, the holder record written while held and the
+// file truncated, never unlinked, on release). The release func is never nil.
+func acquireRepairLock(root, cliVersion string) (func(), error) {
 	noop := func() {}
 	if !isGitRepo(root) {
 		return noop, nil
@@ -172,15 +192,24 @@ func acquireRepairLock(root string) (func(), error) {
 	}
 	_ = os.MkdirAll(common, 0o755)
 	path := filepath.Join(common, "spec-kitty-mission-state.lock")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	f, err := openNoFollow(path)
 	if err != nil {
+		if _, isNF := err.(*NoFollowError); isNF {
+			return noop, err
+		}
 		return noop, nil
 	}
 	if !tryLock(f) {
 		f.Close()
 		return noop, &RepairError{"Another mission-state repair appears to be running: " + path}
 	}
-	return func() { unlock(f); f.Close() }, nil
+	_ = f.Truncate(0)
+	_, _ = f.WriteAt([]byte(lockRecordJSON(cliVersion)), 0)
+	return func() {
+		_ = f.Truncate(0)
+		unlock(f)
+		f.Close()
+	}, nil
 }
 
 // isTracked is kernel.git.is_tracked (ls-files --error-unmatch).
