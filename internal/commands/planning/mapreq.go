@@ -339,7 +339,7 @@ func runMapRequirements(ctx *cli.Context) error {
 		if jsonMode {
 			printCompact(ctx.Stdout, jsonx.NewObject("error", "Invalid requirement ref format", "malformed_refs", strList(malformed), "parsed_spec_ids", strList(sortedIDs), "hint", grammarHint))
 		} else {
-			sayPlain(ctx.Stdout, "Error: Invalid ref format: "+strings.Join(malformed, ", "))
+			say(ctx.Stdout, "[red]Error:[/red] Invalid ref format: "+strings.Join(malformed, ", "))
 			sayPlain(ctx.Stdout, "  "+grammarHint)
 			sayPlain(ctx.Stdout, "  Parsed spec IDs: "+orNone(strings.Join(sortedIDs, ", ")))
 		}

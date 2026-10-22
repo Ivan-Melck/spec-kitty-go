@@ -1214,7 +1214,7 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 		}
 		return nil, cli.Exit(1)
 	}
-	var gerrs []string
+	var gerrs, ginfos, gwarns []string
 	for _, id := range ids {
 		intent := map[string]bool{}
 		for _, c := range wp.StringList(f.frontmatter[id], "create_intent") {
@@ -1229,13 +1229,9 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 			case strings.ContainsAny(pat, "*?["):
 				msg := fmt.Sprintf("%s: owned_files glob '%s' matches zero files in the repository", id, pat)
 				f.ownershipWarn = append(f.ownershipWarn, msg)
-				if !f.json {
-					fmt.Fprintln(f.ctx.Stderr, wrapPlain("WARNING: Ownership: "+msg))
-				}
+				gwarns = append(gwarns, msg)
 			case intent[pat]:
-				if !f.json {
-					fmt.Fprintln(f.ctx.Stderr, wrapPlain(fmt.Sprintf("INFO: %s: owned_files path '%s' has no match — suppressed by create_intent (planned-new-file).", id, pat)))
-				}
+				ginfos = append(ginfos, fmt.Sprintf("%s: owned_files path '%s' has no match — suppressed by create_intent (planned-new-file).", id, pat))
 			default:
 				hint := ""
 				if sg := nearestMatchSuggestion(pat, f.root); sg != "" {
@@ -1245,12 +1241,20 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 			}
 		}
 	}
-	if len(gerrs) > 0 {
-		if !f.json {
-			for _, e := range gerrs {
-				fmt.Fprintln(f.ctx.Stderr, wrapPlain("ERROR: Ownership: "+e))
-			}
+	// _record_ownership_glob_diagnostics: INFO notes, then warnings, then
+	// errors, on the stderr console.
+	if !f.json {
+		for _, n := range ginfos {
+			say(f.ctx.Stderr, "[blue]INFO:[/blue] "+n)
 		}
+		for _, w := range gwarns {
+			say(f.ctx.Stderr, "[yellow]WARNING:[/yellow] Ownership: "+w)
+		}
+		for _, e := range gerrs {
+			say(f.ctx.Stderr, "[red]ERROR:[/red] Ownership: "+e)
+		}
+	}
+	if len(gerrs) > 0 {
 		msg := "Ownership validation failed: literal-path owned_files entries match zero files. Fix the paths or add them to 'create_intent'."
 		if f.json {
 			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", msg, "ownership_literal_path_errors", strList(gerrs)))
