@@ -29,12 +29,9 @@ func TestDoctorToolSurfacesMatchOracle(t *testing.T) {
 			})
 			p.Compare(false, "doctor", "tool-surfaces")
 			p.Compare(false, "doctor", "tool-surfaces", "--json")
-			// --fix: the repair block carries upstream-internal effect ids and
-			// plugin-bundle staging is not ported; compare the repaired states.
-			g, o := p.Run("doctor", "tool-surfaces", "--fix", "--json")
-			if g.Code != o.Code {
-				t.Errorf("--fix exit go=%d oracle=%d", g.Code, o.Code)
-			}
+			// --fix: repair block (effect ids, plugin-bundle staging) and the
+			// repaired states.
+			compareHashed(t, p, "doctor", "tool-surfaces", "--fix", "--json")
 			p.Compare(false, "doctor", "tool-surfaces", "--json", "--kind", "charter-skill", "--kind", "command-skill", "--kind", "agent-profile",
 				"--kind", "context-file", "--kind", "rule", "--kind", "hook", "--kind", "native-config", "--kind", "command-file")
 		})
