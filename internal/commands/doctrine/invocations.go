@@ -154,7 +154,8 @@ func runInvocationsList(ctx *cli.Context) error {
 		cprint(ctx.Stdout, "[dim]No invocation records found.[/dim]")
 		return nil
 	}
-	t := &rtable{Title: "Recent Invocations", Headers: []string{"Invocation ID", "Profile", "Action", "Status", "Outcome", "Closed By", "Started At"}}
+	t := &rtable{Title: "Recent Invocations", Headers: []string{"Invocation ID", "Profile", "Action", "Status", "Outcome", "Closed By", "Started At"},
+		Styles: []string{"dim"}}
 	or := func(r *jsonx.Object, k, d string) string {
 		v, ok := r.Get(k)
 		if !ok || v == nil {
@@ -178,7 +179,11 @@ func runInvocationsList(ctx *cli.Context) error {
 		if len([]rune(started)) > 19 {
 			started = string([]rune(started)[:19])
 		}
-		t.Rows = append(t.Rows, []string{id, or(r, "profile_id", "?"), or(r, "action", "?"), or(r, "status", "?"),
+		st := "yellow"
+		if r.GetString("status") == "closed" {
+			st = "green"
+		}
+		t.Rows = append(t.Rows, []string{id, or(r, "profile_id", "?"), or(r, "action", "?"), "[" + st + "]" + or(r, "status", "?") + "[/" + st + "]",
 			or(r, "outcome", "-"), or(r, "closed_by", "-"), started})
 	}
 	t.render(ctx.Stdout, rich.Width())

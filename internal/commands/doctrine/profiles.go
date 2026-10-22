@@ -114,11 +114,19 @@ func runProfileList(ctx *cli.Context) error {
 	if showAvail {
 		headers = append(headers, "State")
 	}
-	t := &rtable{Title: "Agent Profiles", Headers: headers, NoWrap: []bool{true}}
+	t := &rtable{Title: "Agent Profiles", Headers: headers, NoWrap: []bool{true}, Overflow: []string{"fold"}}
 	for _, d := range descs {
 		r := []string{d.GetString("profile_id"), d.GetString("name"), d.GetString("role"), d.GetString("source")}
 		if showAvail {
-			r = append(r, d.GetString("state"))
+			state := d.GetString("state")
+			if _, ok := d.Get("state"); !ok {
+				state = "activated"
+			}
+			st := "dim"
+			if state == "activated" {
+				st = "green"
+			}
+			r = append(r, "["+st+"]"+state+"[/"+st+"]")
 		}
 		t.Rows = append(t.Rows, r)
 	}
@@ -299,7 +307,8 @@ func renderProfileHuman(ctx *cli.Context, p *jsonx.Object) {
 	if s := p.GetString("source_layer"); s != "" {
 		src = s
 	}
-	t := &rtable{Title: "Agent Profile: " + p.GetString("profile_id"), Headers: []string{"Field", "Value"}, NoWrap: []bool{true}, ShowLines: true}
+	t := &rtable{Title: "Agent Profile: " + p.GetString("profile_id"), Headers: []string{"Field", "Value"}, NoWrap: []bool{true}, ShowLines: true,
+		Styles: []string{"bold cyan", "white"}}
 	t.Rows = [][]string{
 		{"Profile ID", p.GetString("profile_id")},
 		{"Name", p.GetString("name")},

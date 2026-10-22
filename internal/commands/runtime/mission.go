@@ -136,7 +136,7 @@ func runMissionRun(ctx *cli.Context) error {
 			body += fmt.Sprintf("mission_id:   %s\n", id)
 		}
 		body += fmt.Sprintf("feature_dir:  %s\nrun_dir:      %s", env.GetString("feature_dir"), env.GetString("run_dir"))
-		rich.Panel(ctx.Stdout, body+warningLines(env), "Mission Run Started")
+		rich.PrintTo(ctx.Stdout, &rich.RichPanel{R: rich.NewText(body + warningLines(env)), Title: "Mission Run Started", BorderStyle: "green"})
 		return nil
 	}
 	body := env.GetString("message")
@@ -146,7 +146,11 @@ func runMissionRun(ctx *cli.Context) error {
 			body += fmt.Sprintf("\n  %s: %s", k, pyStr(v))
 		}
 	}
-	rich.Panel(ctx.Stdout, body+warningLines(env), env.GetString("error_code"))
+	title := env.GetString("error_code")
+	if title == "" {
+		title = "ERROR"
+	}
+	rich.PrintTo(ctx.Stdout, &rich.RichPanel{R: rich.NewText(body + warningLines(env)), Title: title, BorderStyle: "red"})
 	return cli.Exit(code)
 }
 

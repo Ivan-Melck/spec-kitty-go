@@ -167,7 +167,12 @@ func missionTypeList(ctx *cli.Context, jsonMode, includeInactive bool) error {
 		cprint(ctx.Stdout, "[yellow]No activated mission types found for this project.[/yellow]")
 		return nil
 	}
-	var trows [][]string
+	tbl := rich.NewTable()
+	tbl.HeaderStyle = "bold"
+	tbl.AddColumn("ID", rich.Column{Style: "cyan"})
+	tbl.AddColumn("SOURCE", rich.Column{Style: "green"})
+	tbl.AddColumn("DISPLAY NAME", rich.Column{})
+	tbl.AddColumn("ACTION SEQUENCE", rich.Column{})
 	for _, r := range rows {
 		seq := ""
 		if l, ok := r.Get("action_sequence"); ok {
@@ -182,9 +187,9 @@ func missionTypeList(ctx *cli.Context, jsonMode, includeInactive bool) error {
 				seq = t
 			}
 		}
-		trows = append(trows, []string{r.GetString("id"), r.GetString("source_layer"), r.GetString("display_name"), seq})
+		tbl.AddRow(r.GetString("id"), r.GetString("source_layer"), r.GetString("display_name"), seq)
 	}
-	rich.Table(ctx.Stdout, "", []string{"ID", "SOURCE", "DISPLAY NAME", "ACTION SEQUENCE"}, trows)
+	rich.PrintTo(ctx.Stdout, tbl)
 	return nil
 }
 
@@ -216,11 +221,11 @@ func runMissionShow(ctx *cli.Context) error {
 			"template_set", ts, "source_layer", mt.SourceLayer, "extends", ext), jsonx.Pretty)
 		return nil
 	}
-	lines := []string{"ID: " + mt.ID, "Display Name: " + mt.DisplayName, "Source Layer: " + mt.SourceLayer}
+	lines := []string{"[cyan]ID:[/cyan] " + mt.ID, "[cyan]Display Name:[/cyan] " + mt.DisplayName, "[cyan]Source Layer:[/cyan] " + mt.SourceLayer}
 	if mt.Extends != nil && *mt.Extends != "" {
-		lines = append(lines, "Extends: "+*mt.Extends)
+		lines = append(lines, "[cyan]Extends:[/cyan] "+*mt.Extends)
 	}
-	lines = append(lines, "Action Sequence: "+strings.Join(mt.ActionSequence, ", "))
+	lines = append(lines, "[cyan]Action Sequence:[/cyan] "+strings.Join(mt.ActionSequence, ", "))
 	if mt.TemplateSet != nil {
 		keys := mt.TemplateSet.Keys()
 		sort.Strings(keys)
@@ -228,11 +233,11 @@ func runMissionShow(ctx *cli.Context) error {
 		for _, k := range keys {
 			parts = append(parts, k+"="+mt.TemplateSet.GetString(k))
 		}
-		lines = append(lines, "Template Set: "+strings.Join(parts, ", "))
+		lines = append(lines, "[cyan]Template Set:[/cyan] "+strings.Join(parts, ", "))
 	} else {
-		lines = append(lines, "Template Set: (none)")
+		lines = append(lines, "[cyan]Template Set:[/cyan] (none)")
 	}
-	rich.Panel(ctx.Stdout, strings.Join(lines, "\n"), "Mission Type · "+mt.ID)
+	rich.PanelStyled(ctx.Stdout, strings.Join(lines, "\n"), "Mission Type · "+mt.ID, "cyan")
 	return nil
 }
 
@@ -298,11 +303,12 @@ func listLegacyMissions(root string) []string {
 
 func missionDetailLines(m *legacyMission) []string {
 	d := m.Data
-	l := []string{"Name: " + d.GetString("name"), "Domain: " + d.GetString("domain"), "Version: " + d.GetString("version"), "Path: " + m.Dir}
+	l := []string{"[cyan]Name:[/cyan] " + d.GetString("name"), "[cyan]Domain:[/cyan] " + d.GetString("domain"),
+		"[cyan]Version:[/cyan] " + d.GetString("version"), "[cyan]Path:[/cyan] " + m.Dir}
 	if s := d.GetString("description"); s != "" {
-		l = append(l, "Description: "+s)
+		l = append(l, "[cyan]Description:[/cyan] "+s)
 	}
-	l = append(l, "", "Workflow Phases:")
+	l = append(l, "", "[cyan]Workflow Phases:[/cyan]")
 	if wf := d.GetObject("workflow"); wf != nil {
 		for _, ph := range wf.GetList("phases") {
 			if o, ok := ph.(*jsonx.Object); ok {
@@ -314,7 +320,7 @@ func missionDetailLines(m *legacyMission) []string {
 	if art == nil {
 		art = &jsonx.Object{}
 	}
-	l = append(l, "", "Required Artifacts:")
+	l = append(l, "", "[cyan]Required Artifacts:[/cyan]")
 	if req := art.GetList("required"); len(req) > 0 {
 		for _, x := range req {
 			l = append(l, "  • "+fmt.Sprint(x))
@@ -323,12 +329,12 @@ func missionDetailLines(m *legacyMission) []string {
 		l = append(l, "  • (none)")
 	}
 	if opt := art.GetList("optional"); len(opt) > 0 {
-		l = append(l, "", "Optional Artifacts:")
+		l = append(l, "", "[cyan]Optional Artifacts:[/cyan]")
 		for _, x := range opt {
 			l = append(l, "  • "+fmt.Sprint(x))
 		}
 	}
-	l = append(l, "", "Validation Checks:")
+	l = append(l, "", "[cyan]Validation Checks:[/cyan]")
 	val := d.GetObject("validation")
 	if val != nil && len(val.GetList("checks")) > 0 {
 		for _, x := range val.GetList("checks") {
@@ -338,7 +344,7 @@ func missionDetailLines(m *legacyMission) []string {
 		l = append(l, "  • (none)")
 	}
 	if p := d.GetObject("paths"); p != nil && p.Len() > 0 {
-		l = append(l, "", "Path Conventions:")
+		l = append(l, "", "[cyan]Path Conventions:[/cyan]")
 		for _, kv := range p.Pairs() {
 			l = append(l, fmt.Sprintf("  • %s: %v", kv.Key, kv.Value))
 		}
@@ -354,7 +360,7 @@ func missionDetailLines(m *legacyMission) []string {
 			}
 			return strings.Join(xs, ", ")
 		}
-		l = append(l, "", "MCP Tools:", "  • Required: "+join("required"), "  • Recommended: "+join("recommended"), "  • Optional: "+join("optional"))
+		l = append(l, "", "[cyan]MCP Tools:[/cyan]", "  • Required: "+join("required"), "  • Recommended: "+join("recommended"), "  • Optional: "+join("optional"))
 	}
 	return l
 }
@@ -364,17 +370,16 @@ func runMissionInfo(ctx *cli.Context) error {
 	name := ctx.Arg("mission_name")
 	m := findLegacyMission(root, name)
 	if m == nil {
-		cprintRaw(ctx.Stdout, "Mission not found: "+name)
+		cprint(ctx.Stdout, "%s", "[red]Mission not found:[/red] "+name)
 		if av := listLegacyMissions(root); len(av) > 0 {
-			fmt.Fprintln(ctx.Stdout)
-			fmt.Fprintln(ctx.Stdout, "Available missions:")
+			cprint(ctx.Stdout, "\n[yellow]Available missions:[/yellow]")
 			for _, a := range av {
-				fmt.Fprintln(ctx.Stdout, "  • "+a)
+				cprint(ctx.Stdout, "%s", "  • "+a)
 			}
 		}
 		return cli.Exit(1)
 	}
-	rich.Panel(ctx.Stdout, strings.Join(missionDetailLines(m), "\n"), "Mission Details · "+m.Data.GetString("name"))
+	rich.PanelStyled(ctx.Stdout, strings.Join(missionDetailLines(m), "\n"), "Mission Details · "+m.Data.GetString("name"), "cyan")
 	return nil
 }
 
@@ -383,9 +388,7 @@ func runMissionCurrent(ctx *cli.Context) error {
 	slug := strings.TrimSpace(ctx.String("mission"))
 	if !ctx.IsSet("mission") {
 		w := ctx.Stdout
-		fmt.Fprintln(w, "No active mission detected.")
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Use --mission <slug> to specify one, or run from within a mission worktree.")
+		cprint(w, "[yellow]No active mission detected.[/yellow]\n\nUse [cyan]--mission <slug>[/cyan] to specify one, or run from within a mission worktree.")
 		ents, _ := os.ReadDir(project.Specs(root))
 		var ms []string
 		for _, e := range ents {
@@ -395,16 +398,15 @@ func runMissionCurrent(ctx *cli.Context) error {
 		}
 		sort.Strings(ms)
 		if len(ms) > 0 {
-			fmt.Fprintln(w)
-			fmt.Fprintln(w, "Available missions:")
+			cprint(w, "\n[cyan]Available missions:[/cyan]")
 			for i, s := range ms {
 				if i >= 10 {
 					break
 				}
-				fmt.Fprintln(w, "  - "+s)
+				cprint(w, "%s", "  - "+s)
 			}
 			if len(ms) > 10 {
-				fmt.Fprintf(w, "  ... and %d more\n", len(ms)-10)
+				cprint(w, "%s", fmt.Sprintf("  ... and %d more", len(ms)-10))
 			}
 		}
 		return cli.Exit(2)
@@ -414,7 +416,7 @@ func runMissionCurrent(ctx *cli.Context) error {
 	}
 	dir := findMissionDir(root, slug)
 	if dir == "" {
-		cprintRaw(ctx.Stdout, "Mission not found: "+slug)
+		cprint(ctx.Stdout, "%s", "[red]Mission not found:[/red] "+slug)
 		return cli.Exit(1)
 	}
 	mtype := "software-dev"
@@ -432,7 +434,7 @@ func runMissionCurrent(ctx *cli.Context) error {
 		cprintRaw(ctx.Stdout, fmt.Sprintf("Error: Mission '%s' not found", mtype))
 		return cli.Exit(1)
 	}
-	rich.Panel(ctx.Stdout, strings.Join(missionDetailLines(m), "\n"), "Active Mission (Mission: "+slug+")")
+	rich.PanelStyled(ctx.Stdout, strings.Join(missionDetailLines(m), "\n"), "Active Mission (Mission: "+slug+")", "cyan")
 	return nil
 }
 

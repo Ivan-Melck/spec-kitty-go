@@ -12,7 +12,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/glossary"
 	"github.com/spec-kitty/go-kitty3/internal/invocation"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
-	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // lineJSON is json.dumps() with default separators on one line.
@@ -148,7 +147,7 @@ func renderCapsule(ctx *cli.Context, p *invocation.Payload, showID bool) {
 			"To set a governance baseline, run (see all presets with `spec-kitty charter pack list`):\n"+
 			"  spec-kitty charter activate --preset minimal\n"+
 			"This activates config entries -- it does not by itself make an unmatched request route to a specialist; you may still need an explicit --profile <name>.",
-			"Empty Charter")
+			"Empty Charter", "yellow")
 	}
 	if obs := p.Glossary; obs != nil && len(obs.HighSeverity) > 0 {
 		lines := []string{"High-severity terminology conflicts detected before this invocation."}
@@ -168,13 +167,13 @@ func renderCapsule(ctx *cli.Context, p *invocation.Payload, showID bool) {
 			}
 			lines = append(lines, "- "+d)
 		}
-		fitPanel(w, rich.Strip(strings.Join(lines, "\n")), "Glossary Warning")
+		fitPanel(w, strings.Join(lines, "\n"), "Glossary Warning", "yellow")
 	}
 	if rec := p.Recommendation; rec != nil {
-		fitPanel(w, rich.Strip(formatRecommendation(rec)), "Model Routing Recommendation (advisory)")
+		fitPanel(w, formatRecommendation(rec), "Model Routing Recommendation (advisory)", "cyan")
 	}
 	if p.ContextAvailable && p.ContextText != "" {
-		fitPanel(w, rich.Strip(p.ContextText), "Governance Context")
+		fitPanel(w, p.ContextText, "Governance Context", "")
 	} else {
 		cprint(w, "[yellow]Governance context unavailable.[/yellow] Run 'spec-kitty charter synthesize'.")
 	}

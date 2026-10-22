@@ -197,7 +197,9 @@ func runDoctorMissionType(ctx *cli.Context) error {
 	var rows [][]string
 	for _, s := range missionTypeStates {
 		n, _ := counts.GetInt(s)
-		rows = append(rows, []string{s, fmt.Sprint(n)})
+		st := map[string]string{"resolved": "green", "activated-unresolvable": "red", "unknown": "red",
+			"typeless": "yellow", "legacy-key-only": "yellow", "error": "red"}[s]
+		rows = append(rows, []string{"[" + st + "]" + s + "[/]", fmt.Sprint(n)})
 	}
 	gridTable(w, []string{"State", "Count"}, []int{10, 6}, []bool{false, true}, rows)
 	fmt.Fprintln(w)

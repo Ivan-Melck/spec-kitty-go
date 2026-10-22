@@ -176,20 +176,16 @@ func TableWidth(w io.Writer, title string, headers []string, rows [][]string, ma
 	line("└", "┴", "┘", "─")
 }
 
-// Panel renders an expanded rich.Panel (ROUNDED box, padding (0, 1)) at the
-// console width with a centered title. Content markup is stripped.
-func Panel(w io.Writer, content, title string) {
-	width := Width()
-	inner := width - 4
-	top := "─" + strings.Repeat("─", width-4) + "─"
-	if title != "" {
-		top = center(" "+title+" ", width-2, "─")
+// Panel prints console.print(Panel(content, title=title)) on CliConsole():
+// an expanded ROUNDED panel, padding (0, 1), centred title; content and
+// title are console markup.
+func Panel(w io.Writer, content, title string) { PanelStyled(w, content, title, "") }
+
+// PanelStyled is Panel with border_style.
+func PanelStyled(w io.Writer, content, title, borderStyle string) {
+	p := &RichPanel{R: content, Title: title}
+	if borderStyle != "" {
+		p.BorderStyle = borderStyle
 	}
-	fmt.Fprintln(w, "╭"+top+"╮")
-	for _, l := range strings.Split(Strip(content), "\n") {
-		for _, wl := range WrapWords(l, inner) {
-			fmt.Fprintln(w, "│ "+pad(wl, inner)+" │")
-		}
-	}
-	fmt.Fprintln(w, "╰"+strings.Repeat("─", width-2)+"╯")
+	PrintTo(w, p)
 }

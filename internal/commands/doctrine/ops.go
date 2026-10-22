@@ -91,7 +91,7 @@ func runOpsLog(ctx *cli.Context) error {
 	if len(ops) == 0 {
 		cprint(w, "[dim]No operations found[/dim]")
 	} else {
-		t := &rtable{Title: "Operation History (git reflog)", Headers: []string{"ID", "Time", "Description"}, NoWrap: []bool{true}}
+		t := &rtable{Title: "Operation History (git reflog)", Headers: []string{"ID", "Time", "Description"}, NoWrap: []bool{true}, Styles: []string{"cyan", "dim"}}
 		for _, op := range ops {
 			id := op.id
 			if len([]rune(id)) > 12 {
