@@ -26,17 +26,17 @@ library goldens (`internal/pydantic`, `internal/pydifflib`, `internal/jsonschema
 | `charter interview` | done | TestParityCharterGenerateAndRuntime (defaults), TestParityCharterInterviewOrgPrefill, manual (interactive) | org charter prefill/promotion messages and `org_charter` JSON block |
 | `charter generate` | done | TestParityCharterGenerateAndRuntime, TestCharterGenerateGoOnly | `--owned-checkout` accepted, not resolved |
 | `charter status` | done | TestParityCharterGenerateAndRuntime, TestParityDoctorCharterPacksWarnings, TestParityCharterStatusManifestProvenanceErrors | org layer merges the full graph incl. augmentation edges (DOC-03); manifest/provenance errors are pydantic-exact (DOC-04) |
-| `charter synthesize` | done | TestParityCharterGenerateAndRuntime, TestParityCharterSynthesizePipeline, TestParityCharterSynthesizeDirectWrite, TestCharterSynthesizeGoOnly, TestParityCharterStatusManifestProvenanceErrors | full pipeline (area K). Irreducible: fixture root location (DOC-05) and the Python frames in `.failed/cause.yaml` (DOC-06); YAML parse-error text (PYF) |
+| `charter synthesize` | done | TestParityCharterGenerateAndRuntime, TestParityCharterSynthesizePipeline, TestParityCharterSynthesizeDirectWrite, TestCharterSynthesizeGoOnly, TestParityCharterStatusManifestProvenanceErrors | full pipeline (area K). Irreducible: fixture root location (DOC-05) and the Python frames in `.failed/cause.yaml` (DOC-06) |
 | `charter resynthesize` | done | TestParityCharterSynthesizePipeline | topic resolver (kind:slug / DRG URN / interview section, Levenshtein candidates, exit 2), bounded promote, EC-4 no-op |
 | `charter preflight` | done | TestParityCharterGenerateAndRuntime | auto-refresh runs this binary for `spec-kitty ...` steps |
 | `charter bundle validate` | done | TestParityCharterGenerateAndRuntime | |
 | `charter new` | done | TestParityCharterGenerateAndRuntime, TestCharterGenerateGoOnly | |
-| `charter validate` | done | TestParityCharterGenerateAndRuntime, TestCharterGenerateGoOnly | YAML parser error text differs (yaml.v3 vs ruamel) |
+| `charter validate` | done | TestParityCharterGenerateAndRuntime, TestCharterGenerateGoOnly | ruamel safe-loader parse-error text |
 | `charter pack list/path`, `pack asset list/path` | done | TestParityCharterActivation | built-in pack path is the Go cache, by design |
 | `charter mission-type list` | done | manual | |
 | `agent retrospect synthesize` (closeout package, synthesize path only) | done | TestDiffRetrospectSynthesizeLegacy (closeout) | legacy-schema records: dry-run/`--apply`, `--proposal-id` refusals, staleness against the primary feature dir, conflicts (exit 4), stale/invalid (exit 5), glossary/DRG/charter-pack/flag writes, provenance sidecars, `retrospective.proposal.*` events on the coordination status surface; `--fabricate-empty` (DOC-19) |
 | `charter consistency-check` | done | TestParityCharterConsistencyCheck, TestCharterConsistencyCheckGoOnly, TestParityLoadValidatedGraph | area K; `load_validated_graph` errors (DOC-16) |
-| `charter lint` | done | TestParityCharterLint, TestParityCharterLintOrg, TestCharterLintGoOnly, TestParityDoctorCharterPacksWarnings | area K; layer-collision warnings on stderr; YAML parse-error text differs |
+| `charter lint` | done | TestParityCharterLint, TestParityCharterLintOrg, TestCharterLintGoOnly, TestParityDoctorCharterPacksWarnings | area K; layer-collision warnings on stderr |
 | `charter fetch` | done | TestParityCharterFetch, TestParityCharterFetchHTTPS, TestCharterFetchHTTPSGoOnly, TestParityCharterFetchUntrustedTLS | python-requests texts for refused/unresolvable hosts, TLS verification failures and read timeouts (DOC-09) |
 | `charter org` (group), `org init`, `org validate` | done | TestParityCharterOrgInitAndValidate, TestCharterPackToolsGoOnly | area K |
 | `charter pack validate/assemble/regenerate-graph` | done | TestParityCharterOrgInitAndValidate, TestParityCharterPackAssemble, TestCharterPackToolsGoOnly, TestParityAgentProfileSchemaMessages, TestParityRegenerateGraphExtractor | agent-profile errors from a Draft 7 jsonschema port (DOC-08); regenerate-graph runs the ported DRG extractor + calibrator + hand-authored overlay + built-in manifest generator (DOC-07), `--check`, `invalid` and fail-closed ValueError tracebacks |
@@ -59,11 +59,13 @@ library goldens (`internal/pydantic`, `internal/pydifflib`, `internal/jsonschema
 ## Known deviations
 
 - Help screens are byte-identical (`go test ./internal/helpparity`).
-- YAML parser error texts (yaml.v3 vs ruamel/PyYAML) differ wherever a
-  malformed YAML file is reported; owned by PYF (`internal/pyyaml` error
-  text) and not switched yet.
-- Uncaught Python exceptions (`pyCrash`) print the traceback header and the
-  final `Type: message` line; the framed rich traceback box waits for PYF-01.
+- YAML parse errors carry ruamel's / PyYAML's exact text (PYF's
+  `internal/pyyaml`); the DOC loaders select the upstream loader per call
+  site (`YAML(typ="safe")` over a path or a str, PyYAML `safe_load`).
+- Uncaught Python exceptions print the rich traceback panel
+  (`rich.Traceback`) with the upstream function names and line numbers;
+  frames show `in <name>:<line>` because the Python source is not on disk,
+  and ruamel-internal frames below a YAML load are not listed.
 
 ## Irreducible differences
 
@@ -89,9 +91,6 @@ library goldens (`internal/pydantic`, `internal/pydifflib`, `internal/jsonschema
 
 ## Remaining work
 
-- Encoding-provenance records (`.kittify/encoding-provenance/global.jsonl`,
-  gitignored) written by `load_charter_file` reads are not emitted (ENC owns
-  the charset_normalizer port the record payload depends on).
 - Mission-type activation step-removal warnings (FR-008) and
   `reproject_pack_skills` after skill (de)activation (needs the pack skill
   installer, MAINT territory).
@@ -100,6 +99,26 @@ library goldens (`internal/pydantic`, `internal/pydifflib`, `internal/jsonschema
 - `charter pack regenerate-graph` extractor edge cases: YAML 1.2 typing of
   unquoted ids (`id: 024`) and non-mapping reference entries crash upstream
   with Python TypeErrors/AttributeErrors; Go skips them.
+
+## Wave 5 follow-up (after the ENC / PYF merges)
+
+- Tracebacks: `regenerate-graph` crashes (`RegenCrash.Phase`/`Frames`),
+  `charter activate` registration and the activate/deactivate cascade
+  DRGValidationError go through `rich.Traceback`; tests compare the frame
+  lists (`TestParityRegenerateGraphExtractor`, `TestParityLoadValidatedGraph`).
+- YAML error text masks removed from the pack-tool and synthesizer parity
+  tests.
+- Encoding provenance: the extra `infer_repo_languages` passes upstream makes
+  (bundle `_drop_scope_filtered_ids`, the dispatch executor's second service
+  build, the first activation-aware profile lookup, pack-skill health,
+  consistency-check's cwd-relative directive service) now record their
+  interview read (`TestParityEncodingProvenanceDoctrineFlows`).
+- `render_yaml_document` (activation writes to config.yaml / charter.yaml,
+  the `charter:` pointer write) renders changed entries through the ruamel
+  round trip (`internal/rtyaml`): lead comments stay, the key's line and inner
+  comments are kept as ruamel keeps them (`TestParityCommentedConfigRoundTrip`).
+- `internal/migrate` renders `str(ValidationError)` through `internal/pydantic`
+  (its private formatter is gone; output unchanged, maintenance reindex tests).
 
 ## Wave 5 (area DOC) library additions
 
