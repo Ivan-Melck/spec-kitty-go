@@ -321,25 +321,25 @@ func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o O
 // ---------------------------------------------------------------------------
 
 type run struct {
-	w           io.Writer
-	root        string
-	slug        string
-	sf          *coord.Surface
-	target      string
-	strategy    string
-	ret         Retention
-	m           *lanes.Manifest
-	wps         []string
-	snap        *status.Snapshot
-	number      int
-	baseline    string
-	squash      string
+	w            io.Writer
+	root         string
+	slug         string
+	sf           *coord.Surface
+	target       string
+	strategy     string
+	ret          Retention
+	m            *lanes.Manifest
+	wps          []string
+	snap         *status.Snapshot
+	number       int
+	baseline     string
+	squash       string
 	push         bool
 	skipLanes    bool
 	planningOnly bool
 	state        *MergeState
-	originCheck *string
-	originGated bool
+	originCheck  *string
+	originGated  bool
 }
 
 func hasRemote(root, name string) bool {
