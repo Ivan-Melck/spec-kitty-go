@@ -43,7 +43,6 @@ func Table(w io.Writer, title string, headers []string, rows [][]string) {
 	TableWidth(w, title, headers, rows, Width())
 }
 
-
 func maxLineLen(s string) int {
 	m := 0
 	for _, line := range strings.Split(s, "\n") {
