@@ -15,8 +15,8 @@ func TestParsePolicy(t *testing.T) {
 		`[`:  "--policy is not valid JSON: Expecting value: line 1 column 2 (char 1)",
 		`[]`: "--policy must be a JSON object",
 		`{}`: "--policy missing required field: 'orchestrator_id'",
-		`{"orchestrator_id":1,"orchestrator_version":"1","agent_family":"c","approval_mode":"a","sandbox_mode":"s","network_mode":"n","dangerous_flags":[]}`:          "--policy.orchestrator_id must be a string",
-		`{"orchestrator_id":"o","orchestrator_version":"1","agent_family":"c","approval_mode":"a","sandbox_mode":"s","network_mode":"n","dangerous_flags":["--yolo"]}`: "--policy.dangerous_flags contains a banned flag: '--yolo'. Banned flags must never appear in orchestrator policy payloads.",
+		`{"orchestrator_id":1,"orchestrator_version":"1","agent_family":"c","approval_mode":"a","sandbox_mode":"s","network_mode":"n","dangerous_flags":[]}`:                         "--policy.orchestrator_id must be a string",
+		`{"orchestrator_id":"o","orchestrator_version":"1","agent_family":"c","approval_mode":"a","sandbox_mode":"s","network_mode":"n","dangerous_flags":["--yolo"]}`:               "--policy.dangerous_flags contains a banned flag: '--yolo'. Banned flags must never appear in orchestrator policy payloads.",
 		`{"orchestrator_id":"o","orchestrator_version":"1","agent_family":"c","approval_mode":"a","sandbox_mode":"s","network_mode":"n","dangerous_flags":[],"x":{"y":["a-token"]}}`: "--policy field 'x.y[0]' appears to contain a secret (matched pattern: token|secret|key|password|credential). Do not pass secrets via --policy.",
 	}
 	for in, want := range cases {
