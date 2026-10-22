@@ -49,106 +49,126 @@ func runCharterStatus(ctx *cli.Context) error {
 		jsonOut(w, payload, jsonx.Options{Indent: 2, EnsureASCII: true})
 		return nil
 	}
+	p := func(x string) { cprint(w, "%s", x) }
 	sync := payload.GetObject("charter_sync")
-	cprint(w, "[bold]Charter sync[/bold]")
+	p("[bold]Charter sync[/bold]")
 	if b, _ := sync.Get("available"); b == true {
-		cprintRaw(w, "Charter: "+sync.GetString("charter_path"))
+		p("Charter: " + sync.GetString("charter_path"))
 		if sync.GetString("status") == "stale" {
-			cprint(w, "Status: [yellow]STALE[/yellow] (modified since last sync)")
+			p("Status: [yellow]STALE[/yellow] (modified since last sync)")
 			if s := sync.GetString("stored_hash"); s != "" {
-				cprintRaw(w, "Expected hash: "+s)
+				p("Expected hash: " + s)
 			}
-			cprintRaw(w, "Current hash:  "+sync.GetString("current_hash"))
+			p("Current hash:  " + sync.GetString("current_hash"))
 			if r := payload.GetObject("freshness").GetObject("charter_source").GetString("remediation"); r != "" {
-				cprint(w, "%s", "\n[dim]Run: "+r+"[/dim]")
+				p("\n[dim]Run: " + r + "[/dim]")
 			}
 		} else {
-			cprint(w, "Status: [green]SYNCED[/green]")
+			p("Status: [green]SYNCED[/green]")
 			if ls := sync.GetString("last_sync"); ls != "" {
-				cprintRaw(w, "Last sync: "+ls)
+				p("Last sync: " + ls)
 			}
-			cprintRaw(w, "Hash: "+sync.GetString("current_hash"))
+			p("Hash: " + sync.GetString("current_hash"))
 		}
 		lib, _ := sync.Get("library_docs")
-		cprintRaw(w, fmt.Sprintf("Library docs: %v", lib))
+		p(fmt.Sprintf("Library docs: %v", lib))
 		if warns := payload.GetObject("governance_references").GetList("warnings"); len(warns) > 0 {
-			cprint(w, "\n[yellow]Governance reference warnings[/yellow]")
+			p("\n[yellow]Governance reference warnings[/yellow]")
 			for _, x := range warns {
-				cprintRaw(w, "  - "+fmt.Sprint(x))
+				p("  - " + fmt.Sprint(x))
 			}
 		}
-		cprintRaw(w, "\nExtracted files:")
-		t := &rtable{Headers: []string{"File", "Status", "Size"}, Center: []bool{false, true, false}, Right: []bool{false, false, true}}
+		p("\nExtracted files:")
+		t := rich.NewTable()
+		t.HeaderStyle = "bold"
+		t.AddColumn("File", rich.Column{Style: "cyan"})
+		t.AddColumn("Status", rich.Column{Justify: "center"})
+		t.AddColumn("Size", rich.Column{Justify: "right"})
 		for _, x := range sync.GetList("files") {
 			f := x.(*jsonx.Object)
 			ex, _ := f.Get("exists")
 			sz, _ := f.Get("size_kb")
 			if ex == true {
-				t.Rows = append(t.Rows, []string{f.GetString("name"), "Y", fmt.Sprintf("%.1f KB", sz.(float64))})
+				t.AddRow(f.GetString("name"), "[green]Y[/green]", fmt.Sprintf("%.1f KB", sz.(float64)))
 			} else {
-				t.Rows = append(t.Rows, []string{f.GetString("name"), "N", "-"})
+				t.AddRow(f.GetString("name"), "[red]N[/red]", "[dim]-[/dim]")
 			}
 		}
-		t.render(w, rich.Width())
+		rich.PrintTo(w, t)
 	} else {
-		cprintRaw(w, "Unavailable: "+sync.GetString("error"))
+		p("[yellow]Unavailable[/yellow]: " + sync.GetString("error"))
 	}
 	manifest, gen := syn.GetObject("manifest"), syn.GetObject("generated_inputs")
 	ev, prov := syn.GetObject("evidence"), syn.GetObject("provenance")
 	state := syn.GetString("generation_state")
-	cprint(w, "\n[bold]Synthesis[/bold]")
-	cprintRaw(w, "Generation state: "+strings.ToUpper(state))
+	styleOf := func(m map[string]string, k string) string {
+		if s, ok := m[k]; ok {
+			return s
+		}
+		return "white"
+	}
+	ss := styleOf(map[string]string{"promoted": "green", "ready_for_validation": "yellow", "needs_attention": "red", "not_started": "blue"}, state)
+	p("\n[bold]Synthesis[/bold]")
+	p("Generation state: [" + ss + "]" + strings.ToUpper(state) + "[/" + ss + "]")
 	counts := gen.GetObject("counts")
 	g := func(o *jsonx.Object, k string) any { v, _ := o.Get(k); return v }
-	cprintRaw(w, fmt.Sprintf("Generated inputs: %v directive, %v tactic, %v styleguide under %s", g(counts, "directive"), g(counts, "tactic"), g(counts, "styleguide"), gen.GetString("path")))
-	cprintRaw(w, fmt.Sprintf("Manifest: %s (%s)", strings.ToUpper(manifest.GetString("state")), manifest.GetString("path")))
+	p(fmt.Sprintf("Generated inputs: %v directive, %v tactic, %v styleguide under %s", g(counts, "directive"), g(counts, "tactic"), g(counts, "styleguide"), gen.GetString("path")))
+	ms := styleOf(map[string]string{"valid": "green", "missing": "blue", "partial": "yellow", "invalid": "red"}, manifest.GetString("state"))
+	p(fmt.Sprintf("Manifest: [%s]%s[/%s] (%s)", ms, strings.ToUpper(manifest.GetString("state")), ms, manifest.GetString("path")))
 	if g(manifest, "exists") == true {
 		if manifest.GetString("run_id") != "" && manifest.GetString("adapter_id") != "" && manifest.GetString("adapter_version") != "" {
-			cprintRaw(w, fmt.Sprintf("  Run: %s  Adapter: %s v%s", manifest.GetString("run_id"), manifest.GetString("adapter_id"), manifest.GetString("adapter_version")))
+			p(fmt.Sprintf("  Run: %s  Adapter: %s v%s", manifest.GetString("run_id"), manifest.GetString("adapter_id"), manifest.GetString("adapter_version")))
 		}
-		cprintRaw(w, fmt.Sprintf("  Artifacts: %v (live doctrine files: %v)", g(manifest, "artifact_count"), g(manifest, "live_artifact_count")))
+		p(fmt.Sprintf("  Artifacts: %v (live doctrine files: %v)", g(manifest, "artifact_count"), g(manifest, "live_artifact_count")))
 	}
 	if e := manifest.GetString("error"); e != "" {
-		cprintRaw(w, "  Error: "+e)
+		p("  [red]Error:[/red] " + e)
 	}
 	if mp := manifest.GetList("missing_provenance_paths"); len(mp) > 0 {
-		cprintRaw(w, "  Missing provenance paths:")
-		for _, p := range mp {
-			cprintRaw(w, "    - "+fmt.Sprint(p))
+		p("  Missing provenance paths:")
+		for _, x := range mp {
+			p("    [red]-[/red] " + fmt.Sprint(x))
 		}
 	}
 	if code := ev.GetObject("code"); code != nil {
-		cprintRaw(w, fmt.Sprintf("Evidence: stack=%s (lang=%s, frameworks=%d, test_frameworks=%d)", code.GetString("stack_id"),
+		p(fmt.Sprintf("Evidence: stack=%s (lang=%s, frameworks=%d, test_frameworks=%d)", code.GetString("stack_id"),
 			code.GetString("primary_language"), len(code.GetList("frameworks")), len(code.GetList("test_frameworks"))))
 	} else {
-		cprintRaw(w, "Evidence: code signals unavailable")
+		p("Evidence: code signals unavailable")
 	}
 	snap := ev.GetString("corpus_snapshot_id")
 	if snap == "" {
 		snap = "(none)"
 	}
-	cprintRaw(w, fmt.Sprintf("  Configured URLs: %v  Corpus snapshot: %s", g(ev, "configured_url_count"), snap))
+	p(fmt.Sprintf("  Configured URLs: %v  Corpus snapshot: %s", g(ev, "configured_url_count"), snap))
 	for _, x := range ev.GetList("warnings") {
-		cprintRaw(w, "  Warning: "+fmt.Sprint(x))
+		p("  [yellow]Warning:[/yellow] " + fmt.Sprint(x))
 	}
-	cprintRaw(w, fmt.Sprintf("Provenance: %v visible sidecar(s)", g(prov, "parsed_count")))
+	p(fmt.Sprintf("Provenance: %v visible sidecar(s)", g(prov, "parsed_count")))
 	if mac, _ := g(prov, "manifest_artifact_count").(int); mac > 0 {
 		miss, _ := g(prov, "missing_for_manifest_count").(int)
-		cprintRaw(w, fmt.Sprintf("  Manifest coverage: %d/%d", mac-miss, mac))
+		p(fmt.Sprintf("  Manifest coverage: %d/%d", mac-miss, mac))
 	}
 	if ids := prov.GetList("corpus_snapshot_ids"); len(ids) > 0 {
 		var s []string
 		for _, x := range ids {
 			s = append(s, fmt.Sprint(x))
 		}
-		cprintRaw(w, "  Corpus snapshots: "+strings.Join(s, ", "))
+		p("  Corpus snapshots: " + strings.Join(s, ", "))
 	}
 	for _, x := range prov.GetList("warnings") {
-		cprintRaw(w, "  Warning: "+fmt.Sprint(x))
+		p("  [yellow]Warning:[/yellow] " + fmt.Sprint(x))
 	}
 	if ctx.Bool("provenance") && len(prov.GetList("entries")) > 0 {
-		cprintRaw(w, "\nProvenance entries:")
-		t := &rtable{Headers: []string{"Kind", "Slug", "Artifact URN", "Adapter", "Corpus", "Evidence Hash"}}
+		p("\nProvenance entries:")
+		t := rich.NewTable()
+		t.HeaderStyle = "bold"
+		t.AddColumn("Kind", rich.Column{Style: "cyan"})
+		t.AddColumn("Slug", rich.Column{Style: "cyan"})
+		t.AddColumn("Artifact URN", rich.Column{Style: "magenta"})
+		for _, h := range []string{"Adapter", "Corpus", "Evidence Hash"} {
+			t.AddColumn(h, rich.Column{})
+		}
 		for _, x := range prov.GetList("entries") {
 			e := x.(*jsonx.Object)
 			h := e.GetString("evidence_bundle_hash")
@@ -162,43 +182,53 @@ func runCharterStatus(ctx *cli.Context) error {
 			if corpus == "" {
 				corpus = "-"
 			}
-			t.Rows = append(t.Rows, []string{fmt.Sprint(g(e, "kind")), fmt.Sprint(g(e, "slug")), fmt.Sprint(g(e, "artifact_urn")),
-				fmt.Sprintf("%v v%v", g(e, "adapter_id"), g(e, "adapter_version")), corpus, h})
+			t.AddRow(fmt.Sprint(g(e, "kind")), fmt.Sprint(g(e, "slug")), fmt.Sprint(g(e, "artifact_urn")),
+				fmt.Sprintf("%v v%v", g(e, "adapter_id"), g(e, "adapter_version")), corpus, h)
 		}
-		t.render(w, rich.Width())
+		rich.PrintTo(w, t)
 	}
 	org := payload.GetObject("org_layer")
-	cprint(w, "\n[bold]Organisation Layer[/bold]")
-	cprintRaw(w, "  built-in: present")
+	p("\n[bold]Organisation Layer[/bold]")
+	p("  [dim]built-in[/dim]: [green]present[/green]")
 	if packs := org.GetList("packs"); len(packs) > 0 {
 		for _, x := range packs {
-			p := x.(*jsonx.Object)
-			cprintRaw(w, fmt.Sprintf("  org:%s: %s (%v nodes, %v edges)", p.GetString("name"), p.GetString("source_ref"), g(p, "node_count"), g(p, "edge_count")))
+			pk := x.(*jsonx.Object)
+			name := pk.GetString("name")
+			if _, ok := pk.Get("name"); !ok {
+				name = "unknown"
+			}
+			if f, ok := pk.Get("fetched"); ok && f == false {
+				p(fmt.Sprintf("  [red]org:%s[/red]: [red]MISSING[/red] — %s", name, pk.GetString("source_ref")))
+				continue
+			}
+			p(fmt.Sprintf("  [green]org:%s[/green]: [dim]%s[/dim] (%v nodes, %v edges)", name, pk.GetString("source_ref"), g(pk, "node_count"), g(pk, "edge_count")))
 		}
 		for _, x := range org.GetList("collision_warnings") {
 			c := x.(*jsonx.Object)
-			cprintRaw(w, fmt.Sprintf("  collision: %v target=%v resolution=%v", g(c, "kind"), g(c, "target_id"), g(c, "resolution")))
+			p(fmt.Sprintf("  [yellow]collision[/yellow]: %v target=%v resolution=%v", g(c, "kind"), g(c, "target_id"), g(c, "resolution")))
 		}
 	} else {
-		cprintRaw(w, "  org: (no packs configured)")
+		p("  org: [dim](no packs configured)[/dim]")
 	}
 	for _, x := range org.GetList("errors") {
-		cprintRaw(w, "  Error: "+fmt.Sprint(x))
+		p("  [red]Error:[/red] " + fmt.Sprint(x))
 	}
 	fr := payload.GetObject("freshness")
-	cprint(w, "\n[bold]Freshness[/bold]")
+	p("\n[bold]Freshness[/bold]")
+	fs := map[string]string{"fresh": "green", "stale": "yellow", "missing": "blue", "built_in_only": "cyan", "invalid": "red"}
 	for _, l := range [][2]string{{"Charter source ", "charter_source"}, {"Synced bundle  ", "synced_bundle"}, {"Synthesized DRG", "synthesized_drg"}} {
 		sub := fr.GetObject(l[1])
-		line := "  " + l[0] + ": " + strings.ToUpper(sub.GetString("state"))
+		c := styleOf(fs, sub.GetString("state"))
+		line := "  " + l[0] + ": [" + c + "]" + strings.ToUpper(sub.GetString("state")) + "[/" + c + "]"
 		if lc := sub.GetString("last_change"); lc != "" {
-			line += "  last_change=" + lc
+			line += "  [dim]last_change=" + lc + "[/dim]"
 		}
-		cprintRaw(w, line)
+		p(line)
 		if d := sub.GetString("detail"); d != "" {
-			cprintRaw(w, "    "+d)
+			p("    [dim]" + d + "[/dim]")
 		}
 		if r := sub.GetString("remediation"); r != "" {
-			cprintRaw(w, "    Run: "+r)
+			p("    [dim]Run: " + r + "[/dim]")
 		}
 	}
 	return nil
