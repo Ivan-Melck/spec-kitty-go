@@ -18,6 +18,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lifecycle"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
+	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/reqmap"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
@@ -106,7 +107,11 @@ type finalizeRun struct {
 	deps          map[string][]string
 	depOrder      []string
 	refs          map[string][]string
+	refsOrder     []string // non-nil: dict order of refs (manifest-only outline)
 	diagnostics   *jsonx.Object
+	manifest      *orch.WpsManifest
+	concernWarns  []string
+	tasksMDStale  bool
 	preexisting   map[string]bool
 	persisted     bool
 	previousValue string
@@ -194,6 +199,9 @@ func runFinalizeTasks(ctx *cli.Context) error {
 	if err := f.validationGates(); err != nil {
 		return err
 	}
+	if done, err := f.finishOutlineValidation(); done {
+		return err
+	}
 	if err := f.bootstrapLoop(); err != nil {
 		return err
 	}
@@ -201,6 +209,9 @@ func runFinalizeTasks(ctx *cli.Context) error {
 		if err := f.flushWrites(); err != nil {
 			return f.emitErr(err.Error())
 		}
+	}
+	if err := f.regenerateTasksMD(); err != nil {
+		return f.emitErr(err.Error())
 	}
 	manifests, err := f.ownershipGates()
 	if err != nil {
@@ -331,12 +342,26 @@ func (f *finalizeRun) validationGates() error {
 		f.scaffoldIssueMatrix()
 	}
 	f.lintIssueMatrix()
-	// TODO(wps.yaml): the tasks-outline manifest flow is not ported.
+	man, merr := orch.LoadWpsManifest(f.dir)
+	if merr != nil {
+		return f.emitErr("wps.yaml is present but could not be loaded: " + merr.Error())
+	}
+	f.manifest = man
+	f.concernWarns = []string{}
+	if man != nil {
+		f.concernWarns = orch.CheckConcernRefsCoverage(man)
+	}
 	if err := f.resolveDeps(); err != nil {
 		return err
 	}
 	if err := f.validateGraph(); err != nil {
 		return err
+	}
+	if len(f.wpFiles) == 0 && man != nil {
+		f.wpIDs = nil
+		for _, e := range man.WorkPackages {
+			f.wpIDs = append(f.wpIDs, e.ID)
+		}
 	}
 	if err := f.validateMapping(); err != nil {
 		return err
@@ -344,16 +369,106 @@ func (f *finalizeRun) validationGates() error {
 	if err := f.depConflicts(); err != nil {
 		return err
 	}
+	for _, w := range f.concernWarns {
+		f.human("[yellow]Warning:[/yellow] " + w)
+	}
 	for _, w := range f.extractWarns {
 		f.human("[yellow]Warning:[/yellow] " + w)
 	}
 	return nil
 }
 
+// finishOutlineValidation is _finish_outline_validation_if_applicable: a
+// manifest-only outline (wps.yaml, no WP prompt files yet).
+func (f *finalizeRun) finishOutlineValidation() (bool, error) {
+	if len(f.wpFiles) > 0 || f.manifest == nil {
+		return false, nil
+	}
+	if !f.validateOnly {
+		return true, f.emitErr("WP prompt files are required to finalize tasks; run tasks-packages first")
+	}
+	if f.json {
+		r := jsonx.NewObject("result", "validation_passed", "validation_stage", "tasks-outline", "mission_slug", f.slug,
+			"wp_count", len(f.manifest.WorkPackages), "validate_only", true,
+			"dependencies_parsed", depsObject(f.deps, f.depOrder), "requirement_refs_parsed", f.refsObject())
+		for _, kv := range f.diagnostics.Pairs() {
+			r.Set(kv.Key, kv.Value)
+		}
+		emitJSON(f.ctx.Stdout, r)
+	} else {
+		say(f.ctx.Stdout, "tasks-outline manifest validation passed; WP prompt validation runs after tasks-packages")
+	}
+	return true, nil
+}
+
+// regenerateTasksMD is _regenerate_or_report_tasks_md (T017, #3221).
+func (f *finalizeRun) regenerateTasksMD() error {
+	if f.manifest == nil {
+		return nil
+	}
+	generated := orch.GenerateTasksMD(f.manifest, f.slug, f.deps)
+	path := filepath.Join(f.dir, "tasks.md")
+	if f.validateOnly {
+		b, err := os.ReadFile(path)
+		f.tasksMDStale = err != nil || string(b) != generated
+		if f.tasksMDStale {
+			f.human("[yellow]⚠[/yellow] tasks.md is stale relative to wps.yaml; run finalize-tasks without --validate-only to regenerate")
+		}
+		return nil
+	}
+	if err := os.WriteFile(path, []byte(generated), 0o644); err != nil {
+		return err
+	}
+	f.human(fmt.Sprintf("[green]Regenerated[/green] tasks.md from wps.yaml (%d WPs)", len(f.manifest.WorkPackages)))
+	return nil
+}
+
+func (f *finalizeRun) setDep(id string, d []string) {
+	if _, ok := f.deps[id]; !ok {
+		f.depOrder = append(f.depOrder, id)
+	}
+	f.deps[id] = d
+}
+
 func (f *finalizeRun) resolveDeps() error {
 	f.deps = map[string][]string{}
+	f.depOrder = nil
 	raw, _ := reqmap.ReadAllWPRawRefs(f.tasksDir)
 	f.refs = raw
+	if f.manifest != nil {
+		explicit := map[string]bool{}
+		for _, e := range f.manifest.WorkPackages {
+			if e.DependenciesExplicit {
+				explicit[e.ID] = true
+				f.setDep(e.ID, append([]string{}, e.Dependencies...))
+			} else {
+				f.setDep(e.ID, []string{})
+			}
+		}
+		// _frontmatter_fallback_dependencies (#5448).
+		for _, p := range f.wpFiles {
+			m := wpFilePrefix.FindStringSubmatch(filepath.Base(p))
+			if m == nil || explicit[m[1]] {
+				continue
+			}
+			if w, err := wp.Read(p); err == nil {
+				if d := w.Dependencies(); len(d) > 0 {
+					f.setDep(m[1], d)
+				}
+			}
+		}
+		if len(f.wpFiles) == 0 {
+			f.refs = map[string][]string{}
+			f.refsOrder = []string{}
+			for _, e := range f.manifest.WorkPackages {
+				if _, ok := f.refs[e.ID]; !ok {
+					f.refsOrder = append(f.refsOrder, e.ID)
+				}
+				f.refs[e.ID] = append([]string{}, e.RequirementRefs...)
+			}
+		}
+		return nil
+	}
 	tasksMD := filepath.Join(f.dir, "tasks.md")
 	b, err := os.ReadFile(tasksMD)
 	if err != nil {
@@ -407,19 +522,13 @@ func (f *finalizeRun) resolveDeps() error {
 			return f.emitErr(err.Error())
 		}
 		if d := w.Dependencies(); len(d) > 0 {
-			f.deps[m[1]] = d
+			f.setDep(m[1], d)
 		} else {
 			d := tdeps[m[1]]
 			if d == nil {
 				d = []string{}
 			}
-			f.deps[m[1]] = d
-		}
-	}
-	f.depOrder = nil
-	for _, p := range f.wpFiles {
-		if m := wpFilePrefix.FindStringSubmatch(filepath.Base(p)); m != nil {
-			f.depOrder = append(f.depOrder, m[1])
+			f.setDep(m[1], d)
 		}
 	}
 	return nil
@@ -476,6 +585,9 @@ func depsObject(m map[string][]string, order []string) *jsonx.Object {
 
 func (f *finalizeRun) refsObject() *jsonx.Object {
 	_, order := reqmap.ReadAllWPRawRefs(f.tasksDir)
+	if f.refsOrder != nil {
+		order = f.refsOrder
+	}
 	o := jsonx.NewObject()
 	seen := map[string]bool{}
 	for _, k := range order {
@@ -694,7 +806,7 @@ func branchStrategy(target, final string) string {
 func (f *finalizeRun) bootstrapLoop() error {
 	f.frontmatter = map[string]*jsonx.Object{}
 	f.bodies = map[string]string{}
-	f.ownershipWarn = []string{}
+	f.ownershipWarn = append([]string{}, f.concernWarns...)
 	f.postIntegWarn = []string{}
 	f.modified, f.unchanged, f.preserved, f.wouldModify = []string{}, []string{}, []string{}, []any{}
 	for _, p := range f.wpFiles {
@@ -718,6 +830,12 @@ func (f *finalizeRun) bootstrapLoop() error {
 		deps := f.deps[id]
 		if deps == nil {
 			deps = []string{}
+		}
+		preserved := false
+		if existing := w.Dependencies(); f.manifest == nil && len(deps) == 0 && len(existing) > 0 {
+			deps = existing
+			preserved = true
+			f.preserved = append(f.preserved, id)
 		}
 		refs := f.refs[id]
 		title := w.Meta().GetString("title")
@@ -758,8 +876,10 @@ func (f *finalizeRun) bootstrapLoop() error {
 				f.wouldModify = append(f.wouldModify, jsonx.NewObject("wp_id", id, "changes", changes))
 			}
 			f.updated++
-			f.modified = append(f.modified, id)
-		} else {
+			if !preserved {
+				f.modified = append(f.modified, id)
+			}
+		} else if !preserved {
 			f.unchanged = append(f.unchanged, id)
 		}
 	}
@@ -1106,7 +1226,7 @@ func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
 	if f.json {
 		r := jsonx.NewObject("result", "validation_passed", "mission_slug", f.slug, "wp_count", len(f.workPackages), "validate_only", true,
 			"would_modify", f.wouldModify, "would_preserve", strList(f.preserved), "unchanged", strList(f.unchanged), "updated_wp_count", f.updated,
-			"tasks_md_stale", false, "ownership_warnings", strList(f.ownershipWarn), "requirement_extraction_warnings", strList(nonNil(f.extractWarns)),
+			"tasks_md_stale", f.tasksMDStale, "ownership_warnings", strList(f.ownershipWarn), "requirement_extraction_warnings", strList(nonNil(f.extractWarns)),
 			"post_integration_acceptance_warnings", strList(f.postIntegWarn),
 			"validation", jsonx.NewObject("bootstrap_preview", jsonx.NewObject("total_wps", total, "newly_seeded", seeded, "already_initialized", existing),
 				"lanes_preview", f.lanesStats(lm)),
@@ -1313,6 +1433,9 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 		if lm.CollapseReport != nil && lm.CollapseReport.IndependentWPsCollapsed > 0 {
 			f.human(fmt.Sprintf("[yellow]⚠[/yellow] %d independent WP pair(s) collapsed into same lane. Run with --json to see details.", lm.CollapseReport.IndependentWPsCollapsed))
 		}
+		if err := f.reportParallelizationRisk(lm); err != nil {
+			return err
+		}
 	}
 	if lm != nil {
 		if p := f.scaffoldAcceptanceMatrix(); p != "" {
@@ -1405,12 +1528,8 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 		}
 	}
 	if f.json {
-		depsObj := jsonx.NewObject()
+		depsObj := depsObject(f.deps, f.depOrder)
 		refsObj := jsonx.NewObject()
-		for _, w := range f.workPackages {
-			id := w.GetString("id")
-			depsObj.Set(id, strList(nonNil(f.deps[id])))
-		}
 		for _, id := range sortedKeysObj(f.refs) {
 			refsObj.Set(id, strList(f.refs[id]))
 		}
@@ -1490,8 +1609,9 @@ func (f *finalizeRun) collectArtifacts(lanesPath string) []string {
 			out = append(out, p)
 		}
 	}
-	add(filepath.Join(f.dir, "tasks.md"))
-	add(filepath.Join(f.dir, "meta.json"))
+	for _, n := range []string{"status.events.jsonl", "status.json", "tasks.md", "wps.yaml", "meta.json", "issue-matrix.json"} {
+		add(filepath.Join(f.dir, n))
+	}
 	entries, _ := os.ReadDir(f.tasksDir)
 	var names []string
 	for _, e := range entries {
