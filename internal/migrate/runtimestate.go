@@ -23,10 +23,9 @@ import (
 // runtime_state_cutover.py): seed legacy frontmatter/checkbox runtime state as
 // deterministic events, verify fail-closed, flip meta.json status_phase.
 //
-// Deviations: the pre-#2985 legacy-carrier tolerance, the subtask
-// superseded-by-history tolerance and the foreign-lane write refusal of
-// verify_backfill are not ported (a divergent seed row is always a
-// mismatch); the placement-port PRIMARY-home cross-check is not ported.
+// verify_backfill tolerates exactly the upstream shapes: an old (pre-floor)
+// `at`, the pre-#2985 full-payload claim carrier and a planned subtask seed
+// superseded by legitimate later history.
 
 // RuntimeBackfillActor is BACKFILL_ACTOR.
 const RuntimeBackfillActor = "migration:backfill_runtime_state"
@@ -487,13 +486,7 @@ func buildRuntimeSeeds(writeDir, readDir string, legacy map[string]*legacyRuntim
 			*warnings = append(*warnings, wp+": no claim anchor in event log — synthesized from frontmatter claim state")
 		}
 		if pm := unmigratedClaimSlots(r, present[wp]); pm.Len() > 0 {
-			var mptr *string
-			if mid != slug {
-				m := mid
-				mptr = &m
-			}
-			trans = append(trans, &status.Event{EventID: seedID(mid, wp, "claim"), MissionSlug: slug, WPID: wp, From: "planned", To: "claimed",
-				At: retroClaimAt(anchor, earliest[wp]), Actor: status.StrActor(RuntimeBackfillActor), ExecutionMode: "worktree", PolicyMetadata: pm, MissionID: mptr})
+			trans = append(trans, claimCarrier(slug, mid, wp, retroClaimAt(anchor, earliest[wp]), pm))
 		}
 		add := func(field string, d status.Delta) {
 			if d.IsEmpty() {
@@ -517,6 +510,81 @@ func buildRuntimeSeeds(writeDir, readDir string, legacy map[string]*legacyRuntim
 		}
 	}
 	return trans, anns, nil
+}
+
+// claimCarrier is _claim_carrier: the seed planned -> claimed row carrying
+// the claim slots in policy_metadata.
+func claimCarrier(slug, mid, wp, at string, pm *jsonx.Object) *status.Event {
+	var mptr *string
+	if mid != slug {
+		m := mid
+		mptr = &m
+	}
+	return &status.Event{EventID: seedID(mid, wp, "claim"), MissionSlug: slug, WPID: wp, From: "planned", To: "claimed",
+		At: at, Actor: status.StrActor(RuntimeBackfillActor), ExecutionMode: "worktree", PolicyMetadata: pm, MissionID: mptr}
+}
+
+// pyEqualJSON is Python == over two to_dict() payloads (key order ignored).
+func pyEqualJSON(a, b *jsonx.Object) bool {
+	av, err1 := pyjson.Loads(jsonx.Dumps(a, jsonx.Line))
+	bv, err2 := pyjson.Loads(jsonx.Dumps(b, jsonx.Line))
+	return err1 == nil && err2 == nil && pyjson.Equal(av, bv)
+}
+
+// subtaskSeedSuperseded is _subtask_seed_is_superseded_by_legitimate_history:
+// an immutable seed that recorded a subtask as planned is accepted when the
+// legacy source now says done and real later history proves the completion.
+func subtaskSeedSuperseded(expected, actual *status.Annotation, st *status.Stream) bool {
+	es, as := expected.Delta.Subtasks, actual.Delta.Subtasks
+	if es == nil || as == nil || es.Len() != as.Len() {
+		return false
+	}
+	changed := false
+	for _, kv := range es.Pairs() {
+		av, ok := as.Get(kv.Key)
+		if !ok {
+			return false
+		}
+		if pyjson.Equal(av, kv.Value) {
+			continue
+		}
+		if av != "planned" || kv.Value != "done" {
+			return false
+		}
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+	seedAt, err := parseAware(actual.At, actual.WPID)
+	if err != nil {
+		return false
+	}
+	witness := false
+	for _, a := range st.Annotations {
+		if a.WPID != actual.WPID || isMigrationActor(a.Actor) {
+			continue
+		}
+		at, err := parseAware(a.At, a.WPID)
+		if err != nil {
+			return false
+		}
+		if at.After(seedAt) && a.Delta.Subtasks != nil && pyEqualJSON(a.Delta.Subtasks, es) {
+			witness = true
+		}
+	}
+	if !witness {
+		return false
+	}
+	au := authentic(st)
+	snap := status.Reduce(au.Transitions, au.Annotations, true)
+	wp := snap.WorkPackages.GetObject(actual.WPID)
+	if wp == nil {
+		return false
+	}
+	got, _ := wp.Get("subtasks")
+	g, ok := got.(*jsonx.Object)
+	return ok && pyEqualJSON(g, es)
 }
 
 // RuntimeBackfillResult is backfill_runtime_state.BackfillResult.
@@ -657,24 +725,44 @@ func VerifyRuntimeBackfill(dir string) (*RuntimeVerify, error) {
 		return nil, err
 	}
 	actual := map[string]*jsonx.Object{}
+	actualAnn := map[string]*status.Annotation{}
 	for _, e := range st.Transitions {
 		actual[e.EventID] = e.ToObject()
 	}
 	for _, a := range st.Annotations {
 		actual[a.EventID] = a.ToObject()
+		actualAnn[a.EventID] = a
 	}
-	check := func(wp, label string, exp *jsonx.Object) {
-		act, ok := actual[exp.GetString("event_id")]
+	// _legacy_contract_carriers: the pre-#2985 builder put every non-null
+	// legacy claim slot on one carrier at the claim anchor.
+	legacyCarriers := map[string]*jsonx.Object{}
+	slug := filepath.Base(dir)
+	for _, wp := range sortedRuntimeIDs(legacy) {
+		if pm := legacy[wp].claimSlotValues(); pm.Len() > 0 {
+			c := claimCarrier(slug, seedMissionID(dir), wp, "", pm).ToObject()
+			legacyCarriers[c.GetString("event_id")] = c
+		}
+	}
+	check := func(wp, label string, exp *jsonx.Object, expAnn *status.Annotation) {
+		id := exp.GetString("event_id")
+		act, ok := actual[id]
 		if !ok {
 			mism = append(mism, fmt.Sprintf("%s: %s mismatch (deterministic seed missing)", wp, label))
 			return
 		}
-		if jsonx.Dumps(withoutAt(act), jsonx.Line) != jsonx.Dumps(withoutAt(exp), jsonx.Line) {
-			mism = append(mism, fmt.Sprintf("%s: %s mismatch (deterministic seed payload diverged)", wp, label))
+		if pyEqualJSON(act, exp) || pyEqualJSON(withoutAt(act), withoutAt(exp)) {
+			return
 		}
+		if c := legacyCarriers[id]; c != nil && pyEqualJSON(withoutAt(act), withoutAt(c)) {
+			return
+		}
+		if label == "subtasks" && expAnn != nil && actualAnn[id] != nil && subtaskSeedSuperseded(expAnn, actualAnn[id], st) {
+			return
+		}
+		mism = append(mism, fmt.Sprintf("%s: %s mismatch (deterministic seed payload diverged)", wp, label))
 	}
 	for _, e := range trans {
-		check(e.WPID, "claim", e.ToObject())
+		check(e.WPID, "claim", e.ToObject(), nil)
 	}
 	for _, a := range anns {
 		label := "annotation"
@@ -684,7 +772,7 @@ func VerifyRuntimeBackfill(dir string) (*RuntimeVerify, error) {
 				break
 			}
 		}
-		check(a.WPID, label, a.ToObject())
+		check(a.WPID, label, a.ToObject(), a)
 	}
 	// claim-slot witnesses
 	mid := seedMissionID(dir)
