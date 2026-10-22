@@ -98,8 +98,8 @@ func TestLocalOrchestratorAPI(t *testing.T) {
 func TestUsageMessage(t *testing.T) {
 	cases := map[string]string{
 		"Invalid value for '--origin-check': 'x' is not one of 'enforce', 'warn' or 'off'.": "Invalid value: 'x' is not one of 'enforce', 'warn', 'off'.",
-		"Invalid value for '--topology': 'x' is not one of 'a' or 'b'.":                    "Invalid value for '--topology': 'x' is not one of 'a', 'b'.",
-		"Missing option '--mission'.":                                                       "Missing option '--mission'.",
+		"Invalid value for '--topology': 'x' is not one of 'a' or 'b'.":                     "Invalid value for '--topology': 'x' is not one of 'a', 'b'.",
+		"Missing option '--mission'.": "Missing option '--mission'.",
 	}
 	for in, want := range cases {
 		if got := usageMessage(in); got != want {

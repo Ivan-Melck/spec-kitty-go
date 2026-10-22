@@ -46,7 +46,12 @@ func init() {
 			orch.UsageError(io_.Stdout, usageMessage(e.Msg))
 			return 2
 		}
-		g.Add(verbs()...)
+		for _, c := range verbs() {
+			if h, ok := verbHelp[c.Name]; ok {
+				c.Short, c.Long = h[0], h[1]
+			}
+			g.Add(c)
+		}
 	})
 }
 
