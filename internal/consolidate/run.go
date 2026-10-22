@@ -72,9 +72,7 @@ var compact = jsonx.Options{Indent: -1, EnsureASCII: true}
 
 func say(w io.Writer, s string) { rich.Print(w, s) }
 
-func sayErr(w io.Writer, msg string) {
-	fmt.Fprintln(w, rich.Wrap("Error: "+msg, rich.Width()))
-}
+func sayErr(w io.Writer, msg string) { rich.Print(w, "[red]Error:[/red] "+msg) }
 
 // Retention is RetentionDecision.
 type Retention struct {
@@ -477,11 +475,11 @@ func (r *run) execute() error {
 		warnings, refused := originfresh.Run(r.root, r.slug, originfresh.ResolveMode(r.originCheck), laneBranches,
 			LoadState(r.root, missionIDOf(r.root, r.slug)) != nil)
 		if refused != nil {
-			fmt.Fprintln(r.w, refused.Message)
+			rich.PrintPlain(r.w, refused.Message)
 			return exit(1)
 		}
 		for _, w := range warnings {
-			fmt.Fprintln(r.w, w)
+			rich.PrintPlain(r.w, w)
 		}
 	}
 	if !r.allowSparse {
@@ -538,12 +536,12 @@ func (r *run) execute() error {
 	}
 	if pr := ProtectedStatusTargetRefusal(r.root, r.slug, m, nil); pr != nil {
 		sayErr(r.w, pr.Code+": "+pr.Message)
-		fmt.Fprintln(r.w, rich.Wrap("  Next step: "+pr.NextStep, rich.Width()))
+		say(r.w, "  Next step: "+pr.NextStep)
 		footer := "Consolidation refused before any branch moved."
 		if LoadState(r.root, missionIDOf(r.root, r.slug)) != nil {
 			footer = refusedWithEarlierRecord
 		}
-		fmt.Fprintln(r.w, rich.Wrap(footer, rich.Width()))
+		rich.PrintPlain(r.w, footer)
 		return exit(1)
 	}
 	if err := r.preflight(); err != nil {
@@ -785,7 +783,7 @@ func (r *run) afterReconcile() error {
 		say(r.w, "  No likely-stale assertions detected.")
 	default:
 		line := func(grade string, f staleassert.Finding) {
-			fmt.Fprintln(r.w, rich.Wrap(fmt.Sprintf("  [%s] %s:%d — %s", grade, filepath.Base(f.TestFile), f.TestLine, f.Hint), rich.Width()))
+			say(r.w, "  "+rich.EscapeMarkup(fmt.Sprintf("[%s] %s:%d — %s", grade, filepath.Base(f.TestFile), f.TestLine, f.Hint)))
 		}
 		var info []staleassert.Finding
 		for _, f := range stale.Findings {
