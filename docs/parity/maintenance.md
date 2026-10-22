@@ -62,7 +62,7 @@ frontmatter shapes) and `internal/missionstate.TestPydanticDatetimeAgainstPython
 
 ## Irreducible differences
 
-- `doctor provenance` / `migrate rebaseline-dossier-hashes`: "the installed built-in pack root" is the Python wheel's site-packages location; the Go binary embeds its packs and has no such tree, so without `SPEC_KITTY_PACKS_ROOT` nothing classifies as under it.
+- `doctor provenance`: "the installed built-in pack root" is the Python wheel's site-packages location; the Go binary embeds its packs and has no such tree, so without `SPEC_KITTY_PACKS_ROOT` nothing classifies as under it.
 - A misconfigured `SPEC_KITTY_PACKS_ROOT` makes upstream log `UserWarning` lines that carry site-packages source paths, line numbers and source excerpts; Go prints nothing (`TestDiffDoctorProvenanceBadPacksRoot` compares stdout and exit code).
 - `migrate rebaseline-dossier-hashes`: artifacts that share an `artifact_key` are ordered by upstream's `Path.rglob` (filesystem directory order) inside `artifact_summaries`; Go uses name order. Hashes and counts do not depend on it.
 - Uncaught exceptions (`migrate rebaseline-dossier-hashes` non-object snapshot, `migrate backfill-wp-status` TypeError, `doctor mission-state --fix` symlinked lock, `--teamspace-dry-run --mission` selection errors) print `Traceback (most recent call last):` plus the exact final exception line; rich's framed traceback (site-packages frames) is PYF-01's call-site sweep.
