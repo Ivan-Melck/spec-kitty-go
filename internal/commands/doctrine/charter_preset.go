@@ -49,6 +49,10 @@ func renderCharterErr(w io.Writer, err error, jsonMode bool) {
 func runApplyPreset(ctx *cli.Context, preset string) error {
 	w := ctx.Stdout
 	jsonMode := ctx.Bool("json")
+	if err := writeRootError(); err != nil {
+		cprint(w, "[red]Error:[/red] %s", err.Error())
+		return cli.Exit(1)
+	}
 	root := charterRoot(ctx)
 	if _, err := dct.LoadActivation(root); err != nil {
 		renderCharterErr(w, err, jsonMode)
@@ -66,7 +70,19 @@ func runApplyPreset(ctx *cli.Context, preset string) error {
 		var discard strings.Builder
 		sub := *ctx
 		sub.Stdout = &discard
-		recompileOrNotify(&sub, root)
+		if err := recompileOrNotify(&sub, root); err != nil {
+			code := 1
+			var ee *cli.ExitError
+			if errors.As(err, &ee) {
+				if ee.Code == 0 {
+					return err
+				}
+				code = ee.Code
+			}
+			msg := fmt.Sprintf("preset %s of pack %s was applied to %s, but the resynthesis failed (exit %d); re-run `spec-kitty charter synthesize`.", dct.PyRepr(plan.Preset), dct.PyRepr(plan.Pack), plan.TargetFile, code)
+			renderCodedError(w, "RESYNTHESIS_FAILED", msg, nil, charter.PresetPayload(plan), true)
+			return cli.Exit(1)
+		}
 		jsonOut(w, charter.PresetPayload(plan), jsonx.PrettyUTF8)
 		return nil
 	}
@@ -85,6 +101,5 @@ func runApplyPreset(ctx *cli.Context, preset string) error {
 			cprintRaw(w, fmt.Sprintf("  Removed %s (unrestricted)", k))
 		}
 	}
-	recompileOrNotify(ctx, root)
-	return nil
+	return recompileOrNotify(ctx, root)
 }

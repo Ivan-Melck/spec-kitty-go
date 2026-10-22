@@ -74,6 +74,12 @@ func resolveConfigRoots(root string, langs []string) (*configRoots, error) {
 	if err != nil {
 		return nil, err
 	}
+	return resolveConfigRootsFrom(root, t, langs)
+}
+
+// resolveConfigRootsFrom resolves the activation lists of t (possibly a
+// proposed, unwritten activation state).
+func resolveConfigRootsFrom(root string, t *WriteTarget, langs []string) (*configRoots, error) {
 	configured := false
 	for _, k := range rootKinds {
 		if v, ok := t.Data.Get("activated_" + k.Plural()); ok && v != nil {

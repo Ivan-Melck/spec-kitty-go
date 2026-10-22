@@ -145,6 +145,10 @@ func runCharterActivate(ctx *cli.Context) error {
 		cprint(w, "[red]Error:[/red] Unknown kind '%s'. Valid kinds: %s.", kind, validKindsListing())
 		return cli.Exit(1)
 	}
+	if err := writeRootError(); err != nil {
+		cprint(w, "[red]Error:[/red] %s", err.Error())
+		return cli.Exit(1)
+	}
 	root := charterRoot(ctx)
 	scope, err := parseCascade(ctx.OptString("cascade"))
 	if err != nil {
@@ -169,6 +173,12 @@ func runCharterActivate(ctx *cli.Context) error {
 		cprint(w, "[red]Error:[/red] %s", err.Error())
 		return cli.Exit(1)
 	}
+	if ctx.Bool("resynthesize") {
+		if err := preflightResynthesis(root, kind, id, scope); err != nil {
+			cprint(w, "[red]Error:[/red] %s", err.Error())
+			return cli.Exit(1)
+		}
+	}
 	res, err := charter.Activate(root, kind, id)
 	if err != nil {
 		cprint(w, "[red]Error:[/red] %s", err.Error())
@@ -184,11 +194,11 @@ func runCharterActivate(ctx *cli.Context) error {
 	for _, m := range append(append([]string{}, reg.Warnings...), res.Warnings...) {
 		cprint(w, "[yellow]Warning[/yellow]: %s", m)
 	}
+	renderTensionWarnings(ctx, root)
 	if src := charter.SourceURN(root, kind, id); src != "" {
 		renderActivationCascade(ctx, root, src, scope)
 	}
-	recompileOrNotify(ctx, root)
-	return nil
+	return recompileOrNotify(ctx, root)
 }
 
 func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeScope) {
@@ -256,15 +266,19 @@ func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeS
 
 // recompileOrNotify is recompile_or_notify (the catalog recompile is a
 // no-op while .kittify/charter/charter.yaml does not exist).
-func recompileOrNotify(ctx *cli.Context, root string) {
+func recompileOrNotify(ctx *cli.Context, root string) error {
 	w := ctx.Stdout
-	if !ctx.Bool("compile") && !ctx.Bool("resynthesize") {
+	if ctx.Bool("resynthesize") {
+		return runFullSynthesize(ctx, root)
+	}
+	if !ctx.Bool("compile") {
 		cprint(w, "[yellow]Catalog not recompiled[/yellow] (--no-compile): catalog.references may go stale until the next `charter generate` or `charter activate --resynthesize`.")
-		return
+		return nil
 	}
 	if err := charter.RecompileCatalog(root); err != nil {
 		cprint(w, "[yellow]Catalog not recompiled[/yellow]: %s catalog.references may go stale until the next `charter generate` (from a git repository, with a clean activation set) or `charter activate --resynthesize`.", err.Error())
 	}
+	return nil
 }
 
 var actionProfileDefaults = [][3]string{
@@ -311,6 +325,10 @@ func runCharterDeactivate(ctx *cli.Context) error {
 		cprint(w, "[red]Error:[/red] Unknown kind '%s'. Valid kinds: %s.", kind, validKindsListing())
 		return cli.Exit(1)
 	}
+	if err := writeRootError(); err != nil {
+		cprint(w, "[red]Error:[/red] %s", err.Error())
+		return cli.Exit(1)
+	}
 	root := charterRoot(ctx)
 	scope, err := parseCascade(ctx.OptString("cascade"))
 	if err != nil {
@@ -345,8 +363,7 @@ func runCharterDeactivate(ctx *cli.Context) error {
 			renderDeactivationCascade(ctx, root, src, scope)
 		}
 	}
-	recompileOrNotify(ctx, root)
-	return nil
+	return recompileOrNotify(ctx, root)
 }
 
 func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cascadeScope) {
