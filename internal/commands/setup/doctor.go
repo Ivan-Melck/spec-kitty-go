@@ -16,8 +16,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
-	"github.com/spec-kitty/go-kitty3/internal/toolsurface"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/toolsurface"
 )
 
 func init() {
