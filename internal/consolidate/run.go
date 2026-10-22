@@ -297,6 +297,15 @@ func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o O
 	if m == nil {
 		return errOut(msg)
 	}
+	if pr := ProtectedStatusTargetRefusal(root, slug, m, map[string]bool{}); pr != nil {
+		text := fmt.Sprintf("%s: %s Next step: %s", pr.Code, pr.Message, pr.NextStep)
+		if o.JSON {
+			fmt.Fprintln(w, jsonx.Dumps(jsonx.NewObject("spec_kitty_version", app.Version, "error", text, "error_code", pr.Code), compact))
+		} else {
+			sayErr(w, text)
+		}
+		return exit(1)
+	}
 	var would any
 	if needsNumber(primary) {
 		would = NextMissionNumber(root)

@@ -14,10 +14,26 @@ import (
 // fails the gate (squash blob attribution, merge/rebase closed world), rolls
 // every moved branch back and keeps the record for --abort.
 func TestDiffConsolidateReconcile(t *testing.T) {
-	for _, sc := range []string{"lane-moved", "lane-moved-merge", "teammate", "teammate-merge", "teammate-rebase"} {
+	for _, sc := range []string{"lane-moved", "lane-moved-merge", "teammate", "teammate-merge", "teammate-rebase", "protected"} {
 		sc := sc
 		t.Run(sc, func(t *testing.T) {
 			t.Parallel()
+			if sc == "protected" {
+				// #5385: a lanes mission whose recorded target is protected
+				// refuses before any branch moves (and in the dry-run forecast).
+				p := acceptedPair(t, "--pr-bound", "--branch-strategy", "already-confirmed", "--start-branch", "feat/calc-ops", "--topology", "lanes")
+				p.Both(func(s *testkit.Sandbox) {
+					cfg := s.ReadFile(".kittify/config.yaml")
+					s.WriteFile(".kittify/config.yaml", strings.TrimRight(cfg, "\n")+"\nprotection:\n  protected_branches:\n  - feat/calc-ops\n")
+					s.Git("add", ".kittify/config.yaml")
+					s.Git("commit", "-q", "-m", "protect target")
+				})
+				comparePair(t, p, "consolidate", "--mission", "$M", "--dry-run")
+				comparePair(t, p, "consolidate", "--mission", "$M", "--dry-run", "--json")
+				comparePair(t, p, "consolidate", "--mission", "$M", "--yes")
+				compareGit(t, p)
+				return
+			}
 			p := acceptedPair(t)
 			args := []string{"consolidate", "--mission", "$M", "--yes"}
 			if strings.HasSuffix(sc, "-merge") {
