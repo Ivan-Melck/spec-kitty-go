@@ -48,45 +48,6 @@ func usageLineFor(c *Command, path string) string {
 	return prefix + "\n" + strings.Join(textWrap(args, width, indent, indent), "\n")
 }
 
-// textWrap is textwrap.TextWrapper.wrap for whitespace-separated words
-// (long words are broken at the width).
-func textWrap(text string, width int, initial, subsequent string) []string {
-	words := strings.Fields(text)
-	var lines []string
-	indent := initial
-	cur := ""
-	for len(words) > 0 {
-		w := words[0]
-		avail := width - rich.CellLen(indent)
-		switch {
-		case cur == "" && rich.CellLen(w) > avail && avail > 0:
-			r := []rune(w)
-			if len(r) > avail {
-				lines = append(lines, indent+string(r[:avail]))
-				indent = subsequent
-				words[0] = string(r[avail:])
-				continue
-			}
-			cur = w
-			words = words[1:]
-		case cur == "":
-			cur = w
-			words = words[1:]
-		case rich.CellLen(cur)+1+rich.CellLen(w) <= avail:
-			cur += " " + w
-			words = words[1:]
-		default:
-			lines = append(lines, indent+cur)
-			indent = subsequent
-			cur = ""
-		}
-	}
-	if cur != "" || len(lines) == 0 {
-		lines = append(lines, indent+cur)
-	}
-	return lines
-}
-
 // argBase is the argument's display name: its metavar without usage
 // decoration ("{x}" / "[x]"), else its parameter name.
 func argBase(a *Arg) string {
