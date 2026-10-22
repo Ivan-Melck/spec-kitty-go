@@ -183,7 +183,7 @@ func runAnswerDecision(ctx *cli.Context) error {
 	pv, perr := pyjson.Loads(strings.TrimSpace(raw))
 	payload, isObj := pv.(*jsonx.Object)
 	if code != 0 || perr != nil || !isObj || payload.Has("error") {
-		msg := "decision answers are not supported by this build"
+		msg := "Native next refused the request"
 		if isObj {
 			if e := payload.GetString("error"); e != "" {
 				msg = e

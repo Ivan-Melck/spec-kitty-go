@@ -291,7 +291,11 @@ func contentDigestOrAbsent(path string) string {
 
 // readArtifact is design.authoring.read_artifact.
 func (d *design) readArtifact(kind string, id *string) (*jsonx.Object, error) {
-	orch.TouchAuthoringLock(d.root, d.slug)
+	release, lerr := orch.AcquireAuthoringLock(d.root, d.slug)
+	if lerr != nil {
+		return nil, lerr
+	}
+	defer release()
 	p, err := d.artifactPath(kind, id, nil)
 	if err != nil {
 		return nil, err

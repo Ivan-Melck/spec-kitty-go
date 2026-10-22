@@ -30,6 +30,7 @@ open(p,"w").write(t)' kitty-specs/$M/analysis-report.md`
 // TestDiffRecordAnalysis covers TRACE 4.4-4.6: the DIRTY_WORKTREE refusal,
 // recovery through safe-commit and the committed report.
 func TestDiffRecordAnalysis(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	g, o := missionfx.OracleCalcMission(t, p)
 	shellSteps(t, p, g, o,

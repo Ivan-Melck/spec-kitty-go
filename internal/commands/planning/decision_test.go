@@ -13,6 +13,7 @@ const decisionIDCmd = `python3 -c 'import json,sys; print(json.load(open(sys.arg
 // TestDiffDecisions covers TRACE 1.6-1.8 and 9.9 plus list/defer/cancel,
 // idempotent re-open, terminal conflicts and validation errors.
 func TestDiffDecisions(t *testing.T) {
+	t.Parallel()
 	p := missionfx.NewOraclePair(t)
 	slugs := []string{}
 	p.Both(func(s *testkit.Sandbox) {

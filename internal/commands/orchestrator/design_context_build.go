@@ -1,18 +1,17 @@
 package orchestrator
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 
-	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
-	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
 const designEntryLimit = 64
@@ -37,18 +36,6 @@ func stableValue(v any) any {
 			out[i] = stableValue(x)
 		}
 		return out
-	}
-	return v
-}
-
-func expectedArtifacts(missionType string) any {
-	b, err := assets.ReadFile("packs/built-in/missions/" + missionType + "/expected-artifacts.yaml")
-	if err != nil {
-		return nil
-	}
-	v, err := yamlx.Parse(b)
-	if err != nil {
-		return nil
 	}
 	return v
 }
@@ -119,6 +106,13 @@ func buildDesignContext(root string, m *orch.Mission, stage, missionTypeFlag str
 	for i, a := range activated {
 		types[i] = a
 	}
+	governance := charter.ActionGovernanceDisclosure(root, stage, selected)
+	var required any
+	if ra, err := orch.LoadExpectedArtifacts(root, selected); err != nil {
+		return nil, err
+	} else if ra != nil {
+		required = ra
+	}
 	ctxObj := jsonx.NewObject(
 		"mission_type", selected,
 		"stage", stage,
@@ -126,8 +120,8 @@ func buildDesignContext(root string, m *orch.Mission, stage, missionTypeFlag str
 		"action_sequence", actionSeq,
 		"templates", templates,
 		"questions", questionObjects(questions, false),
-		"governance", charter.ActionGovernanceDisclosure(root, stage, selected),
-		"required_artifacts", expectedArtifacts(selected),
+		"governance", governance,
+		"required_artifacts", required,
 		"charter_sha256", charterDigest,
 	)
 	semantic := jsonx.Dumps(stableValue(ctxObj), jsonx.Options{Indent: -1, SortKeys: true, Compact: true})
@@ -184,6 +178,11 @@ func runDesignContext(ctx *cli.Context) error {
 	if err != nil {
 		if de, ok := err.(*orch.DesignError); ok {
 			return v.fail(de.Code, de.Message, de.Details)
+		}
+		if me, ok := err.(*orch.ManifestLoadError); ok {
+			// Uncaught upstream: the loader exception escapes as a traceback.
+			fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\n%s: %s\n", me.Type, me.Msg)
+			return cli.Exit(1)
 		}
 		return v.fail("DESIGN_CONTEXT_FAILED", err.Error(), nil)
 	}

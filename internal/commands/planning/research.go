@@ -2,6 +2,7 @@ package planning
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/assetpreserve"
 	"io"
 	"os"
 	"path/filepath"
@@ -85,21 +86,11 @@ func displayRel(path, root string) string {
 	return filepath.Base(path)
 }
 
+// guardDestructiveOverwrite routes through assetpreserve exactly like
+// upstream's research / brief call sites: no prover, no backup parent.
 func guardDestructiveOverwrite(dest, root string, substantive, authorized bool) overwriteVerdict {
-	rel := displayRel(dest, root)
-	if _, err := os.Lstat(dest); err != nil {
-		if !substantive {
-			return overwriteVerdict{false, "absent-empty-replacement", fmt.Sprintf("Refused to fabricate an empty %s; destination is absent and replacement is not substantive", rel)}
-		}
-		return overwriteVerdict{true, "absent", fmt.Sprintf("Proceeding; %s is absent", rel)}
-	}
-	if !substantive {
-		return overwriteVerdict{false, "would-truncate-to-empty", fmt.Sprintf("Refused to truncate %s to empty; existing bytes are not proven package-owned", rel)}
-	}
-	if !authorized {
-		return overwriteVerdict{false, "unauthorized", fmt.Sprintf("Refused to overwrite %s; not proven package-owned and not authorized", rel)}
-	}
-	return overwriteVerdict{true, "authorized-overwrite", fmt.Sprintf("Proceeding to overwrite %s; authorized", rel)}
+	v, _ := assetpreserve.GuardDestructiveOverwrite(dest, root, substantive, authorized, nil, "")
+	return overwriteVerdict{v.Proceed, v.Reason, v.Diagnostic}
 }
 
 // --- StepTracker -------------------------------------------------------------
