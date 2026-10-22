@@ -368,6 +368,7 @@ type run struct {
 	attested        []string
 	verifiedLanding bool
 	excluded        map[string]bool
+	checkpoint      *coordCheckpoint
 }
 
 func hasRemote(root, name string) bool {
@@ -1305,6 +1306,11 @@ func (r *run) doneBookkeeping(coordDone bool) error {
 			}
 		}
 		paths = append(paths, dst, filepath.Join(primary, "status.json"))
+		if r.checkpoint != nil {
+			// S-B/FR-004: carry concurrent post-checkpoint coordination commits
+			// forward (written, not staged: upstream commits only the status pair).
+			projectPostCheckpoint(r.root, r.slug, r.checkpoint.ref, r.checkpoint.sha, primary)
+		}
 	}
 	meta, err := mission.ReadMeta(primary)
 	if err != nil {

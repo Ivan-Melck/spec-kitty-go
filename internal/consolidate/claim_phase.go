@@ -66,6 +66,9 @@ func (r *run) captureClaim(st *MergeState) error {
 			return exit(1)
 		}
 	}
+	if sha := revParse(r.root, r.coordRef()); sha != "" {
+		r.checkpoint = &coordCheckpoint{r.coordRef(), sha}
+	}
 	coordBase := ""
 	if st != nil && st.PreCoord != "" {
 		coordBase = st.PreCoord
@@ -160,6 +163,9 @@ func (r *run) gate() error {
 		res = c.verify(r.root, r.m.TargetBranch)
 	}
 	if res.status == "pass" {
+		if err := r.squashProjectionProof(); err != nil {
+			return err
+		}
 		if r.state != nil && verified != "" {
 			r.state.ReconPassed = verified
 			r.state.Save(r.root)

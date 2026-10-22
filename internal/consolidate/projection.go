@@ -8,6 +8,7 @@ package consolidate
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -124,6 +125,30 @@ func driverReplay(root, rel, baseRef, oursRef, theirsRef string) ([]byte, error)
 		return nil, probeErr("driver replay for '%s' (%s) failed: %s", rel, value, err)
 	}
 	return os.ReadFile(a)
+}
+
+// squashProjectionProof is _assert_squash_projected_content_landed.
+func (r *run) squashProjectionProof() error {
+	if r.strategy != "squash" || r.checkpoint == nil {
+		return nil
+	}
+	paths, err := postCheckpointMissionPaths(r.root, r.slug, r.checkpoint.sha, r.checkpoint.ref)
+	if err != nil {
+		fmt.Fprintf(r.w, "\nError: SQUASH reconciliation refused: the projected coordination bookkeeping window could not be read (%s). %s; re-run `spec-kitty consolidate --resume`.\n", err, nothingTornDown)
+		return exit(1)
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	if r.windowBase == "" {
+		say(r.w, "\n[red]Error:[/red] SQUASH reconciliation refused: the pre-merge target baseline could not be resolved, so the projected coordination bookkeeping content proof cannot be evaluated. "+nothingTornDown+"; re-run `spec-kitty consolidate --resume`.")
+		return exit(1)
+	}
+	if projectedContentMatches(r.root, r.checkpoint.ref, r.m.TargetBranch, paths, r.checkpoint.sha, r.windowBase) {
+		return nil
+	}
+	say(r.w, "\n[red]Error:[/red] SQUASH reconciliation refused: projected coordination bookkeeping content did not land on the target. "+nothingTornDown+"; re-run `spec-kitty consolidate --resume`.")
+	return exit(1)
 }
 
 // projectedContentMatches is projected_content_matches_target.
