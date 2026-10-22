@@ -120,7 +120,9 @@ func TestInitArrowKeyPicker(t *testing.T) {
 		!strings.Contains(out, "Use ↑/↓ to move, Space to toggle, Enter to confirm, Esc to cancel") {
 		t.Errorf("panel not drawn:\n%s", out)
 	}
-	if !strings.Contains(out, "Selected AI assistant(s): Claude Code") {
+	// On a terminal rich highlights "assistant(s)" (bold call and parens),
+	// so match the text with the SGR codes stripped.
+	if !strings.Contains(reCSI.ReplaceAllString(out, ""), "Selected AI assistant(s): Claude Code") {
 		t.Errorf("selection (copilot toggled off, claude on) not reported:\n%s", out)
 	}
 	cfg, _ := os.ReadFile(filepath.Join(s.Dir, "proj", ".kittify", "config.yaml"))
