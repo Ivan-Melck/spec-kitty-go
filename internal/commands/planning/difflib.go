@@ -2,7 +2,6 @@ package planning
 
 // Copy of internal/cli/difflib.go (unexported there).
 
-
 // seqRatio is difflib.SequenceMatcher(None, a, b).ratio() for short
 // strings (no autojunk below 200 characters).
 func seqRatio(a, b string) float64 {
