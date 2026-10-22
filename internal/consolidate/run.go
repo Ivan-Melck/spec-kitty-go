@@ -17,6 +17,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mergedriver"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/originfresh"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/retrospective"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
@@ -41,6 +42,7 @@ type Options struct {
 	Push, DryRun   bool
 	JSON, Yes      bool
 	Resume         bool
+	OriginCheck    *string // --origin-check (nil = environment/default)
 }
 
 var compact = jsonx.Options{Indent: -1, EnsureASCII: true}
@@ -191,7 +193,7 @@ func Run(w io.Writer, root string, o Options) error {
 		}
 		say(w, fmt.Sprintf("Resume requested for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
 	}
-	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push}
+	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck}
 	return r.execute()
 }
 
@@ -312,13 +314,124 @@ type run struct {
 	number   int
 	baseline string
 	squash   string
-	push     bool
-	state    *MergeState
+	push        bool
+	state       *MergeState
+	originCheck *string
+	originGated bool
+}
+
+func hasRemote(root, name string) bool {
+	res, _ := gitx.Exec(root, nil, nil, "remote", "get-url", name)
+	return res.Code == 0
+}
+
+var linearHistoryTokens = []string{"linear history", "non-linear", "nonlinear", "merge commits", "GH006", "protected branch hook declined", "must not contain merge commits"}
+
+func isLinearHistoryRejection(stderr string) bool {
+	h := strings.ToLower(stderr)
+	for _, t := range linearHistoryTokens {
+		if strings.Contains(h, strings.ToLower(t)) {
+			return true
+		}
+	}
+	return false
+}
+
+// pushPreflight is _enforce_target_branch_sync_preflight: refresh
+// origin/<target> and refuse a push from a target behind or diverged from it.
+func (r *run) pushPreflight() error {
+	target := r.m.TargetBranch
+	if !hasRemote(r.root, "origin") {
+		return nil
+	}
+	if err := originfresh.FetchBranches(r.root, "origin", []string{target}, nil); err != nil {
+		say(r.w, "[red]Error:[/red] Could not refresh target branch tracking ref before merge.")
+		say(r.w, "  diagnostic_code: TARGET_BRANCH_REFRESH_FAILED")
+		say(r.w, "  branch_or_work_package: "+target)
+		say(r.w, "  violated_invariant: local_target_branch_must_match_tracking_branch")
+		say(r.w, "  remediation:")
+		say(r.w, fmt.Sprintf("  - Run: git fetch origin %s", target))
+		say(r.w, "  - Resolve the fetch problem, then retry spec-kitty consolidate.")
+		say(r.w, "  - Spec Kitty stopped before mutating merge state or reconstructing branches.")
+		return exit(1)
+	}
+	if revParse(r.root, "refs/heads/"+target) == "" {
+		return nil
+	}
+	tracking := ""
+	if res, _ := gitx.Exec(r.root, nil, nil, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "--verify", "--end-of-options", target+"@{upstream}"); res.Code == 0 && strings.TrimSpace(res.Stdout) != "" {
+		tracking = strings.TrimSpace(res.Stdout)
+	} else if revParse(r.root, "refs/remotes/origin/"+target) != "" {
+		tracking = "origin/" + target
+	}
+	if tracking == "" {
+		return nil
+	}
+	res, _ := gitx.Exec(r.root, nil, nil, "rev-list", "--left-right", "--count", target+"..."+tracking)
+	f := strings.Fields(res.Stdout)
+	if res.Code != 0 || len(f) < 2 || f[1] == "0" {
+		return nil
+	}
+	ahead, behind := f[0], f[1]
+	state := "behind"
+	if ahead != "0" {
+		state = "diverged"
+	}
+	say(r.w, "[red]Error:[/red] Target branch is not synchronized with its tracking branch.")
+	say(r.w, "  diagnostic_code: TARGET_BRANCH_NOT_SYNCHRONIZED")
+	say(r.w, "  branch_or_work_package: "+target)
+	say(r.w, "  violated_invariant: local_target_branch_must_match_tracking_branch")
+	say(r.w, "  remediation:")
+	lines := []string{
+		fmt.Sprintf("Local target branch '%s' is %s relative to '%s' (%s ahead, %s behind).", target, state, tracking, ahead, behind),
+		"Spec Kitty stopped before mutating merge state or reconstructing branches.",
+		"Refresh remote refs: git fetch origin " + target,
+		fmt.Sprintf("Inspect differences: git log --oneline --left-right --cherry-pick %s...%s", target, tracking),
+		fmt.Sprintf("Inspect changed paths: git diff --name-only %s...%s", tracking, target),
+	}
+	if state == "diverged" {
+		lines = append(lines, fmt.Sprintf("Recommended: use the focused PR path unless you verified every ahead commit belongs on '%s' now.", target),
+			fmt.Sprintf("Do not run 'git push origin %s' just to satisfy this preflight; local target commits may include orchestration history or unrelated missions.", target),
+			fmt.Sprintf("Only direct-push '%s' after reviewing the ahead commits and changed paths.", target))
+	} else {
+		lines = append(lines, fmt.Sprintf("Recommended: update local '%s' from '%s' after reviewing remote-only commits; do not push the local target branch.", target, tracking))
+	}
+	focused := "kitty/pr/" + r.slug + "-to-" + strings.ReplaceAll(target, "/", "-")
+	lines = append(lines, fmt.Sprintf("Focused PR path: git switch -c %s %s", focused, r.m.MissionBranch),
+		fmt.Sprintf("Then push it: git push -u origin %s", focused),
+		fmt.Sprintf("Open a PR from %s into %s.", focused, target),
+		"Do not use reset, rebase, or force-push as part of this preflight remediation.")
+	for _, l := range lines {
+		say(r.w, "  - "+l)
+	}
+	return exit(1)
 }
 
 const abortedNote = "Merge aborted before any state change. Resolve the reported condition, then re-run spec-kitty consolidate."
 
 func (r *run) execute() error {
+	if !r.originGated {
+		var laneBranches []string
+		if lm, err := lanes.Read(r.sf.PrimaryDir); err == nil && lm != nil {
+			done := map[string]bool{}
+			st := LoadState(r.root, missionIDOf(r.root, r.slug))
+			if st != nil {
+				for _, id := range st.CompletedWPs {
+					done[id] = true
+				}
+			}
+			laneBranches = originfresh.ApprovedLaneBranches(r.root, r.slug, lm, done)
+		}
+		warnings, refused := originfresh.Run(r.root, r.slug, originfresh.ResolveMode(r.originCheck), laneBranches,
+			LoadState(r.root, missionIDOf(r.root, r.slug)) != nil)
+		if refused != nil {
+			fmt.Fprintln(r.w, refused.Message)
+			return exit(1)
+		}
+		for _, w := range warnings {
+			fmt.Fprintln(r.w, w)
+		}
+	}
 	m, msg := requireLanes(r.sf.PrimaryDir)
 	if m == nil {
 		sayErr(r.w, msg)
@@ -330,6 +443,14 @@ func (r *run) execute() error {
 	}
 	for _, x := range r.ret.Notices {
 		say(r.w, "[yellow]Notice:[/yellow] "+x)
+	}
+	if st := LoadState(r.root, missionIDOf(r.root, r.slug)); st != nil && st.PushRequested {
+		r.push = true
+	}
+	if r.push {
+		if err := r.pushPreflight(); err != nil {
+			return err
+		}
 	}
 	if !gitx.BranchExists(r.root, m.MissionBranch) {
 		base := "<base-commit>"
@@ -454,6 +575,21 @@ func (r *run) execute() error {
 	}
 	say(r.w, "  [dim]Running stale-assertion check...[/dim]")
 	stale, staleErr := staleassert.RunCheck(r.baseline, "HEAD", r.root)
+	if r.push && hasRemote(r.root, "origin") {
+		res, _ := gitx.Exec(r.root, nil, nil, "push", "origin", r.m.TargetBranch)
+		if res.Code != 0 {
+			if isLinearHistoryRejection(res.Stderr) {
+				say(r.w, "\n[yellow]Push rejected by linear-history protection.[/yellow]\nTry [cyan]spec-kitty consolidate --strategy squash[/cyan], or set [cyan]merge.strategy: squash[/cyan] in [cyan].kittify/config.yaml[/cyan].\n")
+			}
+			msg := strings.TrimSpace(res.Stderr)
+			if msg == "" {
+				msg = strings.TrimSpace(res.Stdout)
+			}
+			say(r.w, "[red]Error:[/red] Push failed: "+msg)
+			return exit(1)
+		}
+		say(r.w, fmt.Sprintf("[green]✓[/green] Pushed %s to origin", r.m.TargetBranch))
+	}
 	r.captureRetrospective()
 	r.teardown(coordDone)
 	ClearState(r.root, mid)
