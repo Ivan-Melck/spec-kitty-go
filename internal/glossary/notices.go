@@ -23,7 +23,9 @@ type SemanticConflict struct {
 
 // IterSemanticConflictRecords is iter_semantic_conflicts(repo_root) (no
 // invocation filter).
-func IterSemanticConflictRecords(root string) []SemanticConflict { return IterSemanticConflicts(root, "") }
+func IterSemanticConflictRecords(root string) []SemanticConflict {
+	return IterSemanticConflicts(root, "")
+}
 
 func eventStr(o *jsonx.Object, k string) string {
 	v, ok := o.Get(k)
