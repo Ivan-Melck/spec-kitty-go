@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
@@ -141,7 +142,11 @@ func ResolveScope(repoRoot, branch string, warn io.Writer) *Scope {
 			DiagnosticMessage: "ACTIVE_WP_CONTEXT_AMBIGUOUS: Multiple workspace contexts match branch " + branch + "; lanes: " + strings.Join(ids, ", ")}
 	}
 	c := matching[0]
-	missionDir := filepath.Join(repoRoot, "kitty-specs", c.MissionSlug)
+	// STATUS leg: coord-aware (events may live in the coordination
+	// worktree); PRIMARY leg: tasks/ frontmatter in the primary checkout.
+	surface := coord.Resolve(repoRoot, c.MissionSlug)
+	missionDir := surface.StatusDir()
+	planningDir := surface.PrimaryDir
 	laneWPs := c.LaneWPIDs
 	if len(laneWPs) == 0 {
 		for _, id := range []string{c.CurrentWP, c.WPID} {
@@ -184,7 +189,7 @@ func ResolveScope(repoRoot, branch string, warn io.Writer) *Scope {
 	if c.CurrentWP != "" && c.CurrentWP != activeID {
 		warnings = append(warnings, fmt.Sprintf("ACTIVE_WP_CONTEXT_STALE: workspace context current_wp=%s, canonical active_wp=%s; lane_id=%s", c.CurrentWP, activeID, c.LaneID))
 	}
-	path := findWPFile(filepath.Join(missionDir, "tasks"), activeID)
+	path := findWPFile(filepath.Join(planningDir, "tasks"), activeID)
 	if path == "" {
 		return diag(c, "ACTIVE_WP_METADATA_MISSING", "Could not find task file for active_wp="+activeID, activeID)
 	}

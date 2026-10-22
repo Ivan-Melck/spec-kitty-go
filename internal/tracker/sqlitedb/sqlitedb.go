@@ -495,6 +495,12 @@ func Write(path string, specs []TableSpec, data map[string][]Row, changeCounter,
 	if err != nil {
 		return err
 	}
+	return replaceFile(path, img)
+}
+
+// replaceFile atomically replaces path with img (a new file is created
+// 0644; an existing file keeps its mode).
+func replaceFile(path string, img []byte) error {
 	mode := os.FileMode(0o644)
 	if st, err := os.Stat(path); err == nil {
 		mode = st.Mode().Perm()
@@ -527,49 +533,15 @@ func Write(path string, specs []TableSpec, data map[string][]Row, changeCounter,
 
 // Build returns the database image for Write.
 func Build(specs []TableSpec, data map[string][]Row, changeCounter, schemaCookie uint32) ([]byte, error) {
-	w := &writer{usable: PageSize}
+	w := &writer{usable: PageSize, pageSize: PageSize}
 	w.alloc() // page 1
-	type rootRef struct {
-		spec  TableSpec
-		table int
-		index []int
-	}
-	var refs []rootRef
-	for _, s := range specs {
-		ref := rootRef{spec: s, table: w.alloc()}
-		for range s.Indexes {
-			ref.index = append(ref.index, w.alloc())
-		}
-		refs = append(refs, ref)
+	objs, err := w.buildObjects(specs, data)
+	if err != nil {
+		return nil, err
 	}
 	var master []Row
-	for _, ref := range refs {
-		rows := append([]Row(nil), data[ref.spec.Name]...)
-		sort.Slice(rows, func(i, j int) bool { return rows[i].RowID < rows[j].RowID })
-		if err := w.buildTable(ref.table, rows); err != nil {
-			return nil, err
-		}
-		master = append(master, Row{RowID: int64(len(master) + 1), Values: []any{"table", ref.spec.Name, ref.spec.Name, int64(ref.table), ref.spec.SQL}})
-		for i, cols := range ref.spec.Indexes {
-			keys := make([][]any, 0, len(rows))
-			for _, r := range rows {
-				k := make([]any, 0, len(cols)+1)
-				for _, c := range cols {
-					var v any
-					if c < len(r.Values) {
-						v = r.Values[c]
-					}
-					k = append(k, v)
-				}
-				keys = append(keys, append(k, r.RowID))
-			}
-			sort.SliceStable(keys, func(a, b int) bool { return compareKeys(keys[a], keys[b]) < 0 })
-			if err := w.buildIndex(ref.index[i], keys); err != nil {
-				return nil, err
-			}
-			name := fmt.Sprintf("sqlite_autoindex_%s_%d", ref.spec.Name, i+1)
-			master = append(master, Row{RowID: int64(len(master) + 1), Values: []any{"index", name, ref.spec.Name, int64(ref.index[i]), nil}})
-		}
+	for _, o := range objs {
+		master = append(master, Row{RowID: int64(len(master) + 1), Values: o})
 	}
 	// sqlite_master lives on page 1 (after the 100-byte file header).
 	var cells [][]byte
@@ -600,6 +572,59 @@ func Build(specs []TableSpec, data map[string][]Row, changeCounter, schemaCookie
 	return bytes.Join(w.pages, nil), nil
 }
 
+// buildObjects writes the table and automatic-index b-trees of specs
+// (roots allocated table, then its indexes, in spec order) and returns
+// their sqlite_master values (type, name, tbl_name, rootpage, sql).
+func (w *writer) buildObjects(specs []TableSpec, data map[string][]Row) ([][]any, error) {
+	type rootRef struct {
+		spec  TableSpec
+		table int
+		index []int
+	}
+	var refs []rootRef
+	for _, s := range specs {
+		ref := rootRef{spec: s, table: w.alloc()}
+		for range s.Indexes {
+			ref.index = append(ref.index, w.alloc())
+		}
+		refs = append(refs, ref)
+	}
+	var out [][]any
+	for _, ref := range refs {
+		rows := append([]Row(nil), data[ref.spec.Name]...)
+		sort.Slice(rows, func(i, j int) bool { return rows[i].RowID < rows[j].RowID })
+		if err := w.buildTable(ref.table, rows); err != nil {
+			return nil, err
+		}
+		out = append(out, []any{"table", ref.spec.Name, ref.spec.Name, int64(ref.table), ref.spec.SQL})
+		for i, cols := range ref.spec.Indexes {
+			keys := make([][]any, 0, len(rows))
+			for _, r := range rows {
+				k := make([]any, 0, len(cols)+1)
+				for _, c := range cols {
+					var v any
+					if c < len(r.Values) {
+						v = r.Values[c]
+					}
+					k = append(k, v)
+				}
+				keys = append(keys, append(k, r.RowID))
+			}
+			sort.SliceStable(keys, func(a, b int) bool { return compareKeys(keys[a], keys[b]) < 0 })
+			if err := w.buildIndex(ref.index[i], keys); err != nil {
+				return nil, err
+			}
+			out = append(out, []any{"index", AutoIndexName(ref.spec.Name, i), ref.spec.Name, int64(ref.index[i]), nil})
+		}
+	}
+	return out, nil
+}
+
+// AutoIndexName is sqlite_autoindex_<table>_<n> (n from 1).
+func AutoIndexName(table string, i int) string {
+	return fmt.Sprintf("sqlite_autoindex_%s_%d", table, i+1)
+}
+
 func compareKeys(a, b []any) int {
 	for i := 0; i < len(a) && i < len(b); i++ {
 		if c := Compare(a[i], b[i]); c != 0 {
@@ -610,12 +635,25 @@ func compareKeys(a, b []any) int {
 }
 
 type writer struct {
-	pages  [][]byte
-	usable int
+	pages    [][]byte
+	usable   int
+	pageSize int
+	// pool holds reusable page numbers (ascending) for in-place updates.
+	pool []int
 }
 
 func (w *writer) alloc() int {
-	w.pages = append(w.pages, make([]byte, PageSize))
+	if len(w.pool) > 0 {
+		n := w.pool[0]
+		w.pool = w.pool[1:]
+		clear(w.pages[n-1])
+		return n
+	}
+	ps := w.pageSize
+	if ps == 0 {
+		ps = PageSize
+	}
+	w.pages = append(w.pages, make([]byte, ps))
 	return len(w.pages)
 }
 

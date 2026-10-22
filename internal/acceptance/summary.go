@@ -776,6 +776,9 @@ func Collect(root, slug string, opts CollectOptions) (*Summary, error) {
 		if strings.ToLower(filepath.Base(f)) == "readme.md" {
 			continue
 		}
+		if err := strictArtifactCheck(f); err != nil {
+			return nil, err
+		}
 		w, err := wp.Read(f)
 		if err != nil {
 			return nil, &Error{err.Error()}
@@ -825,14 +828,23 @@ func Collect(root, slug string, opts CollectOptions) (*Summary, error) {
 	planning := featureDir
 	tasksFile := filepath.Join(planning, "tasks.md")
 	var unchecked []string
+	if err := strictArtifactCheck(tasksFile); err != nil {
+		return nil, err
+	}
 	if text, err := readStrict(tasksFile); err != nil {
 		unchecked = []string{"tasks.md missing"}
 	} else {
 		unchecked = UncheckedSubtaskRows(text)
 	}
-	s.NeedsClarification = needsClarification([]string{
+	clarificationFiles := []string{
 		filepath.Join(planning, "spec.md"), filepath.Join(planning, "plan.md"), filepath.Join(planning, "quickstart.md"),
-		tasksFile, filepath.Join(planning, "research.md"), filepath.Join(planning, "data-model.md")})
+		tasksFile, filepath.Join(planning, "research.md"), filepath.Join(planning, "data-model.md")}
+	for _, f := range clarificationFiles {
+		if err := strictArtifactCheck(f); err != nil {
+			return nil, err
+		}
+	}
+	s.NeedsClarification = needsClarification(clarificationFiles)
 
 	meta := mission.ReadMetaOrEmpty(featureDir)
 	mc := LoadMissionConfig(root, mission.MissionType(meta))

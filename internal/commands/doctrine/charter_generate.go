@@ -33,7 +33,7 @@ func charterGenerateCmd() *cli.Command {
 			{Name: "owned-checkout", Kind: cli.String, Metavar: "<path>", Help: "Run against an owned checkout: a linked checkout that owns this mission. Refuses the repository root checkout, lane worktrees and coordination worktrees."},
 			{Name: "mission-handle", Kind: cli.String, Help: "Mission identity owned by the explicitly selected checkout"},
 		},
-		Run: runCharterGenerate,
+		Run: catchCharterLoad(runCharterGenerate),
 	}
 }
 
@@ -109,6 +109,7 @@ func runCharterGenerate(ctx *cli.Context) error {
 	if _, err := os.Stat(mdPath); err != nil {
 		os.WriteFile(mdPath, []byte(charterMDSeed), 0o644)
 	}
+	charter.SyncCharterIfPresent(root) // staleness check through the encoding chokepoint
 	for _, f := range []string{".kittify/charter/charter.md", ".kittify/charter/charter.yaml", ".gitignore"} {
 		if _, err := os.Stat(filepath.Join(root, f)); err != nil {
 			continue

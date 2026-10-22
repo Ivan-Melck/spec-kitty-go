@@ -55,8 +55,14 @@ func TestParseTOMLRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	beads := o.GetObject("tracker").GetObject("providers").GetObject("beads")
+	d, _ := beads.Get("d")
+	if s, err := dumpTOMLValue(d); err != nil || s != "1979-05-27T07:32:00Z" {
+		t.Errorf("datetime dumps as %q (%v)", s, err)
+	}
+	beads.Set("d", "<dt>")
 	got := jsonx.Dumps(o, jsonx.Options{Indent: -1})
-	want := `{"top": 1, "tracker": {"providers": {"beads": {"command": "bd", "actor": "me", "list": [1, 2, 3], "inl": {"a": 1, "b": {"c": "x"}}, "f": 1000.5, "h": 255, "d": "1979-05-27T07:32:00Z", "ml": "line1line2"}}}, "arr": [{"x": 1}, {"x": 2}]}`
+	want := `{"top": 1, "tracker": {"providers": {"beads": {"command": "bd", "actor": "me", "list": [1, 2, 3], "inl": {"a": 1, "b": {"c": "x"}}, "f": 1000.5, "h": 255, "d": "<dt>", "ml": "line1line2"}}}, "arr": [{"x": 1}, {"x": 2}]}`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

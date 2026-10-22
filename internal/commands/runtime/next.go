@@ -11,7 +11,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/nextrt"
 	"github.com/spec-kitty/go-kitty3/internal/project"
-	"github.com/spec-kitty/go-kitty3/internal/workflow"
 )
 
 const nextLong = `Decide and emit the next agent action for the current mission.
@@ -145,7 +144,9 @@ func runNext(ctx *cli.Context) error {
 		ctx.Eprintf("Error: Could not locate project root\n")
 		return cli.Exit(1)
 	}
-	workflow.EmitCharterPreflight(ctx.Stderr, root, "next")
+	if err := charterPreflightForNext(ctx, root, ctx.IsSet("result"), jsonMode); err != nil {
+		return err
+	}
 	slug, err := resolveNextSlug(ctx, root, ctx.String("mission"), jsonMode)
 	if err != nil {
 		return err

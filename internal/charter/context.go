@@ -147,8 +147,11 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 	if _, err := dct.LoadActivation(root); err != nil {
 		return nil, err
 	}
+	EnsureBundleFresh(root)
 	norm := strings.ToLower(strings.TrimSpace(action))
 	st := prepareState(root, norm, opt.Depth)
+	// Upstream resolves the action bundle before choosing the render mode.
+	b := ResolveActionBundle(root, norm, opt.MissionType, st.depth)
 	if !BootstrapActions[norm] && !actionNodeDeclared(root, opt.MissionType, norm) {
 		d := 1
 		if opt.Depth != nil {
@@ -160,7 +163,6 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 	if !Present(root) {
 		return &Result{Action: norm, Mode: "missing", FirstLoad: st.firstLoad, Text: MissingText, Depth: st.depth}, nil
 	}
-	b := ResolveActionBundle(root, norm, opt.MissionType, st.depth)
 	if st.depth < minEffectiveDepth {
 		if opt.MarkLoaded && st.firstLoad {
 			st.markLoaded(norm)

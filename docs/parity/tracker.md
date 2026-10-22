@@ -20,20 +20,22 @@ external is contacted.
 Differential tests (`SPEC_KITTY_ORACLE=$REF/oracle-bin/spec-kitty go test
 ./internal/commands/tracker/ -timeout 0`) run each step in two
 oracle-initialised projects and compare exit code, normalized stdout and
-stderr (uncaught exceptions: the final `Exception: message` line),
+stderr (uncaught exceptions: rich's framed traceback with the panel body
+masked by `testkit.MaskTracebackFrames`, so the box, the chained-exception
+separators and every exception line are compared),
 `.kittify/config.yaml`, `~/.spec-kitty/credentials`, the fake CLI's argv log
 and a `sqlite3` dump of the cache (`PRAGMA integrity_check`, issue rows with
 their JSON payloads, checkpoints).
 
 | Command path | Status | Tests | Deviations |
 |---|---|---|---|
-| `tracker` (bare group: help, exit 0) | done | `TestOracleProvidersAndHelp` | help layout is the shared renderer's; content compared whitespace-collapsed |
+| `tracker` (bare group: help, exit 0) | done | `TestOracleProvidersAndHelp` | none (help byte-identical: `go test ./internal/helpparity`) |
 | `tracker providers` (`--json`) | done | `TestOracleProvidersAndHelp`, `TestGoTrackerLifecycle` | none |
-| `tracker bind` (`--provider/--workspace/--ownership-mode/--field-owner/--credential`) | done | `TestOracleUnboundAndBindErrors` (removed/unknown provider, missing workspace, bad mode, bad key=value), `TestOracleBindStatusMapUnbind`, `TestOracleEgressVerdicts` (egress + unknown keys + quote style carried over) | `.kittify/config.yaml` is re-emitted by `yamlx`: YAML comments and quote styles elsewhere in the file are not preserved (ruamel round-trip keeps them); the quote style of `tracker.egress` itself is preserved |
-| `tracker unbind` | done | `TestOracleBindStatusMapUnbind`, `TestOracleEgressVerdicts` (recorded egress outlives the binding), `TestOracleRemovedAndIncompleteBindings` | same YAML note |
+| `tracker bind` (`--provider/--workspace/--ownership-mode/--field-owner/--credential`) | done | `TestOracleUnboundAndBindErrors` (removed/unknown provider, missing workspace, bad mode, bad key=value), `TestOracleBindStatusMapUnbind`, `TestOracleEgressVerdicts` (egress + unknown keys + quote style carried over), `TestOracleCommentedConfigRoundTrip`, `TestOracleTrackerBlockKeepsExtrasAndEgressQuotes` | none known: `.kittify/config.yaml` goes through the ruamel round trip (`internal/rtyaml`): comments, quote styles, flow collections, block scalars, number formats and anchors elsewhere survive, indentation is normalised as ruamel does, `_extra` keys and `egress` keep their loaded types |
+| `tracker unbind` | done | `TestOracleBindStatusMapUnbind`, `TestOracleEgressVerdicts` (recorded egress outlives the binding), `TestOracleRemovedAndIncompleteBindings`, the two round-trip tests above | none known |
 | `tracker status` (`--json`) | done | all oracle tests (unbound, configured, inert removed/unknown provider, provider without workspace, non-mapping tracker block) | none known |
 | `tracker map` (bare: `Missing command.`, exit 2) | done | `TestOracleProvidersAndHelp` | none |
-| `tracker map add` (`--wp-id/--external-id/--external-key/--external-url`) | done | `TestOracleBindStatusMapUnbind` (insert, upsert, UNIQUE violation, blank id), `TestOracleDBInterop` | the `IntegrityError` traceback is reduced to `Traceback` + final line |
+| `tracker map add` (`--wp-id/--external-id/--external-key/--external-url`) | done | `TestOracleBindStatusMapUnbind` (insert, upsert, UNIQUE violation, blank id), `TestOracleDBInterop` | traceback frames: see Irreducible differences |
 | `tracker map list` (`--json`) | done | `TestOracleBindStatusMapUnbind`, `TestOracleDBInterop` | none |
 | `tracker sync` (bare: `Missing command.`, exit 2) | done | `TestOracleProvidersAndHelp` | none |
 | `tracker sync pull` (`--limit`, `--json`) | done | `TestOracleEgressVerdicts` (absent/refused/fault refusals), `TestOracleSyncBeads`, `TestOracleSyncFP`, `TestOracleDBInterop` | none known |
@@ -46,35 +48,36 @@ credential file on one project (`TestOracleDBInterop`); Go-only coverage in
 `TestGoTrackerLifecycle`, `TestGoTrackerSyncWithFakeBeads` and the library
 unit tests.
 
-Other deviations / notes:
+Also tested: config.yaml / credentials parse errors with PyYAML-ruamel and
+`tomllib` message text (`TestOracleMalformedFiles`), the `getpass.getuser()`
+actor lookup order and the 30 s `bd`/`fp` timeout (`TestOracleSyncActorLookup`,
+`TestOracleSyncTimeout`).
+
+## Irreducible differences
 
 - Uncaught exceptions (`sqlite3.IntegrityError`, `FileNotFoundError` for a
-  missing `bd`/`fp`, `spec_kitty_tracker` errors such as
-  `IssuePayloadContractError`, `ConnectorRequestError` from push's remote
-  index, `TrackerConfigError` from the sync commands' pre-boundary root
-  lookup) print `Traceback (most recent call last):` plus the final
-  exception line instead of rich's framed traceback; exit code 1 as upstream.
-- A malformed `~/.spec-kitty/credentials` reports
-  `Failed to load credentials: <reason>`; the reason text is this TOML
-  parser's, not `tomllib`'s. An unparseable config.yaml likewise reports
-  `Failed to parse <path>: <reason>` with yaml.v3's reason.
-- The SQLite cache is rewritten whole on every mutation (sqlitedb has no
-  in-place page updates). Readers see the same rows; page layout, the
-  header's library version number and the change counter cadence differ from
-  a file the real SQLite library would produce. Tables/indexes not in the
-  tracker schema would be dropped on rewrite (upstream never creates any).
-- `bd`/`fp` subprocess timeouts (30 s), `getpass.getuser()` lookup order and
-  the gateway token's 300 s TTL are reproduced but not oracle-tested
-  (timing-dependent). The gateway token always covers its own connector's
-  context, so scope violations cannot occur through the CLI, as upstream.
+  missing `bd`/`fp`, `spec_kitty_tracker` errors, `TrackerConfigError` from
+  the sync commands' root lookup, `CalledProcessError` / `TimeoutExpired`
+  chains) print rich's framed traceback: same panel geometry, title,
+  "The above exception was the direct cause..." separators and exception
+  lines; the frames inside the panel are rendered sourceless (`in
+  _run_or_exit:98`), because upstream's show the wheel's site-packages paths
+  and source excerpts.
+- `.kittify/config.yaml` written for a document whose merged map is shared
+  by several `<<:` referers: ruamel updates referers on delete (`_ref`);
+  `rtyaml` does not (the tracker never deletes merged keys).
+- The SQLite cache's rewritten tracker tables are laid out by sqlitedb's
+  bulk loader, not SQLite's incremental b-tree balancing: same rows, indexes
+  and integrity, different cell placement inside those tables' pages.
+
+## Remaining work
+
 - `agent tasks map-requirements --tracker-ref` / `move-task --tracker-ref`
-  (areas E/A) only record free-form `tracker_refs` strings in WP
-  frontmatter; upstream does not link them to tracker bindings or the
-  mapping table, so there is nothing to share with this library.
+  (areas E/A) only record free-form `tracker_refs` strings, as upstream; no
+  link to tracker bindings is needed.
 - Observed but out of scope: upstream `agent mission create` raises
   `PendingOriginConsumerNotRegisteredError` when `.kittify/pending-origin.yaml`
-  exists (rc8's `specify_cli.tracker` no longer registers a consumer); the Go
-  mission-create port does not check for that file.
+  exists; the Go mission-create port does not check for that file (area A).
 
 ## Library API
 
@@ -86,10 +89,12 @@ Configuration (`.kittify/config.yaml` `tracker:` block):
   `IsRemoved`, `NormalizeProvider`.
 - `ProjectConfig` (`Provider`, `BindingRef`, `ProjectSlug`, `DisplayLabel`,
   `ProviderContext`, `Workspace`, `OwnershipMode`, `FieldOwners`, `Egress`
-  (raw value or `EgressAbsent`), `EgressStyle`, `Extra`), `NewProjectConfig`,
+  (raw value or `EgressAbsent`), `EgressStyle`, `Extra`; the loaded
+  round-trip tracker block rides along unexported), `NewProjectConfig`,
   `FromDict`, `(ProjectConfig).ToDict/IsConfigured/EgressFault`.
-- `LoadConfig(root)`, `SaveConfig(root, cfg)` (atomic, 0600 like
-  `atomic_write`), `ClearConfig(root)` (keeps a recorded egress),
+- `LoadConfig(root)`, `SaveConfig(root, cfg)` (ruamel round trip, atomic
+  like `atomic_write`), `ClearConfig(root)` (round trip, keeps a recorded
+  egress with its quote style),
   `ConfigPath`, `RequireRepoRoot`.
 - Egress: `Verdict(root) EgressVerdict` (`Refused`, `State`, `Raw`,
   `Message`, `Remedies`, `Render()`), constants `EgressRefused`,
@@ -99,10 +104,9 @@ Credentials (`<runtime root>/credentials`, TOML, owner-only, sidecar lock):
 
 - `RuntimeRoot()`, `DefaultCredentialsPath()`, `CredentialStore{Path}`,
   `NewCredentialStore`, `Load/Save/GetProvider/SetProvider/ClearProvider`.
-- `ParseTOML(src) (*jsonx.Object, error)` (tomllib-compatible subset incl.
-  tables, arrays of tables, inline tables, all string forms, numbers,
-  dates as `TOMLDatetime`), `DumpTOML(obj)` (python `toml.dumps`, quirks
-  included).
+- `ParseTOML(src) (*jsonx.Object, error)` (`internal/pytoml.Loads`:
+  CPython 3.13 `tomllib`, exact `TOMLDecodeError` text), `DumpTOML(obj)`
+  (python `toml.dumps`, quirks included; `pytoml` date/time values).
 
 Cache (`<runtime root>/trackers/<scope>.db`):
 
@@ -127,8 +131,10 @@ Models / sync:
 - Facade: `Service{Root, Creds}`, `NewService`, `Bind`, `Unbind`, `Status`,
   `MapAdd`, `MapList`, `Sync(op, limit)`, `SyncPublish`; `ParseKVPairs`.
 - Errors: `*Error` (RuntimeError class: one stderr line, exit 1),
-  `*ValueError`, `*TrackerError` (spec_kitty_tracker exceptions),
-  `*Crash` (uncaught: traceback), `AsCrash`.
+  `*ValueError`, `*TrackerError` (spec_kitty_tracker exceptions, `Cause`),
+  `*Crash` (uncaught: `Type`, `Msg`, `Cause`, `Frames`;
+  `Exception(frames...) *rich.Exception` for `rich.PrintTraceback`),
+  `AsCrash`.
 
 ### `internal/tracker/sqlitedb`
 
@@ -136,11 +142,20 @@ Dependency-free SQLite 3 file format reader/writer (rowid tables plus
 automatic indexes, overflow pages, multi-level b-trees):
 `Read(path)`, `Parse(data)` -> `*File` (`ChangeCounter`, `SchemaCookie`,
 `Master`, `HasTable`, `Rows`); `Write(path, specs, data, changeCounter,
-schemaCookie)`, `Build(...)`; `TableSpec{Name, SQL, Indexes}`, `Row{RowID,
-Values}`, `MasterEntry`; record helpers `EncodeRecord`, `DecodeRecord`,
-`Compare` (BINARY collation order). Files pass `PRAGMA integrity_check` and
-round-trip through the sqlite3 CLI (`sqlitedb_test.go`).
+schemaCookie)`, `Build(...)` (fresh file); `Update(path, ...)` /
+`UpdateImage(old, ...)` (PYF-05: rewrites only the given tables and their
+automatic indexes in place: foreign tables, user indexes, header fields
+(page size, reserved bytes, user_version, application_id, ...) and their
+pages are kept; released pages join the freelist and the freelist is reused
+first; change counter / version-valid-for / schema cookie as passed);
+`AutoIndexName`; `TableSpec{Name, SQL, Indexes}`, `Row{RowID, Values}`,
+`MasterEntry`; record helpers `EncodeRecord`, `DecodeRecord`, `Compare`
+(BINARY collation order). Files pass `PRAGMA integrity_check` and
+round-trip through the sqlite3 CLI (`sqlitedb_test.go`, `update_test.go`).
+`Store` mutations use `Update`.
 
 ## Foundation changes
 
-None. No existing package was modified.
+None in this area's files beyond the above. Shared packages this area
+added or extended (`internal/rich`, `internal/pyyaml`, `internal/yamlx`,
+`internal/pytoml`, `internal/rtyaml`) are documented in util.md.

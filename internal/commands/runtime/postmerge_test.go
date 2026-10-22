@@ -54,6 +54,9 @@ func TestDiffPostMerge(t *testing.T) {
 		[]string{"mission", "reopen", "$M", "--reason", "regression", "--json"},
 		[]string{"mission", "reopen", "$M", "--reason", "again"},
 		[]string{"mission", "close", "--mission", "$M"},
+		// CORE-01: post-mission history + reopened state
+		[]string{"agent", "status", "lifecycle", "--mission", "$M", "--json"},
+		[]string{"agent", "status", "lifecycle", "--mission", "$M"},
 	)
 	compareTree(t, p, "kitty-specs", "analysis-report.md")
 }

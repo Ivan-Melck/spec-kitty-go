@@ -115,8 +115,14 @@ func Load(src Source, requested string) (*Sequence, error) {
 	if err != nil {
 		return nil, fail(err.Error())
 	}
+	// read_text: universal newlines
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 	raw, err := pyyaml.SafeLoad(text)
 	if err != nil {
+		var pe *pyyaml.PyError
+		if errors.As(err, &pe) {
+			return nil, pe
+		}
 		return nil, fail(err.Error())
 	}
 	seq, err := Validate(raw)

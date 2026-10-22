@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 const designEntryLimit = 64
@@ -181,7 +181,7 @@ func runDesignContext(ctx *cli.Context) error {
 		}
 		if me, ok := err.(*orch.ManifestLoadError); ok {
 			// Uncaught upstream: the loader exception escapes as a traceback.
-			fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\n%s: %s\n", me.Type, me.Msg)
+			rich.Traceback(ctx.Stderr, me.Type, me.Msg, rich.Frame{Name: "design_context", Line: 16})
 			return cli.Exit(1)
 		}
 		return v.fail("DESIGN_CONTEXT_FAILED", err.Error(), nil)

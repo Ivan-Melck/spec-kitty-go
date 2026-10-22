@@ -21,6 +21,7 @@ func init() {
 				return err
 			}
 		}
+		rootUpgradeNotices(ctx, os.Args[1:])
 		if err := StartupBootstrap(ctx, os.Args[1:]); err != nil {
 			return err
 		}

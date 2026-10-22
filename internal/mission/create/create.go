@@ -432,6 +432,8 @@ func Create(o Options) (*Result, error) {
 	featureDir := project.Specs(root, dirName)
 	coordRouted := MintsCoordination(topology)
 
+	rb := captureRollback(root, current)
+
 	// scaffold
 	for _, d := range []string{featureDir, filepath.Join(featureDir, "checklists"), filepath.Join(featureDir, "research"), filepath.Join(featureDir, "tasks")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -515,6 +517,7 @@ func Create(o Options) (*Result, error) {
 	var coordWT string
 	if coordRouted && !coordSkipped {
 		coordWT = lanes.CoordWorktreePath(root, dirName, mid8)
+		rb.coordWT = coordWT
 		if st, err := os.Stat(coordWT); err != nil || !st.IsDir() {
 			os.MkdirAll(filepath.Dir(coordWT), 0o755)
 			if _, err := gitx.Run(root, "worktree", "add", coordWT, res.CoordinationBranch); err != nil {
@@ -574,6 +577,13 @@ func Create(o Options) (*Result, error) {
 		if _, err := gitx.Run(root, append([]string{"commit", "-q", "-m", "Add scaffold for mission " + dirName, "--"}, rel...)...); err != nil {
 			return nil, fmt.Errorf("meta.json commit failed: %v", err)
 		}
+	}
+
+	// pending-origin consumption: no consumer is registered in this build,
+	// so a staged binding fails closed and the create is rolled back.
+	if err := pendingOriginError(root); err != nil {
+		rb.restore()
+		return nil, err
 	}
 
 	// result file sets

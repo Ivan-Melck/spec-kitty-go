@@ -5,62 +5,111 @@ Upstream: `spec-kitty-cli` 4.0.0rc8. Packages: `internal/kittify`,
 (registered via `cmd/spec-kitty/imports_setup.go`).
 
 Differential tests run with `SPEC_KITTY_ORACLE=$REF/oracle-bin/spec-kitty`;
-every `*WithoutOracle` test runs in plain `go test ./...`.
+every `*WithoutOracle` test and every test that only drives the Go binary
+runs in plain `go test ./...`. The Go binary never reaches pypi.org under
+test: `testkit` points its PyPI lookups at a closed local port (see
+`SPEC_KITTY_GO_PYPI_JSON_URL` below) unless a test serves a fake index.
 
 ## Commands
 
 | Command path | Status | Tests (internal/commands/setup) | Known deviations |
 |---|---|---|---|
-| *(root callback)* startup bootstrap | done | `bootstrap_test.go`, all oracle tests compare `$HOME` trees | Freshness lock contents differ (Go records its own asset revision). |
-| *(root callback)* schema gate | done | `TestUpgradeStaleAndLegacyMatchOracle`, `TestUpgradeWithoutOracle` | No PyPI query: the upgrade nag (`ALLOW_WITH_NAG`) never fires. |
-| *(startup)* `.kitty.env` operator env loading | done | `TestDoctorSetupLeavesMatchOracle` (env-file tiers) | A `SPEC_KITTY_HOME=` line is dropped silently (upstream also emits a `UserWarning`). |
-| `init` | done | `TestInitMatchesOracle` (8 `--ai` selections, project + HOME trees + `.git/config`), `TestInitErrorsMatchOracle`, `TestInitNamedDirAndNoGit`, `TestInitWithoutOracle` | `metadata.yaml` `python_version`/`platform_version` carry Go runtime values. Interactive agent picker is a plain numbered prompt, not the arrow-key UI. |
-| `agent config` (group) | done | `TestAgentConfigOrphansMatchOracle` (bare group exit 2) | Help box layout comes from the shared `internal/cli` renderer. |
-| `agent config list` | done | `TestAgentConfigMatchesOracle` | |
-| `agent config add` | done | `TestAgentConfigMatchesOracle`, `TestAgentConfigWithoutOracle` | |
-| `agent config remove` | done | `TestAgentConfigMatchesOracle`, `TestAgentConfigOrphansMatchOracle` | |
-| `agent config status` | done | `TestAgentConfigMatchesOracle`, `TestAgentConfigOrphansMatchOracle` | |
-| `agent config sync` | done | `TestAgentConfigMatchesOracle` (`--sync-hooks`, `--create-missing --json`, `--keep-orphaned`) | Orphan scan is sorted (upstream iterates a hash-randomised set). YAML parse-error text differs (PyYAML vs yaml.v3); exit codes/envelope match. |
-| `agent config set` | done | `TestAgentConfigMatchesOracle` | |
-| `verify-setup` | done | `TestVerifySetupMatchesOracle` (text, `--json`, `--diagnostics`, `--mission`) | |
-| `config` | done | `TestConfigAndSessionsMatchOracle` | `--show-origin` package-default paths name embedded assets (`packs/built-in/...`) instead of site-packages paths; the org-pack tier is not consulted. |
-| `session-start` | done | `TestConfigAndSessionsMatchOracle` | |
-| `session-stop` | done | `TestConfigAndSessionsMatchOracle` | |
-| `upgrade` | done (current-schema + rc5–rc8 window); partial for old projects | `TestUpgradeCurrentProjectMatchesOracle`, `TestUpgradeStaleAndLegacyMatchOracle`, `TestUpgradeFlagsMatchOracle`, `TestUpgradeWithoutOracle` | See "Upgrade" below. |
-| `doctor` (group) | done | `TestDoctorSetupLeavesMatchOracle` (bare group: help + stderr, exit 2) | |
-| `doctor skills` | done | `TestDoctorSetupLeavesMatchOracle` (incl. `--fix`) | `pack_skills` always `[]` (org/pack skill catalog not ported). |
-| `doctor command-files` | done | `TestDoctorSetupLeavesMatchOracle` | |
-| `doctor tool-surfaces` | done | `TestDoctorToolSurfacesMatchOracle` (2 agent mixes, `--kind`, `--tool`, drift/missing, `--fix`) | `--fix` repairs through the upgrade repair path; its `repair` block lists surface ids, not upstream's internal effect hashes. Plugin bundles (`dist/spec-kitty-plugins/*`) are reported but never staged. |
-| `doctor state-roots` | done | `TestDoctorSetupLeavesMatchOracle` | |
-| `doctor env-file` | done | `TestDoctorSetupLeavesMatchOracle` | |
-| `doctor channel` | done | `TestDoctorSetupLeavesMatchOracle` | |
-| `doctor bytecode` | done (trivial) | — | No `.pyc` files exist in the Go port: always clean; `root` is the executable's directory. |
-| `regen` | done (refusal path) | — | Outside an upstream source checkout it refuses like upstream (exit 2); inside one it reports that fixture regeneration is a Python maintainer tool. |
-| `materialize` | done | see maintenance.md | Owned by the maintenance area (`internal/commands/maintenance`). |
-| `migrate` (group + 12 leaves) | done | see maintenance.md | Owned by the maintenance area (`internal/commands/maintenance`). |
+| *(root callback)* startup bootstrap | done | `bootstrap_test.go`, all oracle tests compare `$HOME` trees | Freshness-lock signature (irreducible, see below). |
+| *(root callback)* schema gate + upgrade nag | done | `TestUpgradeStaleAndLegacyMatchOracle`, `TestUpgradeWithoutOracle`, `TestUpgradeCLIQueriesFakeIndex` | Nag and "no upgrade available" notices are TTY-only (as upstream); no SGR colours. |
+| *(startup)* `.kitty.env` operator env loading | done | `TestDoctorSetupLeavesMatchOracle`, `TestKittyEnvHomeLineWarnsLikeOracle` | The `UserWarning` names `<spec-kitty>/specify_cli/__init__.py:34` instead of the site-packages path. |
+| `init` | done | `TestInitMatchesOracle`, `TestInitErrorsMatchOracle`, `TestInitNamedDirAndNoGit`, `TestInitWithoutOracle`, `TestInitArrowKeyPicker*` (PTY) | `metadata.yaml` `python_version` (irreducible). Arrow-key picker matches frame text; colours not emitted. With a non-terminal stdin and `SPEC_KITTY_FORCE_INTERACTIVE` a line prompt is used (upstream's readchar crashes there). |
+| `agent config` (group + list/add/remove/status/sync/set) | done | `TestAgentConfigMatchesOracle`, `TestAgentConfigOrphansMatchOracle`, `TestAgentConfigWithoutOracle` | `sync` orphan scan order (irreducible). |
+| `verify-setup` | done | `TestVerifySetupMatchesOracle` | |
+| `config` | done | `TestConfigAndSessionsMatchOracle`, `TestConfigShowOriginOrgPackTier` | `--show-origin` package-default paths name embedded assets (`packs/built-in/...`). |
+| `session-start` / `session-stop` | done | `TestConfigAndSessionsMatchOracle` | Session upgrade cache (`~/.kittify/last-cli-check.json`) refreshes in a re-exec of the Go binary instead of `python -m`. |
+| `upgrade` | done | see "Upgrade" | |
+| `doctor` (group), `command-files`, `state-roots`, `env-file`, `channel` | done | `TestDoctorSetupLeavesMatchOracle` | |
+| `doctor skills` | done | `TestDoctorSetupLeavesMatchOracle` | `pack_skills` always `[]` (Remaining work). |
+| `doctor tool-surfaces` | done | `TestDoctorToolSurfacesMatchOracle` | `--fix` `repair` block lists surface ids; plugin bundles reported, not staged (Remaining work). |
+| `doctor bytecode` | done (trivial) | — | Irreducible (no `.pyc` files). |
+| `regen` | done (refusal path) | — | Irreducible (Python maintainer tool). |
+| `materialize`, `migrate` (group + 12 leaves) | done | see maintenance.md | Owned by the maintenance area. |
 
 ## Upgrade
 
-* Compat planner (`compat.planner`): project states, safety registry,
-  decisions and exit codes 4/5/6, JSON contract (`--json` with `--project`
-  or `--dry-run`, `--cli`, `--plan-json` envelopes). `cli.latest_version`
-  is always `null` / `latest_source: "none"` (no network).
-* Migration catalog: all 124 registered upstream migrations (ids, descriptions,
-  target versions, `runs_first`) are generated into
-  `migrations_catalog.go`, so selection, the migration-plan table and
-  `pending_migrations` match upstream for any recorded version.
-* Ported migrations (detect/apply): `4_0_0rc5_install_lane_tip_recorder`,
-  `4.0.0rc7_exclude_spec_kitty`, the gitignore backfills
-  (`3.2.4_*`, `3.2.5_*`, `3.2.6rc3_*`) and the merge-driver seeding
-  migrations (`3.2.6_*`, `3.2.7_review_cycle_*`, `4.0.0rc5_decision_index_*`).
-  Every other migration detects as "not needed" and is recorded as
-  `skipped` / "Not applicable"; the finalizer's repairs (global runtime,
-  skills, command skills, profiles, orientation, activations, merge-driver
-  git config) then bring generated surfaces current.
-* Finalizer: schema stamp (PyYAML-style re-dump), activation provisioning,
-  surface repair, clone-local merge-driver config, baseline-diff auto-commit
-  `chore: apply spec-kitty upgrade changes (A -> B)` and the FR-023
-  no-commit reasons. Worktree fan-out under `.worktrees/` is not ported
-  (integrating lane/coordination worktrees are skipped upstream as well).
-* `--plan-json` is compared up to `migrations`; `effects`/`dispositions`
-  (upstream's per-asset ownership inventory) are emitted empty.
+* **Migrations:** all 124 upstream migrations are ported with their own
+  detect / can_apply / apply (dry-run wording, change lines, warnings,
+  errors, `manual_review_required` / `preserved_paths`, JSON reports in
+  `changes_made[0]`), fail-closed detection, `runs_first` reselection
+  (`charter_pack_cutover`), legacy-id normalisation, version-stamp
+  capture/restore and `runs_on_worktrees`. Catalog order, plan table and
+  `pending_migrations` match for any recorded version.
+* **Corpora** (`upgrade_corpora_test.go`, `--dry-run --verbose`,
+  `--dry-run --json`, `--yes --json`, tree + modes + contents, commit, re-run):
+  fresh projects stamped 0.1.0 / 2.0.0 / 3.0.0 / 3.2.0 / 3.2.6 / 4.0.0rc1;
+  legacy layouts v0.1 (`.specify/`, `specs/`), v0.9 (claude and
+  claude+codex: lanes dirs, scripts, memory, stale commands), v2.0 (no
+  agents block, stale commands, flow-style frontmatter), v3.0
+  (constitution dir with a legacy governance key, `.kittify/doctrine`,
+  failed first run and recovery run); worktree fan-out (lane, feature with
+  untracked file, integrating `kitty/mission-*` worktree skipped) at 3.2.0
+  and 4.0.0rc8 including per-worktree commits.
+* **Outcome / finalizer:** failure reasons incl. `worktree_failure`,
+  manual-review section and JSON fields, held-for-review warnings,
+  structured migration summaries, version-stamp settle with the
+  "metadata.yaml restored" notice, auto-commit with the upstream candidate
+  order (mutation log for moves/copies standing in for the `sys.audit`
+  hook), index untracks committed from a temporary index.
+* **Compat planner:** PyPI JSON provider (2 s timeout, no redirects, 1 MiB
+  cap, prerelease channel via `SPEC_KITTY_PRERELEASE`), nag cache
+  (`$XDG_CACHE_HOME/spec-kitty/upgrade-nag.json`, 0600, ownership checks),
+  `upgrade.yaml` / `SPEC_KITTY_NAG_THROTTLE_SECONDS` / `SPEC_KITTY_NO_NAG`,
+  read-only vs `query_latest` semantics, `ALLOW_WITH_NAG` /
+  `install_method_unknown`, `--agent-check` (snooze / never-ask / always
+  reasons) and `--agent-choice` recording, the "no upgrade available"
+  notifier and the session-presence upgrade cache.
+  Go-only test seam: `SPEC_KITTY_GO_PYPI_JSON_URL` (a URL template with one
+  `%s` for the package) replaces `https://pypi.org/pypi/%s/json`; upstream
+  hardcodes the URL, so these paths are tested Go-only against a fake index
+  (`compat_latest_test.go`); install method is always `unknown`.
+* `--plan-json`: compared up to `migrations`; `effects` / `dispositions`
+  are emitted empty (Remaining work).
+
+## Library API added in wave 5
+
+* `kittify`: `VersionStamp` (`CaptureVersionStamp`, `Restore`, `Version`),
+  `Metadata.NormalizeAndSaveLegacyIDs`, `LegacyMigrationID`,
+  `CanonicalSchemaCapabilities`; `StampSchemaVersion` writes like
+  `atomic_write` (0600).
+* `agents`: `Profile.AppliesToLanguages`, `ProjectionResult.Pruned`,
+  `ProfileAdmit` hook (activation + language gate), `SkillEntry.Origin`.
+* Additive extensions to other areas: `fm.FlowKeys` / `fm.RestoreFlow`
+  (ruamel flow-sequence round trip), `charter.DefaultGovernance`,
+  `charter.HashContent`, `migrate.MissionNeedsCutover`,
+  `migrate.OnLayoutMove`; `migrate.BackfillWPIDs` now backfills
+  `dependencies: []` and keeps flow sequences (FrontmatterManager.read);
+  `rich` table cells keep whitespace runs when wrapping; `testkit`
+  environment sets the PyPI seam.
+
+## Irreducible differences
+
+* Freshness-lock `template_source_signature` (MAINT-05): upstream hashes
+  its own Python module files and their install paths; the Go binary
+  records a signature of its embedded templates and renderer identity.
+* `metadata.yaml` `environment.python_version` (MAINT-07): there is no
+  Python interpreter; the Go toolchain version is recorded.
+  `platform`/`platform_version` match.
+* `agent config sync` orphan order (MAINT-09): upstream iterates a
+  hash-randomised set; Go sorts.
+* `doctor bytecode` / `regen` (MAINT-14): no bytecode exists; fixture
+  regeneration is a Python maintainer tool.
+* Install-method detection: the Go binary is not installed by pip/pipx/uv,
+  so `install_method` is always `unknown`.
+* Terminal styling: the Go console emits no SGR colours on a TTY (picker,
+  nag, notices).
+
+## Remaining work
+
+* MAINT-03 / MAINT-11 / MAINT-12 / MAINT-13: the tool-surface assessment
+  engine (`upgrade/assessment.py`, `tool_surface/*`, `skills/installer.py`,
+  `skills/command_installer.py`, about 7k upstream lines) is not ported:
+  `--plan-json` `effects`/`dispositions` stay empty, `doctor skills`
+  `pack_skills` is `[]`, `doctor tool-surfaces --fix` lists surface ids
+  instead of effect ids, and plugin bundles are not staged.
+* MAINT-15: `agents.VibeSkillPathConfigured` still uses a regex TOML read;
+  `internal/pytoml` (PYF-03) has not landed on functional-parity yet.

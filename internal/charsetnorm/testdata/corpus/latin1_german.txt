@@ -1,0 +1,3 @@
+# Projektcharta
+
+Das Team verpflichtet sich zu gründlichen Überprüfungen. Größere Änderungen benötigen eine ausführliche Begründung und müssen getestet werden.

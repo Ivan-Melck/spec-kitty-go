@@ -114,6 +114,7 @@ func runStatusLifecycle(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	snap := status.Reduce(stream.Transitions, nil, true)
+	slugResolverWarn(ctx, jsonMode, dir, 1)
 	lc := status.LifecycleObject(dir, snap, clock.Now())
 	if jsonMode {
 		printJSON(ctx.Stdout, lc)
@@ -153,6 +154,13 @@ func runStatusLifecycle(ctx *cli.Context) error {
 	for _, r := range rows {
 		fmt.Fprintln(ctx.Stdout, " "+padRight(r[0], w0)+"  "+padRight(r[1], w1)+" ")
 	}
+	if lines := status.FormatPostMissionEvents(lc.GetList("post_mission_events")); len(lines) > 0 {
+		fmt.Fprintln(ctx.Stdout)
+		consolePrint(ctx.Stdout, "Post-mission History")
+		for _, l := range lines {
+			richPrint(ctx.Stdout, "  • "+l)
+		}
+	}
 	return nil
 }
 
@@ -174,6 +182,9 @@ func runStatusValidate(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	res, has := status.Validate(dir)
+	if has {
+		slugResolverWarn(ctx, jsonMode, dir, 2)
+	}
 	payload := func() *jsonx.Object {
 		return jsonx.NewObject("mission_slug", slug, "passed", res.Passed(), "errors", res.Errors, "warnings", res.Warnings,
 			"error_count", len(res.Errors), "warning_count", len(res.Warnings))
@@ -218,4 +229,19 @@ func runStatusValidate(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	return nil
+}
+
+// slugResolverWarn replays the store._SlugResolver logger warnings
+// (orphaned / unsafe legacy event slugs) once per upstream read_events()
+// pass of the command; logging is silent in --json mode.
+func slugResolverWarn(ctx *cli.Context, jsonMode bool, dir string, passes int) {
+	if jsonMode {
+		return
+	}
+	ws := status.SlugResolverWarnings(dir)
+	for i := 0; i < passes; i++ {
+		for _, w := range ws {
+			warnLog(ctx.Stderr, w)
+		}
+	}
 }

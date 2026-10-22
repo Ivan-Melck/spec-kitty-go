@@ -46,9 +46,22 @@ func snapshotForDoctor(dir string, stream *Stream) *jsonx.Object {
 	return nil
 }
 
-// RunDoctor is status.doctor.run_doctor (issue-matrix discovery is not
-// evaluated; see docs/parity/core.md).
-func RunDoctor(dir, slug, root string, claimedDays, inProgressDays int) ([]Finding, error) {
+// DoctorHooks supplies the checks that need packages above status: the
+// issue-matrix check (check_issue_matrix) and the repo-level sparse-checkout
+// scan (check_sparse_checkout). A nil hook falls back to the built-in
+// primary-only sparse probe / no issue-matrix finding.
+type DoctorHooks struct {
+	IssueMatrix func() []Finding
+	Sparse      func() []Finding
+}
+
+// RunDoctor is status.doctor.run_doctor (the optional hooks carry the
+// issue-matrix and sparse-checkout checks).
+func RunDoctor(dir, slug, root string, claimedDays, inProgressDays int, hooks ...DoctorHooks) ([]Finding, error) {
+	var h DoctorHooks
+	if len(hooks) > 0 {
+		h = hooks[0]
+	}
 	if _, err := os.Stat(dir); err != nil {
 		return nil, fmt.Errorf("Feature directory does not exist: %s", dir)
 	}
@@ -76,7 +89,14 @@ func RunDoctor(dir, slug, root string, claimedDays, inProgressDays int) ([]Findi
 			membership = checkWPFiles(dir, Reduce(stream.Transitions, nil, true))
 		}
 	}
-	findings = append(findings, checkSparseCheckout(root)...)
+	if h.IssueMatrix != nil {
+		findings = append(findings, h.IssueMatrix()...)
+	}
+	if h.Sparse != nil {
+		findings = append(findings, h.Sparse()...)
+	} else {
+		findings = append(findings, checkSparseCheckout(root)...)
+	}
 	findings = append(findings, checkDuplicateKeys(dir)...)
 	return append(findings, membership...), nil
 }
