@@ -212,7 +212,7 @@ func computeRiskReport(m *lanes.Manifest, bodies map[string]string) ([]lanePairR
 // reportParallelizationRisk is _report_parallelization_risk.
 func (f *finalizeRun) reportParallelizationRisk(m *lanes.Manifest) error {
 	pol := loadRiskPolicy(f.root)
-	pairs, overall := computeRiskReport(m, f.bodies)
+	pairs, overall := computeRiskReport(m, f.laneBodies)
 	f2 := func(x float64) string { return strconv.FormatFloat(x, 'f', 2, 64) }
 	if overall > 0 && !f.json {
 		say(f.ctx.Stdout, fmt.Sprintf("[yellow]⚠[/yellow] Parallelization risk: %s (threshold: %s)", f2(overall), f2(pol.threshold)))

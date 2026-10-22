@@ -98,19 +98,26 @@ type finalizeRun struct {
 	override     string
 	missionType  string
 
-	wpFiles         []string // sorted
-	wpIDs           []string
-	specIDs         reqmap.SpecIDs
-	declared        map[string]bool
-	functional      map[string]bool
-	extractWarns    []string
-	specContent     string
-	deps            map[string][]string
-	depOrder        []string
-	refs            map[string][]string
-	refsOrder       []string // non-nil: dict order of refs (manifest-only outline)
-	diagnostics     *jsonx.Object
-	manifest        *orch.WpsManifest
+	wpFiles      []string // sorted
+	wpIDs        []string
+	specIDs      reqmap.SpecIDs
+	declared     map[string]bool
+	functional   map[string]bool
+	extractWarns []string
+	specContent  string
+	deps         map[string][]string
+	depOrder     []string
+	refs         map[string][]string
+	refsOrder    []string // non-nil: dict order of refs (manifest-only outline)
+	diagnostics  *jsonx.Object
+	manifest     *orch.WpsManifest
+	// lane inputs (canceled work projected out) and the frozen membership
+	laneMan         map[string]ownManifest
+	laneDeps        map[string][]string
+	laneOrder       []string
+	laneBodies      map[string]string
+	allCanceled     bool
+	frozen          *lanes.FrozenMembership
 	refresh         bool
 	allowOrphaned   bool
 	pin             *planningPin
@@ -266,6 +273,14 @@ func (f *finalizeRun) run() error {
 	manifests, err := f.ownershipGates()
 	if err != nil {
 		return err
+	}
+	if err := f.projectLaneInputs(manifests); err != nil {
+		return err
+	}
+	if !f.refresh {
+		if err := f.frozenPreflight(); err != nil {
+			return f.laneError(err)
+		}
 	}
 	if !f.noWrite() {
 		lifecycle.EmitArtifactPhase(statusWriteDir(f.root, f.slug), lifecycle.PhaseInput{EventType: lifecycle.TasksStarted, MissionSlug: f.slug, Actor: finalizeCmd})
@@ -1234,19 +1249,19 @@ func (f *finalizeRun) metaObj() *jsonx.Object { return mission.ReadMetaOrEmpty(f
 func (f *finalizeRun) computeLanes(man map[string]ownManifest, previous *lanes.Manifest, planningSHA *string) (*lanes.Manifest, error) {
 	meta := f.metaObj()
 	own := map[string]*lanes.Ownership{}
-	for id, m := range man {
+	for id, m := range f.laneMan {
 		own[id] = &lanes.Ownership{ExecutionMode: m.mode, OwnedFiles: m.owned}
 	}
 	graph := map[string][]string{}
-	for k, v := range f.deps {
+	for k, v := range f.laneDeps {
 		graph[k] = v
 	}
 	var mid *string
 	if s := meta.GetString("mission_id"); s != "" {
 		mid = &s
 	}
-	in := lanes.ComputeInput{DependencyGraph: graph, Ownership: own, MissionSlug: f.slug, TargetBranch: f.target, WPBodies: f.bodies,
-		MissionID: mid, Previous: previous, Topology: coord.TopologyFromMeta(meta, f.dir), MissionBranch: meta.GetString("mission_branch")}
+	in := lanes.ComputeInput{DependencyGraph: graph, Ownership: own, MissionSlug: f.slug, TargetBranch: f.target, WPBodies: f.laneBodies,
+		MissionID: mid, Previous: previous, Topology: coord.TopologyFromMeta(meta, f.dir), MissionBranch: meta.GetString("mission_branch"), Frozen: f.frozen}
 	m, err := lanes.Compute(in)
 	if err != nil {
 		return nil, err
@@ -1302,14 +1317,21 @@ func (f *finalizeRun) lanesStats(m *lanes.Manifest) *jsonx.Object {
 	return jsonx.NewObject("computed", true, "count", len(m.Lanes), "lane_ids", ids, "planning_artifact_wps", strList(nonNil(m.PlanningArtifactWPs)), "collapse_report", cr)
 }
 
-func (f *finalizeRun) laneInputsOK(man map[string]ownManifest) error {
-	if len(man) > 0 && len(f.deps) > 0 {
+// lanesComputable is (lane manifests and lane dependencies) or all_canceled.
+func (f *finalizeRun) lanesComputable() bool {
+	return (len(f.laneMan) > 0 && len(f.laneDeps) > 0) || f.allCanceled
+}
+
+func (f *finalizeRun) laneInputsOK(_ map[string]ownManifest) error {
+	if f.lanesComputable() {
 		return nil
 	}
+	man := f.laneMan
+	lanesNow := f.lifecycleLanes()
 	var code []string
 	for id, m := range f.frontmatter {
 		mode := m.GetString("execution_mode")
-		if (mode == "" || mode == "code_change") && m.GetString("lane") != "canceled" {
+		if (mode == "" || mode == "code_change") && lanesNow[id] != "canceled" {
 			code = append(code, id)
 		}
 	}
@@ -1320,7 +1342,7 @@ func (f *finalizeRun) laneInputsOK(man map[string]ownManifest) error {
 	if len(man) == 0 {
 		missing = append(missing, "ownership manifests")
 	}
-	if len(f.deps) == 0 {
+	if len(f.laneDeps) == 0 {
 		missing = append(missing, "WP dependencies")
 	}
 	msg := "Lane computation aborted: missing " + strings.Join(missing, " and ") + ". finalize-tasks cannot write lanes.json without complete tasks and ownership metadata."
@@ -1329,6 +1351,32 @@ func (f *finalizeRun) laneInputsOK(man map[string]ownManifest) error {
 
 func (f *finalizeRun) laneError(err error) error {
 	switch e := err.(type) {
+	case *lanes.MembershipFrozenError:
+		if f.json {
+			cs := []any{}
+			for _, c := range e.Conflicts {
+				cs = append(cs, jsonx.NewObject("reason", c.Reason, "wp_ids", strList(nonNil(c.WPIDs)), "recorded_lanes", strList(nonNil(c.RecordedLanes)), "remedy", c.Remedy))
+			}
+			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", e.Error(), "error_code", e.ErrorCode(), "reason", e.Reason, "conflicts", cs, "next_step", e.NextStep))
+			return cli.Exit(1)
+		}
+		say(f.ctx.Stdout, "[red]Error:[/red] "+e.Error())
+		for _, c := range e.Conflicts {
+			var named []string
+			for _, p := range c.Pairs() {
+				named = append(named, p[0]+" ("+p[1]+")")
+			}
+			if len(named) == 0 {
+				named = c.WPIDs
+			}
+			if len(named) > 0 {
+				say(f.ctx.Stdout, "  "+c.Reason+": "+strings.Join(named, ", "))
+			} else {
+				say(f.ctx.Stdout, "  "+c.Reason)
+			}
+			say(f.ctx.Stdout, "  Remedy: "+c.Remedy)
+		}
+		return cli.Exit(1)
 	case *lanes.DependencyCycleError:
 		if f.json {
 			cl := []any{}
@@ -1411,7 +1459,7 @@ func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
 		return err
 	}
 	var lm *lanes.Manifest
-	if len(man) > 0 && len(f.deps) > 0 {
+	if f.lanesComputable() {
 		prev, _ := lanes.Read(f.dir)
 		m, err := f.computeLanes(man, prev, nil)
 		if err != nil {
@@ -1653,7 +1701,7 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 	var lm *lanes.Manifest
 	var pin *planningPin
 	lanesPath := ""
-	if len(man) > 0 && len(f.deps) > 0 {
+	if f.lanesComputable() {
 		prev, _ := lanes.Read(f.dir)
 		var err error
 		pin, err = f.planningPin(prev)
