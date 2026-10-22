@@ -173,7 +173,8 @@ func runCharterActivate(ctx *cli.Context) error {
 		// activate_cmd catches (ValueError, DRGLoadError) only.
 		if charter.IsUnexpectedError(err) {
 			if _, isLoad := err.(*charter.DRGLoadError); !isLoad {
-				return pyCrash(ctx, charter.PyExceptionClass(err), err.Error())
+				return pyCrash(ctx, charter.PyExceptionClass(err), err.Error(),
+					crashFrames(err, rich.Frame{Name: "activate_cmd", Line: 976}, rich.Frame{Name: "plan_project_registration", Line: 265})...)
 			}
 		}
 		cprint(w, "[red]Error:[/red] %s", err.Error())
@@ -211,7 +212,7 @@ func runCharterActivate(ctx *cli.Context) error {
 
 func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeScope) error {
 	w := ctx.Stdout
-	g, err := loadCascadeGraph(ctx, root)
+	g, err := loadCascadeGraph(ctx, root, rich.Frame{Name: "activate_cmd", Line: 1015}, rich.Frame{Name: "_render_cascade_activation", Line: 261})
 	if g == nil {
 		return err
 	}
@@ -379,7 +380,7 @@ func runCharterDeactivate(ctx *cli.Context) error {
 
 func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cascadeScope) error {
 	w := ctx.Stdout
-	g, err := loadCascadeGraph(ctx, root)
+	g, err := loadCascadeGraph(ctx, root, rich.Frame{Name: "deactivate_cmd", Line: 339}, rich.Frame{Name: "_render_cascade_deactivation", Line: 180})
 	if g == nil {
 		return err
 	}

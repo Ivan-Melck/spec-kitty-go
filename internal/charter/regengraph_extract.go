@@ -13,6 +13,8 @@ import (
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -35,10 +37,33 @@ type regenEdge struct {
 
 // RegenCrash is an uncaught Python exception raised by the extractor
 // (ValueError for fail-closed authoring checks, pydantic ValidationError for
-// malformed URNs); the CLI renders it as a traceback.
-type RegenCrash struct{ Type, Msg string }
+// malformed URNs, ruamel YAML errors); the CLI renders it as a traceback.
+// Phase is "graph" (generate_graph) or "manifest" (the manifest
+// generator); Frames are the upstream frames below that phase's entry.
+type RegenCrash struct {
+	Type, Msg string
+	Phase     string
+	Frames    []rich.Frame
+}
 
 func (e *RegenCrash) Error() string { return e.Type + ": " + e.Msg }
+
+func graphCrash(typ, msg string, frames ...rich.Frame) *RegenCrash {
+	return &RegenCrash{Type: typ, Msg: msg, Phase: "graph", Frames: frames}
+}
+
+type fr = rich.Frame
+
+// yamlCrash is the uncaught ruamel YAMLError of a load.
+func yamlCrash(err error, phase string) error {
+	if m, ok := err.(*pyyaml.MarkedYAMLError); ok {
+		return &RegenCrash{Type: m.Class, Msg: m.Error(), Phase: phase}
+	}
+	if r, ok := err.(*pyyaml.ReaderError); ok {
+		return &RegenCrash{Type: "ReaderError", Msg: r.Error(), Phase: phase}
+	}
+	return &RegenCrash{Type: "UnicodeDecodeError", Msg: err.Error(), Phase: phase}
+}
 
 // nodeSet is an insertion-ordered dict[str, DRGNode].
 type nodeSet struct {
@@ -207,9 +232,10 @@ func regenLoadYAML(path string) (*jsonx.Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	v, err := yamlx.Parse(b)
+	// _yaml = YAML(typ="safe"); _yaml.load(path) reads a binary stream.
+	v, err := yamlx.ParseWith(b, yamlx.ParseOptions{Safe: true, File: path})
 	if err != nil {
-		return nil, &RegenCrash{"ruamel.yaml.scanner.ScannerError", err.Error()}
+		return nil, yamlCrash(err, "graph")
 	}
 	o, _ := v.(*jsonx.Object)
 	return o, nil
@@ -670,7 +696,8 @@ func (x *regenExtractor) emitOperatingProcedureEdges(profilesDir string) error {
 		for _, u := range bad {
 			parts = append(parts, fmt.Sprintf("%s:%s (%s)", u.profile, u.entry, u.reason))
 		}
-		return &RegenCrash{"ValueError", "built-in operating-procedures entries do not resolve to a procedure node (triage required): " + strings.Join(parts, ", ")}
+		return graphCrash("ValueError", "built-in operating-procedures entries do not resolve to a procedure node (triage required): "+strings.Join(parts, ", "),
+			fr{Name: "generate_graph", Line: 1803}, fr{Name: "extract_artifact_edges", Line: 1295}, fr{Name: "_emit_operating_procedure_edges", Line: 996})
 	}
 	return nil
 }
@@ -993,7 +1020,7 @@ func toDctNode(n *regenNode) dct.Node {
 
 func validateRegenNode(n *regenNode) error {
 	if !reGraphURN.MatchString(n.URN) {
-		return &RegenCrash{"pydantic_core._pydantic_core.ValidationError", fmt.Sprintf("1 validation error for DRGNode\n  Value error, URN %s does not match pattern %s", pyjson.ReprString(n.URN), reGraphURN.String())}
+		return graphCrash("pydantic_core._pydantic_core.ValidationError", fmt.Sprintf("1 validation error for DRGNode\n  Value error, URN %s does not match pattern %s", pyjson.ReprString(n.URN), reGraphURN.String()))
 	}
 	return nil
 }
@@ -1022,8 +1049,9 @@ func generatePureGraph(root string) (*dct.Graph, error) {
 	seen := map[string]string{}
 	for _, mt := range mts {
 		if prev, ok := seen[mt.id]; ok {
-			return nil, &RegenCrash{"ValueError", fmt.Sprintf("Duplicate mission_type id %s declared by both %s and %s in %s",
-				pyjson.ReprString(mt.id), filepath.Base(prev), filepath.Base(mt.path), filepath.Dir(mt.path))}
+			return nil, graphCrash("ValueError", fmt.Sprintf("Duplicate mission_type id %s declared by both %s and %s in %s",
+				pyjson.ReprString(mt.id), filepath.Base(prev), filepath.Base(mt.path), filepath.Dir(mt.path)),
+				fr{Name: "generate_graph", Line: 1817}, fr{Name: "_discover_mission_type_nodes", Line: 1473})
 		}
 		seen[mt.id] = mt.path
 		var l *string
@@ -1049,8 +1077,9 @@ func generatePureGraph(root string) (*dct.Graph, error) {
 			}
 			urn := ArtifactToURN("mission_step_contract", mission+"/"+action)
 			if prev, ok := seenC[urn]; ok {
-				return nil, &RegenCrash{"ValueError", fmt.Sprintf("Duplicate mission_step_contract %s declared by both %s and %s in %s",
-					pyjson.ReprString(urn), filepath.Base(prev), filepath.Base(p), filepath.Dir(p))}
+				return nil, graphCrash("ValueError", fmt.Sprintf("Duplicate mission_step_contract %s declared by both %s and %s in %s",
+					pyjson.ReprString(urn), filepath.Base(prev), filepath.Base(p), filepath.Dir(p)),
+					fr{Name: "generate_graph", Line: 1821}, fr{Name: "_discover_mission_step_contract_nodes", Line: 1523})
 			}
 			seenC[urn] = p
 			nodes.ensure(urn, "mission_step_contract", strp(action))
@@ -1090,7 +1119,8 @@ func generatePureGraph(root string) (*dct.Graph, error) {
 		}
 		if len(seq) > 0 {
 			if msg := validateActionSequence(seq); msg != "" {
-				return nil, &RegenCrash{"ValueError", msg}
+				return nil, graphCrash("ValueError", msg, fr{Name: "generate_graph", Line: 1834}, fr{Name: "extract_mission_type_edges", Line: 1574},
+					fr{Name: "_resolve_action_sequence", Line: 1553}, fr{Name: "project_action_sequence", Line: 101}, fr{Name: "validate_action_sequence", Line: 200})
 			}
 		} else {
 			for _, x := range getList(mt.data, "action_sequence") {
@@ -1128,7 +1158,8 @@ func generatePureGraph(root string) (*dct.Graph, error) {
 		unresolved = append(unresolved, fmt.Sprintf("%s:%s=%s", mtID, field, tid))
 	}
 	if len(unresolved) > 0 {
-		return nil, &RegenCrash{"ValueError", "governance-profile.yaml selected_* entries do not resolve to an existing node (triage required): " + strings.Join(unresolved, ", ")}
+		return nil, graphCrash("ValueError", "governance-profile.yaml selected_* entries do not resolve to an existing node (triage required): "+strings.Join(unresolved, ", "),
+			fr{Name: "generate_graph", Line: 1845}, fr{Name: "assert_governance_scope_edges_resolve", Line: 1710})
 	}
 	all := append(append(append(append(append([]regenEdge{}, artEdges...), actEdges...), mtEdges...), govEdges...), tmplEdges...)
 	allNodes := nodes.list()
@@ -1139,7 +1170,8 @@ func generatePureGraph(root string) (*dct.Graph, error) {
 				continue
 			}
 			if govTargets[urn] {
-				return nil, &RegenCrash{"ValueError", fmt.Sprintf("governance scope-edge target %s unresolved after upfront validation (fail-closed defense-in-depth)", pyjson.ReprString(urn))}
+				return nil, graphCrash("ValueError", fmt.Sprintf("governance scope-edge target %s unresolved after upfront validation (fail-closed defense-in-depth)", pyjson.ReprString(urn)),
+					fr{Name: "generate_graph", Line: 1873})
 			}
 			prefix := strings.SplitN(urn, ":", 2)[0]
 			if !graphNodeKinds[prefix] {
@@ -1158,7 +1190,7 @@ func generatePureGraph(root string) (*dct.Graph, error) {
 	for _, e := range calibrated {
 		for _, f := range []struct{ name, v string }{{"source", e.Source}, {"target", e.Target}} {
 			if !reGraphURN.MatchString(f.v) {
-				return nil, &RegenCrash{"pydantic_core._pydantic_core.ValidationError", fmt.Sprintf("1 validation error for DRGEdge\n  Value error, Edge %s %s does not match URN pattern %s", f.name, pyjson.ReprString(f.v), reGraphURN.String())}
+				return nil, graphCrash("pydantic_core._pydantic_core.ValidationError", fmt.Sprintf("1 validation error for DRGEdge\n  Value error, Edge %s %s does not match URN pattern %s", f.name, pyjson.ReprString(f.v), reGraphURN.String()))
 			}
 		}
 		g.Edges = append(g.Edges, dct.Edge{Source: e.Source, Target: e.Target, Relation: e.Relation, When: e.When, Reason: e.Reason})
@@ -1174,7 +1206,7 @@ func validateActionSequence(seq []string) string {
 	seen := map[string]bool{}
 	for _, s := range seq {
 		if seen[s] {
-			return fmt.Sprintf("action_sequence contains duplicate step ids: %s", pyjson.ReprString(s))
+			return "action_sequence must contain unique step IDs"
 		}
 		seen[s] = true
 	}

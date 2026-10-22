@@ -144,6 +144,9 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 	if _, err := dct.LoadActivation(root); err != nil {
 		return nil, err
 	}
+	if opt.Profile != nil {
+		loadProfileMapOnce(root)
+	}
 	EnsureBundleFresh(root)
 	norm := strings.ToLower(strings.TrimSpace(action))
 	diag := MissingPackDiagnostic(root)
@@ -216,4 +219,17 @@ func MissingPackDiagnostic(root string) string {
 	out = append(out, lines...)
 	out = append(out, "  - Run `spec-kitty charter fetch --pack <name>` to populate the pack, or remove the entry from .kittify/config.yaml.")
 	return strings.Join(out, "\n")
+}
+
+var profileMapLoaded = map[string]bool{}
+
+// loadProfileMapOnce is _activation_aware_profile_map's per-process cache:
+// the first profile lookup for root builds the active charter service
+// (infer_repo_languages, a recorded interview read).
+func loadProfileMapOnce(root string) {
+	if profileMapLoaded[root] {
+		return
+	}
+	profileMapLoaded[root] = true
+	InferRepoLanguages(root, nil, false)
 }

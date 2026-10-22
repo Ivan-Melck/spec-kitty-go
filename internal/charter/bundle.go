@@ -174,6 +174,9 @@ func ResolveActionBundle(root, action, missionType string, depth int) *ActionBun
 		}
 		b.IDs[k] = append(b.IDs[k], id)
 	}
+	// _drop_scope_filtered_ids re-runs infer_repo_languages (a recorded
+	// interview read through the encoding chokepoint).
+	InferRepoLanguages(root, nil, false)
 	b.Merged = merged
 	b.Roots = []string{actionURN}
 	for _, d := range dct.SortedKeys(unionSets(directives, local)) {

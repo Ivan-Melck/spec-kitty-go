@@ -537,6 +537,13 @@ func CollectCharterPackHealth(repoRoot string) *CharterPackHealthReport {
 	for _, s := range gl.skipped {
 		rep.GlossaryBad = append(rep.GlossaryBad, parseSkipped(s))
 	}
+	// _collect_pack_skill_health builds the active charter service, whose
+	// offering service runs infer_repo_languages (a recorded interview read);
+	// a load failure degrades to one synthetic invalid record.
+	if err := CatchLoad(func() { InferRepoLanguages(repoRoot, nil, false) }); err != nil {
+		rep.SkillBad = append(rep.SkillBad, SkippedFile{Layer: "unknown", Path: "unknown", ErrorSummary: "pack-skill health load error: " + ExceptionMessage(err)})
+		return rep
+	}
 	so, sp := kindDirs(orgRoots, projectRoot, dct.Skill)
 	var sk *repoLoad
 	catchWarnings(func() { sk = loadKindRepo(dct.Skill, "pack-skill", nil, so, sp) })

@@ -3,6 +3,7 @@ package doctrine
 import (
 	"errors"
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,11 +117,11 @@ func renderTensionWarnings(ctx *cli.Context, root string) {
 // load_validated_graph(repo_root, org_roots=chain, org_fragments=...): a
 // DRGValidationError is not caught upstream (an uncaught traceback); a load
 // failure skips the cascade render (nil graph, nil error).
-func loadCascadeGraph(ctx *cli.Context, root string) (*dct.Graph, error) {
+func loadCascadeGraph(ctx *cli.Context, root string, outer ...rich.Frame) (*dct.Graph, error) {
 	g, err := charter.LoadOrgValidatedGraph(root, charter.GraphOptions{})
 	if err != nil {
 		if charter.IsUnexpectedError(err) {
-			return nil, pyCrash(ctx, charter.PyExceptionClass(err), err.Error())
+			return nil, pyCrash(ctx, charter.PyExceptionClass(err), err.Error(), crashFrames(err, outer...)...)
 		}
 		return nil, nil
 	}

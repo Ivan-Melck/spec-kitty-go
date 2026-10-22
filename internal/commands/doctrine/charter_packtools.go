@@ -2,6 +2,7 @@ package doctrine
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
@@ -118,7 +119,7 @@ func runRegenerateGraph(ctx *cli.Context) error {
 	}
 	if err != nil {
 		if c, ok := err.(*charter.RegenCrash); ok {
-			return pyCrash(ctx, c.Type, c.Msg)
+			return pyCrash(ctx, c.Type, c.Msg, regenFrames(c, ctx.Bool("check"))...)
 		}
 		return err
 	}
@@ -127,4 +128,26 @@ func runRegenerateGraph(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	return nil
+}
+
+// regenFrames is the upstream traceback of a regenerate-graph crash: the
+// command frame, the overlay/extractor (or manifest) chain, then the raise
+// site's own frames.
+func regenFrames(c *charter.RegenCrash, check bool) []rich.Frame {
+	var out []rich.Frame
+	if c.Phase == "manifest" {
+		if check {
+			out = []rich.Frame{{Name: "regenerate_graph", Line: 173}, {Name: "builtin_manifest_is_fresh", Line: 145}}
+		} else {
+			out = []rich.Frame{{Name: "regenerate_graph", Line: 194}, {Name: "generate_builtin_manifest", Line: 129}}
+		}
+	} else {
+		line := 182
+		if check {
+			line = 162
+		}
+		out = []rich.Frame{{Name: "regenerate_graph", Line: line}, {Name: "write_reference_graph_with_overlay", Line: 2221},
+			{Name: "generate_reference_graph_with_overlay", Line: 2209}}
+	}
+	return append(out, c.Frames...)
 }

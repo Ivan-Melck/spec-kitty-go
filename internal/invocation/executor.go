@@ -144,6 +144,9 @@ type resolution struct {
 
 func resolveRouting(root, request string, hint *string, actor, invocationID, explicitConfidence string) (*resolution, error) {
 	reg := NewRegistry(root)
+	// ProfileInvocationExecutor(repo_root, ...) builds its own charter
+	// service: another infer_repo_languages (recorded interview read).
+	charter.InferRepoLanguages(root, nil, false)
 	r := &resolution{alts: []Alternative{}}
 	if hint != nil {
 		p, err := reg.Resolve(*hint)

@@ -2,7 +2,6 @@ package doctrine
 
 import (
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/spec-kitty/go-kitty3/internal/charter"
@@ -11,14 +10,24 @@ import (
 )
 
 // pyCrash renders an uncaught Python exception the way typer's pretty
-// exception handler does on stderr, and exits 1. The framed traceback box
-// (site-packages paths, source excerpts) cannot be reproduced; the header
-// and the final "<Type>: <message>" line (wrapped at the console width) are.
-// TODO(PYF-01): switch to rich.PrintTraceback once it lands.
-func pyCrash(ctx *cli.Context, excType, msg string) error {
-	io.WriteString(ctx.Stderr, "Traceback (most recent call last):\n")
-	io.WriteString(ctx.Stderr, rich.Wrap(excType+": "+msg, rich.Width())+"\n")
+// exception handler does on stderr (rich.Traceback, frames named by the
+// upstream function and line), and exits 1.
+func pyCrash(ctx *cli.Context, excType, msg string, frames ...rich.Frame) error {
+	rich.Traceback(ctx.Stderr, excType, msg, frames...)
 	return cli.Exit(1)
+}
+
+// drgValidationFrames are the innermost frames of an uncaught
+// DRGValidationError raised by load_validated_graph.
+var drgValidationFrames = []rich.Frame{{Name: "load_validated_graph", Line: 206}, {Name: "assert_valid", Line: 401}}
+
+// crashFrames appends the load_validated_graph frames to the caller's
+// outer frames when err is a DRGValidationError.
+func crashFrames(err error, outer ...rich.Frame) []rich.Frame {
+	if charter.PyExceptionClass(err) == "DRGValidationError" {
+		return append(append([]rich.Frame{}, outer...), drgValidationFrames...)
+	}
+	return outer
 }
 
 // jsonValueOptions is specify_cli._JSON_VALUE_OPTIONS (options whose value

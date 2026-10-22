@@ -149,11 +149,30 @@ func uniqSorted(xs []string) []string {
 }
 
 type gateRes struct {
-	root   string
-	full   *dct.Graph
-	err    error
-	active map[string]bool
-	off    *dct.Offering
+	root    string
+	full    *dct.Graph
+	err     error
+	active  map[string]bool
+	off     *dct.Offering
+	dirsHit bool
+}
+
+// directives is _GateResources.directives(): the offering service is built
+// at most once per run, and building it runs infer_repo_languages over the
+// command's repo_root (Path("."), so the interview read is recorded with a
+// cwd-relative path).
+func (g *gateRes) directives() *dct.Repository {
+	if !g.dirsHit {
+		g.dirsHit = true
+		rel := g.root
+		if cwd, err := os.Getwd(); err == nil {
+			if r, err := filepath.Rel(cwd, g.root); err == nil {
+				rel = r
+			}
+		}
+		CatchLoad(func() { InferRepoLanguages(rel, nil, false) })
+	}
+	return g.off.Repo(dct.Directive)
 }
 
 func newGateRes(root string) *gateRes {
@@ -247,14 +266,22 @@ func (g *gateRes) lattice(rep *ConsistencyReport) {
 	if g.failClosed("enforcement lattice", rep) {
 		return
 	}
-	repo := g.off.Repo(dct.Directive)
-	var out []string
+	var edges []dct.Edge
 	for _, e := range g.reconcileEdges() {
-		sk, sid := dct.SplitURN(e.Source)
-		tk, tid := dct.SplitURN(e.Target)
-		if sk != "directive" || tk != "directive" {
-			continue
+		sk, _ := dct.SplitURN(e.Source)
+		tk, _ := dct.SplitURN(e.Target)
+		if sk == "directive" && tk == "directive" {
+			edges = append(edges, e)
 		}
+	}
+	if len(edges) == 0 {
+		return
+	}
+	repo := g.directives()
+	var out []string
+	for _, e := range edges {
+		_, sid := dct.SplitURN(e.Source)
+		_, tid := dct.SplitURN(e.Target)
 		r, o := repo.Get(sid), repo.Get(tid)
 		if r == nil || o == nil {
 			missing := e.Source
@@ -294,7 +321,7 @@ func (g *gateRes) decisionDoc(rep *ConsistencyReport) {
 	if len(urns) == 0 {
 		return
 	}
-	repo := g.off.Repo(dct.Directive)
+	repo := g.directives()
 	var out []string
 	for _, u := range urns {
 		_, id := dct.SplitURN(u)

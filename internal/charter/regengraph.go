@@ -12,6 +12,7 @@ import (
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -170,9 +171,10 @@ func BuildBuiltinManifest(root string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			v, err := yamlx.Parse(raw)
+			// YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+			v, err := yamlx.ParseWith(raw, yamlx.ParseOptions{Safe: true})
 			if err != nil {
-				return "", &RegenCrash{"ruamel.yaml.scanner.ScannerError", err.Error()}
+				return "", yamlCrash(err, "manifest")
 			}
 			id := ""
 			if o, ok := v.(*jsonx.Object); ok {
@@ -181,7 +183,9 @@ func BuildBuiltinManifest(root string) (string, error) {
 				}
 			}
 			if id == "" {
-				return "", &RegenCrash{"ValueError", fmt.Sprintf("artifact file %s is missing its %s id field; cannot enumerate it as a pack constituent (fail-closed, no silent drop)", p, dct.PyRepr(idKey))}
+				return "", &RegenCrash{Type: "ValueError", Msg: fmt.Sprintf("artifact file %s is missing its %s id field; cannot enumerate it as a pack constituent (fail-closed, no silent drop)", p, dct.PyRepr(idKey)),
+					Phase: "manifest", Frames: []rich.Frame{{Name: "build_builtin_manifest", Line: 116}, {Name: "enumerate_constituents", Line: 107},
+						{Name: "_enumerate_kind", Line: 86}, {Name: "_read_artifact_id", Line: 67}}}
 			}
 			rel, _ := filepath.Rel(root, p)
 			sum := sha256.Sum256(lfNormaliseAll(raw))

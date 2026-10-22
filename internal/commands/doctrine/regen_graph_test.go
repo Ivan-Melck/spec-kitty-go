@@ -36,8 +36,16 @@ func appendFile(t testing.TB, s *testkit.Sandbox, rel, text string) {
 	}
 }
 
-// compareRegenCrash compares exit codes and the final traceback line.
+// compareRegenCrash compares exit codes, the final traceback line and the
+// traceback frames.
 func compareRegenCrash(t *testing.T, p *testkit.Pair, args ...string) {
+	t.Helper()
+	g, o := compareRegenCrashTail(t, p, args...)
+	compareTracebackFrames(t, strings.Join(args, " "), g, o)
+}
+
+// compareRegenCrashTail compares exit codes and the final traceback line.
+func compareRegenCrashTail(t *testing.T, p *testkit.Pair, args ...string) (testkit.Result, testkit.Result) {
 	t.Helper()
 	g, o := p.Run(args...)
 	if g.Code != o.Code {
@@ -50,6 +58,7 @@ func compareRegenCrash(t *testing.T, p *testkit.Pair, args ...string) {
 	if gl, ol := last(p.Go.Normalize(g.Stderr)), last(p.Oracle.Normalize(o.Stderr)); gl != ol {
 		t.Errorf("%v: final stderr line differs\n oracle: %s\n go:     %s", args, ol, gl)
 	}
+	return g, o
 }
 
 // TestParityRegenerateGraphExtractor covers the ported DRG extractor
@@ -123,5 +132,13 @@ func TestParityRegenerateGraphExtractor(t *testing.T) {
 		s.WriteFile("pk/skills/x.skill.yaml", "name: no id\n")
 	})
 	compareRegenCrash(t, p, rg...)
+	compareRegenCrash(t, p, check...)
 	p.CompareTree("pk", true)
+	// Malformed YAML: ruamel's exact error (the frames below the loader are
+	// ruamel internals, so only the outcome and final line are compared).
+	p.Both(func(s *testkit.Sandbox) {
+		os.Remove(filepath.Join(s.Dir, "pk/skills/x.skill.yaml"))
+		s.WriteFile("pk/tactics/broken.tactic.yaml", "id: [unclosed\nname: x\n")
+	})
+	compareRegenCrashTail(t, p, check...)
 }

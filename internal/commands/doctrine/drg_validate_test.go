@@ -51,5 +51,6 @@ func TestParityLoadValidatedGraph(t *testing.T) {
 		if g.Code != o.Code || g.Stdout != o.Stdout || tracebackTail(g.Stderr) != tracebackTail(o.Stderr) || tracebackTail(o.Stderr) == "" {
 			t.Errorf("%v: go=%d %q %q oracle=%d %q %q", args, g.Code, g.Stdout, tracebackTail(g.Stderr), o.Code, o.Stdout, tracebackTail(o.Stderr))
 		}
+		compareTracebackFrames(t, strings.Join(args, " "), g, o)
 	}
 }
