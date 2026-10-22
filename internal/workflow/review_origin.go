@@ -9,8 +9,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
-	"github.com/spec-kitty/go-kitty3/internal/refadvance"
 	"github.com/spec-kitty/go-kitty3/internal/originfresh"
+	"github.com/spec-kitty/go-kitty3/internal/refadvance"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
