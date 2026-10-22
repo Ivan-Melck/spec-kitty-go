@@ -203,3 +203,33 @@ func TestCommentedConfigMatchesOracle(t *testing.T) {
 		t.Errorf("comments dropped:\n%s", g)
 	}
 }
+
+// charter activate/deactivate of a skill re-projects the pack skills in
+// force (activate.reproject_pack_skills): newly in-force skills are
+// written, no-longer-in-force manifest-owned pack skills retired, locally
+// edited ones preserved.
+func TestCharterSkillReprojectionMatchesOracle(t *testing.T) {
+	p := testkit.NewPair(t)
+	p.Compare(false, "init", ".", "--ai", "claude,codex", "--non-interactive")
+	p.Both(writeOrgPack)
+	p.Both(func(s *testkit.Sandbox) {
+		os.WriteFile(filepath.Join(s.Base, "orgpack", "org-charter.yaml"), []byte("skill_namespace: acme\nrequired_skills:\n  - review-helper\n"), 0o644)
+		commitAll(s, "pack")
+	})
+	compareHashed(t, p, "doctor", "skills", "--fix", "--json")
+	p.Compare(true, "charter", "activate", "skill", "run-status")
+	p.CompareTree(".claude/skills", true)
+	p.CompareTree(".agents/skills", false)
+	compareFiles(t, p, ".kittify/config.yaml")
+	p.Both(func(s *testkit.Sandbox) {
+		f := filepath.Join(s.Dir, ".claude/skills/acme-run-status/SKILL.md")
+		os.Chmod(f, 0o644)
+		b, _ := os.ReadFile(f)
+		os.WriteFile(f, append(b, "local\n"...), 0o644)
+	})
+	p.Compare(true, "charter", "deactivate", "skill", "run-status")
+	p.Compare(true, "charter", "deactivate", "skill", "review-helper")
+	p.CompareTree(".claude/skills", true)
+	p.CompareTree(".agents/skills", false)
+	compareHashed(t, p, "doctor", "skills", "--json")
+}

@@ -160,20 +160,36 @@ func FindPackSkillFindings(root string) []PackSkillFinding {
 // ProjectPackSkills is installer.project_pack_skills: re-project the pack
 // skills in force (project roots only); returns the changed paths.
 func ProjectPackSkills(root string) ([]string, error) {
+	p, err := ReprojectPackSkills(root)
+	return p.Changed, err
+}
+
+// PackSkillProjection is installer.PackSkillProjection: project-relative
+// skill files created, updated or retired, and (path, reason) pairs left
+// alone (unowned same-name directories, locally modified managed files).
+type PackSkillProjection struct {
+	Changed   []string
+	Preserved [][2]string
+}
+
+// ReprojectPackSkills is installer.project_pack_skills with its full
+// outcome (charter activate/deactivate of a skill).
+func ReprojectPackSkills(root string) (PackSkillProjection, error) {
+	var proj PackSkillProjection
 	agentKeys, err := installableAgentKeys(root)
 	if err != nil {
-		return nil, err
+		return proj, err
 	}
 	if len(agentKeys) == 0 {
-		return nil, nil
+		return proj, nil
 	}
 	catalog, err := ProjectSkillCatalog(root, true)
 	if err != nil {
-		return nil, err
+		return proj, err
 	}
 	m, err := loadSkillsManifestStrict(root)
 	if err != nil {
-		return nil, err
+		return proj, err
 	}
 	selected := map[string]bool{}
 	if m != nil {
@@ -198,7 +214,7 @@ func ProjectPackSkills(root string) ([]string, error) {
 		}
 	}
 	if len(selected) == 0 {
-		return nil, nil
+		return proj, nil
 	}
 	sel := make([]string, 0, len(selected))
 	for p := range selected {
@@ -212,9 +228,9 @@ func ProjectPackSkills(root string) ([]string, error) {
 			msgs = append(msgs, d.Message)
 		}
 		if len(msgs) == 0 {
-			return nil, errors.New("pack skill assessment is incomplete")
+			return proj, errors.New("pack skill assessment is incomplete")
 		}
-		return nil, errors.New(strings.Join(msgs, "; "))
+		return proj, errors.New(strings.Join(msgs, "; "))
 	}
 	res := ApplyProjectSkills(a)
 	if res.Outcome != "applied" && res.Outcome != "skipped" {
@@ -222,7 +238,7 @@ func ProjectPackSkills(root string) ([]string, error) {
 		for _, d := range res.Diagnostics {
 			msgs = append(msgs, d.Message)
 		}
-		return nil, errors.New(strings.Join(msgs, "; "))
+		return proj, errors.New(strings.Join(msgs, "; "))
 	}
 	ok := map[string]bool{}
 	for _, id := range res.Succeeded {
@@ -235,5 +251,11 @@ func ProjectPackSkills(root string) ([]string, error) {
 		}
 	}
 	sort.Strings(changed)
-	return changed, nil
+	proj.Changed = changed
+	for _, d := range a.Dispositions {
+		if d.State == "preserve" || d.State == "consent_required" {
+			proj.Preserved = append(proj.Preserved, [2]string{d.Path, d.Reason})
+		}
+	}
+	return proj, nil
 }
