@@ -23,6 +23,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/status"
+	"github.com/spec-kitty/go-kitty3/internal/workflow"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
 )
 
@@ -287,21 +288,28 @@ func (st *moveState) resolveTargets() error {
 		return st.outErr(err.Error())
 	}
 	st.targetBranch = cur
-	if st.hasModel && !st.hasInvID {
-		return st.outErr("--model cannot be recorded as resolved actual without correlated durable dispatch evidence; pass --invocation-id")
+	// _resolve_dispatch_binding: APPROVED/DONE (and IN_REVIEW) are reviewer
+	// decisions, everything else resolves the implement action.
+	action := "implement"
+	switch status.Lane(st.target) {
+	case status.InReview, status.Approved, status.Done:
+		action = "review"
+	}
+	req := workflow.BindingRequest{ProfileVersion: func(id string) (string, error) { return resolveProfileVersion(root, id) }}
+	if st.hasModel {
+		req.Model = &st.model
+	}
+	if st.hasProfile {
+		req.Profile = &st.profile
 	}
 	if st.hasInvID {
-		return st.outErr(fmt.Sprintf("Dispatch Op record %s could not be read by this build.", mission.PyRepr(st.invocationID)))
+		req.InvocationID = &st.invocationID
 	}
-	st.binding = &status.ResolvedBinding{}
-	if st.hasProfile {
-		ver, err := resolveProfileVersion(root, st.profile)
-		if err != nil {
-			return st.outErr(err.Error())
-		}
-		p := st.profile
-		st.binding.AgentProfile, st.binding.AgentProfileVersion = &p, &ver
+	b, err := req.Resolve(root, slug, st.taskID, action)
+	if err != nil {
+		return st.outErr(err.Error())
 	}
+	st.binding = b
 	if st.autoCommit {
 		st.skipPrimary = isDir(st.m.Surface.CoordWorktree) && st.m.Surface.CoordWorktree != "" && coord.IsProtected(root, slug, st.targetBranch)
 		if !st.skipPrimary && coord.IsProtected(root, slug, st.targetBranch) {
@@ -1103,14 +1111,19 @@ func (st *moveState) runDecision() error {
 	r := st.guards()
 	if r == nil {
 		st.gatherLateFacts()
-		r = st.guards()
-		// The issue-matrix guard (last in the sequence) is not evaluated, so
-		// "guards preceding issue-matrix clear" is r == nil.
-		if r == nil && st.isArbiter {
+		// arbiter_persist_signal: the OLD-timing arbiter persist fires when
+		// every guard preceding the issue-matrix guard (the last one) clears,
+		// so an issue-matrix refusal still leaves the arbiter write on disk.
+		blocker := st.issueMatrixBlocker
+		st.issueMatrixBlocker = ""
+		preceding := st.guards()
+		st.issueMatrixBlocker = blocker
+		if preceding == nil && st.isArbiter {
 			if err := st.runArbiterOverride(); err != nil {
 				return err
 			}
 		}
+		r = st.guards()
 	}
 	if r != nil {
 		return st.printRefusal(r)
