@@ -19,6 +19,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
+	"github.com/spec-kitty/go-kitty3/internal/toolsurface"
 )
 
 const initDoc = `Initialize a new Spec Kitty project.
@@ -530,16 +531,20 @@ func runInit(ctx *cli.Context) error {
 	for _, c := range InstallPresence(projectPath, selected) {
 		outf(w, "[dim]%s[/dim]", c)
 	}
-	summary, err := RunSurfaceRepair(projectPath)
-	if err != nil {
-		outf(w, "[dim]Note: Could not run tool surface repair: %v[/dim]", err)
-	} else {
-		for _, l := range summary.Lines() {
-			out(w, l)
+	stdin := bufio.NewReader(ctx.Stdin)
+	summary := toolsurface.RunSurfaceRepair(projectPath, !nonInteractive, false, func(path string) bool {
+		fmt.Fprintf(w, "Drifted: %s. Overwrite? [y/N] ", path)
+		line, err := stdin.ReadString('\n')
+		if err != nil && line == "" {
+			return false
 		}
-		if len(summary.Drifted) > 0 && nonInteractive {
-			return cli.Exit(1)
-		}
+		return strings.ToLower(strings.TrimSpace(line)) == "y"
+	})
+	for _, l := range summary.Lines() {
+		out(w, l)
+	}
+	if len(summary.DriftedReported) > 0 && nonInteractive {
+		return cli.Exit(1)
 	}
 	return nil
 }

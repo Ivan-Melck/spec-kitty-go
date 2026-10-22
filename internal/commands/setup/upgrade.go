@@ -872,13 +872,6 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 	return nil
 }
 
-func provisionErrorText(err error) string {
-	if e, ok := err.(*kittify.DefaultPresetError); ok {
-		return fmt.Sprintf("Error (%s): %s", e.Code(), e.Body)
-	}
-	return err.Error()
-}
-
 func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOutcome, now string) {
 	md := kittify.LoadMetadata(root)
 	if md == nil {
