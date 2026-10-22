@@ -6,9 +6,7 @@ package rich
 import (
 	"fmt"
 	"io"
-	"os"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -92,15 +90,6 @@ func Strip(s string) string {
 	return out
 }
 
-// Width is the console width: COLUMNS when set, else 80 (rich's fallback
-// when no terminal is attached).
-func Width() int {
-	if v, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && v > 20 {
-		return v
-	}
-	return 80
-}
-
 // Wrap soft-wraps each line of s at width on spaces (long words are split).
 func Wrap(s string, width int) string {
 	var out []string
@@ -112,7 +101,11 @@ func Wrap(s string, width int) string {
 
 // Print writes markup-stripped, wrapped text plus a newline (console.print).
 func Print(w io.Writer, s string) {
-	fmt.Fprintln(w, Wrap(Strip(s), Width()))
+	width := Width()
+	if width <= 0 {
+		return // a zero-width console renders nothing
+	}
+	fmt.Fprintln(w, Wrap(Strip(s), width))
 }
 
 // Printf is Print with formatting.

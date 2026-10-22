@@ -154,7 +154,7 @@ func tracebackPanel(frames []Frame, width int) []string {
 // PrintTraceback writes exc's rich traceback to w (a stderr console) at
 // the console width.
 func PrintTraceback(w io.Writer, exc *Exception) {
-	for _, l := range RenderTraceback(exc, Width()) {
+	for _, l := range RenderTraceback(exc, TyperWidth(true)) {
 		fmt.Fprintln(w, l)
 	}
 }
