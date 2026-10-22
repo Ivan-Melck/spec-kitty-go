@@ -26,7 +26,10 @@ type corpus struct {
 
 var reDuration = regexp.MustCompile(`"duration_ms": \d+`)
 
+var reBackupDir = regexp.MustCompile(`\.backup-\d{8}T\d{6}Z(-\d+)?`)
+
 func maskUpgrade(s string) string {
+	s = reBackupDir.ReplaceAllString(s, ".backup-<STAMP>")
 	return reDuration.ReplaceAllString(maskCompat(s), `"duration_ms": <D>`)
 }
 
@@ -90,17 +93,19 @@ func runCorpus(t *testing.T, c corpus) {
 func compareTrees(t *testing.T, p *testkit.Pair) {
 	t.Helper()
 	ge, oe := treeEntries(p.Go.Dir, []string{".git/"}), treeEntries(p.Oracle.Dir, []string{".git/"})
-	if strings.Join(ge, "\n") != strings.Join(oe, "\n") {
-		t.Errorf("tree differs (oracle vs go):\n%s", testkit.Diff(strings.Join(oe, "\n"), strings.Join(ge, "\n")))
+	gm, om := reBackupDir.ReplaceAllString(strings.Join(ge, "\n"), ".backup-<STAMP>"), reBackupDir.ReplaceAllString(strings.Join(oe, "\n"), ".backup-<STAMP>")
+	if gm != om {
+		t.Errorf("tree differs (oracle vs go):\n%s", testkit.Diff(om, gm))
 		return
 	}
-	for _, e := range ge {
+	for i, e := range ge {
 		f := strings.SplitN(e, " ", 3)
 		if f[1] != "f" {
 			continue
 		}
+		of := strings.SplitN(oe[i], " ", 3)
 		gb, _ := os.ReadFile(filepath.Join(p.Go.Dir, f[2]))
-		ob, _ := os.ReadFile(filepath.Join(p.Oracle.Dir, f[2]))
+		ob, _ := os.ReadFile(filepath.Join(p.Oracle.Dir, of[2]))
 		gn, on := maskTree(p.Go.Normalize(string(gb))), maskTree(p.Oracle.Normalize(string(ob)))
 		if gn != on {
 			t.Errorf("file %s differs:\n%s", f[2], testkit.Diff(on, gn))
@@ -118,6 +123,7 @@ var (
 func maskTree(s string) string {
 	s = reNotesDuration.ReplaceAllString(s, `"duration_ms": <D>`)
 	s = rePyEnv.ReplaceAllString(s, "$1: <ENV>")
+	s = reBackupDir.ReplaceAllString(s, ".backup-<STAMP>")
 	return s
 }
 
@@ -173,8 +179,44 @@ func writeLegacy09(s *testkit.Sandbox) {
 	s.WriteFile(".gitignore", "kitty-specs/\n"+gi)
 }
 
+// writeLegacyV3 is a 3.0-era project: the pre-rename constitution
+// directory (with a legacy governance doctrine key), a legacy
+// .kittify/doctrine project root, pre-skill command files and a mission
+// whose WP still carries mutable lane fields.
+func writeLegacyV3(s *testkit.Sandbox) {
+	s.WriteFile(".kittify/constitution/constitution.md", "# Project Constitution\n\nWe test everything.\n")
+	s.WriteFile(".kittify/constitution/governance.yaml", "doctrine:\n  selected_paradigms: []\n")
+	s.WriteFile(".kittify/doctrine/directives/local.directive.yaml", "id: DIR-900\ntitle: Local rule\n")
+	s.WriteFile(".claude/commands/spec-kitty.specify.md", "---\ndescription: Specify\n---\nRun `spec-kitty agent mission create`\n")
+	s.WriteFile(".claude/commands/spec-kitty.constitution.md", "<!-- spec-kitty-command-version: 3.0.3 -->\n# constitution\n")
+	f := "kitty-specs/002-v3-feature/"
+	s.WriteFile(f+"meta.json", "{\n  \"mission_number\": \"002\",\n  \"slug\": \"002-v3-feature\",\n  \"friendly_name\": \"v3 feature\",\n  \"mission_type\": \"software-dev\",\n  \"target_branch\": \"main\",\n  \"created_at\": \"2025-01-01T00:00:00+00:00\"\n}\n")
+	s.WriteFile(f+"tasks/WP01-build.md", "---\nwork_package_id: WP01\ntitle: Build\nlane: doing\nassignee: claude\nhistory:\n- lane: planned\n---\n# WP01\n\nTouch src/x.py\n")
+	s.WriteFile(f+"spec.md", "# Spec\n")
+}
+
+// writeLegacyV2 is a 2.0-era project: config without the agents block,
+// stale 2.0 command files and a legacy status log without a snapshot.
+func writeLegacyV2(s *testkit.Sandbox) {
+	cfg := s.ReadFile(".kittify/config.yaml")
+	if i := strings.Index(cfg, "agents:\n"); i >= 0 {
+		cfg = cfg[:i]
+	}
+	s.WriteFile(".kittify/config.yaml", cfg)
+	s.WriteFile(".claude/commands/spec-kitty.plan.md", "<!-- spec-kitty-command-version: 2.0.0 -->\n---\ndescription: Plan\n---\nPlan it.\n")
+	s.WriteFile(".claude/commands/spec-kitty.checklist.md", "<!-- spec-kitty-command-version: 2.0.0 -->\n# checklist\n")
+	s.WriteFile(".gitignore", strings.Replace(s.ReadFile(".gitignore"), ".worktrees/\n", "", 1))
+	f := "kitty-specs/003-v2-feature/"
+	s.WriteFile(f+"meta.json", "{\n  \"feature_number\": \"003\",\n  \"slug\": \"003-v2-feature\",\n  \"friendly_name\": \"v2 feature\",\n  \"mission\": \"software-dev\"\n}\n")
+	s.WriteFile(f+"tasks/WP01-a.md", "---\nwork_package_id: WP01\ntitle: A\nlane: for_review\n---\n# WP01\n")
+	s.WriteFile(f+"tasks/WP02-b.md", "---\nwork_package_id: WP02\ntitle: B\ndependencies: [WP01]\nlane: planned\n---\n# WP02\n")
+	s.WriteFile(f+"spec.md", "# Spec\n")
+}
+
 func TestUpgradeLegacyLayoutCorporaMatchOracle(t *testing.T) {
 	for _, c := range []corpus{
+		{name: "v3.0-charter", ai: "claude", version: "3.0.3", mutate: writeLegacyV3},
+		{name: "v2.0", ai: "claude,codex", version: "2.0.0", noStamp: true, mutate: writeLegacyV2},
 		{name: "v0.9-claude", ai: "claude", version: "0.9.0", noStamp: true, mutate: writeLegacy09},
 		{name: "v0.9-codex", ai: "claude,codex", version: "0.9.0", noStamp: true, mutate: writeLegacy09},
 	} {

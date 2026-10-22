@@ -1029,7 +1029,7 @@ func normalizeAllFrontmatter(root string, dryRun bool) ([]string, []string, []st
 			skipped++
 			continue
 		}
-		rendered := renderFrontmatter(front, body)
+		rendered := renderFrontmatter(front, body, original)
 		if original == rendered {
 			skipped++
 			continue
@@ -2260,11 +2260,16 @@ func mTargetBranch() migrationImpl {
 
 // renderFrontmatter is FrontmatterManager.render (WP field order; an empty
 // mapping dumps as "{}").
-func renderFrontmatter(front *jsonx.Object, body string) string {
+func renderFrontmatter(front *jsonx.Object, body string, original ...string) string {
 	if front.Len() == 0 {
 		return "---\n{}\n---\n" + body
 	}
-	return fm.Render(&fm.Doc{Meta: front, Body: body}, fm.WPFieldOrder)
+	out := fm.Render(&fm.Doc{Meta: front, Body: body}, fm.WPFieldOrder)
+	if len(original) > 0 {
+		// ruamel round trip: a flow sequence read from the file stays flow.
+		out = fm.RestoreFlow(out, fm.FlowKeys(original[0]), nil)
+	}
+	return out
 }
 
 // metaReadError is MissionMetaReadError's text for a malformed meta.json.

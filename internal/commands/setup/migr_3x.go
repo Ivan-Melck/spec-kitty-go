@@ -13,8 +13,10 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/invocation"
@@ -429,7 +431,7 @@ func backfillOwnership(feature, slug string) {
 		return
 	}
 	for _, wp := range globFiles(tasks, "WP*.md") {
-		front, body, _, err := frontmatterRead(wp)
+		front, body, orig, err := frontmatterRead(wp)
 		if err != nil {
 			continue
 		}
@@ -469,7 +471,7 @@ func backfillOwnership(feature, slug string) {
 			}
 		}
 		if changed {
-			atomicWrite(wp, []byte(renderFrontmatter(front, body)))
+			atomicWrite(wp, []byte(renderFrontmatter(front, body, orig)))
 		}
 	}
 }
@@ -479,7 +481,7 @@ var mutableFields = []string{"lane", "review_status", "reviewed_by", "review_fee
 	"review_artifact_override_reason", "reviewer_shell_pid", "history"}
 
 func stripOne(p string) {
-	front, body, _, err := frontmatterRead(p)
+	front, body, orig, err := frontmatterRead(p)
 	if err != nil {
 		return
 	}
@@ -491,7 +493,7 @@ func stripOne(p string) {
 		}
 	}
 	if n > 0 {
-		atomicWrite(p, []byte(renderFrontmatter(front, body)))
+		atomicWrite(p, []byte(renderFrontmatter(front, body, orig)))
 	}
 }
 
@@ -532,7 +534,11 @@ func rewriteAgentShims(root string) (*rewriteResult, error) {
 			key = strings.TrimLeft(d.root, ".")
 		}
 		td := filepath.Join(root, d.root, d.subdir)
-		os.MkdirAll(td, 0o755)
+		if err := os.MkdirAll(td, 0o755); err != nil {
+			res.warnings = append(res.warnings, "generate_all_shims failed: "+pyOSError(err))
+			res.written = nil
+			return res, nil
+		}
 		ext := "md"
 		if cfg, ok := agents.CommandConfigs[key]; ok {
 			ext = cfg.Ext
@@ -543,13 +549,23 @@ func rewriteAgentShims(root string) (*rewriteResult, error) {
 				continue
 			}
 			out := filepath.Join(td, "spec-kitty."+c+"."+ext)
-			writePlain(out, []byte(content))
+			if err := writePlain(out, []byte(content)); err != nil {
+				// write_text raised: generate_all_shims aborts and nothing
+				// else of the rewrite runs.
+				res.warnings = append(res.warnings, "generate_all_shims failed: "+pyOSError(err))
+				res.written = nil
+				return res, nil
+			}
 			res.written = append(res.written, out)
 		}
 	}
-	// _generate_prompt_templates.
+	// _generate_prompt_templates (a raise drops its whole written list).
 	var prompts []string
+	promptsFailed := false
 	for _, d := range dirs {
+		if promptsFailed {
+			break
+		}
 		key, ok := agents.AgentDirToKey[d.root]
 		if !ok {
 			continue
@@ -568,9 +584,16 @@ func rewriteAgentShims(root string) (*rewriteResult, error) {
 				continue
 			}
 			out := filepath.Join(td, commandOutputFilename(c, key))
-			writePlain(out, []byte(rendered))
+			if err := writePlain(out, []byte(rendered)); err != nil {
+				res.warnings = append(res.warnings, "_generate_prompt_templates failed: "+pyOSError(err))
+				promptsFailed = true
+				break
+			}
 			prompts = append(prompts, out)
 		}
+	}
+	if promptsFailed {
+		prompts = nil
 	}
 	sort.Strings(prompts)
 	sort.Strings(res.written)
@@ -3102,8 +3125,39 @@ func mUnifiedBundle() migrationImpl {
 				}
 				return out
 			}
-			tracked := []string{".kittify/charter/charter.md"}
-			derived := []string{".kittify/charter/governance.yaml", ".kittify/charter/directives.yaml", ".kittify/charter/metadata.yaml"}
+			var errs []string
+			if !dryRun {
+				// ensure_charter_bundle_fresh: no derived files are declared,
+				// so only a stale charter.md reaches sync(), which reads it
+				// through the encoding chokepoint (recording provenance) and
+				// never writes or reports synced.
+				cp := filepath.Join(cd, "charter.md")
+				stale := true
+				if b, err := os.ReadFile(cp); err == nil && utf8.Valid(b) {
+					stored := ""
+					if mb, err := os.ReadFile(filepath.Join(cd, "metadata.yaml")); err == nil {
+						if v, err := yamlx.Parse(mb); err == nil {
+							if o, ok := v.(*jsonx.Object); ok {
+								if h, ok := o.Get("charter_hash"); ok && h != nil {
+									stored = fmt.Sprint(h)
+								}
+							}
+						}
+						stale = charter.HashContent(string(b)) != stored
+					}
+				}
+				if stale {
+					if data, err := os.ReadFile(cp); err != nil {
+						errs = append(errs, pyOSError(err))
+					} else if rec, rerr := migrate.RecoverEncoding(data); rerr != nil || rec == nil {
+						errs = append(errs, migrate.AmbiguousBody(cp))
+					} else {
+						migrate.WriteEncodingProvenance(cp, rec)
+					}
+				}
+			}
+			tracked := []string{".kittify/charter/charter.md", ".kittify/charter/charter.yaml"}
+			derived := []string{}
 			declared := map[string]bool{}
 			for _, f := range append(append([]string{}, tracked...), derived...) {
 				declared[f] = true
@@ -3122,7 +3176,7 @@ func mUnifiedBundle() migrationImpl {
 			}
 			mt, md := missing(tracked), missing(derived)
 			v := jsonx.NewObject("missing_derived", md, "missing_tracked", mt, "passed", len(mt) == 0 && len(md) == 0, "unexpected", ua)
-			return report(true, false, false, v, nil)
+			return report(true, false, false, v, errs)
 		},
 	}
 }

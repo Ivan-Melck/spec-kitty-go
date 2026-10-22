@@ -802,7 +802,7 @@ func repairFeature(feature, root string, dryRun bool) ([]string, []string) {
 					front.Set("lane", canon)
 				}
 			}
-			rendered := renderFrontmatter(front, body)
+			rendered := renderFrontmatter(front, body, original)
 			if original == rendered {
 				continue
 			}

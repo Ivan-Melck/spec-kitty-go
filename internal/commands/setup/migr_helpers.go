@@ -594,12 +594,21 @@ func copyNodeVerbatim(src, dest string) error {
 		os.Chtimes(dest, st.ModTime(), st.ModTime())
 		return nil
 	default:
-		return copyFile2(src, dest)
+		return copyFileData(src, dest) // write_file_verbatim: no shutil audit event
 	}
 }
 
-// copyFile2 is shutil.copy2 (content, mode bits, mtime).
+// copyFile2 is shutil.copy2 (content, mode bits, mtime), recorded in the
+// upgrade mutation log like upstream's shutil.copyfile audit event.
 func copyFile2(src, dest string) error {
+	if fi, err := os.Stat(dest); err == nil && fi.IsDir() {
+		dest = filepath.Join(dest, filepath.Base(src))
+	}
+	recordUpgradeMutation(src, dest, false)
+	return copyFileData(src, dest)
+}
+
+func copyFileData(src, dest string) error {
 	st, err := os.Stat(src)
 	if err != nil {
 		return err
@@ -611,7 +620,6 @@ func copyFile2(src, dest string) error {
 	if fi, err := os.Stat(dest); err == nil && fi.IsDir() {
 		dest = filepath.Join(dest, filepath.Base(src))
 	}
-	recordUpgradeMutation(src, dest, false)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil && !pathExists(filepath.Dir(dest)) {
 		return err
 	}
