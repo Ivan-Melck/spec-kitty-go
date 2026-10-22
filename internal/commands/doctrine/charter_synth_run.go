@@ -65,6 +65,7 @@ func synthesizeMain(ctx *cli.Context, root, adapterName string) error {
 	jsonMode, dryRun, prune := ctx.Bool("json"), ctx.Bool("dry-run"), ctx.Bool("prune")
 	warnings := []any{}
 	fail := func(err error) error { return synthHandleError(ctx, jsonMode, adapterName, warnings, err) }
+	installSynthLogger(ctx, jsonMode)
 	ev, evWarn, err := charter.CollectEvidence(root, ctx.Bool("skip-code-evidence"), ctx.Bool("skip-corpus"))
 	if err != nil {
 		return fail(err)
@@ -224,6 +225,15 @@ func synthesizeMain(ctx *cli.Context, root, adapterName string) error {
 	return nil
 }
 
+// installSynthLogger routes project_drg logging warnings to the rich log
+// handler on stderr in human mode.
+func installSynthLogger(ctx *cli.Context, jsonMode bool) {
+	charter.SynthWarningLogger = nil
+	if !jsonMode {
+		charter.SynthWarningLogger = func(m string) { rich.LogWarning(ctx.Stderr, m) }
+	}
+}
+
 // synthHandleError is charter_synthesize's typed exception envelopes.
 func synthHandleError(ctx *cli.Context, jsonMode bool, adapter string, warnings []any, err error) error {
 	w := ctx.Stdout
@@ -287,6 +297,7 @@ func synthHandleError(ctx *cli.Context, jsonMode bool, adapter string, warnings 
 func runCharterResynthesize(ctx *cli.Context) error {
 	w := ctx.Stdout
 	jsonMode := ctx.Bool("json")
+	installSynthLogger(ctx, jsonMode)
 	fail := func(msg string, unexpected bool) error {
 		if jsonMode {
 			emitCharterError(w, true, msg, "", nil)

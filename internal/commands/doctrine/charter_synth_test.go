@@ -205,6 +205,19 @@ func TestParityCharterSynthesizeDirectWrite(t *testing.T) {
 	}
 	compareSynth(t, p, true, "charter", "synthesize")
 	compareSynth(t, p, true, "charter", "synthesize", "--json")
+	// Registered artifacts are re-emitted alongside generated targets.
+	p.Both(func(s *testkit.Sandbox) {
+		s.Git("add", "-A")
+		s.Git("commit", "-q", "-m", "reg")
+		for rel, body := range synthFiles {
+			s.WriteFile(rel, body)
+		}
+	})
+	compareSynth(t, p, true, "charter", "synthesize", "--json")
+	compareSynthFile(t, p, ".kittify/charter-packs/graph.yaml")
+	compareSynthFile(t, p, ".kittify/charter/synthesis-manifest.yaml")
+	compareSynth(t, p, true, "charter", "synthesize")
+	compareSynth(t, p, true, "charter", "resynthesize", "--list-topics")
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile(".kittify/charter-packs/directive/bad.directive.yaml", "id: BAD\n")
 	})

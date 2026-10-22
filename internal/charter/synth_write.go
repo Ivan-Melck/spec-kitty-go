@@ -323,7 +323,7 @@ func walkProjectProfileNodes(root string) ([]dct.Node, error) {
 
 // emitProjectLayer is project_drg.emit_project_layer (answer-driven nodes,
 // hand-authored project agent profiles).
-func emitProjectLayer(targets []SynthTarget, version string, base *dct.Graph, root string) (*dct.Graph, []string, error) {
+func emitProjectLayer(targets []SynthTarget, version string, base, org *dct.Graph, root string) (*dct.Graph, []string, error) {
 	baseURNs := base.NodeURNs()
 	baseTriples := map[string]bool{}
 	for _, e := range base.Edges {
@@ -375,8 +375,63 @@ func emitProjectLayer(targets []SynthTarget, version string, base *dct.Graph, ro
 			seen[n.URN] = true
 			g.Nodes = append(g.Nodes, n)
 		}
+		arts, err := registeredProjectArtifacts(root)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, a := range arts {
+			if !seen[a.Node.URN] {
+				seen[a.Node.URN] = true
+				g.Nodes = append(g.Nodes, a.Node)
+			}
+		}
+		universe := append([]dct.Node{}, base.Nodes...)
+		if org != nil {
+			universe = append(universe, org.Nodes...)
+		}
+		universe = append(universe, g.Nodes...)
+		projected, warns := projectReferenceEdges(arts, universe)
+		if SynthWarningLogger != nil {
+			for _, w := range warns {
+				SynthWarningLogger(w)
+			}
+		}
+		have := map[string]bool{}
+		for _, e := range g.Edges {
+			have[e.Source+"\x00"+e.Target+"\x00"+e.Relation] = true
+		}
+		for _, e := range projected {
+			if !have[e.Source+"\x00"+e.Target+"\x00"+e.Relation] {
+				g.Edges = append(g.Edges, e)
+			}
+		}
+		return g, warns, nil
 	}
 	return g, nil, nil
+}
+
+// SynthWarningLogger receives project_drg's logging.warning calls (the CLI
+// installs a rich log handler in human mode).
+var SynthWarningLogger func(string)
+
+// registeredProjectArtifacts is project_drg._registered_project_artifacts.
+func registeredProjectArtifacts(root string) ([]ProjectArtifact, error) {
+	mp := Path(root, synthManifestRel)
+	if !exists(mp) {
+		return nil, nil
+	}
+	m, err := LoadSynthManifest(mp)
+	if err != nil {
+		return nil, err
+	}
+	paths := map[string]bool{}
+	for _, e := range m.Artifacts {
+		pp := Path(root, e.ProvenancePath)
+		if o := readYAMLObject(pp); o != nil && o.GetString("adapter_id") == "project-direct-write" {
+			paths[Path(root, e.Path)] = true
+		}
+	}
+	return ScanProjectArtifacts(root, paths)
 }
 
 // ------------------------------------------------------------------ staging
@@ -1237,7 +1292,7 @@ func Synthesize(root string, req *SynthesisRequest, a *SynthAdapter, version str
 		return nil, err
 	}
 	org := orgChainGraph(root)
-	fresh, warns, err := emitProjectLayer(targets, version, builtIn, root)
+	fresh, warns, err := emitProjectLayer(targets, version, builtIn, org, root)
 	if err != nil {
 		return nil, err
 	}
@@ -1291,7 +1346,7 @@ func SynthesisDryRun(root string, req *SynthesisRequest, a *SynthAdapter, versio
 		if err != nil {
 			return err
 		}
-		g, _, err := emitProjectLayer(targets, version, builtIn, root)
+		g, _, err := emitProjectLayer(targets, version, builtIn, org, root)
 		if err != nil {
 			return err
 		}
@@ -1330,7 +1385,7 @@ func ReconciliationPreview(root string, req *SynthesisRequest, version string) (
 		return nil, err
 	}
 	org := orgChainGraph(root)
-	fresh, _, err := emitProjectLayer(targets, version, builtIn, root)
+	fresh, _, err := emitProjectLayer(targets, version, builtIn, org, root)
 	if err != nil {
 		return nil, err
 	}
@@ -1664,7 +1719,7 @@ func Resynthesize(root string, req *SynthesisRequest, a *SynthAdapter, version, 
 	var written *SynthManifest
 	err = withStaging(root, bounded.RunID, func(s *stagingDir) error {
 		m, err := promote(root, s, &bounded, results, func(s *stagingDir) error {
-			upd, _, err := emitProjectLayer(targets, version, builtIn, root)
+			upd, _, err := emitProjectLayer(targets, version, builtIn, org, root)
 			if err != nil {
 				return err
 			}
