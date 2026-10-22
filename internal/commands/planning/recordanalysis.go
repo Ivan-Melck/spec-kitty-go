@@ -240,10 +240,7 @@ func runRecordAnalysis(ctx *cli.Context) error {
 	if ctx.String("owned-checkout") != "" {
 		return fail("--owned-checkout is not supported by this build")
 	}
-	if ctx.Bool("report-only") {
-		// TODO: the --report-only report transaction is not ported.
-		return fail("--report-only is not supported by this build")
-	}
+	reportOnly := ctx.Bool("report-only")
 	feature := ctx.String("mission")
 	featureDir, derr := readPathFor(root, feature)
 	if derr != nil {
@@ -260,6 +257,9 @@ func runRecordAnalysis(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	slug := filepath.Base(featureDir)
+	if reportOnly {
+		return runReportOnly(ctx, root, slug, jsonMode, fail)
+	}
 	// write preflight: refuse a pre-existing dirty working tree.
 	cwdRoot := project.CurrentWorktreeRoot(cwd())
 	if cwdRoot == "" {
