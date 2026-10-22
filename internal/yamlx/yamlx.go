@@ -12,20 +12,44 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
-	"gopkg.in/yaml.v3"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 )
 
-// Parse decodes a YAML document into ordered values. Timestamps are kept as
-// their source strings.
+// Parse decodes a YAML document into ordered values the way upstream's
+// ruamel.yaml round-trip loader (YAML().load(str)) does: YAML 1.2 typing,
+// duplicate keys refused, merge keys, ruamel's exact error text (marks
+// named "<unicode string>" with snippets). Values: *jsonx.Object keyed by
+// the key's source text, []any, int (*big.Int when huge), float64, bool,
+// nil, string; timestamps and tagged scalars stay their source text.
+// Invalid UTF-8 is reported as Python's UnicodeDecodeError text.
 func Parse(src []byte) (any, error) {
-	var n yaml.Node
-	if err := yaml.Unmarshal(src, &n); err != nil {
+	return ParseWith(src, ParseOptions{})
+}
+
+// ParseOptions selects the upstream loader a call site uses.
+type ParseOptions struct {
+	// Safe selects YAML(typ="safe") instead of the round-trip loader.
+	Safe bool
+	// File names the file when upstream loads a path / binary stream
+	// (marks then name the file and carry no snippet).
+	File string
+}
+
+// ParseWith is Parse with the upstream loader's options.
+func ParseWith(src []byte, opts ParseOptions) (any, error) {
+	d := pyyaml.Ruamel
+	if opts.Safe {
+		d = pyyaml.RuamelSafe
+	}
+	if opts.File != "" {
+		return pyyaml.LoadRuamelInput(pyyaml.FileInput(src, opts.File), d)
+	}
+	text, err := pyjson.DecodeUTF8(src)
+	if err != nil {
 		return nil, err
 	}
-	if n.Kind == 0 {
-		return nil, nil
-	}
-	return convert(&n)
+	return pyyaml.LoadRuamel(text, d)
 }
 
 // ParseObject decodes a YAML mapping (nil document -> empty object).
@@ -42,88 +66,6 @@ func ParseObject(src []byte) (*jsonx.Object, error) {
 		return nil, fmt.Errorf("yaml document is not a mapping")
 	}
 	return o, nil
-}
-
-func convert(n *yaml.Node) (any, error) {
-	switch n.Kind {
-	case yaml.DocumentNode:
-		if len(n.Content) == 0 {
-			return nil, nil
-		}
-		return convert(n.Content[0])
-	case yaml.AliasNode:
-		return convert(n.Alias)
-	case yaml.MappingNode:
-		o := &jsonx.Object{}
-		seen := map[string]bool{}
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			k := n.Content[i]
-			if k.Kind == yaml.ScalarNode && k.Tag == "!!merge" {
-				v, err := convert(n.Content[i+1])
-				if err != nil {
-					return nil, err
-				}
-				if m, ok := v.(*jsonx.Object); ok {
-					for _, kv := range m.Pairs() {
-						if !o.Has(kv.Key) {
-							o.Set(kv.Key, kv.Value)
-						}
-					}
-				}
-				continue
-			}
-			key := k.Value
-			if seen[key] {
-				return nil, fmt.Errorf("line %d: duplicate key %q", k.Line, key)
-			}
-			seen[key] = true
-			v, err := convert(n.Content[i+1])
-			if err != nil {
-				return nil, err
-			}
-			o.Set(key, v)
-		}
-		return o, nil
-	case yaml.SequenceNode:
-		l := make([]any, 0, len(n.Content))
-		for _, c := range n.Content {
-			v, err := convert(c)
-			if err != nil {
-				return nil, err
-			}
-			l = append(l, v)
-		}
-		return l, nil
-	case yaml.ScalarNode:
-		return scalar(n)
-	}
-	return nil, fmt.Errorf("unsupported yaml node kind %v", n.Kind)
-}
-
-func scalar(n *yaml.Node) (any, error) {
-	switch n.ShortTag() {
-	case "!!null":
-		return nil, nil
-	case "!!bool":
-		var b bool
-		if err := n.Decode(&b); err != nil {
-			return n.Value, nil
-		}
-		return b, nil
-	case "!!int":
-		var i int64
-		if err := n.Decode(&i); err != nil {
-			return n.Value, nil
-		}
-		return int(i), nil
-	case "!!float":
-		var f float64
-		if err := n.Decode(&f); err != nil {
-			return n.Value, nil
-		}
-		return f, nil
-	}
-	return n.Value, nil
 }
 
 // Options controls emission.

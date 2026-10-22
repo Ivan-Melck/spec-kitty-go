@@ -216,9 +216,14 @@ type ComposeOptions struct {
 // stream. Errors are *MarkedYAMLError or *ReaderError with the library's
 // exact message.
 func Compose(src string, opts ComposeOptions) (*Node, error) {
+	return ComposeInput(StringInput(src), opts)
+}
+
+// ComposeInput is Compose for any Input.
+func ComposeInput(in Input, opts ComposeOptions) (*Node, error) {
 	var n *Node
 	err := run(func() {
-		c := &composer{parser: newParser(src, opts.Dialect), anchors: map[string]*Node{}, resolve: opts.Resolve}
+		c := &composer{parser: newParser(in, opts.Dialect), anchors: map[string]*Node{}, resolve: opts.Resolve}
 		n = c.getSingleNode()
 	})
 	return n, err

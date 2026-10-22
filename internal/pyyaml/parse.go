@@ -54,8 +54,8 @@ type parser struct {
 
 var defaultTags = map[string]string{"!": "!", "!!": "tag:yaml.org,2002:"}
 
-func newParser(src string, d Dialect) *parser {
-	p := &parser{scanner: newScanner(src, d)}
+func newParser(in Input, d Dialect) *parser {
+	p := &parser{scanner: newScanner(in, d)}
 	p.state = p.parseStreamStart
 	return p
 }

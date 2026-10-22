@@ -80,6 +80,7 @@ type simpleKey struct {
 type scanner struct {
 	dialect Dialect
 	name    string
+	stream  bool // file input: marks carry no snippet
 	buffer  []rune
 	pointer int
 	index   int
@@ -102,9 +103,19 @@ type scanner struct {
 	hasVersion  bool
 }
 
-func newScanner(src string, d Dialect) *scanner {
+func newScanner(in Input, d Dialect) *scanner {
 	s := &scanner{dialect: d, name: "<unicode string>"}
-	runes := []rune(src)
+	var runes []rune
+	if in.Stream {
+		s.stream = true
+		s.name = in.Name
+		if s.name == "" {
+			s.name = "<file>"
+		}
+		runes = s.decodeStream(in.Data)
+	} else {
+		runes = []rune(in.Text)
+	}
 	s.checkPrintable(runes)
 	s.buffer = append(runes, 0)
 	s.indent = -1
@@ -185,7 +196,69 @@ func (s *scanner) forward(n int) {
 }
 
 func (s *scanner) getMark() *Mark {
+	if s.stream {
+		return &Mark{Name: s.name, Index: s.index, Line: s.line, Column: s.column, dialect: s.dialect}
+	}
 	return &Mark{Name: s.name, Index: s.index, Line: s.line, Column: s.column, Buffer: s.buffer, Pointer: s.pointer, dialect: s.dialect}
+}
+
+// Input is what a loader reads: a Python str (Text; marks are named
+// "<unicode string>" and carry snippets) or a binary file stream (Data
+// read from the file Name: decoded like Reader.determine_encoding, marks
+// without snippets).
+type Input struct {
+	Text   string
+	Data   []byte
+	Name   string
+	Stream bool
+}
+
+// StringInput is a Python str input.
+func StringInput(s string) Input { return Input{Text: s} }
+
+// FileInput is a binary file stream input named by its path.
+func FileInput(data []byte, name string) Input { return Input{Data: data, Name: name, Stream: true} }
+
+// decodeStream is Reader.determine_encoding + update for a whole stream
+// (UTF-16 by BOM, else strict UTF-8). Decoding and printable checks run
+// eagerly; upstream reads 4 KiB chunks lazily, so a bad byte past the
+// first 8 KiB of a long file would surface later there.
+func (s *scanner) decodeStream(b []byte) []rune {
+	switch {
+	case len(b) >= 2 && b[0] == 0xff && b[1] == 0xfe:
+		return decodeUTF16(b, false)
+	case len(b) >= 2 && b[0] == 0xfe && b[1] == 0xff:
+		return decodeUTF16(b, true)
+	}
+	text, err := pyjson.DecodeUTF8(b)
+	if err != nil {
+		ue := err.(*pyjson.UnicodeError)
+		// raw_buffer[exc.start] is an int, so the "unacceptable character" form is used
+		panic(&ReaderError{Name: s.name, Position: ue.Start, Character: rune(ue.Byte), Byte: -1, Encoding: "utf-8", Reason: ue.Reason})
+	}
+	return []rune(text)
+}
+
+func decodeUTF16(b []byte, big bool) []rune {
+	var out []rune
+	for i := 0; i+1 < len(b); i += 2 {
+		u := rune(b[i]) | rune(b[i+1])<<8
+		if big {
+			u = rune(b[i])<<8 | rune(b[i+1])
+		}
+		out = append(out, u)
+	}
+	// combine surrogate pairs
+	res := out[:0]
+	for i := 0; i < len(out); i++ {
+		r := out[i]
+		if r >= 0xD800 && r < 0xDC00 && i+1 < len(out) && out[i+1] >= 0xDC00 && out[i+1] < 0xE000 {
+			r = 0x10000 + (r-0xD800)<<10 + (out[i+1] - 0xDC00)
+			i++
+		}
+		res = append(res, r)
+	}
+	return res
 }
 
 // in reports whether r is one of the runes in set (NUL included).

@@ -13,9 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/spec-kitty/go-kitty3/internal/jsonx"
-	"gopkg.in/yaml.v3"
 )
 
 // Date is a datetime.date loaded from an implicit timestamp scalar.
@@ -190,63 +187,6 @@ func plainValue(v string) any {
 	return v
 }
 
-func convert(n *yaml.Node) (any, error) {
-	switch n.Kind {
-	case yaml.DocumentNode:
-		if len(n.Content) == 0 {
-			return nil, nil
-		}
-		return convert(n.Content[0])
-	case yaml.AliasNode:
-		return convert(n.Alias)
-	case yaml.MappingNode:
-		o := &jsonx.Object{}
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			k, err := convert(n.Content[i])
-			if err != nil {
-				return nil, err
-			}
-			v, err := convert(n.Content[i+1])
-			if err != nil {
-				return nil, err
-			}
-			o.Set(keyString(k), v)
-		}
-		return o, nil
-	case yaml.SequenceNode:
-		out := []any{}
-		for _, c := range n.Content {
-			v, err := convert(c)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, v)
-		}
-		return out, nil
-	case yaml.ScalarNode:
-		if n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) != 0 {
-			return n.Value, nil
-		}
-		if n.Tag != "" && n.Tag != "!!str" && n.Style&yaml.TaggedStyle != 0 {
-			switch n.Tag {
-			case "!!int":
-				return constructInt(n.Value), nil
-			case "!!float":
-				return constructFloat(n.Value), nil
-			case "!!bool":
-				return plainValue(n.Value), nil
-			case "!!null":
-				return nil, nil
-			}
-		}
-		if n.Style&yaml.TaggedStyle != 0 && n.Tag == "!!str" {
-			return n.Value, nil
-		}
-		return plainValue(n.Value), nil
-	}
-	return nil, fmt.Errorf("unsupported YAML node")
-}
-
 func keyString(k any) string {
 	switch t := k.(type) {
 	case string:
@@ -264,14 +204,5 @@ func keyString(k any) string {
 	return fmt.Sprint(k)
 }
 
-// SafeLoad parses text like yaml.safe_load.
-func SafeLoad(text string) (any, error) {
-	var n yaml.Node
-	if err := yaml.Unmarshal([]byte(text), &n); err != nil {
-		return nil, err
-	}
-	if n.Kind == 0 {
-		return nil, nil
-	}
-	return convert(&n)
-}
+// SafeLoad parses text like yaml.safe_load (an alias of Load).
+func SafeLoad(text string) (any, error) { return Load(text) }

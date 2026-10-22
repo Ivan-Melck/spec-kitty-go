@@ -1044,7 +1044,12 @@ func exportYAMLX(v any, memo map[any]any) any {
 // parser, composer and SafeConstructor, with PyYAML's exact errors
 // (*MarkedYAMLError, *ReaderError, or *PyError for non-YAML exceptions).
 func Load(src string) (any, error) {
-	v, err := load(src, PyYAML)
+	return LoadInput(StringInput(src))
+}
+
+// LoadInput is Load for any Input (yaml.safe_load(open(path, "rb"))).
+func LoadInput(in Input) (any, error) {
+	v, err := load(in, PyYAML)
 	if err != nil {
 		return nil, err
 	}
@@ -1057,7 +1062,13 @@ func Load(src string) (any, error) {
 // int (or *big.Int), float64, bool, nil, string; timestamps, !!binary and
 // tagged scalars as their source text. Errors carry ruamel's exact text.
 func LoadRuamel(src string, d Dialect) (any, error) {
-	v, err := load(src, d)
+	return LoadRuamelInput(StringInput(src), d)
+}
+
+// LoadRuamelInput is LoadRuamel for any Input (YAML().load(path) reads a
+// binary stream: FileInput).
+func LoadRuamelInput(in Input, d Dialect) (any, error) {
+	v, err := load(in, d)
 	if err != nil {
 		return nil, err
 	}
@@ -1067,17 +1078,17 @@ func LoadRuamel(src string, d Dialect) (any, error) {
 // LoadRuamelPy is LoadRuamel returning pyyaml.Load's value space (Date,
 // Timestamp, []byte, int64 / *big.Int, keys via str()).
 func LoadRuamelPy(src string, d Dialect) (any, error) {
-	v, err := load(src, d)
+	v, err := load(StringInput(src), d)
 	if err != nil {
 		return nil, err
 	}
 	return exportPy(v, map[any]any{}), nil
 }
 
-func load(src string, d Dialect) (any, error) {
+func load(in Input, d Dialect) (any, error) {
 	var out any
 	err := run(func() {
-		p := newParser(src, d)
+		p := newParser(in, d)
 		comp := &composer{parser: p, anchors: map[string]*Node{}}
 		n := comp.getSingleNode()
 		if n == nil {
