@@ -1,6 +1,7 @@
 package closeout
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -363,9 +364,18 @@ func runRetroBackfill(ctx *cli.Context) error {
 	}
 	dry := ctx.Bool("dry-run")
 	filter := ctx.String("mission")
+	emitSkipped, emitFailures := ctx.Bool("emit-skipped"), ctx.Bool("emit-failures")
 	skipped, failed := []any{}, []any{}
 	created := 0
 	scanned := 0
+	eventsDir := func(slug string) string { return coord.Resolve(root, slug).StatusDir() }
+	maybeEmitSkip := func(id, slug, reason string) {
+		if emitSkipped && !dry {
+			retrospective.EmitSkipped(eventsDir(slug), id, slug, "backfill_skip: "+reason)
+		}
+	}
+	type candidate struct{ id, slug string }
+	var work []candidate
 	regRoot := filepath.Join(root, ".kittify", "missions")
 	entries, _ := os.ReadDir(regRoot)
 	for _, e := range entries {
@@ -388,6 +398,7 @@ func runRetroBackfill(ctx *cli.Context) error {
 		scanned++
 		skip := func(reason string) {
 			skipped = append(skipped, jsonx.NewObject("mission_id", id, "mission_slug", slug, "reason", reason))
+			maybeEmitSkip(id, slug, reason)
 		}
 		if filter != "" && id != filter && !strings.HasPrefix(id, filter) && slug != filter {
 			skip("mission_filter_excluded")
@@ -406,21 +417,44 @@ func runRetroBackfill(ctx *cli.Context) error {
 			skip("out_of_window")
 			continue
 		}
+		work = append(work, candidate{id, slug})
+	}
+	type createdRec struct{ slug, path string }
+	var authored []createdRec
+	for _, c := range work {
+		id, slug := c.id, c.slug
 		path := filepath.Join(root, "kitty-specs", slug, retrospective.FileName)
 		if _, err := os.Stat(path); err == nil {
 			skipped = append(skipped, jsonx.NewObject("mission_id", id, "mission_slug", slug, "reason", "already_exists", "record_path", path))
+			maybeEmitSkip(id, slug, "already_exists")
 			continue
 		}
 		if dry {
 			created++
 			continue
 		}
-		if _, p, err := retrospective.Author(root, slug, "backfill", "spec-kitty retrospect backfill"); err != nil {
-			failed = append(failed, jsonx.NewObject("mission_id", id, "mission_slug", slug, "failure_category", "generator_exception", "missing", []any{}, "remediation_hint", err.Error()))
-		} else {
+		_, p, err := retrospective.Author(root, slug, "backfill", "spec-kitty retrospect backfill")
+		var nf *retrospective.NotFoundError
+		switch {
+		case err == nil:
 			created++
-			retroCommit(root, slug, "chore(retrospective): backfill retrospective for "+slug, p, status.EventsPath(projectSpecs(root, slug)))
+			authored = append(authored, createdRec{slug, p})
+		case errors.As(err, &nf):
+			remediation := "Mission lacks required artifacts; rebuild via `spec-kitty migrate normalize-lifecycle --mission " + slug + "`."
+			failed = append(failed, jsonx.NewObject("mission_id", id, "mission_slug", slug, "failure_category", "missing_artifacts",
+				"missing", []any{err.Error()}, "remediation_hint", remediation))
+			if emitFailures {
+				retrospective.EmitCaptureFailed(eventsDir(slug), id, slug, "missing_artifacts", err.Error(), remediation, "backfill", []string{err.Error()})
+			}
+		default:
+			failed = append(failed, jsonx.NewObject("mission_id", id, "mission_slug", slug, "failure_category", "generator_exception", "missing", []any{}, "remediation_hint", err.Error()))
+			if emitFailures {
+				retrospective.EmitCaptureFailed(eventsDir(slug), id, slug, "generator_exception", err.Error(), "", "backfill", nil)
+			}
 		}
+	}
+	for _, a := range authored {
+		retroCommit(root, a.slug, "chore(retrospective): backfill retrospective for "+a.slug, a.path, status.EventsPath(projectSpecs(root, a.slug)))
 	}
 	next := []any{}
 	if created > 0 && !dry {
