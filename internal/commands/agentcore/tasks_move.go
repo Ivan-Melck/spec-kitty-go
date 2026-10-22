@@ -2128,8 +2128,8 @@ func resolveProfileVersion(root, id string) (string, error) {
 		for _, x := range ids {
 			quoted = append(quoted, "'"+x+"'")
 		}
-		return "", fmt.Errorf("Could not resolve --profile %s: Profile '%s' not found. Available: [%s]. Omit --profile to use the work package's own frontmatter agent_profile instead.",
-			mission.PyRepr(id), id, strings.Join(quoted, ", "))
+		// workflow.ResolveBinding wraps this as "Could not resolve --profile …".
+		return "", fmt.Errorf("Profile '%s' not found. Available: [%s]", id, strings.Join(quoted, ", "))
 	}
 	for _, k := range []string{"schema-version", "schema_version"} {
 		if v, ok := p.Data.Get(k); ok && v != nil {

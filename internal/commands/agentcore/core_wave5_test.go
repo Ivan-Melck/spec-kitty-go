@@ -92,6 +92,7 @@ func TestDiffStatusDoctorChecks(t *testing.T) {
 						s.WriteFile(dir+"/spec.md", s.ReadFile(dir+"/spec.md")+"\n## Issues\n\n- Implements #4321 (subtract).\n- Fixes #77 too.\n")
 					}
 				}
+				s.Git("commit", "-qam", "issues")
 			})
 			comparePairSteps(t, p, g, o, [][]string{
 				{"agent", "status", "doctor", "--mission", "$M"},
