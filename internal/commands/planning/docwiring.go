@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
@@ -413,7 +414,13 @@ func gapAnalysisReport(docs, root string, date time.Time) (string, float64, stri
 
 // runDocumentationWiring is _run_documentation_wiring: (gap analysis path,
 // detected generators); a no-op for non-documentation missions.
-func runDocumentationWiring(out io.Writer, jsonMode bool, root, slug string) (string, []*jsonx.Object) {
+func runDocumentationWiring(out io.Writer, jsonMode bool, root, slug string, owned *ownedcheckout.Fact) (string, []*jsonx.Object) {
+	// An owned run reads and writes in the owned checkout P; the router
+	// still resolves from R with the fact (commit_for_mission(owned=...)).
+	routerRoot := root
+	if owned != nil {
+		root = owned.OwnedRoot
+	}
 	dir := project.Specs(root, slug)
 	if missionart.MissionTypeFor(dir) != "documentation" {
 		return "", nil
@@ -461,7 +468,7 @@ func runDocumentationWiring(out io.Writer, jsonMode bool, root, slug string) (st
 						say(out, "[yellow]Warning:[/yellow] Gap analysis failed: "+err.Error())
 					}
 				} else {
-					r := safecommit.CommitForMission(root, slug, []string{outFile, metaFile}, "Add gap analysis for mission "+slug, mission.KindPrimaryMetadataUnknown, safecommit.RouterOptions{})
+					r := safecommit.CommitForMission(routerRoot, slug, []string{outFile, metaFile}, "Add gap analysis for mission "+slug, mission.KindPrimaryMetadataUnknown, safecommit.RouterOptions{Owned: owned})
 					if !jsonMode && surfaceNeedsWarningPlain(r) {
 						r.PrintRendered(out, wrapPlain)
 					}
@@ -489,7 +496,7 @@ func runDocumentationWiring(out io.Writer, jsonMode bool, root, slug string) (st
 				say(out, "[yellow]Warning:[/yellow] Failed to save generator config: "+err.Error())
 			}
 		} else {
-			r := safecommit.CommitForMission(root, slug, []string{metaFile}, "Update generator config for mission "+slug, mission.KindPrimaryMetadataUnknown, safecommit.RouterOptions{})
+			r := safecommit.CommitForMission(routerRoot, slug, []string{metaFile}, "Update generator config for mission "+slug, mission.KindPrimaryMetadataUnknown, safecommit.RouterOptions{Owned: owned})
 			if !jsonMode && surfaceNeedsWarningPlain(r) {
 				r.PrintRendered(out, wrapPlain)
 			}

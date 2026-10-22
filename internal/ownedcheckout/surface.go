@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -103,6 +104,39 @@ func EchoStaleCopyWarning(stderr io.Writer, f *Fact) {
 	if v := StaleCopy(f); v != nil {
 		rich.Print(stderr, StaleCopyWarningText(f, v))
 	}
+}
+
+// Files is OwnedCheckout.files(paths, follow_links): a relative path joins
+// the owned root, any ".." part is refused, each candidate resolves (parents
+// only, unless followLinks) and must lie inside the mission dir. The whole
+// batch is validated before anything is returned (OWNED_MISSION_PATH_REFUSED).
+func (f *Fact) Files(paths []string, followLinks bool) ([]string, error) {
+	var out []string
+	for _, p := range paths {
+		candidate := p
+		if !filepath.IsAbs(candidate) {
+			candidate = filepath.Join(f.OwnedRoot, p)
+		}
+		for _, part := range strings.Split(filepath.ToSlash(p), "/") {
+			if part == ".." {
+				return nil, refuse(OwnedMissionPathRefused, "Path is outside the selected mission: "+p)
+			}
+		}
+		var resolved string
+		if followLinks {
+			if isLoop(candidate) {
+				return nil, refuse(OwnedMissionPathRefused, "Path is outside the selected mission: "+p)
+			}
+			resolved = PyResolve(candidate)
+		} else {
+			resolved = filepath.Join(PyResolve(filepath.Dir(filepath.Clean(candidate))), filepath.Base(filepath.Clean(candidate)))
+		}
+		if !isWithin(resolved, f.MissionDir) {
+			return nil, refuse(OwnedMissionPathRefused, "Path is outside the selected mission: "+p)
+		}
+		out = append(out, resolved)
+	}
+	return out, nil
 }
 
 // MissionRel is the mission dir relative to the owned root
