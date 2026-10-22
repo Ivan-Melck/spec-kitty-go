@@ -102,7 +102,7 @@ func exists(p string) bool { _, err := os.Stat(p); return err == nil }
 func join(parts ...string) string { return filepath.Join(parts...) }
 
 // diffIndexRe matches git-diff "index a..b" headers. Blob ids hash content
-// that embeds per-side ULIDs, and all-digit abbreviations escape the
+// that embeds per-side ULIDs, and all-letter abbreviations escape the
 // testkit SHA mask, so they are masked here.
 var diffIndexRe = regexp.MustCompile(`(?m)^index [0-9a-f<>A-Z]+\.\.[0-9a-f<>A-Z]+`)
 

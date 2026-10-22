@@ -201,7 +201,7 @@ func runConfig(ctx *cli.Context) error {
 		}
 		rows = append(rows, []string{title, e.Name, e.Tier, p})
 	}
-	richTableX(w, tableSpec{Title: "Asset Resolution Origins", Headers: []string{"Type", "Name", "Tier", "Resolved Path"}, Width: []int{10}, ShowLines: true}, rows)
+	rich.TableX(w, rich.TableSpec{Title: "Asset Resolution Origins", Headers: []string{"Type", "Name", "Tier", "Resolved Path"}, Width: []int{10}, ShowLines: true}, rows)
 	checkVersionPin(ctx, root)
 	return nil
 }

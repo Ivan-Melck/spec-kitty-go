@@ -65,7 +65,7 @@ func init() {
 				{Name: "dry-run", Kind: cli.Bool, Help: "Show actions without executing"},
 				{Name: "keep-branch", Kind: cli.Bool, Negatable: true, NoName: "delete-branch", Help: "Keep or delete mission branch after merge (default: retain-gate choice)"},
 				{Name: "keep-worktree", Kind: cli.Bool, Negatable: true, NoName: "remove-worktree", Help: "Keep or remove worktree after merge (default: retain-gate choice)"},
-				{Name: "auto-retry", Kind: cli.Bool, Negatable: true, Help: "Auto-navigate to a deterministic mission worktree if in the wrong location"},
+				{Name: "auto-retry", Kind: cli.Bool, Negatable: true, Default: false, Help: "Auto-navigate to a deterministic mission worktree if in the wrong location"},
 			},
 			Run: runAgentMerge,
 		})

@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
 
 // Kind is the value type of a flag.
@@ -45,6 +45,15 @@ type Flag struct {
 	NoName    string
 	// Envvar, when set, supplies the value if the flag was not given.
 	Envvar string
+	// Help rendering: Panel names a rich_help_panel ("" = Options);
+	// HideDefault suppresses "[default: ...]" (show_default=False);
+	// DefaultText overrides the rendered default value.
+	Panel       string
+	HideDefault bool
+	DefaultText string
+	// Min/Max bound an Int flag (click IntRange): out-of-range values are
+	// usage errors and help shows "<int range> [lo<=x<=hi]".
+	Min, Max *int
 }
 
 // Arg describes a positional argument.
@@ -60,6 +69,11 @@ type Arg struct {
 	// instead of the metavar (typer shows "{name}" in the usage line but the
 	// bare name in the error).
 	ErrorHint string
+	// Help rendering: Type is the Arguments panel type column (default
+	// "<str>"); Panel names a rich_help_panel; Hidden omits it from help.
+	Type   string
+	Panel  string
+	Hidden bool
 }
 
 // Command is a node in the command tree.
@@ -70,9 +84,25 @@ type Command struct {
 	Long    string // full help text; defaults to Short
 	Epilog  string
 	Hidden  bool
-	Flags   []*Flag
-	Args    []*Arg
-	Run     func(*Context) error
+	// Deprecated marks the command "(deprecated)" in help listings.
+	Deprecated bool
+	// ShortHelp, when set, replaces the help's first paragraph in the
+	// parent's Commands panel (click short_help).
+	ShortHelp string
+	// GroupUsage renders the usage line like a group's ("COMMAND
+	// [ARGS]...") for a leaf that upstream implements as a typer sub-app
+	// with only a callback.
+	GroupUsage bool
+	// NoShortHelp drops the -h alias of --help (upstream registers a few
+	// commands after the -h alias is applied, e.g. upgrade).
+	NoShortHelp bool
+	// ParseUsagePath, when set, replaces the command path in usage errors
+	// raised while parsing its arguments (upstream's upgrade re-parses its
+	// arguments under a context named "upgrade").
+	ParseUsagePath string
+	Flags          []*Flag
+	Args           []*Arg
+	Run            func(*Context) error
 
 	// Group behaviour.
 	Subcommands []*Command
@@ -189,6 +219,9 @@ type Context struct {
 	values map[string]any
 	set    map[string]bool
 	args   map[string][]string
+	// pendingExtra holds unexpected positionals, reported after the
+	// missing-parameter checks (click order).
+	pendingExtra []string
 }
 
 func newContext(cmd *Command, parent *Context, io_ IO) *Context {
@@ -324,6 +357,10 @@ func Fail(msg string) error { return &ExitError{Code: 1, Msg: msg} }
 type UsageError struct {
 	Cmd *Command
 	Msg string
+	// NoContext marks parser errors click raises without a context
+	// (BadOptionUsage): only the Error panel is printed.
+	NoContext bool
+	parsing   bool
 }
 
 func (e *UsageError) Error() string { return e.Msg }
@@ -341,6 +378,7 @@ func BadParameter(cmd *Command, flag, msg string) error {
 // Execute parses argv against root and runs the selected command, returning
 // the process exit code.
 func Execute(root *Command, argv []string, io_ IO) int {
+	invocationArgs = argv
 	err := execute(root, argv, io_)
 	return handleErr(err, io_)
 }
@@ -397,10 +435,19 @@ func execute(root *Command, argv []string, io_ IO) error {
 		var err error
 		var sub string
 		rest, sub, err = parseInto(ctx, cmd, rest)
+		if err == nil && !cmd.isGroup() {
+			err = finalize(ctx, cmd)
+		}
 		if err != nil {
+			if ue, ok := err.(*UsageError); ok {
+				ue.parsing = true
+			}
 			return err
 		}
 		if cmd.isGroup() {
+			if sub != "" && cmd.Find(sub) == nil {
+				return noSuchCommand(cmd, sub)
+			}
 			if cmd.Callback != nil {
 				if err := finalize(ctx, cmd); err != nil {
 					return err
@@ -426,18 +473,12 @@ func execute(root *Command, argv []string, io_ IO) error {
 				return nil
 			}
 			next := cmd.Find(sub)
-			if next == nil {
-				return Usage(cmd, "No such command '%s'.", sub)
-			}
 			if err := finalize(ctx, cmd); err != nil {
 				return err
 			}
 			ctx = newContext(next, ctx, io_)
 			cmd = next
 			continue
-		}
-		if err := finalize(ctx, cmd); err != nil {
-			return err
 		}
 		if cmd.Callback != nil {
 			if err := cmd.Callback(ctx); err != nil {
@@ -457,333 +498,20 @@ func execute(root *Command, argv []string, io_ IO) error {
 	}
 }
 
-// parseInto consumes argv for cmd. For groups it stops at the first
-// positional (the subcommand name) and returns it.
-func parseInto(ctx *Context, cmd *Command, argv []string) ([]string, string, error) {
-	var positionals []string
-	i := 0
-	onlyPositional := false
-	for i < len(argv) {
-		a := argv[i]
-		i++
-		if onlyPositional || a == "-" || !strings.HasPrefix(a, "-") {
-			if cmd.isGroup() {
-				return argv[i:], a, nil
-			}
-			positionals = append(positionals, a)
-			continue
-		}
-		if a == "--" {
-			onlyPositional = true
-			continue
-		}
-		if a == "-h" || a == "--help" {
-			WriteHelp(ctx.Stdout, cmd)
-			return nil, "", &helpShown{}
-		}
-		var f *Flag
-		var name, val string
-		hasVal := false
-		negated := false
-		if strings.HasPrefix(a, "--") {
-			name = a[2:]
-			if eq := strings.IndexByte(name, '='); eq >= 0 {
-				val, hasVal = name[eq+1:], true
-				name = name[:eq]
-			}
-			f = cmd.flag(name)
-			if f == nil && name == "mission" && !cmd.isGroup() {
-				// Every leaf accepts (and ignores) --mission.
-				f = &Flag{Name: "mission", Kind: String}
-			}
-			if f != nil && f.Kind == Bool && f.Negatable && name == f.negName() {
-				negated = true
-			}
-		} else {
-			name = a[1:2]
-			f = cmd.shortFlag(name)
-			if len(a) > 2 {
-				val, hasVal = a[2:], true
-			}
-		}
-		if f == nil {
-			if cmd.IgnoreUnknownOptions {
-				positionals = append(positionals, a)
-				continue
-			}
-			if len(a) > 2 && !strings.HasPrefix(a, "--") {
-				return nil, "", Usage(cmd, "No such option: %s", a[:2])
-			}
-			opt := a
-			if eq := strings.IndexByte(opt, '='); eq >= 0 {
-				opt = opt[:eq]
-			}
-			if s := suggest(cmd, opt); s != "" {
-				return nil, "", Usage(cmd, "No such option: %s (Possible options: %s)", opt, s)
-			}
-			return nil, "", Usage(cmd, "No such option: %s", opt)
-		}
-		disp := displayName(a, hasVal)
-		switch f.Kind {
-		case Bool:
-			if hasVal {
-				return nil, "", Usage(cmd, "Option '%s' does not take a value.", disp)
-			}
-			ctx.values[f.Name] = !negated
-			ctx.set[f.Name] = true
-		default:
-			if !hasVal {
-				if i >= len(argv) {
-					return nil, "", Usage(cmd, "Option '%s' requires an argument.", disp)
-				}
-				val = argv[i]
-				i++
-			}
-			if err := assign(ctx, cmd, f, disp, val); err != nil {
-				return nil, "", err
-			}
-		}
+// noSuchCommand is typer's resolve_command failure with close-match
+// suggestions among all registered (also hidden) subcommands.
+func noSuchCommand(cmd *Command, name string) error {
+	msg := fmt.Sprintf("No such command %s.", pyjson.ReprString(name))
+	var names []string
+	for _, s := range cmd.Subcommands {
+		names = append(names, s.Name)
 	}
-	if cmd.isGroup() {
-		return nil, "", nil
-	}
-	// Bind positionals.
-	pi := 0
-	for _, arg := range cmd.Args {
-		if arg.Variadic {
-			n := len(positionals) - pi
-			// leave room for trailing required args
-			after := 0
-			for _, a2 := range cmd.Args[indexOf(cmd.Args, arg)+1:] {
-				if a2.Required {
-					after++
-				}
-			}
-			n -= after
-			if n < 0 {
-				n = 0
-			}
-			ctx.args[arg.Name] = append([]string(nil), positionals[pi:pi+n]...)
-			pi += n
-			continue
+	if hits := closeMatches(name, names); len(hits) > 0 {
+		q := make([]string, len(hits))
+		for i, h := range hits {
+			q[i] = pyjson.ReprString(h)
 		}
-		if pi < len(positionals) {
-			v := positionals[pi]
-			if len(arg.Choices) > 0 && !contains(arg.Choices, v) {
-				return nil, "", Usage(cmd, "Invalid value for '%s': '%s' is not one of %s.", argMeta(arg), v, quoteList(arg.Choices))
-			}
-			ctx.args[arg.Name] = []string{v}
-			pi++
-		} else if arg.Default != "" {
-			ctx.args[arg.Name] = []string{arg.Default}
-		}
+		msg = strings.TrimSuffix(msg, ".") + ". Did you mean " + strings.Join(q, ", ") + "?"
 	}
-	if pi < len(positionals) {
-		if cmd.AllowExtraArgs {
-			ctx.Extra = positionals[pi:]
-		} else {
-			extra := positionals[pi:]
-			if len(extra) == 1 {
-				return nil, "", Usage(cmd, "Got unexpected extra argument (%s)", extra[0])
-			}
-			return nil, "", Usage(cmd, "Got unexpected extra arguments (%s)", strings.Join(extra, " "))
-		}
-	}
-	return nil, "", nil
-}
-
-func indexOf(args []*Arg, a *Arg) int {
-	for i, x := range args {
-		if x == a {
-			return i
-		}
-	}
-	return -1
-}
-
-func displayName(a string, hasVal bool) string {
-	if hasVal && strings.HasPrefix(a, "--") {
-		if eq := strings.IndexByte(a, '='); eq >= 0 {
-			return a[:eq]
-		}
-	}
-	if !strings.HasPrefix(a, "--") && len(a) > 2 {
-		return a[:2]
-	}
-	return a
-}
-
-func assign(ctx *Context, cmd *Command, f *Flag, disp, val string) error {
-	if len(f.Choices) > 0 && !contains(f.Choices, val) {
-		return Usage(cmd, "Invalid value for '%s': '%s' is not one of %s.", flagDisplay(f, disp), val, quoteList(f.Choices))
-	}
-	switch f.Kind {
-	case String:
-		ctx.values[f.Name] = val
-	case Int:
-		n, err := strconv.Atoi(strings.TrimSpace(val))
-		if err != nil {
-			return Usage(cmd, "Invalid value for '%s': '%s' is not a valid integer.", flagDisplay(f, disp), val)
-		}
-		ctx.values[f.Name] = n
-	case Float:
-		n, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
-		if err != nil {
-			return Usage(cmd, "Invalid value for '%s': '%s' is not a valid float.", flagDisplay(f, disp), val)
-		}
-		ctx.values[f.Name] = n
-	case StringList:
-		cur, _ := ctx.values[f.Name].([]string)
-		if !ctx.set[f.Name] {
-			cur = nil
-		}
-		ctx.values[f.Name] = append(cur, val)
-	}
-	ctx.set[f.Name] = true
-	return nil
-}
-
-func flagDisplay(f *Flag, disp string) string {
-	if disp != "" {
-		return disp
-	}
-	return "--" + f.Name
-}
-
-// finalize applies defaults, env vars and required checks.
-func finalize(ctx *Context, cmd *Command) error {
-	for _, f := range cmd.Flags {
-		if ctx.set[f.Name] {
-			continue
-		}
-		if f.Envvar != "" {
-			if v, ok := os.LookupEnv(f.Envvar); ok && v != "" {
-				if f.Kind == Bool {
-					lv := strings.ToLower(v)
-					ctx.values[f.Name] = lv == "1" || lv == "true" || lv == "yes" || lv == "y" || lv == "on"
-					ctx.set[f.Name] = true
-				} else if err := assign(ctx, cmd, f, "--"+f.Name, v); err != nil {
-					return err
-				}
-				continue
-			}
-		}
-		if f.Required {
-			return Usage(cmd, "Missing option '%s'.", flagLabel(f))
-		}
-		if f.Default != nil {
-			ctx.values[f.Name] = f.Default
-		} else {
-			switch f.Kind {
-			case Bool:
-				ctx.values[f.Name] = false
-			case Int:
-				ctx.values[f.Name] = 0
-			case String:
-				ctx.values[f.Name] = ""
-			case StringList:
-				ctx.values[f.Name] = []string(nil)
-			}
-		}
-	}
-	for _, a := range cmd.Args {
-		if a.Required && len(ctx.args[a.Name]) == 0 {
-			if a.Variadic && argHint(a) == argMeta(a) {
-				return Usage(cmd, "Missing argument '%s...'.", argHint(a))
-			}
-			return Usage(cmd, "Missing argument '%s'.", argHint(a))
-		}
-	}
-	return nil
-}
-
-func flagLabel(f *Flag) string {
-	if f.Short != "" {
-		return "--" + f.Name + "' / '-" + f.Short
-	}
-	return "--" + f.Name
-}
-
-// argHint is the missing-argument hint: typer renders a "{name}" usage
-// metavar but names the bare argument in the error.
-func argHint(a *Arg) string {
-	if a.ErrorHint != "" {
-		return a.ErrorHint
-	}
-	m := argMeta(a)
-	if strings.HasPrefix(m, "{") && strings.HasSuffix(m, "}") {
-		return m[1 : len(m)-1]
-	}
-	return m
-}
-
-func argMeta(a *Arg) string {
-	if a.Metavar != "" {
-		return a.Metavar
-	}
-	return strings.ToUpper(strings.ReplaceAll(a.Name, "-", "_"))
-}
-
-func contains(xs []string, v string) bool {
-	for _, x := range xs {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
-func quoteList(xs []string) string {
-	q := make([]string, len(xs))
-	for i, x := range xs {
-		q[i] = "'" + x + "'"
-	}
-	if len(q) == 1 {
-		return q[0]
-	}
-	return strings.Join(q[:len(q)-1], ", ") + " or " + q[len(q)-1]
-}
-
-func suggest(cmd *Command, opt string) string {
-	name := strings.TrimLeft(opt, "-")
-	var hits []string
-	for _, f := range cmd.Flags {
-		if f.Hidden {
-			continue
-		}
-		for _, n := range append([]string{f.Name}, f.Aliases...) {
-			if similar(name, n) {
-				hits = append(hits, "--"+n)
-			}
-		}
-	}
-	sort.Strings(hits)
-	return strings.Join(hits, ", ")
-}
-
-// similar approximates difflib.get_close_matches(cutoff=0.6).
-func similar(a, b string) bool {
-	if a == "" || b == "" {
-		return false
-	}
-	m := lcs(a, b)
-	return 2*float64(m)/float64(len(a)+len(b)) >= 0.6
-}
-
-func lcs(a, b string) int {
-	prev := make([]int, len(b)+1)
-	for i := 1; i <= len(a); i++ {
-		cur := make([]int, len(b)+1)
-		for j := 1; j <= len(b); j++ {
-			if a[i-1] == b[j-1] {
-				cur[j] = prev[j-1] + 1
-			} else if prev[j] > cur[j-1] {
-				cur[j] = prev[j]
-			} else {
-				cur[j] = cur[j-1]
-			}
-		}
-		prev = cur
-	}
-	return prev[len(b)]
+	return &UsageError{Cmd: cmd, Msg: msg}
 }

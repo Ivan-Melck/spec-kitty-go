@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/ulid"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
@@ -80,7 +81,7 @@ func emitAnnotation(dir, wpID string, delta status.Delta, actor string) (*status
 func warnLog(w io.Writer, msg string) {
 	width := cli.Width()
 	inner := width - 9
-	for i, l := range RichWrap(msg, inner) {
+	for i, l := range rich.WrapWords(msg, inner) {
 		prefix := "         "
 		if i == 0 {
 			prefix = "WARNING  "

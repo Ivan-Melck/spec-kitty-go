@@ -1,0 +1,47 @@
+// Code generated from the upstream help inventory by area M; DO NOT EDIT.
+
+package cli
+
+// upstreamOrder is the order upstream lists each group's subcommands in
+// (typer keeps registration order; Go registration order differs).
+var upstreamOrder = map[string][]string{
+	"spec-kitty agent":                {"tracer-append", "issue-verdict", "acceptance-verdict", "config", "mission", "tasks", "context", "release", "action", "status", "tests", "decision", "retrospect"},
+	"spec-kitty agent action":         {"implement", "review"},
+	"spec-kitty agent config":         {"list", "add", "remove", "status", "sync", "set"},
+	"spec-kitty agent context":        {"resolve"},
+	"spec-kitty agent decision":       {"open", "resolve", "defer", "cancel", "verify", "list", "repair-runtime-lock"},
+	"spec-kitty agent mission":        {"record-analysis", "acceptance-verdict", "branch-context", "create", "check-prerequisites", "setup-plan", "accept", "merge", "finalize-tasks", "repair"},
+	"spec-kitty agent profile":        {"list", "show"},
+	"spec-kitty agent release":        {"prep"},
+	"spec-kitty agent retrospect":     {"synthesize", "summary"},
+	"spec-kitty agent status":         {"emit", "materialize", "doctor", "lifecycle", "migrate", "validate", "reconcile"},
+	"spec-kitty agent tasks":          {"move-task", "mark-status", "list-tasks", "add-history", "finalize-tasks", "map-requirements", "validate-workflow", "status", "list-dependents", "check-terminability"},
+	"spec-kitty agent tests":          {"stale-check"},
+	"spec-kitty archive":              {"create", "list"},
+	"spec-kitty charter":              {"activate", "deactivate", "consistency-check", "new", "validate", "fetch", "interview", "generate", "context", "status", "synthesize", "resynthesize", "lint", "preflight", "bundle", "mission-type", "list", "pack", "org"},
+	"spec-kitty charter bundle":       {"validate"},
+	"spec-kitty charter mission-type": {"list"},
+	"spec-kitty charter org":          {"init", "validate"},
+	"spec-kitty charter pack":         {"list", "path", "validate", "assemble", "regenerate-graph", "asset"},
+	"spec-kitty charter pack asset":   {"list", "path"},
+	"spec-kitty context":              {"info", "list", "cleanup", "mission-resolve", "mission-show"},
+	"spec-kitty docs":                 {"query"},
+	"spec-kitty doctor":               {"bytecode", "channel", "env-file", "provenance", "run-index", "command-files", "skills", "tool-surfaces", "state-roots", "workspaces", "identity", "topology", "mission-type", "sparse-checkout", "shim-registry", "contracts", "invocation-pairing", "ops", "mission-state", "charter-packs", "coordination", "cutover", "review-cycle-reconcile", "decisions"},
+	"spec-kitty events":               {"tail"},
+	"spec-kitty glossary":             {"list", "conflicts", "resolve", "show", "validate"},
+	"spec-kitty invocations":          {"list"},
+	"spec-kitty issue-matrix":         {"migrate"},
+	"spec-kitty migrate":              {"backfill-identity", "backfill-merge-commit", "backfill-topology", "backfill-mission-type", "charter-encoding", "backfill-provenance", "normalize-lifecycle", "rewrite-opposed-by", "backfill-runtime-state", "backfill-wp-status", "rebaseline-dossier-hashes", "repin-hooks"},
+	"spec-kitty mission":              {"current", "info", "run", "close", "reopen", "follow-up", "switch", "list", "show"},
+	"spec-kitty mission-type":         {"current", "info", "run", "close", "reopen", "follow-up", "switch", "list", "show"},
+	"spec-kitty ops":                  {"log", "undo"},
+	"spec-kitty orchestrator-api":     {"contract-version", "mission-state", "list-ready", "resolve-workspace", "start-implementation", "start-review", "transition", "append-history", "accept-mission", "consolidate-mission", "specify", "plan", "tasks", "check-prerequisites", "record-analysis", "open-decision", "resolve-decision", "defer-decision", "cancel-decision", "answer-decision", "design-status", "artifact-read", "artifact-submit", "design-validate", "design-context", "interview-record", "next"},
+	"spec-kitty plugin":               {"build"},
+	"spec-kitty profile-invocation":   {"complete"},
+	"spec-kitty profiles":             {"list", "show"},
+	"spec-kitty retrospect":           {"create", "backfill", "summary"},
+	"spec-kitty tracker":              {"providers", "bind", "status", "unbind", "map", "sync"},
+	"spec-kitty tracker map":          {"add", "list"},
+	"spec-kitty tracker sync":         {"pull", "push", "run", "publish"},
+	"spec-kitty workflow":             {"list", "export", "import"},
+}

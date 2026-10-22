@@ -21,10 +21,10 @@ func charterActivateCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "activate",
 		Short: "Activate a doctrine artifact by kind and ID (FR-004), or apply a pack's preset.",
-		Long:  "Activate a doctrine artifact by kind and ID (FR-004), or apply a pack's preset.\n\nTwo forms:\n  spec-kitty charter activate KIND ARTIFACT_ID [--cascade SCOPE]\n  spec-kitty charter activate [--pack PACK] --preset PRESET [--force] [--json]\n\nA preset replaces every activation key it governs: keys it lists are\nwritten (plus the org's required ids), keys it leaves out are removed.\nA change to a customised key is refused without --force.",
+		Long:  "Activate a doctrine artifact by kind and ID (FR-004), or apply a pack's preset.\n\nTwo forms:\n\n  spec-kitty charter activate KIND ARTIFACT_ID [--cascade SCOPE]\n\n  spec-kitty charter activate [--pack PACK] --preset PRESET [--force] [--json]\n\nA preset replaces every activation key it governs: keys it lists are\nwritten (plus the org's required ids), keys it leaves out are removed.\nA change to a customised key is refused without --force.",
 		Flags: []*cli.Flag{
 			{Name: "cascade", Kind: cli.String, Help: "Cascade activation scope: 'all' for every referenced kind, or a comma-separated kind list (e.g. 'agent-profile,tactic'). Omit to skip cascade (referenced artifacts are reported as a warning)."},
-			{Name: "resynthesize", Kind: cli.Bool, Negatable: true, Help: resynthesizeHelp},
+			{Name: "resynthesize", Kind: cli.Bool, Negatable: true, Default: false, Help: resynthesizeHelp},
 			{Name: "compile", Kind: cli.Bool, Negatable: true, Default: true, Help: noCompileHelp},
 			{Name: "preset", Kind: cli.String, Help: "Apply this activation preset of the pack with replace semantics instead of activating one artifact."},
 			{Name: "pack", Kind: cli.String, Default: "built-in", Help: "Pack whose preset --preset applies (built-in, an org pack name). Only with --preset."},
@@ -46,7 +46,7 @@ func charterDeactivateCmd() *cli.Command {
 		Short: "Deactivate a doctrine artifact by kind and ID (FR-005), with optional cascade.",
 		Flags: []*cli.Flag{
 			{Name: "cascade", Kind: cli.String, Help: "Cascade deactivation scope: 'all' for every exclusively-referenced kind, or a comma-separated kind list. Shared artifacts are never removed. Omit to deactivate only the named artifact."},
-			{Name: "resynthesize", Kind: cli.Bool, Negatable: true, Help: resynthesizeHelp},
+			{Name: "resynthesize", Kind: cli.Bool, Negatable: true, Default: false, Help: resynthesizeHelp},
 			{Name: "compile", Kind: cli.Bool, Negatable: true, Default: true, Help: noCompileHelp},
 			{Name: "repo-root", Kind: cli.String, Default: ".", Hidden: true},
 		},
@@ -423,8 +423,9 @@ func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cas
 
 func charterListCmd() *cli.Command {
 	return &cli.Command{
-		Name:  "list",
-		Short: "List activated charter artifacts by kind.",
+		Name:       "list",
+		Short:      "List activated charter artifacts by kind.",
+		GroupUsage: true,
 		Flags: []*cli.Flag{
 			{Name: "show-available", Kind: cli.Bool, Help: "Also show available-but-not-activated artifacts."},
 			{Name: "all", Kind: cli.Bool, Help: "Show every available artifact per kind across the built-in, org, and project layers (annotated by source layer), including the template kind. Supersedes --show-available."},
