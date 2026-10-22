@@ -54,7 +54,7 @@ func AllDirectives(root string) []any {
 			ids = append(ids, d.ID)
 		}
 	}
-	InferRepoLanguages(root, nil, false) // _build_offering_service's language gate
+	CatchLoad(func() { InferRepoLanguages(root, nil, false) }) // _maybe_build_offering_service swallows failures
 	repo := dct.NewOffering(root, dct.OrgRoots(root)).Repo(dct.Directive)
 	for _, id := range ids {
 		if l, ok := local[id]; ok {

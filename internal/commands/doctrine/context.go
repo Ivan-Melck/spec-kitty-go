@@ -24,7 +24,7 @@ func charterContextCmd() *cli.Command {
 			{Name: "json", Kind: cli.Bool, Help: "Output JSON. `context_schema_version` stamps the top-level payload shape (#2787, tracking contract -- not yet frozen). `directives` is action-scoped; `all_directives` and `project_charter` describe the project-local charter, while `org_charter` describes imported org packs."},
 			{Name: "include-all", Kind: cli.Bool, Help: "Escape hatch: materialise the entire reachable closure inline in the structured (--json) payload instead of the default progressive disclosure (requires eager, suggests linked). Output is a superset of the progressive render for the same grain."},
 		},
-		Run: runCharterContext,
+		Run: catchCharterLoad(runCharterContext),
 	}
 }
 

@@ -168,7 +168,7 @@ func subst(args []string, slug string) []string {
 	return out
 }
 
-var fileRe =regexp.MustCompile(`"file_path":"([^"]*)"`)
+var fileRe = regexp.MustCompile(`"file_path":"([^"]*)"`)
 
 func paths(recs []string) string {
 	var out []string

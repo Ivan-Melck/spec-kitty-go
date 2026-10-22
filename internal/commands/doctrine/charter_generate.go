@@ -33,7 +33,7 @@ func charterGenerateCmd() *cli.Command {
 			{Name: "owned-checkout", Kind: cli.String, Metavar: "<path>", Help: "Run against an owned checkout: a linked checkout that owns this mission. Refuses the repository root checkout, lane worktrees and coordination worktrees."},
 			{Name: "mission-handle", Kind: cli.String, Help: "Mission identity owned by the explicitly selected checkout"},
 		},
-		Run: runCharterGenerate,
+		Run: catchCharterLoad(runCharterGenerate),
 	}
 }
 

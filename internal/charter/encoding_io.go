@@ -6,6 +6,7 @@ import (
 	"sort"
 	"unicode/utf8"
 
+	"github.com/spec-kitty/go-kitty3/internal/charsetnorm"
 	"github.com/spec-kitty/go-kitty3/internal/charterenc"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 )
@@ -15,15 +16,58 @@ import (
 // every successful load decodes through the canonical detector and appends
 // an encoding-provenance record.
 
-// loadCharterText is load_charter_file(path).text; ok is false when the
-// load raised (ambiguous encoding, undecodable bytes after a BOM, read
-// error).
+// LoadPanic carries an exception load_charter_file raises (CharterEncodingError
+// for an ambiguous code page, or the UnicodeDecodeError for undecodable bytes
+// after a BOM) up to the command boundary, where upstream's handlers (or the
+// uncaught-exception path) render it. Recover it with CatchLoad.
+type LoadPanic struct{ Err error }
+
+// loadCharterText is load_charter_file(path).text. Encoding failures raise
+// (panic with *LoadPanic) like upstream; ok is false only for read errors.
 func loadCharterText(path string) ([]byte, bool) {
 	c, err := charterenc.LoadFile(path, false)
 	if err != nil {
-		return nil, false
+		if _, isPath := err.(*os.PathError); isPath {
+			return nil, false
+		}
+		panic(&LoadPanic{Err: err})
 	}
 	return []byte(c.Text), true
+}
+
+// CatchLoad runs fn and returns the charter-load exception it raised (nil
+// when none). Other panics propagate.
+func CatchLoad(fn func()) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if lp, ok := r.(*LoadPanic); ok {
+				err = lp.Err
+				return
+			}
+			panic(r)
+		}
+	}()
+	fn()
+	return nil
+}
+
+// IsCharterEncodingError reports a CharterEncodingError (the code-only
+// str(exc) upstream handlers print).
+func IsCharterEncodingError(err error) bool {
+	_, ok := err.(*charterenc.Error)
+	return ok
+}
+
+// ExceptionMessage is str(exc) for a charter-load exception: a
+// KittyInternalConsistencyError stringifies to its code.
+func ExceptionMessage(err error) string {
+	if e, ok := err.(*charterenc.Error); ok {
+		return e.Code
+	}
+	if n, ok := err.(*charsetnorm.NotedError); ok {
+		return n.Err.Error()
+	}
+	return err.Error()
 }
 
 // EnsureBundleFresh is sync.ensure_charter_bundle_fresh's observable effect:
@@ -48,7 +92,7 @@ func EnsureBundleFresh(root string) {
 		stale = hashContent(string(b)) != stored
 	}
 	if stale {
-		loadCharterText(charterPath)
+		charterenc.LoadFile(charterPath, false) //nolint:errcheck // sync() swallows the exception
 	}
 }
 
