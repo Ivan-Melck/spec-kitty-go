@@ -9,6 +9,7 @@ package consolidate
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/originfresh"
 	"io"
 	"path/filepath"
 	"strings"
@@ -123,7 +124,7 @@ func RunLaneMerge(root string, o LaneMergeOptions) error {
 	if planningOnly(m) {
 		var buf strings.Builder
 		ret := ResolveRetention(sf.PrimaryDir, nil, nil)
-		r := &run{w: &buf, root: root, slug: o.Slug, sf: sf, target: o.Target, strategy: o.Strategy, ret: ret}
+		r := &run{w: &buf, root: root, slug: o.Slug, sf: sf, target: o.Target, strategy: o.Strategy, ret: ret, originGated: true}
 		if err := r.execute(); err != nil {
 			if e, ok := err.(*Exit); ok {
 				return &LaneMergeError{Msg: fmt.Sprintf("Planning-artifact closeout failed with exit code %d", e.Code)}
@@ -138,12 +139,29 @@ func RunLaneMerge(root string, o LaneMergeOptions) error {
 	if isCoord {
 		missionDeletable = ret.DeleteBranch && ret.RemoveWorktree
 	}
+	canceled := lm.canceledWPs()
+	var gateWPs []string
+	for _, l := range m.Lanes {
+		for _, id := range l.WPIDs {
+			if !canceled[id] {
+				gateWPs = append(gateWPs, id)
+			}
+		}
+	}
+	var blocking []string
+	for _, g := range EvaluateGates(root, sf.PrimaryDir, sf.StatusDir(), sf.StatusDir(), gateWPs, LoadGatePolicy(root)) {
+		if g.Blocking {
+			blocking = append(blocking, g.Details)
+		}
+	}
+	if len(blocking) > 0 {
+		return &LaneMergeError{Msg: strings.Join(blocking, "; ")}
+	}
 	if err := lm.preflight(ret); err != nil {
 		return err
 	}
 	restore := activateDrivers(root)
 	defer restore()
-	canceled := lm.canceledWPs()
 	for _, l := range m.Lanes {
 		if laneFullyCanceled(l, canceled) {
 			continue
@@ -483,4 +501,16 @@ func reachableElsewhere(root, branch string) bool {
 		}
 	}
 	return false
+}
+
+// OriginGateInputs is origin_lane_branches(seam, resume=False) plus
+// merge_record_may_exist(seam): the lane branches and record flag the
+// orchestrator consolidate-mission origin gate checks.
+func OriginGateInputs(root, slug string) ([]string, bool) {
+	sf := coord.Resolve(root, slug)
+	var branches []string
+	if m, err := lanes.Read(sf.PrimaryDir); err == nil && m != nil {
+		branches = originfresh.ApprovedLaneBranches(root, slug, m, map[string]bool{})
+	}
+	return branches, LoadState(root, missionIDOf(root, slug)) != nil
 }
