@@ -52,7 +52,25 @@ func (e *DecodeError) Error() string {
 	return fmt.Sprintf("'%s' codec can't decode bytes in position %d-%d: %s", e.Codec, e.Start, e.End-1, e.Reason)
 }
 
-var bomTable = []struct {
+// NotedError is an exception carrying PEP 678 notes. Error() renders the
+// message followed by one "[NOTE] ..." line per note, as rich's traceback
+// prints them under the exception line.
+type NotedError struct {
+	Err   error
+	Notes []string
+}
+
+func (e *NotedError) Error() string {
+	s := e.Err.Error()
+	for _, n := range e.Notes {
+		s += "\n[NOTE] " + n
+	}
+	return s
+}
+
+func (e *NotedError) Unwrap() error { return e.Err }
+
+var bomTable =[]struct {
 	prefix         []byte
 	codec, srcName string
 }{
@@ -84,7 +102,9 @@ func DecodeBOMCodec(data []byte, codec string) (string, error) {
 		}
 		if !utf8.Valid(rest) {
 			_, err := pyjson.DecodeUTF8(rest)
-			return "", err
+			// utf_8_sig is a Python-level codec, so CPython attaches a
+			// PEP 678 note to the escaping exception.
+			return "", &NotedError{Err: err, Notes: []string{"decoding with 'utf-8-sig' codec failed"}}
 		}
 		return string(rest), nil
 	case "utf-16":

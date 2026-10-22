@@ -96,7 +96,8 @@ def describe_recover(data):
                 "bypass_used": r.bypass_used,
             }
         except UnicodeDecodeError as exc:
-            out["unsafe" if unsafe else "safe"] = {"error": str(exc)}
+            notes = "".join("\n[NOTE] " + n for n in getattr(exc, "__notes__", []))
+            out["unsafe" if unsafe else "safe"] = {"error": str(exc) + notes}
     return out
 
 
