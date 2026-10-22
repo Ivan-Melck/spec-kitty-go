@@ -70,7 +70,7 @@ func (e *NotedError) Error() string {
 
 func (e *NotedError) Unwrap() error { return e.Err }
 
-var bomTable =[]struct {
+var bomTable = []struct {
 	prefix         []byte
 	codec, srcName string
 }{
