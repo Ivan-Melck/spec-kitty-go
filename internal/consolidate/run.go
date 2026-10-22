@@ -42,8 +42,9 @@ type Options struct {
 	Push, DryRun   bool
 	JSON, Yes      bool
 	Resume         bool
-	OriginCheck    *string // --origin-check (nil = environment/default)
-	SkipLanes      bool    // --skip-lanes: synthesize a no-lane manifest when lanes.json is absent
+	OriginCheck    *string  // --origin-check (nil = environment/default)
+	SkipLanes      bool     // --skip-lanes: synthesize a no-lane manifest when lanes.json is absent
+	DryRunNotes    []string // "--attest-* is not applied with --dry-run" notices
 }
 
 // synthesizeNoLaneManifest is _synthesize_no_lane_manifest: one planning
@@ -273,6 +274,9 @@ func needsNumber(primaryDir string) bool {
 }
 
 func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o Options) error {
+	for _, n := range o.DryRunNotes {
+		say(w, "[yellow]Note:[/yellow] "+n)
+	}
 	errOut := func(msg string) error {
 		if o.JSON {
 			fmt.Fprintln(w, jsonx.Dumps(jsonx.NewObject("spec_kitty_version", app.Version, "error", msg), compact))

@@ -41,6 +41,18 @@ func TestDiffConsolidateAutoRebaseManual(t *testing.T) {
 	teammateCommit(t, p, map[string]string{"src/calc.py": "def add(a, b):\n    return b + a\n"}, "teammate: calc")
 	comparePair(t, p, "consolidate", "--mission", "$M", "--yes", "--strategy", "merge")
 	compareGit(t, p)
+	// attestation / release flag validation (CLI boundary, record kept)
+	for _, c := range [][]string{
+		{"consolidate", "--mission", "$M", "--attest-canceled-superseded", "WP01"},
+		{"consolidate", "--mission", "$M", "--attest-approved-reviewed", "WP01"},
+		{"consolidate", "--mission", "$M", "--dry-run", "--attest-reason", "checked"},
+		{"consolidate", "--mission", "$M", "--dry-run", "--attest-approved-reviewed", "WP01", "--attest-canceled-superseded", "WP02", "--attest-reason", "checked"},
+		{"consolidate", "--mission", "$M", "--release-branch", "main", "--release-reason", "r"},
+		{"consolidate", "--mission", "$M", "--abort", "--release-branch", "main"},
+		{"consolidate", "--mission", "$M", "--abort", "--release-branch", "kitty/mission-$M-lane-a", "--release-reason", "r"},
+	} {
+		comparePair(t, p, c...)
+	}
 	comparePair(t, p, "consolidate", "--mission", "$M", "--abort")
 	compareGit(t, p)
 }

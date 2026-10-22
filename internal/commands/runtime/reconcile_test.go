@@ -69,6 +69,8 @@ func TestDiffReconcileDossier(t *testing.T) {
 	edit(".hidden.md", func(string) string { return "ignored\n" })
 	edit("spec.md", func(b string) string { return b + "\nAddendum.\n" })
 	edit("tasks/WP02-multiply.md", func(b string) string { return strings.Replace(b, "---\n", "---\nbogus: 1\n", 1) })
-	p.Both(func(s *testkit.Sandbox) { os.Remove(filepath.Join(s.Dir, "kitty-specs", missionfx.MissionSlug(t, s), "plan.md")) })
+	p.Both(func(s *testkit.Sandbox) {
+		os.Remove(filepath.Join(s.Dir, "kitty-specs", missionfx.MissionSlug(t, s), "plan.md"))
+	})
 	steps(t, p, false, rec...)
 }

@@ -139,6 +139,29 @@ func runConsolidate(ctx *cli.Context) error {
 	if err := requireMainRepo(ctx, "consolidate"); err != nil {
 		return err
 	}
+	canceledWPs, approvedWPs := cleanIDs(ctx.Strings("attest-canceled-superseded")), cleanIDs(ctx.Strings("attest-approved-reviewed"))
+	attestReason := strings.TrimSpace(ctx.String("attest-reason"))
+	if len(canceledWPs) > 0 && attestReason == "" {
+		say(ctx.Stdout, `[red]Error:[/red] --attest-canceled-superseded requires --attest-reason "<what you checked>" so the attestation records why.`)
+		return cli.Exit(2)
+	}
+	if attestReason != "" && len(canceledWPs) == 0 && len(approvedWPs) == 0 {
+		say(ctx.Stdout, "[yellow]Note:[/yellow] --attest-reason has no effect without --attest-canceled-superseded or --attest-approved-reviewed.")
+	}
+	if len(approvedWPs) > 0 && attestReason == "" {
+		say(ctx.Stdout, `[red]Error:[/red] --attest-approved-reviewed requires --attest-reason "<what you checked>" so the attestation records why.`)
+		return cli.Exit(2)
+	}
+	release := cleanIDs(ctx.Strings("release-branch"))
+	releaseReason := strings.TrimSpace(ctx.String("release-reason"))
+	switch {
+	case len(release) == 0 && releaseReason != "":
+		say(ctx.Stdout, "[yellow]Note:[/yellow] --release-reason has no effect without --release-branch.")
+	case len(release) > 0 && !ctx.Bool("abort"):
+		return refuseRelease(ctx, "--release-branch only applies to `spec-kitty consolidate --abort`.")
+	case len(release) > 0 && releaseReason == "":
+		return refuseRelease(ctx, `--release-branch requires --release-reason "<why the branch is kept>" so the release records why.`)
+	}
 	note := strings.TrimSpace(ctx.String("note"))
 	if ctx.Bool("skip-review-artifact-check") && note == "" {
 		say(ctx.Stdout, `[red]Error:[/red] --skip-review-artifact-check requires --note "<reason>" so the bypass is recorded as override evidence.`)
@@ -153,12 +176,21 @@ func runConsolidate(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	if ctx.Bool("abort") {
-		return exitFrom(consolidate.Abort(ctx.Stdout, root, ctx.String("mission")))
+		return exitFrom(consolidate.Abort(ctx.Stdout, root, ctx.String("mission"), release))
+	}
+	var notes []string
+	if ctx.Bool("dry-run") && !ctx.Bool("json") {
+		if len(canceledWPs) > 0 {
+			notes = append(notes, "--attest-canceled-superseded is not applied with --dry-run: nothing is recorded, and the forecast does not evaluate mixed-lane attribution.")
+		}
+		if len(approvedWPs) > 0 {
+			notes = append(notes, "--attest-approved-reviewed is not applied with --dry-run: nothing is recorded, and the forecast does not evaluate the approved bound.")
+		}
 	}
 	o := consolidate.Options{Mission: ctx.String("mission"), Target: ctx.String("target"), Strategy: ctx.String("strategy"),
 		DeleteBranch: optBool(ctx, "delete-branch"), RemoveWorktree: optBool(ctx, "remove-worktree"),
 		Push: ctx.Bool("push"), DryRun: ctx.Bool("dry-run"), JSON: ctx.Bool("json"), Yes: ctx.Bool("yes"), Resume: ctx.Bool("resume"),
-		OriginCheck: ctx.OptString("origin-check"), SkipLanes: ctx.Bool("skip-lanes")}
+		OriginCheck: ctx.OptString("origin-check"), SkipLanes: ctx.Bool("skip-lanes"), DryRunNotes: notes}
 	if err := consolidate.Run(ctx.Stdout, root, o); err != nil {
 		return exitFrom(err)
 	}
@@ -308,4 +340,25 @@ func autoRetry(ctx *cli.Context, root, slug, target string) (int, error) {
 		return 0, err
 	}
 	return 0, nil
+}
+
+// cleanIDs is the attestation/release flag normalisation: stripped,
+// de-duplicated, blanks dropped.
+func cleanIDs(xs []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range xs {
+		x = strings.TrimSpace(x)
+		if x != "" && !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// refuseRelease is _refuse_release (exit 2, nothing changed).
+func refuseRelease(ctx *cli.Context, msg string) error {
+	say(ctx.Stdout, "[red]Error:[/red] "+msg+" Nothing was changed. Error code: RELEASE_BRANCH_INVALID.")
+	return cli.Exit(2)
 }

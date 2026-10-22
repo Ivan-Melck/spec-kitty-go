@@ -320,7 +320,7 @@ func short7(s string) string {
 
 // Abort is `consolidate --abort`: roll back to the snapshot and clear the
 // record.
-func Abort(w io.Writer, root, handle string) error {
+func Abort(w io.Writer, root, handle string, release []string) error {
 	slug, err := ResolveMissionSlug(root, handle)
 	if err != nil {
 		sayErr(w, err.Error())
@@ -328,6 +328,29 @@ func Abort(w io.Writer, root, handle string) error {
 	}
 	mid := missionIDOf(root, slug)
 	st := LoadState(root, mid)
+	if len(release) > 0 {
+		var movable, invalid []string
+		if st != nil {
+			for _, p := range st.PreRefs {
+				if !st.isLane(p[0]) {
+					movable = append(movable, p[0])
+				}
+			}
+		}
+		for _, b := range release {
+			if !contains(movable, b) {
+				invalid = append(invalid, b)
+			}
+		}
+		if len(invalid) > 0 {
+			allowed := strings.Join(movable, ", ")
+			if allowed == "" {
+				allowed = "none"
+			}
+			say(w, "[red]Error:[/red] "+fmt.Sprintf("--release-branch names %s, which this consolidation record cannot release (releasable: the record's target, mission or coordination branch: %s).", strings.Join(invalid, ", "), allowed)+" Nothing was changed. Error code: RELEASE_BRANCH_INVALID.")
+			return exit(2)
+		}
+	}
 	if st == nil {
 		say(w, fmt.Sprintf("No active merge state found for %s. Coordination workspace left unchanged.", slug))
 		return nil
