@@ -91,6 +91,7 @@ func runMaterialize(ctx *cli.Context) error {
 		outputError(ctx, jsonMode, fmt.Sprintf("No event log found at %s\nRun 'spec-kitty agent status emit' to create the first event, or run a migration to initialize the event log.", events))
 		return cli.Exit(1)
 	}
+	slugResolverWarn(ctx, jsonMode, dir, 1)
 	snap, err := status.Materialize(dir)
 	if err != nil {
 		outputError(ctx, jsonMode, err.Error())
@@ -156,6 +157,7 @@ func runListTasks(ctx *cli.Context) error {
 		outputError(ctx, jsonMode, "Tasks directory not found: "+tasksDir)
 		return cli.Exit(1)
 	}
+	slugResolverWarn(ctx, jsonMode, m.ReadDir(), 1)
 	lanesByWP := laneMap(m.ReadDir())
 	filter := ctx.String("lane")
 	type row struct{ id, title, lane, path string }
@@ -316,6 +318,7 @@ func runTasksStatus(ctx *cli.Context) error {
 	var transitions *status.Snapshot
 	var events []*status.Event
 	full := &status.Snapshot{WorkPackages: &jsonx.Object{}}
+	slugResolverWarn(ctx, jsonMode, readDir, 5)
 	if stream, err := status.ReadStream(readDir, ""); err == nil {
 		events = stream.Transitions
 		if len(stream.Transitions) > 0 {

@@ -28,6 +28,9 @@ type Profile struct {
 	PrimaryFocus      string
 	AvoidanceBoundary string
 	Sentinel          bool
+	// AppliesToLanguages is the profile's language scope (empty = always
+	// applicable).
+	AppliesToLanguages []string
 	// Optional codex fields.
 	Model, ReasoningEffort, SandboxMode string
 	// Source provenance.
@@ -62,6 +65,9 @@ func ParseProfile(b []byte) (Profile, error) {
 		ReasoningEffort: strField(o, "model-reasoning-effort", "model_reasoning_effort"),
 		SandboxMode:     strField(o, "sandbox-mode", "sandbox_mode"),
 		Sentinel:        o.GetBool("sentinel"),
+	}
+	for _, l := range o.GetList("applies_to_languages") {
+		p.AppliesToLanguages = append(p.AppliesToLanguages, fmt.Sprint(l))
 	}
 	for _, r := range o.GetList("roles") {
 		p.Roles = append(p.Roles, fmt.Sprint(r))
@@ -285,7 +291,14 @@ type ProjectionResult struct {
 	Created  []string
 	Repaired []string // stale managed files rewritten
 	Drifted  []string // locally edited, preserved
+	// Pruned are managed projections of profiles no longer admitted
+	// (deleted, manifest entries dropped).
+	Pruned []string
 }
+
+// ProfileAdmit is the activation/language gate of the active charter
+// service (set by the setup package; nil admits every profile).
+var ProfileAdmit func(root string, p Profile) bool
 
 // ProjectProfiles writes native agent-profile projections for the profile
 // harnesses among agentKeys (in agentKeys order) and records them in
@@ -302,11 +315,48 @@ func ProjectProfiles(root string, agentKeys []string) (ProjectionResult, error) 
 	if len(harnesses) == 0 {
 		return res, nil
 	}
-	profiles, err := BuiltinProfiles()
+	all, err := BuiltinProfiles()
 	if err != nil {
 		return res, err
 	}
+	var profiles []Profile
+	for _, p := range all {
+		if ProfileAdmit == nil || ProfileAdmit(root, p) {
+			profiles = append(profiles, p)
+		}
+	}
 	manifest := loadProfileManifest(root)
+	admitted := map[string]bool{}
+	for _, h := range harnesses {
+		for _, p := range profiles {
+			admitted[h.OutputPath(p)] = true
+		}
+	}
+	tools := map[string]bool{}
+	for _, h := range harnesses {
+		tools[h.Tool] = true
+	}
+	var stale []string
+	for rel, e := range manifest {
+		if admitted[rel] || !tools[e.GetString("tool_key")] {
+			continue
+		}
+		stale = append(stale, rel)
+	}
+	sort.Strings(stale)
+	for _, rel := range stale {
+		abs := filepath.Join(root, filepath.FromSlash(rel))
+		if b, err := os.ReadFile(abs); err == nil {
+			if sha256Hex(b) != manifest[rel].GetString("file_hash") {
+				continue
+			}
+			if err := os.Remove(abs); err != nil {
+				continue
+			}
+		}
+		delete(manifest, rel)
+		res.Pruned = append(res.Pruned, rel)
+	}
 	for _, h := range harnesses {
 		for _, p := range profiles {
 			rel := h.OutputPath(p)

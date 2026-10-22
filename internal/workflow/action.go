@@ -324,6 +324,14 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 		}
 	}
 	wsPath := ws.WorktreePath
+	// Seam C-005: the claim-ancestry gate runs post-materialize, keyed on
+	// the merged tip, before any claim event is emitted.
+	if anc := ResolveClaimAncestry(root, slug, s.StatusDir(), wpID, wsPath); !anc.OK {
+		o.Printf("Error: cannot claim %s: ancestry could not be established after self-heal for: %s", wpID, strings.Join(anc.Missing, ", "))
+		return ExitErr(1)
+	} else if anc.DeferredTo != "" {
+		o.Printf("Planning work package: code dependency lanes are not merged into the repository root checkout on the target branch; they reach %s through `spec-kitty consolidate` (#5296).", anc.DeferredTo)
+	}
 	subtasks := w.Subtasks()
 	subtaskCmd := strings.Join(subtasks, " ")
 	if subtaskCmd == "" {

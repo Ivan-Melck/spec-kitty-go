@@ -20,7 +20,7 @@ byte for byte, including the trailing spaces rich pads every line with.
 
 | Test | What it proves |
 |---|---|
-| `internal/helpparity` `TestHelpInventoryParity` | `--help` of every inventoried path vs `$REF/inventory/help/*.txt` (COLUMNS=160), byte for byte. Skips when the inventory is absent. Current: 231 match, 0 differ, 4 groups only list subcommands other areas have not ported, 41 paths not implemented. |
+| `internal/helpparity` `TestHelpInventoryParity` | `--help` of every inventoried path vs `$REF/inventory/help/*.txt` (COLUMNS=160), byte for byte. Skips when the inventory is absent. Current: 276 match, 0 differ, 0 groups listing unported subcommands, 0 paths not implemented (of 276). |
 | `internal/helpparity` `TestHelpWidthsOracle` (oracle) | every implemented path at COLUMNS=60/80/100, `SPEC_KITTY_SIMPLE_HELP=1` at 160 and `=0` at 60, vs the oracle. All pass. Also surveyed by hand at 40 and 211. |
 | `internal/testkit` `TestNormalizeShortSHAs` | short-SHA masking incl. all-digit abbreviations. |
 | existing oracle suites of every package | usage-error and help changes, the rich consolidation (setup/agentcore tables, wrapping) and the Normalize change keep them green. |
@@ -64,7 +64,7 @@ paths other areas have not ported and one non-help console wrap in the
 
 | Path | Status |
 |---|---|
-| `spec-kitty` | partial (lists unported subcommands) |
+| `spec-kitty` | done |
 | `spec-kitty __force_multi_command_mode__` | done |
 | `spec-kitty accept` | done |
 | `spec-kitty agent` | done |
@@ -136,33 +136,33 @@ paths other areas have not ported and one non-help console wrap in the
 | `spec-kitty archive` | done |
 | `spec-kitty archive create` | done |
 | `spec-kitty archive list` | done |
-| `spec-kitty charter` | partial (lists unported subcommands) |
+| `spec-kitty charter` | done |
 | `spec-kitty charter activate` | done |
 | `spec-kitty charter bundle` | done |
 | `spec-kitty charter bundle validate` | done |
-| `spec-kitty charter consistency-check` | missing (not ported) |
+| `spec-kitty charter consistency-check` | done |
 | `spec-kitty charter context` | done |
 | `spec-kitty charter deactivate` | done |
-| `spec-kitty charter fetch` | missing (not ported) |
+| `spec-kitty charter fetch` | done |
 | `spec-kitty charter generate` | done |
 | `spec-kitty charter interview` | done |
-| `spec-kitty charter lint` | missing (not ported) |
+| `spec-kitty charter lint` | done |
 | `spec-kitty charter list` | done |
 | `spec-kitty charter mission-type` | done |
 | `spec-kitty charter mission-type list` | done |
 | `spec-kitty charter new` | done |
-| `spec-kitty charter org` | missing (not ported) |
-| `spec-kitty charter org init` | missing (not ported) |
-| `spec-kitty charter org validate` | missing (not ported) |
-| `spec-kitty charter pack` | partial (lists unported subcommands) |
-| `spec-kitty charter pack assemble` | missing (not ported) |
+| `spec-kitty charter org` | done |
+| `spec-kitty charter org init` | done |
+| `spec-kitty charter org validate` | done |
+| `spec-kitty charter pack` | done |
+| `spec-kitty charter pack assemble` | done |
 | `spec-kitty charter pack asset` | done |
 | `spec-kitty charter pack asset list` | done |
 | `spec-kitty charter pack asset path` | done |
 | `spec-kitty charter pack list` | done |
 | `spec-kitty charter pack path` | done |
-| `spec-kitty charter pack regenerate-graph` | missing (not ported) |
-| `spec-kitty charter pack validate` | missing (not ported) |
+| `spec-kitty charter pack regenerate-graph` | done |
+| `spec-kitty charter pack validate` | done |
 | `spec-kitty charter preflight` | done |
 | `spec-kitty charter resynthesize` | done |
 | `spec-kitty charter status` | done |
@@ -181,10 +181,10 @@ paths other areas have not ported and one non-help console wrap in the
 | `spec-kitty dispatch` | done |
 | `spec-kitty docs` | done |
 | `spec-kitty docs query` | done |
-| `spec-kitty doctor` | partial (lists unported subcommands) |
+| `spec-kitty doctor` | done |
 | `spec-kitty doctor bytecode` | done |
 | `spec-kitty doctor channel` | done |
-| `spec-kitty doctor charter-packs` | missing (not ported) |
+| `spec-kitty doctor charter-packs` | done |
 | `spec-kitty doctor command-files` | done |
 | `spec-kitty doctor contracts` | done |
 | `spec-kitty doctor coordination` | done |
@@ -192,10 +192,10 @@ paths other areas have not ported and one non-help console wrap in the
 | `spec-kitty doctor decisions` | done |
 | `spec-kitty doctor env-file` | done |
 | `spec-kitty doctor identity` | done |
-| `spec-kitty doctor invocation-pairing` | missing (not ported) |
+| `spec-kitty doctor invocation-pairing` | done |
 | `spec-kitty doctor mission-state` | done |
-| `spec-kitty doctor mission-type` | missing (not ported) |
-| `spec-kitty doctor ops` | missing (not ported) |
+| `spec-kitty doctor mission-type` | done |
+| `spec-kitty doctor ops` | done |
 | `spec-kitty doctor provenance` | done |
 | `spec-kitty doctor review-cycle-reconcile` | done |
 | `spec-kitty doctor run-index` | done |
@@ -268,34 +268,34 @@ paths other areas have not ported and one non-help console wrap in the
 | `spec-kitty ops` | done |
 | `spec-kitty ops log` | done |
 | `spec-kitty ops undo` | done |
-| `spec-kitty orchestrator-api` | missing (not ported) |
-| `spec-kitty orchestrator-api accept-mission` | missing (not ported) |
-| `spec-kitty orchestrator-api answer-decision` | missing (not ported) |
-| `spec-kitty orchestrator-api append-history` | missing (not ported) |
-| `spec-kitty orchestrator-api artifact-read` | missing (not ported) |
-| `spec-kitty orchestrator-api artifact-submit` | missing (not ported) |
-| `spec-kitty orchestrator-api cancel-decision` | missing (not ported) |
-| `spec-kitty orchestrator-api check-prerequisites` | missing (not ported) |
-| `spec-kitty orchestrator-api consolidate-mission` | missing (not ported) |
-| `spec-kitty orchestrator-api contract-version` | missing (not ported) |
-| `spec-kitty orchestrator-api defer-decision` | missing (not ported) |
-| `spec-kitty orchestrator-api design-context` | missing (not ported) |
-| `spec-kitty orchestrator-api design-status` | missing (not ported) |
-| `spec-kitty orchestrator-api design-validate` | missing (not ported) |
-| `spec-kitty orchestrator-api interview-record` | missing (not ported) |
-| `spec-kitty orchestrator-api list-ready` | missing (not ported) |
-| `spec-kitty orchestrator-api mission-state` | missing (not ported) |
-| `spec-kitty orchestrator-api next` | missing (not ported) |
-| `spec-kitty orchestrator-api open-decision` | missing (not ported) |
-| `spec-kitty orchestrator-api plan` | missing (not ported) |
-| `spec-kitty orchestrator-api record-analysis` | missing (not ported) |
-| `spec-kitty orchestrator-api resolve-decision` | missing (not ported) |
-| `spec-kitty orchestrator-api resolve-workspace` | missing (not ported) |
-| `spec-kitty orchestrator-api specify` | missing (not ported) |
-| `spec-kitty orchestrator-api start-implementation` | missing (not ported) |
-| `spec-kitty orchestrator-api start-review` | missing (not ported) |
-| `spec-kitty orchestrator-api tasks` | missing (not ported) |
-| `spec-kitty orchestrator-api transition` | missing (not ported) |
+| `spec-kitty orchestrator-api` | done |
+| `spec-kitty orchestrator-api accept-mission` | done |
+| `spec-kitty orchestrator-api answer-decision` | done |
+| `spec-kitty orchestrator-api append-history` | done |
+| `spec-kitty orchestrator-api artifact-read` | done |
+| `spec-kitty orchestrator-api artifact-submit` | done |
+| `spec-kitty orchestrator-api cancel-decision` | done |
+| `spec-kitty orchestrator-api check-prerequisites` | done |
+| `spec-kitty orchestrator-api consolidate-mission` | done |
+| `spec-kitty orchestrator-api contract-version` | done |
+| `spec-kitty orchestrator-api defer-decision` | done |
+| `spec-kitty orchestrator-api design-context` | done |
+| `spec-kitty orchestrator-api design-status` | done |
+| `spec-kitty orchestrator-api design-validate` | done |
+| `spec-kitty orchestrator-api interview-record` | done |
+| `spec-kitty orchestrator-api list-ready` | done |
+| `spec-kitty orchestrator-api mission-state` | done |
+| `spec-kitty orchestrator-api next` | done |
+| `spec-kitty orchestrator-api open-decision` | done |
+| `spec-kitty orchestrator-api plan` | done |
+| `spec-kitty orchestrator-api record-analysis` | done |
+| `spec-kitty orchestrator-api resolve-decision` | done |
+| `spec-kitty orchestrator-api resolve-workspace` | done |
+| `spec-kitty orchestrator-api specify` | done |
+| `spec-kitty orchestrator-api start-implementation` | done |
+| `spec-kitty orchestrator-api start-review` | done |
+| `spec-kitty orchestrator-api tasks` | done |
+| `spec-kitty orchestrator-api transition` | done |
 | `spec-kitty plan` | done |
 | `spec-kitty plugin` | done |
 | `spec-kitty plugin build` | done |
@@ -341,11 +341,9 @@ paths other areas have not ported and one non-help console wrap in the
 | `spec-kitty workflow import` | done |
 | `spec-kitty workflow list` | done |
 
-"missing" paths belong to areas still porting them (orchestrator-api is
-area I; charter consistency-check/fetch/lint/org and charter pack
-assemble/regenerate-graph/validate and doctor charter-packs/invocation-pairing/
-mission-type/ops are area K). The four "partial" groups match as soon as those
-subcommands are registered with their upstream help.
+Every inventoried path (276) is implemented and its help is byte-identical
+to upstream's at COLUMNS=160 (and to the oracle at 60/80/100 and in the plain
+renderer).
 
 ## Exported API
 
@@ -382,7 +380,7 @@ column text; `Default: false` on a negatable flag shows `[default: no-x]`,
 | `RatioReduce`, `RatioDistribute`, `CollapseWidths` | rich `_ratio` / table width algorithms |
 | `CellLen`, `CharWidth`, `SetCellSize` | rich cell widths from rich's unicode 17 table (`celltable.go`, generated) incl. ZWJ/VS16 handling |
 | `HeavyTable`, `TableSpec`, `TableX`, `AlignText` | the HEAVY_HEAD tables formerly in `internal/commands/setup/richtable*.go` |
-| `Width` | console width (moved here from `internal/cli`; `cli.Width` delegates) |
+| `Width`, `StderrWidth`, `TyperWidth`, `IsTerminal` | console width and terminal detection as rich computes them (COLUMNS, TIOCGWINSZ on fds 0/1/2, dumb terminal 80, TTY_COMPATIBLE / FORCE_COLOR); `cli.Width` delegates to `TyperWidth(false)` |
 
 `internal/testkit`: `NormalizeValues` now masks all-digit 7-12 digit short
 SHAs (not when part of a decimal/version or list number); `"pid"` values are
@@ -392,10 +390,21 @@ removes directories of finished test processes (12 GB of leftovers had filled
 
 ## Deviations / open issues
 
-- Terminal width: like before, the width is `COLUMNS` (> 20) else 80; rich
-  also queries the terminal size of stdin/stdout/stderr, which only matters
-  for interactive use.
-- `merge` (hidden stub, util area): its refusal message is printed unwrapped,
-  upstream wraps it at the console width (not a help-renderer issue; not
-  changed).
-- Help colours/styles are not reproduced (no ANSI output on a terminal).
+## Irreducible differences
+
+None known for help text: all 276 paths are byte-identical without a
+terminal.
+
+## Remaining work
+
+- Help colours/styles: on a terminal (or with `FORCE_COLOR`) typer's
+  rich help is styled (bold/cyan option names, dim panels, yellow
+  metavars). `internal/rich` now has rich's colour engine (colour systems,
+  styles, theme, markup spans, `ReprHighlighter`; see util.md) and
+  `console.print` output is coloured, but the help renderer
+  (`internal/cli/help.go`) still emits plain text: wiring typer's
+  `rich_utils` styles through the layout renderables is open (PYF-14).
+- Terminal width now follows rich (COLUMNS, then the terminal size of
+  stdin/stdout/stderr, 80 for a dumb terminal; `TERMINAL_WIDTH` for typer
+  consoles: `rich.TyperWidth`), and the `merge` stub wraps at the console
+  width (PYF-12/13, util area).

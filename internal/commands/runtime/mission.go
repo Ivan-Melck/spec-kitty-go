@@ -494,70 +494,11 @@ func runMissionClose(ctx *cli.Context) error {
 		missionError(ctx, fmt.Sprintf("Error: cannot close: mission %s has not been merged.\nRemediation: this mission has no recorded merge baseline. Use `--discard` to abandon it mid-flight, or consolidate it first (`spec-kitty consolidate`) before closing.", slug), "mission_not_merged", jsonMode)
 		return cli.Exit(1)
 	}
-	if s.CoordWorktree != "" {
-		if _, err := os.Stat(s.CoordWorktree); err == nil {
-			gitx.Run(root, "worktree", "remove", "--force", s.CoordWorktree)
-		}
-		gitx.Run(root, "worktree", "prune")
-	}
+	teardownCoordination(ctx, root, slug, dir, "", jsonMode)
 	if jsonMode {
 		emitJSON(ctx, jsonx.NewObject("ok", true, "result", "closed", "mission_slug", slug))
 	} else {
 		rich.Print(ctx.Stdout, fmt.Sprintf("✓ Mission %s closed.", slug))
-	}
-	return nil
-}
-
-func discardMission(ctx *cli.Context, root, slug, dir string, s *coord.Surface, jsonMode bool) error {
-	if !ctx.Bool("force") {
-		fmt.Fprintf(ctx.Stdout, "Discard mission %s? This deletes its coordination and lane branches. [y/N]: ", slug)
-		var ans string
-		fmt.Fscanln(ctx.Stdin, &ans)
-		if a := strings.ToLower(strings.TrimSpace(ans)); a != "y" && a != "yes" {
-			rich.Print(ctx.Stdout, "Aborted.")
-			return cli.Exit(1)
-		}
-	}
-	m, _ := lanes.Read(dir)
-	if m != nil {
-		for _, l := range m.Lanes {
-			if l.LaneID == lanes.PlanningLaneID {
-				continue
-			}
-			wt := lanes.WorktreePath(root, slug, l.LaneID)
-			if _, err := os.Stat(wt); err == nil {
-				gitx.Run(root, "worktree", "remove", "--force", wt)
-			}
-			br := lanes.LaneBranchName(slug, l.LaneID, m.TargetBranch)
-			if gitx.BranchExists(root, br) {
-				gitx.Run(root, "branch", "-D", br)
-			}
-		}
-	}
-	if s.CoordWorktree != "" {
-		if _, err := os.Stat(s.CoordWorktree); err == nil {
-			gitx.Run(root, "worktree", "remove", "--force", s.CoordWorktree)
-		}
-	}
-	gitx.Run(root, "worktree", "prune")
-	if s.CoordBranch != "" && gitx.BranchExists(root, s.CoordBranch) {
-		if tip, err := gitx.RevParse(root, s.CoordBranch); err == nil {
-			gitx.Run(root, "update-ref", "refs/spec-kitty/discarded/"+s.CoordBranch, tip)
-		}
-		gitx.Run(root, "branch", "-D", s.CoordBranch)
-	}
-	meta := mission.ReadMetaOrEmpty(dir)
-	meta.Delete("coordination_branch")
-	meta.Delete("topology")
-	meta.Set("flattened", true)
-	meta.Set("discarded", true)
-	if err := mission.WriteMeta(dir, meta, false); err == nil {
-		coord.CommitPaths(root, fmt.Sprintf("chore(%s): flatten discarded mission metadata", slug), filepath.Join(dir, mission.MetaFile))
-	}
-	if jsonMode {
-		emitJSON(ctx, jsonx.NewObject("ok", true, "result", "discarded", "mission_slug", slug))
-	} else {
-		rich.Print(ctx.Stdout, fmt.Sprintf("✓ Mission %s discarded.", slug))
 	}
 	return nil
 }

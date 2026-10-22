@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"unicode"
 )
 
 // RuntimeRoot is get_runtime_root().base (~/.spec-kitty or SPEC_KITTY_HOME).
@@ -42,10 +43,16 @@ func (s *CredentialStore) Load() (*jsonx.Object, error) {
 	if err != nil {
 		return nil, errorf("Failed to load credentials: %v", err)
 	}
-	if strings.TrimSpace(string(raw)) == "" {
+	// path.read_text(encoding="utf-8"): strict decoding, universal newlines
+	text, err := pyjson.DecodeUTF8(raw)
+	if err != nil {
+		return nil, errorf("Failed to load credentials: %v", err)
+	}
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	if strings.TrimFunc(text, unicode.IsSpace) == "" {
 		return &jsonx.Object{}, nil
 	}
-	o, err := ParseTOML(string(raw))
+	o, err := ParseTOML(text)
 	if err != nil {
 		return nil, errorf("Failed to load credentials: %v", err)
 	}

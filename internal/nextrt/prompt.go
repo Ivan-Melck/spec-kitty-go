@@ -10,7 +10,9 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/charter"
+	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/workflow"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
@@ -60,9 +62,13 @@ func templateAction(state, root, missionType string) string {
 }
 
 // governanceContext is prompt_builder._governance_context.
-func governanceContext(root, action string) string {
+func governanceContext(root, action, featureDir string, profileID ...string) string {
+	var prof *dct.Profile
+	if len(profileID) > 0 && profileID[0] != "" {
+		prof = dct.LoadProfileCatalog(root).Resolve(profileID[0])
+	}
 	if action != "" {
-		if r, err := charter.BuildContext(root, action, charter.Options{MarkLoaded: true}); err == nil && r.Mode != "missing" {
+		if r, err := charter.BuildContext(root, action, charter.Options{MarkLoaded: true, Profile: prof, MissionType: mission.MissionType(mission.ReadMetaOrEmpty(featureDir))}); err == nil && r.Mode != "missing" {
 			return r.Text
 		}
 	}
@@ -136,7 +142,7 @@ func buildTemplatePrompt(m *missionCtx, featureDir, action, agent string) (strin
 	}
 	bar := strings.Repeat("=", 80)
 	header := strings.Join([]string{bar, "Mission: " + m.Slug, "Agent: " + agent, "Mission directory: " + featureDir, bar}, "\n")
-	content := header + "\n\n" + governanceContext(m.Root, action) + "\n\n" + tpl
+	content := header + "\n\n" + governanceContext(m.Root, action, featureDir) + "\n\n" + tpl
 	return writeNextPrompt(m.Root, action, "", agent, m.Slug, content), nil
 }
 
@@ -168,7 +174,15 @@ func buildWPPrompt(m *missionCtx, action, wpID, agent string) (string, error) {
 	} else {
 		l = append(l, "Workspace contract: repository root planning workspace")
 	}
-	l = append(l, "", governanceContext(m.Root, action),
+	l = append(l, "")
+	payload, perr := missionTypeGovernancePayload(m.Root, m.StatusDir)
+	if perr != nil {
+		return "", perr
+	}
+	if payload != "" {
+		l = append(l, payload, "")
+	}
+	l = append(l, governanceContext(m.Root, action, m.StatusDir, strings.TrimSpace(w.String("agent_profile"))),
 		"Authority references: project glossary `docs/context/`; architecture ADRs `docs/adr/`.", "")
 	verb := "REVIEWING"
 	if action == "implement" {

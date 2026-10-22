@@ -232,7 +232,19 @@ func LifecycleObject(featureDir string, snap *Snapshot, now time.Time) *jsonx.Ob
 		age = d
 		ageDays = d
 	}
+	post := PostMissionEvents(featureDir)
+	postList := []any{}
+	for _, e := range post {
+		postList = append(postList, e)
+	}
+	var lastFollowUp any
+	if t, ok := lastEventAt(post, FollowUpRecordedEvent); ok {
+		lastFollowUp = clock.ISO(t)
+	}
 	state, surface, reason := classifyLifecycle(total, active, terminal, age)
+	if isReopened(featureDir, post) {
+		state, surface, reason = "reopened", "reopened", "Mission was re-opened after merge and is actionable again."
+	}
 	var mnum any
 	if n, ok := mission.MissionNumber(meta); ok {
 		mnum = n
@@ -257,8 +269,8 @@ func LifecycleObject(featureDir string, snap *Snapshot, now time.Time) *jsonx.Ob
 		"last_activity_at", iso(haveActivity, lastActivity), "last_transition_at", iso(haveLast, lastTransition),
 		"age_days", ageDays, "completion_pct", PyRound(prog.Percentage, 1), "event_count", snap.EventCount,
 		"total_wps", total, "active_wp_count", active, "blocked_wp_count", blocked, "review_wp_count", review,
-		"terminal_wp_count", terminal, "has_event_log", hasLog, "post_mission_events", []any{},
-		"last_follow_up_at", nil, "stale_after_days", 14, "abandoned_after_days", 30)
+		"terminal_wp_count", terminal, "has_event_log", hasLog, "post_mission_events", postList,
+		"last_follow_up_at", lastFollowUp, "stale_after_days", 14, "abandoned_after_days", 30)
 }
 
 func classifyLifecycle(total, active, terminal, age int) (string, string, string) {

@@ -129,18 +129,13 @@ func Present(root string) bool {
 	return exists(Path(root, CharterYAML)) || exists(Path(root, CharterMD))
 }
 
-// actionNodeDeclared reports whether action:<missionType>/<action> exists in
-// the merged DRG.
-func actionNodeDeclared(root, missionType, action string) bool {
-	if missionType == "" {
-		return false
-	}
-	g, err := dct.LoadGraph(root, dct.OrgRoots(root))
-	if err != nil {
-		return false
-	}
-	return g.NodeURNs()["action:"+missionType+"/"+action]
+// actionNodeDeclared is _action_node_declared(bundle, action): membership of
+// action:<bundle mission>/<action> in the bundle's merged graph (false when
+// the mission type was unresolved).
+func (b *ActionBundle) actionNodeDeclared(action string) bool {
+	return b != nil && b.Merged != nil && b.Merged.NodeURNs()["action:"+b.Mission+"/"+action]
 }
+
 
 // ErrConfig wraps activation config errors surfaced by BuildContext.
 var ErrConfig = errors.New("config")
@@ -150,6 +145,7 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 	if _, err := dct.LoadActivation(root); err != nil {
 		return nil, err
 	}
+	EnsureBundleFresh(root)
 	norm := strings.ToLower(strings.TrimSpace(action))
 	diag := MissingPackDiagnostic(root)
 	augment := func(t string) string {
@@ -160,7 +156,8 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 	}
 	st := prepareState(root, norm, opt.Depth)
 	// The governance bundle resolves before any mode decision (a broken DRG
-	// fails the call whatever the mode).
+	// fails the call whatever the mode); _action_node_declared reads the
+	// bundle's merged graph.
 	b := ResolveActionBundle(root, norm, opt.MissionType, st.depth)
 	if b.Err != nil {
 		return nil, b.Err
@@ -169,8 +166,7 @@ func BuildContext(root, action string, opt Options) (*Result, error) {
 	if b.Warning != "" {
 		warns = append(warns, b.Warning)
 	}
-	declared := b.Merged != nil && b.Merged.NodeURNs()["action:"+b.Mission+"/"+norm]
-	if !BootstrapActions[norm] && !declared {
+	if !BootstrapActions[norm] && !b.actionNodeDeclared(norm) {
 		d := 1
 		if opt.Depth != nil {
 			d = *opt.Depth

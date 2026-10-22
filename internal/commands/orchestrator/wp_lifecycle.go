@@ -102,26 +102,17 @@ func recordClaimBase(root, slug, wpID string) {
 	gitx.Run(root, "update-ref", "refs/spec-kitty/wp-base/"+slug+"/"+wpID, strings.TrimSpace(head))
 }
 
-// enforceClaimAncestry is _enforce_claim_ancestry (planning-commit leg).
+// enforceClaimAncestry is _enforce_claim_ancestry: the shared
+// post-materialize claim-ancestry gate (recorded planning commit + approved
+// dependency-lane tips, with one self-heal re-entry).
 func (v *verb) enforceClaimAncestry(m *orch.Mission, wpID, workspace string) error {
-	manifest, err := lanes.Read(m.PrimaryDir)
-	if err != nil || manifest == nil || manifest.LaneForWP(wpID) == nil {
-		return nil
-	}
-	head, herr := gitx.HeadSHA(workspace)
-	if herr != nil || strings.TrimSpace(head) == "" {
-		return nil
-	}
-	var missing []string
-	if sha := manifest.PlanningCommitSHA; sha != nil && *sha != "" && !gitx.IsAncestor(workspace, *sha, strings.TrimSpace(head)) {
-		missing = append(missing, fmt.Sprintf("planning commit %s", *sha))
-	}
-	if len(missing) == 0 {
+	r := workflow.ResolveClaimAncestry(m.Root, m.Slug, m.StatusDir, wpID, workspace)
+	if r.OK {
 		return nil
 	}
 	return v.fail("ANCESTRY_NOT_ESTABLISHED",
-		fmt.Sprintf("cannot claim %s: ancestry could not be established after self-heal for: %s", wpID, strings.Join(missing, ", ")),
-		identity(m.StatusDir, "wp_id", wpID, "missing_refs", strList(missing)))
+		fmt.Sprintf("cannot claim %s: ancestry could not be established after self-heal for: %s", wpID, strings.Join(r.Missing, ", ")),
+		identity(m.StatusDir, "wp_id", wpID, "missing_refs", strList(r.Missing)))
 }
 
 // surfaceFor resolves the mission's coordination surface; status events are

@@ -53,12 +53,12 @@ func runCharterEncoding(ctx *cli.Context) error {
 			already = append(already, p)
 			continue
 		}
-		rec, err := migrate.RecoverEncoding(data)
+		rec, cands, err := migrate.RecoverEncoding(data)
 		if err != nil {
 			return uncaught(ctx, "UnicodeDecodeError", err)
 		}
 		if rec == nil {
-			body := migrate.AmbiguousBody(p)
+			body := migrate.AmbiguousBody(p, cands)
 			ambiguous = append(ambiguous, encRecord{path: p, body: body})
 			cprintf(errw, "[red]AMBIGUOUS:[/red] %s", p)
 			cprintf(errw, "  %s", strings.SplitN(body, "\n", 2)[0])

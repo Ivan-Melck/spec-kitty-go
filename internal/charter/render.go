@@ -92,8 +92,17 @@ func RenderCompact(root string, in CompactInput) string {
 	if len(diags) > 0 {
 		lines = append(lines, "  - Diagnostics: "+strings.Join(diags, " | "))
 	}
-	// _append_language_lines
-	if langs, known := InferRepoLanguages(root, nil, false); known && len(langs) > 0 {
+	// compact._append_language_lines: the languages footnote (and the
+	// charter-extension advisory) from the single language authority.
+	var langs []string
+	var known bool
+	if err := CatchLoad(func() { langs, known = InferRepoLanguages(root, nil, false) }); err != nil {
+		if !IsCharterEncodingError(err) {
+			panic(&LoadPanic{Err: err})
+		}
+		langs, known = nil, false
+	}
+	if known && len(langs) > 0 {
 		sorted := append([]string(nil), langs...)
 		sort.Strings(sorted)
 		lines = append(lines, "  - Languages: "+strings.Join(sorted, ", "))

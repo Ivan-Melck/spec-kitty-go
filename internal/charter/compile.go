@@ -269,6 +269,7 @@ func CompileCharterWith(root, mission string, iv *Interview, templateSet string,
 	c.Paradigms, c.Directives, c.Tactics = cr.byKind[dct.Paradigm], cr.byKind[dct.Directive], cr.byKind[dct.Tactic]
 
 	refs := []CharterRef{userProfileRef(iv)}
+	indexParadigmAssets()
 	off := dct.NewOffering(root, dct.OrgRoots(root))
 	off.Languages = langs
 	for _, p := range c.Paradigms {

@@ -191,15 +191,13 @@ func runReconcile(ctx *cli.Context) error {
 		result.Set("error", "mission dossier not found: "+slug)
 		return finish()
 	}
-	snapPath := filepath.Join(dir, ".kittify", "dossiers", slug, "snapshot-latest.json")
-	b, err := os.ReadFile(snapPath)
+	snap, err := dossier.LoadSnapshot(dir, slug)
 	if err != nil {
-		result.Set("error", "no recorded snapshot to reconcile against for "+slug)
+		result.Set("error", fmt.Sprintf("could not load recorded snapshot for %s: %v", slug, err))
 		return finish()
 	}
-	snap, err := jsonx.DecodeObject(b)
-	if err != nil || snap == nil {
-		result.Set("error", fmt.Sprintf("could not load recorded snapshot for %s: %v", slug, err))
+	if snap == nil {
+		result.Set("error", "no recorded snapshot to reconcile against for "+slug)
 		return finish()
 	}
 	source, err := dossier.SourceProjection(dir)

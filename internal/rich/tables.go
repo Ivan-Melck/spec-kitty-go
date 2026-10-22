@@ -3,6 +3,7 @@ package rich
 import (
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 )
 
@@ -99,27 +100,34 @@ type TableSpec struct {
 // wrapCellWords is rich Text.wrap(width, overflow="ellipsis") for cells of
 // single-spaced words: greedy word wrap (no folding), then each line
 // truncated to width with "…".
+var cellWordRe = regexp.MustCompile(`\s*\S+\s*`)
+
 func wrapCellWords(s string, width int) []string {
 	var out []string
 	for _, para := range strings.Split(s, "\n") {
-		words := strings.Fields(para)
+		// rich divide_line: words are \s*\S+\s* runs; a word that does not
+		// fit (measured without its trailing whitespace) starts a new line;
+		// interior whitespace runs are kept.
+		words := cellWordRe.FindAllString(para, -1)
 		if len(words) == 0 {
 			out = append(out, "")
 			continue
 		}
-		cur := ""
+		cur, pos := "", 0
 		for _, wd := range words {
+			wl := runeLen(strings.TrimRight(wd, " \t"))
 			switch {
-			case cur == "":
-				cur = wd
-			case runeLen(cur)+1+runeLen(wd) <= width:
-				cur += " " + wd
+			case width-pos >= wl:
+				cur += wd
+				pos += runeLen(wd)
+			case pos == 0:
+				cur, pos = wd, runeLen(wd)
 			default:
-				out = append(out, cur)
-				cur = wd
+				out = append(out, strings.TrimRight(cur, " \t"))
+				cur, pos = wd, runeLen(wd)
 			}
 		}
-		out = append(out, cur)
+		out = append(out, strings.TrimRight(cur, " \t"))
 	}
 	for i, l := range out {
 		if runeLen(l) > width {

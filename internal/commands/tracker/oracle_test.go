@@ -10,15 +10,9 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/testkit/missionfx"
 )
 
-// lastLine returns the final non-empty line (the exception line of a
-// Python traceback).
-func lastLine(s string) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	return strings.TrimSpace(lines[len(lines)-1])
-}
-
 // step runs args on both sides and compares exit code, stdout and stderr.
-// Tracebacks (uncaught exceptions) are compared by their final line only.
+// Tracebacks (uncaught exceptions) are compared with their frames masked:
+// panel borders and the exception lines must match exactly.
 func step(t *testing.T, p *testkit.Pair, args ...string) (testkit.Result, testkit.Result) {
 	t.Helper()
 	g, o := p.Run(args...)
@@ -30,9 +24,7 @@ func step(t *testing.T, p *testkit.Pair, args ...string) (testkit.Result, testki
 		t.Errorf("%s: stdout differs\n%s", name, testkit.Diff(os_, gs))
 	}
 	ge, oe := p.Go.Normalize(g.Stderr), p.Oracle.Normalize(o.Stderr)
-	if strings.Contains(oe, "Traceback (most recent call last)") {
-		ge, oe = lastLine(ge), lastLine(oe)
-	}
+	ge, oe = testkit.MaskTracebackFrames(ge), testkit.MaskTracebackFrames(oe)
 	if ge != oe {
 		t.Errorf("%s: stderr differs\n%s", name, testkit.Diff(oe, ge))
 	}

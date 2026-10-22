@@ -278,7 +278,7 @@ func run(ctx *cli.Context) error {
 		}
 		text, derr := pyjson.DecodeUTF8(b)
 		if derr != nil {
-			fmt.Fprintf(ctx.Stderr, "Traceback (most recent call last):\nUnicodeDecodeError: %v\n", derr)
+			rich.Traceback(ctx.Stderr, "UnicodeDecodeError", derr.Error(), rich.Frame{Name: "cutover_guard", Line: 395})
 			return cli.Exit(1)
 		}
 		for _, l := range splitLines(text) {

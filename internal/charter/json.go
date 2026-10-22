@@ -9,6 +9,7 @@ import (
 
 // ProjectCharterBlock is upstream _project_charter_json_block.
 func ProjectCharterBlock(root string) *jsonx.Object {
+	EnsureBundleFresh(root) // _bundle_root_for_json
 	y := Path(root, CharterYAML)
 	o := jsonx.NewObject("present", exists(y), "path", CharterYAML, "charter_md_present", exists(Path(root, CharterMD)), "charter_md_path", CharterMD)
 	st, err := os.Stat(y)
@@ -53,7 +54,8 @@ func AllDirectives(root string) []any {
 			ids = append(ids, d.ID)
 		}
 	}
-	repo := dct.NewOffering(root, nil).Repo(dct.Directive) // _build_offering_service(repo_root): built-in + project, no org layer
+	CatchLoad(func() { InferRepoLanguages(root, nil, false) }) // _maybe_build_offering_service swallows failures
+	repo := dct.NewOffering(root, nil).Repo(dct.Directive)     // _build_offering_service(repo_root): built-in + project, no org layer
 	for _, id := range ids {
 		if l, ok := local[id]; ok {
 			e := jsonx.NewObject("id", id, "source", "project")
@@ -77,9 +79,12 @@ func ContextJSON(root string, res *Result, missionType string, includeAll bool) 
 		"action", res.Action, "mode", res.Mode, "first_load", res.FirstLoad, "references_count", res.ReferencesCount,
 		"context", res.Text, "text", res.Text)
 	empty := func() []any { return []any{} }
+	// Upstream build order: all_directives (offering service), the
+	// project_charter block, then the action bundle.
+	allDirectives := AllDirectives(root)
+	projectCharter := ProjectCharterBlock(root)
 	directives, tactics, styleguides, toolguides, refs := empty(), empty(), empty(), empty(), empty()
-	if BootstrapActions[res.Action] || actionNodeDeclared(root, missionType, res.Action) {
-		b := ResolveActionBundle(root, res.Action, missionType, res.Depth)
+	if b := ResolveActionBundle(root, res.Action, missionType, res.Depth); BootstrapActions[res.Action] || b.actionNodeDeclared(res.Action) {
 		if b.Merged != nil {
 			d := b.disclosure(includeAll)
 			get := func(k string) []any { v, _ := d.Get(k); l, _ := v.([]any); return l }
@@ -87,13 +92,13 @@ func ContextJSON(root string, res *Result, missionType string, includeAll bool) 
 		}
 	}
 	o.Set("directives", directives)
-	o.Set("all_directives", AllDirectives(root))
+	o.Set("all_directives", allDirectives)
 	o.Set("tactics", tactics)
 	o.Set("styleguides", styleguides)
 	o.Set("toolguides", toolguides)
 	o.Set("references", refs)
 	o.Set("governance_references", []any{})
-	o.Set("project_charter", ProjectCharterBlock(root))
+	o.Set("project_charter", projectCharter)
 	o.Set("org_charter", OrgCharterJSONBlock(root))
 	return o
 }

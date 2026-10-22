@@ -74,6 +74,7 @@ func (s *Service) Bind(provider, workspace, mode string, fieldOwners, creds *jso
 	c.FieldOwners = fieldOwners.Clone()
 	c.Egress = committed.Egress
 	c.EgressStyle = committed.EgressStyle
+	c.loaded, c.rtBlock = committed.loaded, committed.rtBlock
 	c.Extra = committed.Extra.Clone()
 	if err := SaveConfig(s.Root, c); err != nil {
 		return c, err

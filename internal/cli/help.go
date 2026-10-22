@@ -18,7 +18,7 @@ import (
 
 // Width is the rendering width for help and error panels (rich defaults to
 // the terminal width, falling back to 80; COLUMNS overrides).
-func Width() int { return rich.Width() }
+func Width() int { return rich.TyperWidth(false) }
 
 // usagePieces are click's collect_usage_pieces (after "[OPTIONS]").
 func usagePieces(c *Command) []string {

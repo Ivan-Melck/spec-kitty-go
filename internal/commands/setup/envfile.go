@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -12,6 +13,10 @@ import (
 // repo tier (<repo>/.kittify/.kitty.env), then setdefault'ed so real
 // environment values always win. A SPEC_KITTY_HOME line is never honoured.
 func init() { LoadOperatorEnvFile("") }
+
+// envWarningSite stands in for the wheel's specify_cli/__init__.py, where
+// the import-time loader runs (the <spec-kitty> display root).
+const envWarningSite = "<spec-kitty>/specify_cli/__init__.py"
 
 // LoadOperatorEnvFile is bootstrap.env_file.load_operator_env_file.
 func LoadOperatorEnvFile(start string) {
@@ -40,7 +45,13 @@ func LoadOperatorEnvFile(start string) {
 			return nil
 		}
 		vals := ParseEnvFile(string(b))
-		delete(vals, "SPEC_KITTY_HOME")
+		if _, ok := vals["SPEC_KITTY_HOME"]; ok {
+			delete(vals, "SPEC_KITTY_HOME")
+			// warnings.warn(..., UserWarning, stacklevel=3): reported at the
+			// `import specify_cli` call site with its source line.
+			fmt.Fprintf(os.Stderr, "%s:34: UserWarning: %s defines SPEC_KITTY_HOME; ignoring that line (the locator that finds this file cannot be redefined by it).\n  load_operator_env_file()\n",
+				envWarningSite, p)
+		}
 		return vals
 	}
 	merged := map[string]string{}

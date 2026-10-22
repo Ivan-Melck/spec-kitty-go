@@ -10,6 +10,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/assets"
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
@@ -57,13 +58,50 @@ func packageDefault(mission, subdir, name string) string {
 	return ""
 }
 
-// resolveAsset is runtime.resolver._resolve_asset (org-pack tier omitted).
+// legacyNudgeShown is resolver._migrate_nudge_shown (once per invocation).
+var legacyNudgeShown bool
+
+// warnLegacyAsset is resolver._warn_legacy_asset: with a configured global
+// runtime, a one-time stderr nudge (never in --json invocations); otherwise
+// the logger warning (its DeprecationWarning twin is filtered by default).
+func warnLegacyAsset(p string) {
+	if pathExists(filepath.Join(project.GlobalKittify(), "cache", "version.lock")) {
+		if legacyNudgeShown {
+			return
+		}
+		for _, a := range os.Args[1:] {
+			if a == "--json" {
+				return
+			}
+		}
+		legacyNudgeShown = true
+		fmt.Fprintf(os.Stderr, "Note: Run `spec-kitty migrate` to clean up legacy project files and use the global runtime (%s).\n", tildePath(project.GlobalKittify()))
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Legacy asset resolved: %s — run 'spec-kitty migrate' to clean up. Legacy resolution will be removed in the next major version.\n", p)
+}
+
+// resolveAsset is runtime.resolver._resolve_asset.
 func resolveAsset(name, subdir, root, mission string) (string, string, error) {
 	k := filepath.Join(root, ".kittify")
 	for _, c := range []struct{ p, tier string }{
 		{filepath.Join(k, "overrides", "missions", mission, subdir, name), "override"},
 		{filepath.Join(k, "overrides", subdir, name), "override"},
 		{filepath.Join(k, subdir, name), "legacy"},
+	} {
+		if isFile(c.p) {
+			if c.tier == "legacy" {
+				warnLegacyAsset(c.p)
+			}
+			return c.p, c.tier, nil
+		}
+	}
+	for _, org := range charter.ResolvePackChain(root) {
+		if p := filepath.Join(org, "missions", mission, subdir, name); isFile(p) {
+			return p, "org", nil
+		}
+	}
+	for _, c := range []struct{ p, tier string }{
 		{filepath.Join(project.GlobalKittify(), "missions", mission, subdir, name), "global_mission"},
 		{filepath.Join(project.GlobalKittify(), subdir, name), "global"},
 	} {
@@ -82,11 +120,21 @@ func resolveMissionConfig(name, root string) (string, string, error) {
 	for _, c := range []struct{ p, tier string }{
 		{filepath.Join(k, "overrides", "missions", name, "mission.yaml"), "override"},
 		{filepath.Join(k, "missions", name, "mission.yaml"), "legacy"},
-		{filepath.Join(project.GlobalKittify(), "missions", name, "mission.yaml"), "global_mission"},
 	} {
 		if isFile(c.p) {
+			if c.tier == "legacy" {
+				warnLegacyAsset(c.p)
+			}
 			return c.p, c.tier, nil
 		}
+	}
+	for _, org := range charter.ResolvePackChain(root) {
+		if p := filepath.Join(org, "missions", name, "mission.yaml"); isFile(p) {
+			return p, "org", nil
+		}
+	}
+	if p := filepath.Join(project.GlobalKittify(), "missions", name, "mission.yaml"); isFile(p) {
+		return p, "global_mission", nil
 	}
 	if p := path.Join(pkgMissions, name, "mission.yaml"); assets.Exists(p) {
 		return p, "package_default", nil

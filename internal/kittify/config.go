@@ -17,6 +17,8 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
+	"github.com/spec-kitty/go-kitty3/internal/rtyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -83,35 +85,80 @@ func ConfigExists(root string) bool {
 	return err == nil
 }
 
-// RenderConfig renders cfg in the ruamel round-trip style upstream uses for
-// config.yaml (2-space mappings, sequences not indented under their key).
+// RenderConfig renders cfg the way upstream's YAML().dump renders a plain
+// dict (ruamel round-trip emitter: 2-space mappings, sequences not
+// indented under their key).
 func RenderConfig(cfg *jsonx.Object) string {
-	if cfg == nil || cfg.Len() == 0 {
+	if cfg == nil {
+		cfg = &jsonx.Object{}
+	}
+	if out, err := rtyaml.Dump(cfg); err == nil {
+		return out
+	}
+	if cfg.Len() == 0 {
 		return "{}\n"
 	}
 	return yamlx.Emit(cfg)
 }
 
+// renderOver renders cfg over the existing config.yaml the way upstream's
+// writers do (YAML() with preserve_quotes: load, edit the CommentedMap,
+// dump): comments, quote styles and formatting of untouched entries are
+// kept. snap records cfg as loaded (nil: compare against the file's
+// content instead of object identity).
+func renderOver(p string, cfg *jsonx.Object, snap *rtyaml.Snapshot) string {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return RenderConfig(cfg)
+	}
+	in, err := pyyaml.TextFileInput(b, p)
+	if err != nil {
+		return RenderConfig(cfg)
+	}
+	doc, err := rtyaml.Load(in)
+	if err != nil {
+		return RenderConfig(cfg)
+	}
+	if snap == nil {
+		before, _ := yamlx.ParseWith(b, yamlx.ParseOptions{TextFile: p})
+		snap = rtyaml.ContentSnapshot(before)
+	}
+	doc.Apply(cfg, snap)
+	out, err := doc.Dump()
+	if err != nil {
+		return RenderConfig(cfg)
+	}
+	return out
+}
+
 // SaveConfig writes cfg to config.yaml in place (open(..., "w") semantics:
-// an existing file keeps its mode, a new file is created 0644).
+// an existing file keeps its mode, a new file is created 0644), keeping
+// the comments and styles of the entries cfg leaves unchanged.
 func SaveConfig(root string, cfg *jsonx.Object) error {
+	return saveConfig(root, cfg, nil)
+}
+
+func saveConfig(root string, cfg *jsonx.Object, snap *rtyaml.Snapshot) error {
 	p := ConfigPath(root)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	return writeInPlace(p, []byte(RenderConfig(cfg)), 0o644)
+	return writeInPlace(p, []byte(renderOver(p, cfg, snap)), 0o644)
 }
 
-// UpdateConfig loads config.yaml, applies fn and saves it.
+// UpdateConfig loads config.yaml, applies fn and saves it. Mappings fn
+// edits in place keep their comments; values fn replaces with new objects
+// are written plain (Python: assigning a new dict into the CommentedMap).
 func UpdateConfig(root string, fn func(cfg *jsonx.Object) error) error {
 	cfg, err := LoadConfig(root)
 	if err != nil {
 		return err
 	}
+	snap := rtyaml.Snap(cfg)
 	if err := fn(cfg); err != nil {
 		return err
 	}
-	return SaveConfig(root, cfg)
+	return saveConfig(root, cfg, snap)
 }
 
 func writeInPlace(path string, data []byte, newMode os.FileMode) error {
@@ -251,12 +298,13 @@ func SaveAgentConfig(root string, ac AgentConfig) error {
 			return err
 		}
 	}
+	snap := rtyaml.Snap(cfg)
 	avail := make([]any, len(ac.Available))
 	for i, a := range ac.Available {
 		avail[i] = a
 	}
 	cfg.Set("agents", jsonx.NewObject("available", avail, "auto_commit", ac.AutoCommit, "lint_on_edit", ac.LintOnEdit))
-	return SaveConfig(root, cfg)
+	return saveConfig(root, cfg, snap)
 }
 
 // Agents returns the configured agent keys (empty on any error).

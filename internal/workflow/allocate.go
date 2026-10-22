@@ -198,7 +198,11 @@ func mergeRecordedPlanningCommit(root, wt, laneID string, sha *string, targetBra
 	if isAncestorIn(wt, *sha, "HEAD") {
 		return nil
 	}
-	r := git(wt, "merge", "--no-edit", "-m", fmt.Sprintf("Merge recorded planning-artifact commit into %s (FR-009)", laneID), *sha)
+	var r gitx.Result
+	withMergeDriverActivation(root, func() error {
+		r = git(wt, "merge", "--no-edit", "-m", fmt.Sprintf("Merge recorded planning-artifact commit into %s (FR-009)", laneID), *sha)
+		return nil
+	})
 	if r.Code == 0 {
 		return nil
 	}
@@ -228,6 +232,10 @@ func mergeDependencyLaneTips(o *Out, root, wt, slug string, lane *lanes.Lane, m 
 		return nil
 	}
 	sortLanes(deps)
+	return withMergeDriverActivation(root, func() error { return mergeDependencyLanes(o, root, wt, slug, lane, m, deps) })
+}
+
+func mergeDependencyLanes(o *Out, root, wt, slug string, lane *lanes.Lane, m *lanes.Manifest, deps []*lanes.Lane) error {
 	pre := branchTip(wt, "HEAD")
 	for _, dep := range deps {
 		branch := lanes.LaneBranchName(slug, dep.LaneID, m.TargetBranch)

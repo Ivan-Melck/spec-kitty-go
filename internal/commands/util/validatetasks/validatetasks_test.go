@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"fmt"
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
 
@@ -62,6 +63,29 @@ dependencies: []
 # WP03
 `
 
+// compareLocks compares the Mission write-lock files a repair leaves under
+// the git common dir (.git/spec-kitty-locks/<key>.status.lock, mode 0600,
+// empty; the holder sidecar removed).
+func compareLocks(t *testing.T, p *testkit.Pair) {
+	t.Helper()
+	list := func(s *testkit.Sandbox) string {
+		var out []string
+		dir := filepath.Join(s.Dir, ".git", "spec-kitty-locks")
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if e.Name() == "__project__.status.lock" {
+				continue // written by the oracle's init, not by validate-tasks
+			}
+			info, _ := e.Info()
+			out = append(out, fmt.Sprintf("%s %v %d", e.Name(), info.Mode(), info.Size()))
+		}
+		return strings.Join(out, "\n")
+	}
+	if g, o := list(p.Go), list(p.Oracle); g != o {
+		t.Errorf("lock files differ\n%s", testkit.Diff(o, g))
+	}
+}
+
 func legacyFixtures(s *testkit.Sandbox) {
 	s.WriteFile(".kittify/config.yaml", "agents:\n  available: [claude]\n")
 	s.WriteFile("kitty-specs/001-legacy/spec.md", "# spec\n")
@@ -90,6 +114,7 @@ func TestValidateTasksParity(t *testing.T) {
 	p.CompareTree("kitty-specs", true)
 	p.Compare(true, "validate-tasks", "--mission", "001-legacy", "--fix", "--agent", "codex", "--shell-pid", "4242")
 	p.CompareTree("kitty-specs", true)
+	compareLocks(t, p)
 	p.Compare(true, "validate-tasks", "--mission", "001-legacy")
 
 	p.Both(legacyFixtures)
@@ -99,6 +124,7 @@ func TestValidateTasksParity(t *testing.T) {
 	p.Compare(true, "validate-tasks", "--all", "--fix", "--agent", "codex", "--shell-pid", "7")
 	p.CompareTree("kitty-specs", true)
 	p.CompareTree(".worktrees", true)
+	compareLocks(t, p)
 	p.Compare(true, "validate-tasks", "--all")
 
 	// A narrow console collapses and wraps the table and summary panel.
@@ -113,30 +139,33 @@ func TestValidateTasksParityEdgeCases(t *testing.T) {
 		s.WriteFile(".kittify/config.yaml", "agents:\n  available: [claude]\n")
 	})
 	p.Compare(true, "validate-tasks", "--all")
-	// A YAML error degrades to empty metadata plus a logged warning (the
-	// PyYAML error detail itself is not reproduced byte for byte).
+	// A YAML error degrades to empty metadata plus a logged warning with
+	// PyYAML's exact error text.
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile("kitty-specs/001-x/tasks/doing/WP01.md", "---\nlane: [a\n---\n")
 	})
+	p.Compare(true, "validate-tasks", "--mission", "001-x")
+	// A ValueError while constructing (an impossible date) is not a
+	// YAMLError; detect_lane_mismatch's except Exception swallows it.
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile("kitty-specs/001-x/tasks/doing/WP01.md", "---\nlane: doing\nat: 2024-02-30\n---\n")
+	})
 	g, o := p.Compare(false, "validate-tasks", "--mission", "001-x")
-	const warn = "WARNING  YAML parse error in frontmatter (WP may vanish from dashboard): "
-	if !strings.HasPrefix(g.Stderr, warn) || !strings.HasPrefix(o.Stderr, warn) {
-		t.Errorf("warning: go=%q oracle=%q", g.Stderr, o.Stderr)
+	if a, b := testkit.MaskTracebackFrames(p.Go.Normalize(g.Stderr)), testkit.MaskTracebackFrames(p.Oracle.Normalize(o.Stderr)); a != b {
+		t.Errorf("traceback differs\n%s", testkit.Diff(b, a))
 	}
-	// A non-string lane is an uncaught AttributeError: compare the final
-	// exception line of the (Rich) traceback.
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile("kitty-specs/001-x/tasks/doing/WP01.md", "---\nlane: [a\n---\n")
+	})
+	// A non-string lane is an uncaught AttributeError: compare the rich
+	// traceback (frames masked).
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile("kitty-specs/001-x/tasks/doing/WP02.md", "---\nlane: 5\n---\n")
 	})
 	g, o = p.Compare(false, "validate-tasks", "--mission", "001-x")
-	if gl, ol := lastLine(g.Stderr), lastLine(o.Stderr); gl != ol {
-		t.Errorf("exception: go=%q oracle=%q", gl, ol)
+	if gl, ol := testkit.MaskTracebackFrames(p.Go.Normalize(g.Stderr)), testkit.MaskTracebackFrames(p.Oracle.Normalize(o.Stderr)); gl != ol {
+		t.Errorf("traceback differs\n%s", testkit.Diff(ol, gl))
 	}
-}
-
-func lastLine(s string) string {
-	l := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	return strings.TrimSpace(l[len(l)-1])
 }
 
 func TestValidateTasksE2E(t *testing.T) {

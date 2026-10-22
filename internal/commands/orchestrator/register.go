@@ -14,6 +14,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 const (
@@ -138,10 +139,24 @@ func (v *verb) root() string {
 	return cwd
 }
 
+// ambiguousFrames are the upstream frames below each verb's own frame
+// (orchestrator_api/_common.py, missions/_read_path_resolver.py).
+var ambiguousFrames = []rich.Frame{
+	{Name: "_resolve_mission_dir_or_fail", Line: 174},
+	{Name: "_resolve_mission_dir", Line: 134},
+	{Name: "resolve_handle_to_read_path", Line: 1127},
+	{Name: "_canonicalize_bare_modern_handle", Line: 488},
+	{Name: "resolve_bare_modern_mission_dir_name", Line: 1750},
+}
+
 // mission resolves --mission or emits the resolution failure envelope.
 func (v *verb) mission(root, handle string) (*orch.Mission, error) {
 	m, err := orch.ResolveMission(root, handle)
 	if err != nil {
+		if crash, ok := err.(*orch.SelectorAmbiguousCrash); ok {
+			rich.PrintTraceback(v.ctx.Stderr, &rich.Exception{Type: "MissionSelectorAmbiguous", Value: crash.Err.Error(), Frames: ambiguousFrames})
+			return nil, cli.Exit(1)
+		}
 		re := err.(*orch.ResolveError)
 		return nil, v.fail(re.Code, re.Message, re.Data)
 	}

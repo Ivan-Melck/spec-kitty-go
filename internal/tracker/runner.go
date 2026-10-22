@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // subprocessTimeout is SubprocessCommandRunner.timeout_seconds.
@@ -38,27 +40,33 @@ func runCommand(command []string, cwd string) (string, error) {
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
 	joined := strings.Join(command, " ")
+	reprs := make([]any, len(command))
+	for i, c := range command {
+		reprs[i] = c
+	}
+	causeFrames := []rich.Frame{{Name: "run", Line: 42}}
 	if ctx.Err() == context.DeadlineExceeded {
-		return "", requestError("Command timed out: " + joined)
+		return "", &TrackerError{Class: "ConnectorRequestError", Msg: "Command timed out: " + joined, FailureClass: "non_retryable",
+			Cause: &Crash{Type: "TimeoutExpired", Msg: fmt.Sprintf("Command '%s' timed out after %s seconds", pyjson.Repr(reprs), pyFloatSeconds(subprocessTimeout)), Frames: causeFrames}}
 	}
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
+			// str(CalledProcessError)
+			var excStr string
+			code := ee.ExitCode()
+			if ws, ok := ee.Sys().(interface{ Signal() syscall.Signal }); ok && code < 0 {
+				sig := ws.Signal()
+				excStr = fmt.Sprintf("Command '%s' died with <Signals.%s: %d>.", pyjson.Repr(reprs), signalName(sig), int(sig))
+			} else {
+				excStr = fmt.Sprintf("Command '%s' returned non-zero exit status %d.", pyjson.Repr(reprs), code)
+			}
 			stderr := strings.TrimSpace(errb.String())
 			if stderr == "" {
-				reprs := make([]any, len(command))
-				for i, c := range command {
-					reprs[i] = c
-				}
-				code := ee.ExitCode()
-				if ws, ok := ee.Sys().(interface{ Signal() syscall.Signal }); ok && code < 0 {
-					sig := ws.Signal()
-					stderr = fmt.Sprintf("Command '%s' died with <Signals.%s: %d>.", pyjson.Repr(reprs), signalName(sig), int(sig))
-				} else {
-					stderr = fmt.Sprintf("Command '%s' returned non-zero exit status %d.", pyjson.Repr(reprs), code)
-				}
+				stderr = excStr
 			}
-			return "", requestError(fmt.Sprintf("Command failed: %s :: %s", joined, stderr))
+			return "", &TrackerError{Class: "ConnectorRequestError", Msg: fmt.Sprintf("Command failed: %s :: %s", joined, stderr), FailureClass: "non_retryable",
+				Cause: &Crash{Type: "CalledProcessError", Msg: excStr, Frames: causeFrames}}
 		}
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
 			return "", &Crash{Type: "FileNotFoundError", Msg: fmt.Sprintf("[Errno 2] No such file or directory: %s", pyjson.ReprString(command[0]))}
@@ -218,7 +226,17 @@ func parseJSONOutput(output string) (any, error) {
 	}
 	v, err := pyjson.Loads(text)
 	if err != nil {
-		return nil, payloadError("Invalid JSON from bd: " + err.Error())
+		return nil, &TrackerError{Class: "IssuePayloadContractError", Msg: "Invalid JSON from bd: " + err.Error(),
+			Cause: &Crash{Type: "JSONDecodeError", Msg: err.Error(), Frames: []rich.Frame{{Name: "_parse_json", Line: 332}}}}
 	}
 	return v, nil
+}
+
+// pyFloatSeconds formats the timeout the way TimeoutExpired.__str__ does:
+// "%s" of the float timeout_seconds (30.0).
+func pyFloatSeconds(d time.Duration) string {
+	if d%time.Second == 0 {
+		return fmt.Sprintf("%d.0", int(d/time.Second))
+	}
+	return strconv.FormatFloat(d.Seconds(), 'g', -1, 64)
 }
