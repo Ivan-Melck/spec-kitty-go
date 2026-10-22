@@ -235,7 +235,7 @@ func runProfileShow(ctx *cli.Context) error {
 		if jsonMode {
 			jsonOut(ctx.Stdout, jsonx.NewObject("activated_candidates", strs(candidates), "error", "profile_not_activated", "profile_id", id), jsonx.SortedPretty)
 		} else {
-			cprintRaw(ctx.Stdout, fmt.Sprintf("Error: profile '%s' is not activated.", id))
+			cprintRaw(ctx.Stdout, fmt.Sprintf("[red]Error: profile '%s' is not activated.[/red]", id))
 			if len(candidates) > 0 {
 				cprintRaw(ctx.Stdout, "Activated candidates: "+strings.Join(candidates, ", "))
 			} else {
@@ -274,7 +274,7 @@ func runProfileShow(ctx *cli.Context) error {
 	}
 	renderProfileHuman(ctx, payload)
 	for _, w := range warnings {
-		cprintRaw(ctx.Stdout, "warning: "+w)
+		rich.PrintOpts(ctx.Stdout, rich.PrintOptions{Style: "yellow"}, "[yellow]warning: "+w+"[/yellow]")
 	}
 	return nil
 }

@@ -115,7 +115,7 @@ func mtError(ctx *cli.Context, jsonMode bool, err error) error {
 	if jsonMode {
 		jsonError(ctx.Stdout, code, msg)
 	} else {
-		cprintRaw(ctx.Stdout, "Error: "+msg)
+		cprintRaw(ctx.Stdout, "[red]Error:[/red] "+msg)
 	}
 	return cli.Exit(1)
 }
@@ -245,14 +245,14 @@ func runMissionSwitch(ctx *cli.Context) error {
 	fmt.Fprintln(ctx.Stderr, "DeprecationWarning: The command 'switch' is deprecated.")
 	w := ctx.Stdout
 	for _, l := range []string{
-		"Error: The 'mission switch' command was removed in v0.8.0.", "",
-		"Mission types are now selected per mission run during /spec-kitty.specify.", "",
-		"New workflow:",
-		"  1. Run /spec-kitty.specify inside your coding agent (Claude Code, Codex, Cursor) to start a new mission",
+		"[bold red]Error:[/bold red] The 'mission switch' command was removed in v0.8.0.", "",
+		"Mission types are now selected [bold]per mission run[/bold] during [cyan]/spec-kitty.specify[/cyan].", "",
+		"[cyan]New workflow:[/cyan]",
+		"  1. Run [bold]/spec-kitty.specify[/bold] inside your coding agent (Claude Code, Codex, Cursor) to start a new mission",
 		"  2. The system will infer and confirm the appropriate mission",
-		"  3. Mission is stored in the mission's meta.json", "",
-		"To see available missions:", "  spec-kitty mission list", "",
-		"See: https://github.com/your-org/spec-kitty#mission-types",
+		"  3. Mission is stored in the mission's [dim]meta.json[/dim]", "",
+		"[cyan]To see available missions:[/cyan]", "  spec-kitty mission list", "",
+		"[dim]See: https://github.com/your-org/spec-kitty#mission-types[/dim]",
 	} {
 		cprintRaw(w, l)
 	}
@@ -431,7 +431,7 @@ func runMissionCurrent(ctx *cli.Context) error {
 	}
 	m := findLegacyMission(root, mtype)
 	if m == nil {
-		cprintRaw(ctx.Stdout, fmt.Sprintf("Error: Mission '%s' not found", mtype))
+		cprintRaw(ctx.Stdout, fmt.Sprintf("[red]Error:[/red] Mission '%s' not found", mtype))
 		return cli.Exit(1)
 	}
 	rich.PanelStyled(ctx.Stdout, strings.Join(missionDetailLines(m), "\n"), "Active Mission (Mission: "+slug+")", "cyan")

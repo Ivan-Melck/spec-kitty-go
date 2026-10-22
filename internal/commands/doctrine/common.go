@@ -28,7 +28,7 @@ func cwd() string {
 	return wd
 }
 
-// cprint is rich console.print (markup stripped, wrapped).
+// cprint is rich console.print (markup, highlighting, wrapping).
 func cprint(w io.Writer, format string, a ...any) {
 	if len(a) == 0 {
 		rich.Print(w, format)
@@ -37,10 +37,12 @@ func cprint(w io.Writer, format string, a ...any) {
 	rich.Print(w, fmt.Sprintf(format, a...))
 }
 
-// cprintRaw prints without markup processing (markup=False) but wrapped.
-func cprintRaw(w io.Writer, s string) {
-	fmt.Fprintln(w, rich.Wrap(s, rich.Width()))
-}
+// cprintRaw is console.print(s) of a pre-built string (no format verbs):
+// markup, highlighting and wrapping like rich.
+func cprintRaw(w io.Writer, s string) { rich.Print(w, s) }
+
+// cprintPlain is console.print(s, markup=False).
+func cprintPlain(w io.Writer, s string) { rich.PrintPlain(w, s) }
 
 func jsonOut(w io.Writer, v any, opts jsonx.Options) {
 	fmt.Fprintln(w, jsonx.Dumps(v, opts))

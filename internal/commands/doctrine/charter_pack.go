@@ -257,7 +257,7 @@ func packAssetGroup() *cli.Command {
 			if ctx.Bool("json") {
 				fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("id", id, "error", msg), jsonx.Pretty))
 			} else {
-				cprintRaw(ctx.Stdout, msg)
+				cprintRaw(ctx.Stdout, "[red]"+msg+"[/red]")
 			}
 			return cli.Exit(1)
 		},

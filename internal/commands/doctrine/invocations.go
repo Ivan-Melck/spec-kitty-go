@@ -61,13 +61,13 @@ func runComplete(ctx *cli.Context) error {
 		var ac *invocation.AlreadyClosedError
 		switch {
 		case errors.As(err, &im):
-			cprintRaw(ctx.Stdout, "Error: "+im.Error())
+			cprintRaw(ctx.Stdout, "[red]Error:[/red] "+im.Error())
 			return cli.Exit(2)
 		case errors.As(err, &ac):
 			if jsonMode {
 				fmt.Fprintln(ctx.Stderr, jsonx.Dumps(jsonx.NewObject("error", "already_closed", "invocation_id", id), lineJSON))
 			} else {
-				cprintRaw(ctx.Stdout, fmt.Sprintf("Error: Invocation %s is already closed.", id))
+				cprintRaw(ctx.Stdout, fmt.Sprintf("[red]Error:[/red] Invocation %s is already closed.", id))
 			}
 			return cli.Exit(1)
 		}
@@ -85,7 +85,7 @@ func runComplete(ctx *cli.Context) error {
 		if ref == "" {
 			ref = "unknown refusal"
 		}
-		cprintRaw(ctx.Stdout, fmt.Sprintf("Warning: Op record auto-commit was refused (%s). The completed event is on disk but not committed — it will not survive a checkout or reset. Commit the Op record yourself, or set SPEC_KITTY_ALLOW_PROTECTED_BRANCH_COMMITS if you own this branch.", ref))
+		cprintRaw(ctx.Stdout, fmt.Sprintf("[yellow]Warning:[/yellow] Op record auto-commit was refused (%s). The completed event is on disk but not committed — it will not survive a checkout or reset. Commit the Op record yourself, or set SPEC_KITTY_ALLOW_PROTECTED_BRANCH_COMMITS if you own this branch.", ref))
 	}
 	if jsonMode {
 		links := []any{}

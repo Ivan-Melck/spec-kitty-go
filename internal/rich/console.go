@@ -125,6 +125,21 @@ func CliConsoleFor(w io.Writer, width int) *Console {
 // PrintTo prints renderables on CliConsole() for w.
 func PrintTo(w io.Writer, objs ...any) { CliConsoleFor(w, 0).Print(w, objs...) }
 
+// PrintOpts prints renderables on CliConsole() for w with print options.
+func PrintOpts(w io.Writer, po PrintOptions, objs ...any) { CliConsoleFor(w, 0).PrintWith(w, po, objs...) }
+
+// PrintSoftWrap is console.print(s, soft_wrap=True): markup and
+// highlighting, no wrapping or cropping.
+func PrintSoftWrap(w io.Writer, s string) { PrintOpts(w, PrintOptions{SoftWrap: BoolP(true)}, s) }
+
+// PrintPlainSoftWrap is console.print(s, markup=False, soft_wrap=True).
+func PrintPlainSoftWrap(w io.Writer, s string) {
+	PrintOpts(w, PrintOptions{SoftWrap: BoolP(true), Markup: BoolP(false)}, s)
+}
+
+// PrintPlain is console.print(s, markup=False).
+func PrintPlain(w io.Writer, s string) { PrintOpts(w, PrintOptions{Markup: BoolP(false)}, s) }
+
 func termEnvForced() bool {
 	switch os.Getenv("TTY_COMPATIBLE") {
 	case "0":

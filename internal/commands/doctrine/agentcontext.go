@@ -123,7 +123,7 @@ func runContextResolve(ctx *cli.Context) error {
 		if jsonMode {
 			jsonOut(ctx.Stdout, jsonx.NewObject("success", false, "error_code", code, "error", msg), jsonx.Pretty)
 		} else {
-			cprintRaw(ctx.Stdout, "Error: "+msg)
+			cprintRaw(ctx.Stdout, "[red]Error:[/red] "+msg)
 		}
 		return cli.Exit(1)
 	}

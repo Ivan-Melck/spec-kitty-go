@@ -4,6 +4,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // catchCharterLoad renders an exception raised by the charter-read encoding
@@ -21,7 +22,7 @@ func catchCharterLoad(run func(*cli.Context) error) func(*cli.Context) error {
 		if ctx.Bool("json") {
 			jsonOut(ctx.Stdout, jsonx.NewObject("error", msg, "result", "error", "success", false), jsonx.Line)
 		} else {
-			cprintRaw(ctx.Stdout, "Unexpected error: "+msg)
+			cprintRaw(ctx.Stdout, "[red]Unexpected error:[/red] "+rich.EscapeMarkup(msg))
 		}
 		return cli.Exit(1)
 	}

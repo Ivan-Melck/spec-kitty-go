@@ -152,7 +152,7 @@ func runBundleValidate(ctx *cli.Context) error {
 		if len(outScope) > 0 {
 			cprintRaw(w, "  Out-of-scope files present (informational):")
 			for _, rel := range outScope {
-				cprintRaw(w, "    "+rel)
+				cprintRaw(w, "    [yellow]"+rel+"[/yellow]")
 			}
 			cprintRaw(w, "")
 		}

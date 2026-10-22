@@ -88,7 +88,7 @@ func runCharterLint(ctx *cli.Context) error {
 			return cli.Exit(1)
 		}
 		if !jsonMode {
-			cprintRaw(w, "warning: org-layer skipped (load error): "+err.Error())
+			cprintRaw(w, "[yellow]warning:[/yellow] org-layer skipped (load error): "+err.Error())
 		}
 		frags = nil
 	}

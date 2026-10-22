@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/glossary"
 	"github.com/spec-kitty/go-kitty3/internal/invocation"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // lineJSON is json.dumps() with default separators on one line.
@@ -119,8 +120,17 @@ func runDispatch(ctx *cli.Context) error {
 	cprint(w, "  [dim]spec-kitty profile-invocation complete --invocation-id %s --outcome <done|failed|abandoned> \\[--evidence <file>] \\[--artifact <path>] \\[--commit <sha>][/dim]", p.InvocationID)
 	cprint(w, "[dim]Unclosed Ops are reported by `spec-kitty doctor ops` and swept to 'abandoned' when stale.[/dim]")
 	// Inline glossary drift notices for this invocation (never fails).
-	for _, l := range glossary.NoticeLines(glossary.CollectNotices(root, p.InvocationID)) {
-		cprintRaw(w, l)
+	if ns := glossary.CollectNotices(root, p.InvocationID); len(ns) > 0 {
+		// ObservationSurface.render_notices: Text objects (no highlighting).
+		rich.PrintTo(w)
+		for _, n := range ns {
+			l1 := rich.NewText("")
+			l1.Append("⚠ Glossary drift ", "yellow bold")
+			l1.Append("["+n.Severity+"]", "yellow")
+			l1.Append(fmt.Sprintf(": \"%s\" — %s detected", n.Term, n.ConflictType), nil)
+			rich.PrintTo(w, l1)
+			rich.PrintTo(w, rich.NewStyledText("  Suggest: run `spec-kitty glossary conflicts --unresolved`", "dim"))
+		}
 	}
 	return nil
 }

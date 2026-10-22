@@ -582,19 +582,23 @@ func runCharterPreflight(ctx *cli.Context) error {
 		}
 		cprint(w, "%s", "[bold "+colour+"]Charter preflight: "+head+"[/bold "+colour+"]")
 		for _, c := range res.checks {
-			cprintRaw(w, fmt.Sprintf("  %14s  %s: %s", strings.ToUpper(c.state), c.name, c.detail))
+			col := map[string]string{"fresh": "green", "skipped": "dim", "built_in_only": "cyan", "stale": "yellow", "missing": "blue", "invalid": "red"}[c.state]
+			if col == "" {
+				col = "white"
+			}
+			cprintRaw(w, fmt.Sprintf("  [%s]%14s[/%s]  %s: %s", col, strings.ToUpper(c.state), col, c.name, c.detail))
 			if c.remediation != "" {
-				cprintRaw(w, "                  Run: "+c.remediation)
+				cprintRaw(w, "                  [dim]Run: "+c.remediation+"[/dim]")
 			}
 		}
 		if res.applied {
 			cprint(w, "\n[bold]Auto-refresh:[/bold]")
 			for _, a := range res.actions {
-				cprintRaw(w, "  ran: "+a)
+				cprintRaw(w, "  [green]ran:[/green] "+a)
 			}
 		}
 		if res.blocked != "" {
-			cprintRaw(w, "\nBlocked: "+res.blocked)
+			cprintRaw(w, "\n[red]Blocked:[/red] "+res.blocked)
 		}
 	}
 	if res.passed || !ctx.Bool("strict") {
