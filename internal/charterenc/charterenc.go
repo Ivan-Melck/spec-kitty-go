@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/charsetnorm"
@@ -50,6 +51,17 @@ var Warn = func(string) {}
 // *Error (ambiguous), the UnicodeDecodeError recover lets escape for bytes
 // after a BOM, or the read error.
 func LoadFile(path string, unsafe bool) (*Content, error) {
+	if os.Getenv("CHARTERENC_TRACE") != "" {
+		var chain []string
+		for i := 1; i < 12; i++ {
+			pc, _, line, ok := runtime.Caller(i)
+			if !ok {
+				break
+			}
+			chain = append([]string{fmt.Sprintf("%s:%d", filepath.Base(runtime.FuncForPC(pc).Name()), line)}, chain...)
+		}
+		fmt.Fprintf(os.Stderr, "LOAD %s: %s\n", filepath.Base(path), strings.Join(chain, " > "))
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

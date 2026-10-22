@@ -81,7 +81,94 @@ func TestDiffCharterReadProvenance(t *testing.T) {
 	}
 }
 
-var fileRe = regexp.MustCompile(`"file_path":"([^"]*)"`)
+// TestDiffMissionPromptProvenance: runtime prompts that render charter
+// context (implement / review / next) load charter files the same way.
+func TestDiffMissionPromptProvenance(t *testing.T) {
+	t.Parallel()
+	p := missionfx.NewOraclePair(t)
+	missionfx.OracleCalcMission(t, p)
+	p.Both(func(s *testkit.Sandbox) {
+		s.RunOracle("charter", "interview", "--defaults", "--json")
+		s.RunOracle("charter", "generate", "--json")
+		s.Git("add", "-A")
+		s.Git("commit", "-q", "-m", "charter")
+		provenanceRecords(t, s)
+	})
+	for _, args := range [][]string{
+		{"next", "--mission", "$M", "--json"},
+		{"next", "--mission", "$M"},
+		{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M"},
+		{"agent", "context", "resolve", "--action", "implement", "--mission", "$M", "--json"},
+		{"charter", "context", "--action", "plan", "--json"},
+		{"charter", "context", "--action", "tasks"},
+	} {
+		g := p.Go.Run(subst(args, missionfx.MissionSlug(t, p.Go))...)
+		o := p.Oracle.RunOracle(subst(args, missionfx.MissionSlug(t, p.Oracle))...)
+		gr, or := provenanceRecords(t, p.Go), provenanceRecords(t, p.Oracle)
+		if strings.Join(gr, "\n") != strings.Join(or, "\n") {
+			t.Errorf("%v (exit go=%d oracle=%d): provenance records differ\n oracle: %s\n go:     %s", args, g.Code, o.Code, paths(or), paths(gr))
+		}
+	}
+}
+
+// TestDiffCharterNonUTF8Answers: a cp1252 interview transcript is decoded
+// (and recorded) through the chokepoint; an ambiguous one is refused.
+func TestDiffCharterNonUTF8Answers(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, tail string }{
+		{"cp1252", "# The team\x92s \x93principles\x94 are simple \x97 ship small, review everything.\n"},
+		{"ambiguous", "# plain ascii text with one stray byte \xe9 here\n"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := missionfx.NewOraclePair(t)
+			p.Both(func(s *testkit.Sandbox) {
+				s.RunOracle("charter", "interview", "--defaults", "--json")
+				path := filepath.Join(s.Dir, ".kittify", "charter", "interview", "answers.yaml")
+				b, _ := os.ReadFile(path)
+				os.WriteFile(path, append(b, []byte(tc.tail)...), 0o644)
+				provenanceRecords(t, s)
+			})
+			for _, args := range [][]string{
+				{"charter", "context", "--action", "implement", "--json"},
+				{"charter", "generate", "--json"},
+				{"charter", "context", "--action", "tasks"},
+			} {
+				g := p.Go.Run(args...)
+				o := p.Oracle.RunOracle(args...)
+				gr, or := provenanceRecords(t, p.Go), provenanceRecords(t, p.Oracle)
+				if g.Code != o.Code {
+					t.Errorf("%v: exit go=%d oracle=%d\n--- go\n%s%s\n--- oracle\n%s%s", args, g.Code, o.Code, g.Stdout, g.Stderr, o.Stdout, lastLines(o.Stderr, 4))
+				}
+				if gs, os_ := p.Go.Normalize(g.Stdout), p.Oracle.Normalize(o.Stdout); gs != os_ {
+					t.Errorf("%v: stdout differs\n%s", args, testkit.Diff(os_, gs))
+				}
+				if strings.Join(gr, "\n") != strings.Join(or, "\n") {
+					t.Errorf("%v: provenance records differ\n%s", args, testkit.Diff(strings.Join(or, "\n"), strings.Join(gr, "\n")))
+				}
+			}
+		})
+	}
+}
+
+func lastLines(s string, n int) string {
+	l := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(l) > n {
+		l = l[len(l)-n:]
+	}
+	return strings.Join(l, "\n")
+}
+
+func subst(args []string, slug string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = strings.ReplaceAll(a, "$M", slug)
+	}
+	return out
+}
+
+var fileRe =regexp.MustCompile(`"file_path":"([^"]*)"`)
 
 func paths(recs []string) string {
 	var out []string
