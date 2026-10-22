@@ -25,7 +25,7 @@ var SynthesisArtifactPaths = []string{".kittify/charter/synthesis-manifest.yaml"
 
 // canonicalYAML is synthesize_pipeline.canonical_yaml (sorted keys).
 func canonicalYAML(o *jsonx.Object) string {
-	return yamlx.Emit(sortKeysDeep(o))
+	return yamlx.EmitWith(sortKeysDeep(o), yamlx.Options{Width: 80})
 }
 
 func sortKeysDeep(v any) any {

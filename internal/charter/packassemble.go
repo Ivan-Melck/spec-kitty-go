@@ -691,6 +691,7 @@ func WritePackManifest(dir string, packVersion, etag *string, sourceURL, sourceT
 		}
 		hashed.Set(kv.Key, kv.Value)
 	}
+	hashed.Set("charter", nil)
 	sum := sha256.Sum256([]byte(canonicalYAML(hashed)))
 	// field order (model order): schema_version, generated_by, generated_at,
 	// source_url, source_type, fetched_at, pack_version, etag,
