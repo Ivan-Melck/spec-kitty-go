@@ -43,6 +43,23 @@ type Options struct {
 	JSON, Yes      bool
 	Resume         bool
 	OriginCheck    *string // --origin-check (nil = environment/default)
+	SkipLanes      bool    // --skip-lanes: synthesize a no-lane manifest when lanes.json is absent
+}
+
+// synthesizeNoLaneManifest is _synthesize_no_lane_manifest: one planning
+// lane carrying every WP of the status snapshot, landing directly on the
+// target branch.
+func (r *run) synthesizeNoLaneManifest() *lanes.Manifest {
+	target := r.target
+	var ids []string
+	if snap, err := status.ReduceDir(r.sf.StatusDir()); err == nil {
+		ids = snap.WorkPackages.Keys()
+		sort.Strings(ids)
+	}
+	mid := missionIDOf(r.root, r.slug)
+	return &lanes.Manifest{Version: 1, MissionSlug: r.slug, MissionID: &mid, MissionBranch: target,
+		TargetBranch: target, Lanes: []lanes.Lane{{LaneID: lanes.PlanningLaneID, WPIDs: ids}},
+		ComputedAt: clock.NowUTCISO(), ComputedFrom: "skip-lanes direct-on-target synthesis (T021, FR-012)"}
 }
 
 var compact = jsonx.Options{Indent: -1, EnsureASCII: true}
@@ -193,7 +210,7 @@ func Run(w io.Writer, root string, o Options) error {
 		}
 		say(w, fmt.Sprintf("Resume requested for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
 	}
-	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck}
+	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck, skipLanes: o.SkipLanes}
 	return r.execute()
 }
 
@@ -317,8 +334,10 @@ type run struct {
 	number      int
 	baseline    string
 	squash      string
-	push        bool
-	state       *MergeState
+	push         bool
+	skipLanes    bool
+	planningOnly bool
+	state        *MergeState
 	originCheck *string
 	originGated bool
 }
@@ -436,11 +455,22 @@ func (r *run) execute() error {
 		}
 	}
 	m, msg := requireLanes(r.sf.PrimaryDir)
+	if m == nil && r.skipLanes {
+		if _, err := os.Stat(filepath.Join(r.sf.PrimaryDir, lanes.File)); os.IsNotExist(err) {
+			m = r.synthesizeNoLaneManifest()
+		}
+	}
 	if m == nil {
 		sayErr(r.w, msg)
 		return exit(1)
 	}
 	r.m = m
+	r.planningOnly = m.MissionBranch == m.TargetBranch
+	for _, l := range m.Lanes {
+		if l.LaneID != lanes.PlanningLaneID {
+			r.planningOnly = false
+		}
+	}
 	for _, x := range r.ret.Warnings {
 		say(r.w, "[yellow]Warning:[/yellow] "+x)
 	}
@@ -513,6 +543,9 @@ func (r *run) execute() error {
 		ids = append(ids, l.LaneID)
 	}
 	say(r.w, "  Lanes: "+strings.Join(ids, ", "))
+	if r.planningOnly {
+		say(r.w, "  Planning-artifact-only mission: target branch already contains deliverables; branch merge steps will be skipped.")
+	}
 	gatesPass := true
 	for _, g := range EvaluateGates(r.root, r.sf.PrimaryDir, r.sf.StatusDir(), r.sf.StatusDir(), r.wps, LoadGatePolicy(r.root)) {
 		icon := "[green]✓[/green]"
@@ -869,6 +902,15 @@ func (r *run) bake() error {
 		return nil
 	}
 	r.number = NextMissionNumber(r.root)
+	if r.planningOnly {
+		// written now (the done transitions materialize it), committed by
+		// the done bookkeeping commit on the target
+		if meta, err := mission.ReadMeta(r.sf.PrimaryDir); err == nil {
+			meta.Set("mission_number", r.number)
+			mission.WriteMeta(r.sf.PrimaryDir, meta, false)
+		}
+		return nil
+	}
 	dir, cleanup, err := scratchWorktree(r.root, r.m.MissionBranch, "kitty-numwrite-")
 	if err != nil {
 		return nil
@@ -977,6 +1019,11 @@ func (r *run) clearTerminalLaneTips(sf *coord.Surface) {
 // mission → target squash
 
 func (r *run) squashIntoTarget() error {
+	if r.planningOnly {
+		say(r.w, fmt.Sprintf("  [dim]Skipping mission branch merge; %s is the planning artifact branch.[/dim]", r.m.TargetBranch))
+		r.squash = revParse(r.root, "refs/heads/"+r.m.TargetBranch)
+		return nil
+	}
 	say(r.w, fmt.Sprintf("  [dim]Merging mission branch into %s...[/dim]", r.m.TargetBranch))
 	dir, cleanup, err := scratchWorktree(r.root, r.m.TargetBranch, "kitty-merge-")
 	if err != nil {
