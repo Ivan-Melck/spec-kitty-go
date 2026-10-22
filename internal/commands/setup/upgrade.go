@@ -2,9 +2,11 @@ package setup
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -13,11 +15,13 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/bootstrap"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
+	"github.com/spec-kitty/go-kitty3/internal/toolsurface"
 )
 
 const upgradeDoc = `Upgrade a Spec Kitty project to the current version.
@@ -330,7 +334,8 @@ func runPlannerJSON(w io.Writer, root, targetVersion string, dryRun, noNag bool)
 	payload.Set("rendered_human", "")
 	semantic := p.ExitCode
 	current := detectProjectVersion(root)
-	if verr := validateUpgradeTarget(current, targetVersion); verr != "" {
+	verr := validateUpgradeTarget(current, targetVersion)
+	if verr != "" {
 		payload.Set("pending_migrations", []any{})
 		switch p.Decision {
 		case DecisionBlockCorrupt, DecisionBlockCLIUpgrade, DecisionBlockMigration:
@@ -344,15 +349,26 @@ func runPlannerJSON(w io.Writer, root, targetVersion string, dryRun, noNag bool)
 		}
 	} else {
 		payload.Set("pending_migrations", migrationSteps(root, targetVersion))
-		if dryRun && semantic != 2 && semantic != 5 && semantic != 6 {
-			if notice := supportingRepairNotice(root); notice != "" {
-				payload.Set("rendered_human", "\n"+notice)
-			}
-		}
 	}
 	code := semantic
 	if dryRun && semantic != 5 {
 		code = 0
+	}
+	if dryRun && verr == "" && semantic != 2 && semantic != 5 && semantic != 6 {
+		notice, incomplete := supportingRepairNotice(root)
+		if notice != "" {
+			notice = truncate(notice, 1023)
+			compat := payload.GetString("rendered_human")
+			keep := 1023 - len(notice)
+			if keep < 0 {
+				keep = 0
+			}
+			payload.Set("rendered_human", truncate(compat, keep)+"\n"+notice)
+		}
+		if incomplete {
+			code = 1
+			payload.Set("exit_code", code)
+		}
 	}
 	fmt.Fprintln(w, prettyJSON(payload))
 	return exitOrNil(code)
@@ -440,15 +456,49 @@ func runFullPlanJSON(w io.Writer, root string, requested any, target string, pro
 	if terr != "" {
 		return block(2, "invalid_target", terr)
 	}
-	roots := p.GetList("roots")
-	p.Set("roots", append([]any{jsonx.NewObject("id", "global_assets", "scope", "global", "path", filepath.Dir(project.UserHome()))}, roots...))
+	prepared, err := toolsurface.PrepareUpgradeRepairs(root)
+	var effects []any
+	if err == nil {
+		effects, err = prepared.PlanEffectsJSON()
+	}
+	if err != nil {
+		p.Set("decision", "incomplete")
+		p.Set("process_exit_code", 1)
+		p.Set("diagnostics", []any{jsonx.NewObject("code", "assessment_failed", "owner", nil, "severity", "error", "message", preparationErrorText(err))})
+		fmt.Fprintln(w, prettyJSON(p))
+		return cli.Exit(1)
+	}
+	p.Set("roots", prepared.PlanRootsJSON())
 	p.Set("migrations", migrationSteps(root, target))
-	p.Set("complete", true)
-	p.Set("decision", "ready")
-	p.Set("process_exit_code", 0)
+	p.Set("effects", effects)
+	p.Set("dispositions", prepared.PlanDispositionsJSON())
+	p.Set("diagnostics", prepared.PlanDiagnosticsJSON())
+	p.Set("execution_artifacts", prepared.PlanArtifactsJSON())
+	complete := prepared.Complete()
+	p.Set("complete", complete)
+	code := 0
+	if complete {
+		p.Set("decision", "ready")
+	} else {
+		p.Set("decision", "incomplete")
+		code = 1
+	}
+	p.Set("process_exit_code", code)
 	p.Set("commit_policy", jsonx.NewObject("project_enabled", kittify.AutoCommit(root), "worktrees_enabled", !noWorktrees, "mission_repair_included", false))
 	fmt.Fprintln(w, prettyJSON(p))
-	return nil
+	return exitOrNil(code)
+}
+
+// preparationErrorText is upgrade._preparation_error_text.
+func preparationErrorText(err error) string {
+	if e, ok := err.(*kittify.DefaultPresetError); ok {
+		return fmt.Sprintf("Error (%s): %s", e.Code(), e.Body)
+	}
+	var ce *dct.ConfigError
+	if errors.As(err, &ce) && ce.Body != "" {
+		return ce.Body
+	}
+	return err.Error()
 }
 
 func locateProject(cwd string) string {
@@ -485,6 +535,10 @@ type upgradeOutcome struct {
 	resultOrder        []string
 	manualReview       []string
 	worktreeFailures   []string
+	// previewIncomplete / surfaceRepairMessages are the dry-run preview's
+	// SurfaceRepairReport (preview_incomplete, failure_messages).
+	previewIncomplete     bool
+	surfaceRepairMessages []string
 }
 
 // collectManualReviewPaths is upgrade._collect_manual_review_paths.
@@ -513,6 +567,9 @@ func (o *upgradeOutcome) reasons() []string {
 	}
 	if len(o.surfaceRepairFails) > 0 {
 		r = append(r, "surface_repair_failed")
+	}
+	if o.previewIncomplete {
+		r = append(r, "preview_incomplete")
 	}
 	return r
 }
@@ -543,6 +600,7 @@ func (o *upgradeOutcome) errorList() []string {
 	all = append(all, o.activationErrors...)
 	all = append(all, o.worktreeFailures...)
 	all = append(all, o.surfaceRepairFails...)
+	all = append(all, o.surfaceRepairMessages...)
 	seen := map[string]bool{}
 	var out []string
 	for _, e := range all {
@@ -692,7 +750,10 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 	}
 	if o.success {
 		if opt.dryRun {
-			if n := supportingRepairNotice(root); n != "" && !opt.jsonOut {
+			if n, incomplete := supportingRepairNotice(root); incomplete {
+				o.previewIncomplete = true
+				o.surfaceRepairMessages = append(o.surfaceRepairMessages, n)
+			} else if n != "" && !opt.jsonOut {
 				plain(w, n)
 			}
 		} else {
@@ -907,65 +968,45 @@ func applyUpgradeRepairs(root string, o *upgradeOutcome) {
 	InstallPresence(root, ac.Available)
 }
 
-// supportingRepairNotice is _supporting_repair_preview's text: an estimate
-// of the effects a real run's repair would apply.
-func supportingRepairNotice(root string) string {
-	effects, manifests := 0, 0
-	dirs := map[string]bool{}
-	countPath := func(rel string) {
-		effects++
-		d := filepath.Dir(filepath.FromSlash(rel))
-		for d != "." && d != string(filepath.Separator) {
-			if dirs[d] {
-				break
-			}
-			if _, err := os.Stat(filepath.Join(root, d)); err == nil {
-				break
-			}
-			dirs[d] = true
-			effects++
-			d = filepath.Dir(d)
+// supportingRepairNotice is _supporting_repair_preview: the count of the
+// canonical retained effects a real run would apply (incomplete=true when
+// the preparation could not be completed).
+func supportingRepairNotice(root string) (string, bool) {
+	const hint = "Use --plan-json for full repair details."
+	clause := func(s string) string { return strings.TrimRight(strings.TrimRight(s, " \t\n\r"), ".") }
+	prepared, err := toolsurface.PrepareUpgradeRepairs(root)
+	var effects []toolsurface.Effect
+	if err == nil && !prepared.Complete() {
+		detail := truncate(strings.Join(prepared.ErrorMessages(), "; "), 350)
+		if c := clause(detail); c != "" {
+			return "Supporting repair preview incomplete: " + c + ". " + hint, true
 		}
+		return "Supporting repair preview incomplete: Required owner assessment incomplete. " + hint, true
 	}
-	ac, err := kittify.LoadAgentConfig(root)
+	if err == nil {
+		effects, err = prepared.Effects()
+	}
 	if err != nil {
-		return "Supporting repair preview incomplete: " + strings.TrimRight(err.Error(), ".") + ". Use --plan-json for full repair details."
+		return "Supporting repair preview incomplete: " + clause(truncate(preparationErrorText(err), 350)) + ". " + hint, true
 	}
-	prev := agents.LoadSkillsManifest(root)
-	seen := map[string]bool{}
-	for _, a := range ac.Available {
-		st := classifySkills(root, a, prev)
-		for _, p := range append(st.missing, st.stale...) {
-			if seen[p] {
-				continue
-			}
-			seen[p] = true
-			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err != nil {
-				countPath(p)
-			} else {
-				effects++
+	preserved := prepared.PreservedCount()
+	if len(effects) == 0 && preserved == 0 {
+		return "", false
+	}
+	var lines []string
+	if len(effects) > 0 {
+		manifests := 0
+		for _, e := range effects {
+			if e.After.Kind != "directory" && strings.Contains(strings.ToLower(path.Base(e.Path)), "manifest") {
+				manifests++
 			}
 		}
-		if agents.IsCommandSkillAgent(a) {
-			for _, c := range agents.CommandSkillCommands {
-				p := agents.CommandSkillPath(c)
-				if seen[p] {
-					continue
-				}
-				if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err != nil {
-					seen[p] = true
-					countPath(p)
-				}
-			}
-		}
+		lines = append(lines, fmt.Sprintf("Would repair %d supporting surface paths (including %d manifests).", len(effects), manifests))
 	}
-	if kittify.ConfigExists(root) && activationProvisioningPending(root) {
-		effects++
+	if preserved > 0 {
+		lines = append(lines, fmt.Sprintf("Would preserve %d paths requiring separate consent.", preserved))
 	}
-	if effects == 0 {
-		return ""
-	}
-	return fmt.Sprintf("Would repair %d supporting surface paths (including %d manifests). Use --plan-json for full repair details.", effects, manifests)
+	return strings.Join(append(lines, hint), " "), false
 }
 
 func printDryRunProvisioningNotice(w io.Writer, root string, dryRun bool) {
