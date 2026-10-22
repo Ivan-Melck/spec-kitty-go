@@ -7,6 +7,7 @@ package colorparity
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
@@ -224,6 +226,115 @@ func usageProbes(t *testing.T) []probe {
 		out = append(out, probe{strings.Join(args, " "), args})
 	}
 	return out
+}
+
+// leafProbes: every inventoried leaf command run bare (no arguments),
+// except commands that start long-running or interactive work.
+func leafProbes(t *testing.T) []probe {
+	dir := inventoryDir()
+	if dir == "" {
+		t.Skip("help inventory not present")
+	}
+	skip := map[string]bool{"init": true, "upgrade": true, "dashboard": true, "merge-driver": true,
+		"session-start": true, "session-stop": true, "plugin build": true, "lint": true, "events tail": true,
+		"commit-guard-hook": true}
+	groups := map[string]bool{}
+	files, _ := filepath.Glob(filepath.Join(dir, "*.txt"))
+	var paths [][]string
+	for _, f := range files {
+		args := pathArgs(filepath.Base(f))
+		paths = append(paths, args)
+		if len(args) > 1 {
+			groups[strings.Join(args[:len(args)-1], " ")] = true
+		}
+	}
+	var out []probe
+	for _, a := range paths {
+		name := strings.Join(a, " ")
+		if len(a) == 0 || groups[name] || skip[name] || strings.HasPrefix(name, "merge-driver") || strings.HasPrefix(name, "__") {
+			continue
+		}
+		out = append(out, probe{name, a})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
+}
+
+// TestNoProjectColour runs every leaf command bare in an empty directory
+// (not a project, not a git repository) and compares the coloured output:
+// the "not in a project" / missing-argument paths of every command family.
+func TestNoProjectColour(t *testing.T) {
+	oracle := testkit.Oracle(t)
+	bin := testkit.Binary(t)
+	probes := leafProbes(t)
+	for _, v := range colourSystems[:1] {
+		v := v
+		t.Run(v.name, func(t *testing.T) {
+			ch := make(chan probe)
+			var mu sync.Mutex
+			var bad []string
+			var wg sync.WaitGroup
+			for w := 0; w < 6; w++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for p := range ch {
+						base := t.TempDir()
+						res := map[string]string{}
+						for _, side := range []string{"o", "g"} {
+							home, cwd := filepath.Join(base, "home"+side), filepath.Join(base, "cwd"+side)
+							os.MkdirAll(home, 0o755)
+							os.MkdirAll(cwd, 0o755)
+							exe := bin
+							if side == "o" {
+								exe = oracle
+							}
+							out, code := runTimeout(exe, home, cwd, v.env, p.args...)
+							out = strings.ReplaceAll(strings.ReplaceAll(out, cwd, "<CWD>"), home, "<HOME>")
+							res[side] = fmt.Sprintf("exit %d\n%s", code, normalize(out))
+						}
+						if res["o"] != res["g"] {
+							mu.Lock()
+							bad = append(bad, p.name)
+							if os.Getenv("COLORPARITY_VERBOSE") != "" {
+								t.Logf("%s: %s", p.name, firstDiff(res["o"], res["g"]))
+							}
+							mu.Unlock()
+						}
+					}
+				}()
+			}
+			for _, p := range probes {
+				ch <- p
+			}
+			close(ch)
+			wg.Wait()
+			sort.Strings(bad)
+			if len(bad) > 0 {
+				t.Errorf("%d of %d differ: %s", len(bad), len(probes), strings.Join(bad, ", "))
+			}
+		})
+	}
+}
+
+// runTimeout is run with stdin closed and a 90 s limit.
+func runTimeout(bin, home, cwd string, env []string, args ...string) (string, int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = cwd
+	cmd.Env = append([]string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "SPEC_KITTY_NO_UPGRADE_CHECK=1",
+		"LANG=C.UTF-8", "COLUMNS=100", "GIT_CONFIG_NOSYSTEM=1"}, env...)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	err := cmd.Run()
+	code := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	} else if err != nil {
+		code = -1
+	}
+	return out.String(), code
 }
 
 // TestPTYSpotCheck runs a few commands under a real pseudo-terminal
