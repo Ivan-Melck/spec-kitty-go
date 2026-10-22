@@ -145,6 +145,10 @@ func runCharterActivate(ctx *cli.Context) error {
 		cprint(w, "[red]Error:[/red] Unknown kind '%s'. Valid kinds: %s.", kind, validKindsListing())
 		return cli.Exit(1)
 	}
+	if err := writeRootError(); err != nil {
+		cprint(w, "[red]Error:[/red] %s", err.Error())
+		return cli.Exit(1)
+	}
 	root := charterRoot(ctx)
 	scope, err := parseCascade(ctx.OptString("cascade"))
 	if err != nil {
@@ -166,8 +170,21 @@ func runCharterActivate(ctx *cli.Context) error {
 	}
 	reg, err := charter.PlanProjectRegistration(root, app.Version)
 	if err != nil {
+		// activate_cmd catches (ValueError, DRGLoadError) only.
+		if charter.IsUnexpectedError(err) {
+			if _, isLoad := err.(*charter.DRGLoadError); !isLoad {
+				return pyCrash(ctx, charter.PyExceptionClass(err), err.Error(),
+					crashFrames(err, rich.Frame{Name: "activate_cmd", Line: 976}, rich.Frame{Name: "plan_project_registration", Line: 265})...)
+			}
+		}
 		cprint(w, "[red]Error:[/red] %s", err.Error())
 		return cli.Exit(1)
+	}
+	if ctx.Bool("resynthesize") {
+		if err := preflightResynthesis(root, kind, id, scope); err != nil {
+			cprint(w, "[red]Error:[/red] %s", err.Error())
+			return cli.Exit(1)
+		}
 	}
 	res, err := charter.Activate(root, kind, id)
 	if err != nil {
@@ -184,18 +201,20 @@ func runCharterActivate(ctx *cli.Context) error {
 	for _, m := range append(append([]string{}, reg.Warnings...), res.Warnings...) {
 		cprint(w, "[yellow]Warning[/yellow]: %s", m)
 	}
+	renderTensionWarnings(ctx, root)
 	if src := charter.SourceURN(root, kind, id); src != "" {
-		renderActivationCascade(ctx, root, src, scope)
+		if err := renderActivationCascade(ctx, root, src, scope); err != nil {
+			return err
+		}
 	}
-	recompileOrNotify(ctx, root)
-	return nil
+	return recompileOrNotify(ctx, root)
 }
 
-func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeScope) {
+func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeScope) error {
 	w := ctx.Stdout
-	g, err := dct.LoadGraph(root, dct.OrgRoots(root))
-	if err != nil {
-		return
+	g, err := loadCascadeGraph(ctx, root, rich.Frame{Name: "activate_cmd", Line: 1015}, rich.Frame{Name: "_render_cascade_activation", Line: 261})
+	if g == nil {
+		return err
 	}
 	act, filtered := charter.CascadeRefs(g, src)
 	ix := charter.NewConfigIDIndex(root)
@@ -252,19 +271,24 @@ func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeS
 			cprint(w, "[dim]Not cascaded[/dim]: %s/%s (kind not charter-activatable)", tok(k), ix.ConfigID(k+":"+id))
 		}
 	}
+	return nil
 }
 
 // recompileOrNotify is recompile_or_notify (the catalog recompile is a
 // no-op while .kittify/charter/charter.yaml does not exist).
-func recompileOrNotify(ctx *cli.Context, root string) {
+func recompileOrNotify(ctx *cli.Context, root string) error {
 	w := ctx.Stdout
-	if !ctx.Bool("compile") && !ctx.Bool("resynthesize") {
+	if ctx.Bool("resynthesize") {
+		return runFullSynthesize(ctx, root)
+	}
+	if !ctx.Bool("compile") {
 		cprint(w, "[yellow]Catalog not recompiled[/yellow] (--no-compile): catalog.references may go stale until the next `charter generate` or `charter activate --resynthesize`.")
-		return
+		return nil
 	}
 	if err := charter.RecompileCatalog(root); err != nil {
 		cprint(w, "[yellow]Catalog not recompiled[/yellow]: %s catalog.references may go stale until the next `charter generate` (from a git repository, with a clean activation set) or `charter activate --resynthesize`.", err.Error())
 	}
+	return nil
 }
 
 var actionProfileDefaults = [][3]string{
@@ -311,6 +335,10 @@ func runCharterDeactivate(ctx *cli.Context) error {
 		cprint(w, "[red]Error:[/red] Unknown kind '%s'. Valid kinds: %s.", kind, validKindsListing())
 		return cli.Exit(1)
 	}
+	if err := writeRootError(); err != nil {
+		cprint(w, "[red]Error:[/red] %s", err.Error())
+		return cli.Exit(1)
+	}
 	root := charterRoot(ctx)
 	scope, err := parseCascade(ctx.OptString("cascade"))
 	if err != nil {
@@ -342,18 +370,19 @@ func runCharterDeactivate(ctx *cli.Context) error {
 	}
 	if scope != nil && len(res.Deactivated) > 0 {
 		if src := charter.SourceURN(root, kind, id); src != "" {
-			renderDeactivationCascade(ctx, root, src, scope)
+			if err := renderDeactivationCascade(ctx, root, src, scope); err != nil {
+				return err
+			}
 		}
 	}
-	recompileOrNotify(ctx, root)
-	return nil
+	return recompileOrNotify(ctx, root)
 }
 
-func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cascadeScope) {
+func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cascadeScope) error {
 	w := ctx.Stdout
-	g, err := dct.LoadGraph(root, dct.OrgRoots(root))
-	if err != nil {
-		return
+	g, err := loadCascadeGraph(ctx, root, rich.Frame{Name: "deactivate_cmd", Line: 339}, rich.Frame{Name: "_render_cascade_deactivation", Line: 180})
+	if g == nil {
+		return err
 	}
 	act, filtered := charter.CascadeRefs(g, target)
 	ix := charter.NewConfigIDIndex(root)
@@ -427,6 +456,7 @@ func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cas
 			cprint(w, "[dim]Not cascaded[/dim]: %s/%s (kind not charter-activatable)", strings.ReplaceAll(k, "_", "-"), ix.ConfigID(k+":"+id))
 		}
 	}
+	return nil
 }
 
 // ---- charter list -----------------------------------------------------------

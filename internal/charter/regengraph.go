@@ -2,6 +2,8 @@ package charter
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,13 +12,13 @@ import (
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
-// `charter pack regenerate-graph` support. The DRG extractor/calibrator is
-// not ported: the regenerated fragment set is the shipped (embedded)
-// built-in graph source plus its pack-manifest.yaml, which is exactly what
-// upstream's regeneration yields for the unmodified shipped pack.
+// `charter pack regenerate-graph` support: the DRG extractor port lives in
+// regengraph_extract.go, the built-in pack manifest generator
+// (charter.offering.packs.builtin_manifest) here.
 
 // RequireBuiltInLevel is _require_built_in_level: ("", true) when the root
 // carries a pack.yaml declaring pack_level: built-in.
@@ -40,20 +42,6 @@ func RequireBuiltInLevel(root string) (string, bool) {
 	return "", true
 }
 
-// shippedGraphSource returns {name: bytes} of the embedded graph source and
-// the embedded pack-manifest.yaml.
-func shippedGraphSource() (map[string][]byte, []byte) {
-	bi := dct.BuiltIn()
-	out := map[string][]byte{}
-	for _, rel := range bi.Walk(".", ".graph.yaml", false) {
-		if b, err := bi.ReadFile(rel); err == nil {
-			out[filepath.Base(rel)] = b
-		}
-	}
-	m, _ := bi.ReadFile("pack-manifest.yaml")
-	return out, m
-}
-
 func readGraphSource(dir string) map[string][]byte {
 	out := map[string][]byte{}
 	single := filepath.Join(dir, "graph.yaml")
@@ -75,37 +63,170 @@ func lfNormalise(b []byte) []byte {
 	return []byte(strings.ReplaceAll(string(b), "\r\n", "\n"))
 }
 
-// BuiltInGraphIsFresh is the --check comparison.
-func BuiltInGraphIsFresh(root string) bool {
-	want, manifest := shippedGraphSource()
-	got := readGraphSource(root)
-	if len(want) != len(got) {
-		return false
-	}
-	for k, v := range want {
-		if !bytes.Equal(lfNormalise(v), lfNormalise(got[k])) {
-			return false
-		}
-	}
-	have, err := os.ReadFile(filepath.Join(root, "pack-manifest.yaml"))
-	return err == nil && bytes.Equal(lfNormalise(have), lfNormalise(manifest))
+// RegenStatus is the outcome of a regenerate-graph run.
+type RegenStatus struct {
+	Status string // written | fresh | stale | invalid
+	Detail string // "; ".join(DRGValidationError.errors) for invalid
 }
 
-// WriteBuiltInGraph writes the regenerated fragments (retiring a legacy
-// graph.yaml monolith) and the built-in pack manifest under root.
-func WriteBuiltInGraph(root string) error {
-	want, manifest := shippedGraphSource()
-	_ = os.Remove(filepath.Join(root, "graph.yaml"))
+// CheckBuiltInGraph is the --check path: regenerate in memory and compare
+// the per-kind fragments (text, universal newlines) and the pack manifest
+// (bytes) against the committed source under root.
+func CheckBuiltInGraph(root string) (RegenStatus, error) {
+	g, err := generateReferenceGraph(root)
+	if err != nil {
+		if v, ok := err.(*dct.DRGValidationError); ok {
+			return RegenStatus{"invalid", strings.Join(v.Errors, "; ")}, nil
+		}
+		return RegenStatus{}, err
+	}
+	want := GraphFragments(g)
+	got := readGraphSource(root)
+	fresh := len(want) == len(got)
+	if fresh {
+		for k, v := range want {
+			if string(lfNormaliseAll(got[k])) != v {
+				fresh = false
+				break
+			}
+		}
+	}
+	if fresh {
+		have, err := os.ReadFile(filepath.Join(root, BuiltinManifestFile))
+		if err != nil {
+			fresh = false
+		} else {
+			m, err := BuildBuiltinManifest(root)
+			if err != nil {
+				return RegenStatus{}, err
+			}
+			fresh = bytes.Equal(have, []byte(m))
+		}
+	}
+	if fresh {
+		return RegenStatus{Status: "fresh"}, nil
+	}
+	return RegenStatus{Status: "stale"}, nil
+}
+
+// WriteBuiltInGraph regenerates the per-kind fragments under root (retiring
+// stale fragments and a graph.yaml monolith) and then the pack manifest.
+func WriteBuiltInGraph(root string) (RegenStatus, error) {
+	g, err := generateReferenceGraph(root)
+	if err != nil {
+		if v, ok := err.(*dct.DRGValidationError); ok {
+			return RegenStatus{"invalid", strings.Join(v.Errors, "; ")}, nil
+		}
+		return RegenStatus{}, err
+	}
+	frags := GraphFragments(g)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return RegenStatus{}, err
+	}
+	for name, text := range frags {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o644); err != nil {
+			return RegenStatus{}, err
+		}
+	}
 	m, _ := filepath.Glob(filepath.Join(root, "*.graph.yaml"))
 	for _, f := range m {
-		if _, ok := want[filepath.Base(f)]; !ok {
+		if _, ok := frags[filepath.Base(f)]; !ok {
 			_ = os.Remove(f)
 		}
 	}
-	for name, b := range want {
-		if err := os.WriteFile(filepath.Join(root, name), b, 0o644); err != nil {
-			return err
+	if st, err := os.Stat(filepath.Join(root, "graph.yaml")); err == nil && st.Mode().IsRegular() {
+		_ = os.Remove(filepath.Join(root, "graph.yaml"))
+	}
+	text, err := BuildBuiltinManifest(root)
+	if err != nil {
+		return RegenStatus{}, err
+	}
+	if err := os.WriteFile(filepath.Join(root, BuiltinManifestFile), []byte(text), 0o644); err != nil {
+		return RegenStatus{}, err
+	}
+	return RegenStatus{Status: "written"}, nil
+}
+
+// BuiltinManifestFile is builtin_manifest.MANIFEST_FILENAME.
+const BuiltinManifestFile = "pack-manifest.yaml"
+
+// BuildBuiltinManifest is dump_pack_manifest_bytes(build_builtin_manifest(root)).
+func BuildBuiltinManifest(root string) (string, error) {
+	type constituent struct{ kind, id, path, hash string }
+	var cs []constituent
+	for _, k := range dct.AllKinds {
+		if !k.HasBuiltInContentDir() {
+			continue
+		}
+		d := filepath.Join(root, k.Plural())
+		if !isDirPath(d) {
+			continue
+		}
+		idKey := "id"
+		if k == dct.AgentProfile {
+			idKey = "profile-id"
+		}
+		for _, p := range rglobFiles(d, suffixMatch(k.Suffix())) {
+			raw, err := os.ReadFile(p)
+			if err != nil {
+				return "", err
+			}
+			// YAML(typ="safe").load(path.read_text(encoding="utf-8"))
+			v, err := yamlx.ParseWith(raw, yamlx.ParseOptions{Safe: true})
+			if err != nil {
+				return "", yamlCrash(err, "manifest")
+			}
+			id := ""
+			if o, ok := v.(*jsonx.Object); ok {
+				if x, ok := o.Get(idKey); ok {
+					id = strings.TrimSpace(pyStrVal(x))
+				}
+			}
+			if id == "" {
+				return "", &RegenCrash{Type: "ValueError", Msg: fmt.Sprintf("artifact file %s is missing its %s id field; cannot enumerate it as a pack constituent (fail-closed, no silent drop)", p, dct.PyRepr(idKey)),
+					Phase: "manifest", Frames: []rich.Frame{{Name: "build_builtin_manifest", Line: 116}, {Name: "enumerate_constituents", Line: 107},
+						{Name: "_enumerate_kind", Line: 86}, {Name: "_read_artifact_id", Line: 67}}}
+			}
+			rel, _ := filepath.Rel(root, p)
+			sum := sha256.Sum256(lfNormaliseAll(raw))
+			cs = append(cs, constituent{string(k), id, filepath.ToSlash(rel), hex.EncodeToString(sum[:])})
 		}
 	}
-	return os.WriteFile(filepath.Join(root, "pack-manifest.yaml"), manifest, 0o644)
+	sort.SliceStable(cs, func(i, j int) bool {
+		if cs[i].kind != cs[j].kind {
+			return cs[i].kind < cs[j].kind
+		}
+		return cs[i].id < cs[j].id
+	})
+	cl := []any{}
+	for _, c := range cs {
+		cl = append(cl, jsonx.NewObject("kind", c.kind, "id", c.id, "path", c.path, "content_hash", c.hash, "provenance_path", nil))
+	}
+	var presets []any
+	for _, f := range PresetFiles(root) {
+		b, _ := os.ReadFile(f)
+		sum := sha256.Sum256(lfNormaliseAll(b))
+		rel, _ := filepath.Rel(root, f)
+		presets = append(presets, jsonx.NewObject("name", stem(f), "path", filepath.ToSlash(rel), "content_hash", hex.EncodeToString(sum[:])))
+	}
+	m := jsonx.NewObject("schema_version", "1", "generated_by", "spec-kitty charter pack regenerate-graph", "generated_at", nil,
+		"source_url", nil, "source_type", "built-in", "fetched_at", nil, "manifest_hash", nil, "constituents", cl, "charter", nil)
+	if presets != nil {
+		m.Set("presets", presets)
+	}
+	hashed := jsonx.NewObject()
+	for _, kv := range m.Pairs() {
+		switch kv.Key {
+		case "manifest_hash", "generated_at", "generated_by":
+			continue
+		}
+		hashed.Set(kv.Key, kv.Value)
+	}
+	sum := sha256.Sum256([]byte(canonicalYAML(hashed)))
+	m.Set("manifest_hash", hex.EncodeToString(sum[:]))
+	return canonicalYAML(m), nil
+}
+
+func lfNormaliseAll(b []byte) []byte {
+	return []byte(strings.ReplaceAll(strings.ReplaceAll(string(b), "\r\n", "\n"), "\r", "\n"))
 }

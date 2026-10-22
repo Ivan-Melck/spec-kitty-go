@@ -11,7 +11,6 @@ import (
 var (
 	reRunID     = regexp.MustCompile(`\b[0-9A-Z]{26}\b`)
 	reSynthVol  = regexp.MustCompile(`(?m)^(generated_at|produced_at|created_at|synthesis_run_id|run_id|manifest_hash): .*$`)
-	reYAMLParse = regexp.MustCompile(`YAML parse error in ([^:]+): [^)]*\)`)
 	reBundleSHA = regexp.MustCompile(`sha256:[0-9a-f]{64}`)
 	reFixRoot   = regexp.MustCompile(`expected at \S*/tests/charter/fixtures`)
 )
@@ -53,7 +52,7 @@ func synthMask(s string) string {
 	s = reSynthVol.ReplaceAllString(s, "$1: <V>")
 	s = reBundleSHA.ReplaceAllString(s, "sha256:<BH>")
 	s = reFixRoot.ReplaceAllString(s, "expected at <FIXROOT>/tests/charter/fixtures")
-	return reYAMLParse.ReplaceAllString(s, "YAML parse error in $1: <E>)")
+	return s
 }
 
 func compareSynth(t *testing.T, p *testkit.Pair, stderr bool, args ...string) {

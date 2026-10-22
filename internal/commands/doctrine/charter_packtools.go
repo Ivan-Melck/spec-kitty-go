@@ -2,6 +2,7 @@ package doctrine
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
@@ -85,31 +86,68 @@ func runRegenerateGraph(ctx *cli.Context) error {
 		}
 		root = *pr
 	}
-	emit := func(status string) {
+	emit := func(st charter.RegenStatus) {
 		if jsonMode {
-			fmt.Fprintln(w, jsonx.Dumps(jsonx.NewObject("status", status, "path", root), jsonx.Options{Indent: -1, EnsureASCII: true}))
+			o := jsonx.NewObject("status", st.Status, "path", root)
+			if st.Status == "invalid" {
+				o.Set("detail", st.Detail)
+			}
+			fmt.Fprintln(w, jsonx.Dumps(o, jsonx.Options{Indent: -1, EnsureASCII: true}))
 			return
 		}
-		switch status {
+		switch st.Status {
 		case "written":
 			cprint(w, "[green]Regenerated DRG graph:[/green] %s", root)
 		case "fresh":
 			cprint(w, "[green]DRG graph is fresh:[/green] %s", root)
 		case "stale":
 			cprint(w, "[red]DRG graph is stale:[/red] %s\nRun [bold]spec-kitty charter pack regenerate-graph[/bold] and commit the result.", root)
+		case "invalid":
+			d := st.Detail
+			if d == "" {
+				d = "(no detail)"
+			}
+			cprint(w, "[red]DRG graph failed validation:[/red] %s", d)
 		}
 	}
+	var st charter.RegenStatus
+	var err error
 	if ctx.Bool("check") {
-		if charter.BuiltInGraphIsFresh(root) {
-			emit("fresh")
-			return nil
-		}
-		emit("stale")
-		return cli.Exit(1)
+		st, err = charter.CheckBuiltInGraph(root)
+	} else {
+		st, err = charter.WriteBuiltInGraph(root)
 	}
-	if err := charter.WriteBuiltInGraph(root); err != nil {
+	if err != nil {
+		if c, ok := err.(*charter.RegenCrash); ok {
+			return pyCrash(ctx, c.Type, c.Msg, regenFrames(c, ctx.Bool("check"))...)
+		}
 		return err
 	}
-	emit("written")
+	emit(st)
+	if st.Status == "stale" || st.Status == "invalid" {
+		return cli.Exit(1)
+	}
 	return nil
+}
+
+// regenFrames is the upstream traceback of a regenerate-graph crash: the
+// command frame, the overlay/extractor (or manifest) chain, then the raise
+// site's own frames.
+func regenFrames(c *charter.RegenCrash, check bool) []rich.Frame {
+	var out []rich.Frame
+	if c.Phase == "manifest" {
+		if check {
+			out = []rich.Frame{{Name: "regenerate_graph", Line: 173}, {Name: "builtin_manifest_is_fresh", Line: 145}}
+		} else {
+			out = []rich.Frame{{Name: "regenerate_graph", Line: 194}, {Name: "generate_builtin_manifest", Line: 129}}
+		}
+	} else {
+		line := 182
+		if check {
+			line = 162
+		}
+		out = []rich.Frame{{Name: "regenerate_graph", Line: line}, {Name: "write_reference_graph_with_overlay", Line: 2221},
+			{Name: "generate_reference_graph_with_overlay", Line: 2209}}
+	}
+	return append(out, c.Frames...)
 }

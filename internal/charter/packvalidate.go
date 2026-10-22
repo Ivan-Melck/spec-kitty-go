@@ -152,7 +152,7 @@ func validationSafeLoad(p string) (*jsonx.Object, string) {
 	if err != nil {
 		return nil, "YAML parse error: " + err.Error()
 	}
-	v, err := yamlx.Parse(b)
+	v, err := yamlx.ParseWith(b, yamlx.ParseOptions{Safe: true, File: p})
 	if err != nil {
 		return nil, "YAML parse error: " + err.Error()
 	}
@@ -378,7 +378,7 @@ func loadGraphDocument(p string) (*MergedGraph, error) {
 	if err != nil {
 		return nil, &graphLoadError{false, err.Error()}
 	}
-	v, err := yamlx.Parse(b)
+	v, err := yamlx.ParseWith(b, yamlx.ParseOptions{Safe: true, File: p})
 	if err != nil {
 		return nil, &graphLoadError{false, fmt.Sprintf("YAML parse error in %s: %v", p, err)}
 	}
@@ -924,7 +924,7 @@ func ValidateOrgCharterFile(p string, packDirectives map[string]bool) []Validati
 	if err != nil {
 		return []ValidationIssue{{"error", "org-charter", nil, p, "YAML parse error: " + err.Error(), ""}}
 	}
-	v, err := yamlx.Parse(b)
+	v, err := yamlx.ParseWith(b, yamlx.ParseOptions{Safe: true, File: p})
 	if err != nil {
 		return []ValidationIssue{{"error", "org-charter", nil, p, "YAML parse error: " + err.Error(), ""}}
 	}

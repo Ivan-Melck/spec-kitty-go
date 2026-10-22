@@ -1,6 +1,8 @@
 package charter
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
@@ -15,6 +17,11 @@ type ActionBundle struct {
 	Roots   []string
 	Bridge  []string
 	Offer   *dct.Offering
+	// Warning is the logged "DRG action resolution skipped" message when the
+	// DRG failed to load or the project overlay broke validation.
+	Warning string
+	// Err is an uncaught DRGValidationError (built-in/org layer invalid).
+	Err error
 }
 
 var bundleKinds = []dct.Kind{dct.Directive, dct.Tactic, dct.Styleguide, dct.Toolguide, dct.Procedure, dct.Asset, dct.GlossaryPack}
@@ -45,8 +52,20 @@ func ResolveActionBundle(root, action, missionType string, depth int) *ActionBun
 	if missionType == "" {
 		return b
 	}
-	g, err := dct.LoadGraph(root, orgRoots)
+	g, err := LoadOrgValidatedGraph(root, GraphOptions{ProjectDegrade: true})
 	if err != nil {
+		// load_validated_graph(project_degrade=True): a load error or a
+		// validation error introduced only by the project overlay degrades
+		// to an empty bundle with a warning; anything else propagates.
+		var pe *DRGProjectValidationError
+		switch err.(type) {
+		case *dct.DRGValidationError, *OrgConflictError, *OrgPackSchemaError, *OrgPackParseError, *UnknownRelationError, *DuplicateURNError:
+			if !errors.As(err, &pe) {
+				b.Err = err
+				return b
+			}
+		}
+		b.Warning = fmt.Sprintf("DRG action resolution skipped for %s/%s: %v. Charter-level selections still render.", missionType, action, err)
 		return b
 	}
 	act, err := dct.LoadActivation(root)
@@ -155,6 +174,9 @@ func ResolveActionBundle(root, action, missionType string, depth int) *ActionBun
 		}
 		b.IDs[k] = append(b.IDs[k], id)
 	}
+	// _drop_scope_filtered_ids re-runs infer_repo_languages (a recorded
+	// interview read through the encoding chokepoint).
+	InferRepoLanguages(root, nil, false)
 	b.Merged = merged
 	b.Roots = []string{actionURN}
 	for _, d := range dct.SortedKeys(unionSets(directives, local)) {

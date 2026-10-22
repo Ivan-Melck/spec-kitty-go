@@ -8,11 +8,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
 
-// reYAMLParseErr masks ruamel vs yaml.v3 parse error texts.
-var (
-	reYAMLParseErr = regexp.MustCompile(`YAML parse error: [^"\n]*(\\n[^"]*)?`)
-	reManifestVol  = regexp.MustCompile(`(?m)^(fetched_at|manifest_hash): .*$`)
-)
+var reManifestVol = regexp.MustCompile(`(?m)^(fetched_at|manifest_hash): .*$`)
 
 func comparePackTool(t *testing.T, p *testkit.Pair, args ...string) {
 	t.Helper()
@@ -20,8 +16,7 @@ func comparePackTool(t *testing.T, p *testkit.Pair, args ...string) {
 	if g.Code != o.Code {
 		t.Errorf("%v: exit go=%d oracle=%d\n%s\n%s", args, g.Code, o.Code, g.Stdout, o.Stdout)
 	}
-	mask := func(s string) string { return reYAMLParseErr.ReplaceAllString(s, "YAML parse error: <E>") }
-	if gs, os_ := mask(p.Go.Normalize(g.Stdout)), mask(p.Oracle.Normalize(o.Stdout)); gs != os_ {
+	if gs, os_ := p.Go.Normalize(g.Stdout), p.Oracle.Normalize(o.Stdout); gs != os_ {
 		t.Errorf("%v: stdout differs\n%s", args, testkit.Diff(os_, gs))
 	}
 }
