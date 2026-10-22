@@ -239,6 +239,8 @@ func TestPTYSpotCheck(t *testing.T) {
 		{"agent", "tasks", "move-task", "--help"},
 		{"archive", "--bogus"},
 		{"nonexistent"},
+		{"context", "list"},
+		{"mission", "switch"},
 	} {
 		args := args
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {

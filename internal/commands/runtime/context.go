@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/atomicfile"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/commands/util/encoding"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -106,6 +107,9 @@ func contextError(ctx *cli.Context, code, message string, jsonMode bool) {
 	}
 }
 
+// repoRootMissing is task_utils.find_repo_root's TaskCliError text.
+const repoRootMissing = "Unable to locate repository root (missing .git or .kittify)."
+
 func notInProject() string {
 	cwd, _ := os.Getwd()
 	return fmt.Sprintf("Could not locate project root (no .kittify/ directory found from %s)", cwd)
@@ -167,9 +171,9 @@ func plainTable(ctx *cli.Context, rows [][2]string) {
 }
 
 func runContextInfo(ctx *cli.Context, workspace string, jsonMode bool) error {
-	root := locateRoot()
+	root := encoding.FindRepoRoot()
 	if root == "" {
-		contextError(ctx, "not_in_project", notInProject(), jsonMode)
+		contextError(ctx, "not_in_project", repoRootMissing, jsonMode)
 		return cli.Exit(1)
 	}
 	if workspace == "" {
@@ -236,9 +240,9 @@ func orphanedContexts(root string) ([]string, map[string]*jsonx.Object) {
 
 func runContextList(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
-	root := locateRoot()
+	root := encoding.FindRepoRoot()
 	if root == "" {
-		contextError(ctx, "not_in_project", notInProject(), jsonMode)
+		contextError(ctx, "not_in_project", repoRootMissing, jsonMode)
 		return cli.Exit(1)
 	}
 	if ctx.Bool("orphaned") {
@@ -312,9 +316,9 @@ func runContextList(ctx *cli.Context) error {
 }
 
 func runContextCleanup(ctx *cli.Context) error {
-	root := locateRoot()
+	root := encoding.FindRepoRoot()
 	if root == "" {
-		rich.Print(ctx.Stdout, "[red]Error:[/red] "+notInProject())
+		rich.Print(ctx.Stdout, "[red]Error:[/red] "+repoRootMissing)
 		return cli.Exit(1)
 	}
 	orphans, objs := orphanedContexts(root)
