@@ -18,14 +18,14 @@ timestamps, prompt hashes). `TestLocalRuntimeLoop` runs without the oracle.
 
 | Command | Status | Differential tests (TRACE steps) | Deviations |
 |---|---|---|---|
-| `agent action implement` | done | `TestDiffImplementReviewLoop` (4.7, 5.F1, 5.F1b, 5.1, 5.3, 5.13–5.15), `TestDiffPostMerge` (9.10), `TestDiffActionInvocationID`, `TestLocalRuntimeLoop` | ephemeral merge-driver activation skipped; pre-commit commit-guard pins the Go binary |
+| `agent action implement` | done | `TestDiffImplementReviewLoop` (4.7, 5.F1, 5.F1b, 5.1, 5.3, 5.13–5.15), `TestDiffPostMerge` (9.10), `TestDiffActionInvocationID`, `TestDiffMergeDriverActivation`, `TestDiffAnalysisFreshnessReportOnly`, `TestDiffCharterPreflightFreshness`, `TestLocalRuntimeLoop`, Go-only `TestCheckClaimAncestry` | ephemeral merge-driver activation around planning-commit / dependency-lane merges (CORE-10); shared claim-ancestry gate (CORE-18); the commit-guard hook pins the Go binary (irreducible, CORE-11) |
 | `agent action implement/review --invocation-id` / `--model` / `--profile` (dispatch→claim resolved binding read from `kitty-ops/<ULID>.jsonl`) | done | `TestDiffActionInvocationID` (missing/malformed/mismatched Op records, `--model` without invocation, correlated claim) | — |
-| `agent action review` | done | `TestDiffImplementReviewLoop` (5.4, 5.8, 5.11, 5.19) | origin-freshness review-lane reconcile skipped |
-| `implement` (top level) | done | `TestDiffImplementReviewLoop`, `TestLocalRuntimeLoop` | `--owned-checkout` refused as unsupported (as briefed) |
+| `agent action review` | done | `TestDiffImplementReviewLoop` (5.4, 5.8, 5.11, 5.19), `TestDiffReviewLaneOriginFreshness` | — (origin-freshness review-lane reconcile: fast-forward, create-from, diverged refusal / warn, CORE-12) |
+| `implement` (top level) | done | `TestDiffImplementReviewLoop`, `TestDiffCharterPreflightFreshness`, `TestLocalRuntimeLoop` | `--owned-checkout` is area OWN's |
 | `implement --base` (explicit base ref, unresolved/unhonorable refusals, fresh-base guard) | done | `TestDiffImplementBaseRecover` | — |
 | `implement --recover` (crash recovery: lane worktree / workspace context rebuilt) | done | `TestDiffImplementBaseRecover` | — |
-| `next` (query, `--json`) | done | `TestDiffNextFinalizedBoard` (4.1, 4.2, 9.1), `TestDiffNextFreshMission`, `TestDiffPostMerge` (5.21, 8.2) | `mission_type` governance payload and profile references not rendered in the governance block |
-| `next --result success\|failed\|blocked` incl. composition dispatch (step contracts executed through the profile-invocation executor: one Op record per contract step in `kitty-ops/<ULID>.jsonl`, started+completed, committed `op(<profile>): <action> [<id8>]`) | done | `TestDiffNextFreshMission` (kitty-ops + git compared), `TestDiffNextFinalizedBoard`, `TestDiffPostMerge`, `TestDiffCustomMissionRun` | `guard_failure_paths` only for "Required artifact missing"; the Python traceback that upstream logs for a failing decision git log is not emulated |
+| `next` (query, `--json`) | done | `TestDiffNextFinalizedBoard` (4.1, 4.2, 9.1), `TestDiffNextFreshMission`, `TestDiffPostMerge` (5.21, 8.2), `TestDiffNextWPPromptGovernance`, `TestDiffCharterPreflightFreshness`, `TestDiffCharterPreflightDefaultProfile` | — (mission-type governance payload, profile-cited references and mission-type-aware charter context in WP prompts, CORE-13; charter freshness preflight, CORE-17) |
+| `next --result success\|failed\|blocked` incl. composition dispatch (step contracts executed through the profile-invocation executor: one Op record per contract step in `kitty-ops/<ULID>.jsonl`, started+completed, committed `op(<profile>): <action> [<id8>]`) | done | `TestDiffNextFreshMission` (kitty-ops + git compared), `TestDiffNextFinalizedBoard`, `TestDiffPostMerge`, `TestDiffCustomMissionRun`, `TestDiffNextGuardFailurePaths`, `TestDiffCharterPreflightFreshness` | — (`guard_failure_paths` keyed by the family's real artifact tags, repo-relative, every advancing decision, CORE-14; engine-blocked decisions carry no step); the decision git-log traceback is PYF-01's |
 | `next --answer` (`--decision-id`, pending-decision resolution, `NO_PENDING_DECISION` / ambiguity refusals) | done | `TestDiffCustomMissionRun`, orchestrator `TestDiffAnswerDecisionNative` | — |
 | `context` / `context info` | done | `TestDiffRuntimeMisc` | — |
 | `context list [--orphaned]` | done | `TestDiffRuntimeMisc` | — |
@@ -33,15 +33,14 @@ timestamps, prompt hashes). `TestLocalRuntimeLoop` runs without the oracle.
 | `context mission-resolve` | done | `TestDiffRuntimeMisc` | — |
 | `context mission-show` | done | `TestDiffRuntimeMisc` | — |
 | `mission run` / `mission-type run` (custom missions: discovery tiers, pydantic-style validation messages, `MISSION_TYPE_CONFLICT`, run start, composed custom steps, `requires_inputs` decision gate) | done | `TestDiffRuntimeMisc`, `TestDiffCustomMissionRun` | — |
-| `mission close` | done | `TestDiffRuntimeMisc`, `TestDiffPostMerge` | no retrospective generation |
+| `mission close` | done | `TestDiffRuntimeMisc`, `TestDiffPostMerge`, `TestDiffMissionCloseMerged`, `TestDiffMissionCloseDiscard` | — (retrospective persist + commit and coordination teardown report, CORE-15; `--discard` ports the guarded discard: loss announcement, unique-commit refusal, kept discarded tips, runtime_abandoned retrospective, residual verification, `discarded_at`) |
 | `mission follow-up` | done | `TestDiffRuntimeMisc`, `TestDiffPostMerge` | — |
 | `mission reopen` | done | `TestDiffRuntimeMisc`, `TestDiffPostMerge` | — |
-| `agent tests stale-check` (Python AST port: `internal/pyast` + `internal/staleassert`) | done | `TestDiffRuntimeMisc`, `TestDiffStaleCheck` | stderr compares the last line only (the oracle prints interpreter `UserWarning`s with site-packages paths first) |
-| `reconcile` (dossier projection: every non-hidden file of the feature dir, WP static-projection hash, fail-closed schema-invalid WPs, all three divergence kinds) | done | `TestDiffRuntimeMisc` (no snapshot), `TestDiffReconcileDossier` (snapshot recorded by the upstream indexer; parity, runtime-field churn immunity, missing_in_projection / content_mismatch / missing_in_source) | snapshot-load and indexing exception texts are Go's |
-| help pages of all of the above | done | `TestDiffRuntimeHelp` | exit codes and usage lines match; box layout is the shared `internal/cli` renderer |
+| `agent tests stale-check` (Python AST port: `internal/pyast` + `internal/staleassert`) | done | `TestDiffRuntimeMisc`, `TestDiffStaleCheck` | test-only: stderr compares the last line (irreducible, CORE-20: the oracle prints interpreter `UserWarning`s with site-packages paths first) |
+| `reconcile` (dossier projection: every non-hidden file of the feature dir, WP static-projection hash, fail-closed schema-invalid WPs, all three divergence kinds) | done | `TestDiffRuntimeMisc` (no snapshot), `TestDiffReconcileDossier`, `TestDiffReconcileSnapshotLoadErrors` | — (snapshot load errors carry upstream's json / UnicodeDecodeError / mapping TypeError / pydantic texts, CORE-16) |
+| help pages of all of the above | done | `TestDiffRuntimeHelp`, `go test ./internal/helpparity` | — |
 
-Other deviations: the charter preflight warning (stderr, consumers
-`implement` / `next`) checks charter presence only.
+The charter preflight (`implement`, `next`) evaluates the three-layer charter freshness (abort in advancing mode with the `CHARTER_PREFLIGHT_FAILED` JSON envelope, logged warning in query mode, opt-in auto-refresh, deactivated default-profile advisories). See docs/parity/core.md for the wave-5 API, irreducible differences and remaining work.
 
 ## Exported API
 

@@ -16,27 +16,27 @@ package unit tests run without the oracle.
 
 | Command | Status | Differential tests | Deviations |
 |---|---|---|---|
-| `agent mission create` | done | `TestDiffMissionCreate`, `TestDiffMissionCreateDuplicate` | — |
+| `agent mission create` | done | `TestDiffMissionCreate`, `TestDiffMissionCreateDuplicate`, `TestDiffMissionCreatePendingOrigin` | — (a staged `.kittify/pending-origin.yaml` fails closed after the scaffold commit and rolls the git state back, CORE-09) |
 | `agent mission branch-context` | done | `TestDiffBranchContext` | — |
-| `agent tasks status` (human + `--json`) | done | `TestDiffTasksReadAndAnnotate`, `TestDiffMoveTask*`, `TestDiffStatusEmit`, `TestDiffTasksStatusStaleness` | `--owned-checkout` refused ("not supported by this build"); claim liveness uses a Linux `/proc` probe |
+| `agent tasks status` (human + `--json`) | done | `TestDiffTasksReadAndAnnotate`, `TestDiffMoveTask*`, `TestDiffStatusEmit`, `TestDiffTasksStatusStaleness`, `TestDiffOrphanedEventWarnings` | `--owned-checkout` is area OWN's; claim liveness: Linux `/proc`, darwin `kinfo_proc` start time (CORE-08, Go-only on darwin), signal-0 elsewhere |
 | `agent tasks list-tasks` | done | `TestDiffTasksReadAndAnnotate` | — |
 | `agent tasks mark-status` | done | `TestDiffTasksReadAndAnnotate`, move-task tests | `--owned-checkout` refused |
 | `agent tasks add-history` | done | `TestDiffTasksReadAndAnnotate` | — |
-| `agent tasks move-task` | done (see deviations) | `TestDiffMoveTaskCoord`, `TestDiffMoveTaskLanes`, `TestDiffMoveTaskWorktree` (TRACE 5.1–5.12, F2–F4, 9.4–9.6), `TestDiffMoveTaskArbiter`, `TestDiffMoveTaskSelfReviewFallback`, `TestDiffMoveTaskProfile`, `TestDiffCoreUsageErrors` | see below |
+| `agent tasks move-task` | done | `TestDiffMoveTaskCoord`, `TestDiffMoveTaskLanes`, `TestDiffMoveTaskWorktree` (TRACE 5.1–5.12, F2–F4, 9.4–9.6), `TestDiffMoveTaskArbiter`, `TestDiffMoveTaskArbiterIssueMatrix`, `TestDiffMoveTaskSelfReviewFallback`, `TestDiffMoveTaskProfile`, `TestDiffMoveTaskInvocationID`, `TestDiffPreReviewGate*` (Declared, NoNewFailures, UnverifiedBaseline, JUnit, Edges), `TestDiffCoreUsageErrors` | see below |
 | `agent tasks list-dependents` | done | `TestDiffTasksExtras` | — |
 | `agent tasks validate-workflow` | done | `TestDiffTasksExtras` | — |
 | `agent tasks check-terminability` | done | `TestDiffTasksExtras` | — |
-| `agent tasks finalize-tasks` | missing (wave 3) | — | library support: `lanes.Compute`, `lanes.Write`, `coord.Surface.EmitTransition` |
-| `agent tasks map-requirements` | missing (wave 3) | — | — |
+| `agent tasks finalize-tasks` | done (area PLAN, see planning.md) | — | — |
+| `agent tasks map-requirements` | done (area PLAN, see planning.md) | — | — |
 | `agent status emit` | done | `TestDiffStatusEmit` | — |
 | `agent status materialize` | done | `TestDiffTasksReadAndAnnotate` | — |
-| `agent status lifecycle` | done | `TestDiffStatusLeaves` | post-mission history (reopen / follow-up events) not rendered |
-| `agent status validate` | done | `TestDiffStatusLeaves` | the "orphaned event" stderr WARNING (human mode) is not printed |
+| `agent status lifecycle` | done | `TestDiffStatusLeaves`, runtime `TestDiffPostMerge`, `TestDiffOrphanedEventWarnings` | — (post-mission history, `reopened` state and `last_follow_up_at`, CORE-01) |
+| `agent status validate` | done | `TestDiffStatusLeaves`, `TestDiffOrphanedEventWarnings` | — (orphaned / unsafe legacy-slug warnings once per upstream `read_events` pass, CORE-02) |
 | `agent status migrate` | done (removed-command stub) | `TestDiffStatusLeaves` | — |
 | `agent status reconcile` | done (removed-command stub) | `TestDiffStatusLeaves` | — |
-| `agent status doctor` | done | `TestDiffStatusLeaves` | issue-matrix check not evaluated (no finding); sparse-checkout finding simplified (primary only); human findings table never wraps |
+| `agent status doctor` | done | `TestDiffStatusLeaves`, `TestDiffStatusDoctorChecks`, `TestDiffOrphanedEventWarnings` | — (issue-matrix check CORE-03, sparse scan over lane/coord worktrees CORE-04, wrapping findings table CORE-05) |
 
-### move-task deviations
+### move-task coverage
 
 Implemented: the full guard sequence (self-review options, protected-branch
 refusal, coord skip-primary metadata refusal, agent ownership incl. the
@@ -64,18 +64,28 @@ override persist, the FR-002 verdict revert (an emitted-transition failure
 deletes and commits away the just-written review-cycle artifact), and the
 `ReviewerSelfApproval` lifecycle event of `--self-review-fallback`.
 
-Not implemented (returns an error or is skipped):
-* `--owned-checkout` (refused), `--invocation-id` (refused: Op records are
-  area C), `--model` without `--invocation-id` refused like upstream.
-  `--profile` resolves the profile (and its `schema-version`) through the
-  area-C doctrine profile catalog (`TestDiffMoveTaskProfile`).
-* A *declared* pre-review regression gate (`review.test_command` /
-  `pre_review_test_scope`): the scoped pytest run is not executed; the
-  transition records the undeclared `skipped` verdict.
-* Issue-matrix approval blocker (spec/plan/tasks `#NNNN` references vs
-  `issue-matrix.{json,md}` verdicts): now wired by area E through
-  `issuematrix.ApprovalBlocker` (see docs/parity/planning.md,
-  `TestDiffIssueMatrix`).
+Also implemented (wave 5):
+* `--invocation-id` reads the dispatch Op record and stamps the resolved
+  binding (profile, profile version, model, provider); mismatches with
+  `--profile` / `--model`, a malformed or missing record, and a wrong
+  mission / WP / action (review for in_review/approved/done) are refused with
+  upstream's messages (CORE-06).
+* The declared pre-review regression gate (`internal/prereview`, CORE-07):
+  `review.test_command` scope source (`{output_file}` substitution, `sh -c`),
+  lazy fork-point baseline capture in a detached scratch worktree with the
+  `chore: Capture baseline tests for WPnn` commit, head run with the 300 s
+  timeout / 30 s heartbeat / machine-wide run lock
+  (`~/.spec-kitty/gate-locks/pre-review-gate-run.lock`), JUnit and
+  `FAIL <test>` parsing, baseline diff, budget assessment (`scope_identity`),
+  gate-binding resolution from the review step contract + DRG activation
+  (no-contract / no-binding / not-activated reasons), the override tier
+  (frontmatter `pre_review_test_scope`, `review.pre_review_test_command`),
+  `fail_on_pre_review_regression` block, `--force` bypass, terminal
+  timed_out/cancelled hard stops and the byproduct compensator.
+* The OLD-timing arbiter persist runs before the issue-matrix guard, so an
+  issue-matrix refusal leaves the arbiter override on disk (DOCS-07).
+* Lane-deliverable commits relay pre-commit hook stderr as the
+  "produced warnings on a successful commit" log line.
 
 ### tasks status
 
@@ -189,3 +199,44 @@ durability `Outcome`), `Pointer`, `NextCycleNumber`, synthetic refs.
   emoji-capable character followed by VS16 (rich 15 `narrow_to_wide`).
 * Test helper: `comparePairSteps` logs every step's output when
   `KITTY_TEST_TRACE=1`.
+
+## Wave 5 (area CORE): new library API
+
+`internal/prereview` (new; the move-task pre-review regression gate):
+* Config: `ReviewSection(root)`, `BlockEnabled(root)`, `TestCommandTemplate(root)`, `Truthy`, key constants.
+* Commands: `ShlexValid`, `ShellQuote`, `BuildShellCommand(template, subs)` (build_shell_command_with_substitutions).
+* Scope source: `DeclaredSource` (`NewDeclaredSource`, `TestCommand`, `OutputFile`, `ParseMode`, `Identity`, `ParseResults`), `Raw`.
+* Baseline: `Failure`, `Baseline` (`Object`, `Save`), `LoadBaseline`, `Sentinel`, `Diff`, `ParseJUnit`, `ArtifactPath`, `Capture(CaptureOptions)`, `UTCSecondStamp`.
+* Runs: `RunRaw(cmd, RunOptions)` (timeout, heartbeat, process-group kill, machine lock), `RunScopedTestsAtHead`, `RuntimeRoot`, `PythonExecutable`.
+* Verdicts: `Scope`, `Verdict`, `Observer`, `EvaluateWithScope`, `EvaluatePreReview`, `AssessBudget`/`Assessment`, `AggregateVerdicts`, `Translate`/`Effect`, `Metadata`, `ConsoleWarning`, `BlockMessage`, `EmptyScopeVerdict`, `NotDeclaredVerdict`, `PyG`.
+* Bindings: `ResolveGateBindings(root, missionType, edge)` / `BindingResolution`, `PreReviewHandler`.
+
+Additive exports elsewhere (CORE-owned packages):
+* `internal/status`: `PostMissionEvents`, `FormatPostMissionEvents`, `MissionReopenedEvent`/`FollowUpRecordedEvent`, `SlugResolverWarnings`, `DoctorHooks` (variadic `RunDoctor` hooks); liveness split by platform (`liveness_linux.go`, `liveness_darwin.go`, `liveness_other.go`).
+* `internal/mission`: `UnsafeSegmentReason`; `internal/mission/create`: pending-origin refusal with git rollback.
+* `internal/dossier`: `LoadSnapshot`, `SnapshotPath` (pydantic-faithful MissionDossierSnapshot validation).
+* `internal/orchestrator`: `SelectorAmbiguousCrash`.
+* `internal/workflow`: `CheckClaimAncestry`, `ResolveClaimAncestry`, `AncestryResult`; `RunCharterPreflight`, `PreflightResult`, `CharterPreflightOrAbort`, `CharterPreflightWarnOnly` (+ `EmitCharterPreflight` / `CharterPreflightWarning`); report-only receipt + material-input check in `CheckAnalysisReport`.
+* `internal/nextrt`: guard-failure paths on every advancing decision; WP prompt mission-type payload.
+* `internal/testkit/missionfx`: `WriteOpRecord`.
+
+## Wave 5 extensions to other areas' packages (additive)
+
+* `internal/originfresh/review.go` (CONS): `PlanReviewLane`, `ReviewLaneAction` + kinds, `CheckBranch`, `Headline`, `LaneDivergedText`, `ReviewWarningText`.
+* `internal/retrospective/writer.go` (CONS): `AuthorRuntime` (runtime-actor capture with a provenance kind; `Author` unchanged).
+* `internal/commands/orchestrator/register.go` (shared): `verb.mission` renders `SelectorAmbiguousCrash`.
+* `internal/healthcheck` (MAINT) and `internal/issuematrix` / `internal/missionart` (PLAN) are read only.
+
+## Irreducible differences
+
+* Commit-guard pre-commit hook (CORE-11): the hook installed by `agent action implement` invokes the running Go binary; upstream's pins its Python entry point. A Go build has no Python entry point to name.
+* `agent tests stale-check` test normalisation (CORE-20): the oracle prints interpreter `UserWarning`s with site-packages paths on stderr first; only the final line is compared.
+* Override-tier pre-review runs (`pre_review_test_scope`): upstream runs `sys.executable -m pytest`; Go runs `python3 -m pytest` (or `uv run … pytest` with uv + pyproject.toml, like upstream).
+* `completeness_status must be one of {...}` (dossier snapshot validation) renders a Python set whose order depends on string-hash randomisation; Go prints one fixed order.
+* Built-in asset paths in prompts (`Reference Docs`) name the Go pack cache instead of site-packages (cross-cutting item 7).
+* Claim liveness on darwin is Go-only tested (no oracle on that platform).
+* `MissionSelectorAmbiguous` traceback (CORE-19): the final exception line matches; frames follow the PYF-01 policy (PYF's rich traceback helper had not landed; the plain `Traceback (most recent call last):` header is printed).
+
+## Remaining work
+
+* None for CORE-01..CORE-20 / DOCS-01 / DOCS-07. Small documented approximations: the pre-review dirty-path and discard worktree-removal residue classifiers reuse the self-bookkeeping + coord-residue rules (no `ref_advance` obstruction analysis for ignored files); the orphaned-event warning is replayed on the agentcore status/tasks commands with upstream's per-command `read_events` pass counts (other human commands reading legacy rows do not replay it).
