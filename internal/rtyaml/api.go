@@ -62,7 +62,7 @@ func dump(data any, info pyyaml.DocInfo) (out string, err error) {
 	em.v11 = v11
 	s := &serializer{em: em, nodes: map[*dnode]bool{}, anchors: map[*dnode]*string{}, v11: v11,
 		version: info.Version, tags: info.Tags}
-	rep := &representer{objects: map[any]*dnode{}}
+	rep := &representer{objects: map[any]*dnode{}, v11: v11}
 	em.emit(&eevent{kind: evStreamStart})
 	n := rep.data(data)
 	s.serialize(n)

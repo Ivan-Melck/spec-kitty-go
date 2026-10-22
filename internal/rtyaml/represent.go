@@ -34,6 +34,7 @@ func tagOf(suffix string) Tag { return Tag{Suffix: suffix, Value: suffix} }
 type representer struct {
 	objects map[any]*dnode // represented_objects (alias-able objects)
 	count   int
+	v11     bool // serializer.use_version == (1, 1)
 }
 
 func (r *representer) aliasKey(data any) (any, bool) {
@@ -95,7 +96,11 @@ func (r *representer) data(data any) *dnode {
 	case *Int:
 		n = reg(r.intNode(x))
 	case float64:
-		n = r.scalar(pyyaml.TagFloat, floatRepr(x), 0, nil)
+		v := floatRepr(x)
+		if r.v11 && !strings.Contains(v, ".") && strings.Contains(v, "e") {
+			v = strings.Replace(v, "e", ".0e", 1)
+		}
+		n = r.scalar(pyyaml.TagFloat, v, 0, nil)
 	case *Float:
 		n = reg(r.floatNode(x))
 	case Date:
@@ -190,6 +195,9 @@ func (r *representer) intNode(x *Int) *dnode {
 		digits, prefix = abs.Text(2), "0b"
 	case IntOctal:
 		digits, prefix = abs.Text(8), "0o"
+		if r.v11 {
+			prefix = "0"
+		}
 	case IntHex:
 		digits, prefix = abs.Text(16), "0x"
 	case IntHexCaps:

@@ -40,6 +40,7 @@ type event struct {
 	flowStyle  bool
 	explicit   bool
 	cmt        *PyList // ruamel round-trip comment list
+	tagSuffix  string  // the tag's suffix as scanned (round trip)
 }
 
 type stateFn func() *event
@@ -51,9 +52,9 @@ type parser struct {
 	// docInfo is what ruamel's process_directives stores on the YAML
 	// instance (loader.version, loader.tags).
 	docInfo DocInfo
-	states       []stateFn
-	marks        []*Mark
-	state        stateFn
+	states  []stateFn
+	marks   []*Mark
+	state   stateFn
 }
 
 var defaultTags = map[string]string{"!": "!", "!!": "tag:yaml.org,2002:"}
@@ -297,6 +298,9 @@ func (p *parser) parseNode(block, indentlessSequence bool) *event {
 	ev := &event{anchor: anchor, hasAnchor: hasAnchor, tag: tag, hasTag: hasTag, start: start}
 	if tagT != nil && tagT.hasHandle {
 		ev.tagHandle = tagT.tagHandle
+	}
+	if tagT != nil {
+		ev.tagSuffix = tagT.suffix
 	}
 	if indentlessSequence && p.checkToken(tBlockEntry) {
 		pt := p.peekToken()

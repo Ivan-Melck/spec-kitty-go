@@ -28,6 +28,7 @@ type Node struct {
 	Value     string // scalars
 	Style     rune   // scalars: 0 plain, '\'', '"', '|', '>'
 	TagHandle string // the tag's handle ("!", "!!", "!e!"), "" if none / implicit
+	TagSuffix string // the tag's suffix as scanned (no %-decoding), "" if implicit
 	Items     []*Node
 	Pairs     [][2]*Node
 	FlowStyle bool
@@ -118,7 +119,7 @@ func (c *composer) composeNode() *Node {
 		if !ev.hasTag || tag == "!" {
 			tag = c.resolveTag(ScalarNode, ev.value, ev.implicit)
 		}
-		n = &Node{Kind: ScalarNode, Tag: tag, TagHandle: ev.tagHandle, Value: ev.value, Style: ev.style, Start: ev.start, End: ev.end, Comment: ev.cmt, Anchor: ev.anchor}
+		n = &Node{Kind: ScalarNode, Tag: tag, TagHandle: ev.tagHandle, TagSuffix: ev.tagSuffix, Value: ev.value, Style: ev.style, Start: ev.start, End: ev.end, Comment: ev.cmt, Anchor: ev.anchor}
 		if ev.hasAnchor {
 			c.anchors[ev.anchor] = n
 		}
@@ -128,7 +129,7 @@ func (c *composer) composeNode() *Node {
 		if !start.hasTag || tag == "!" {
 			tag = c.resolveTag(SequenceNode, "", start.implicit)
 		}
-		n = &Node{Kind: SequenceNode, Tag: tag, TagHandle: start.tagHandle, FlowStyle: start.flowStyle, Start: start.start, Comment: start.cmt, Anchor: start.anchor}
+		n = &Node{Kind: SequenceNode, Tag: tag, TagHandle: start.tagHandle, TagSuffix: start.tagSuffix, FlowStyle: start.flowStyle, Start: start.start, Comment: start.cmt, Anchor: start.anchor}
 		if start.hasAnchor {
 			c.anchors[start.anchor] = n
 		}
@@ -144,7 +145,7 @@ func (c *composer) composeNode() *Node {
 		if !start.hasTag || tag == "!" {
 			tag = c.resolveTag(MappingNode, "", start.implicit)
 		}
-		n = &Node{Kind: MappingNode, Tag: tag, TagHandle: start.tagHandle, FlowStyle: start.flowStyle, Start: start.start, Comment: start.cmt, Anchor: start.anchor}
+		n = &Node{Kind: MappingNode, Tag: tag, TagHandle: start.tagHandle, TagSuffix: start.tagSuffix, FlowStyle: start.flowStyle, Start: start.start, Comment: start.cmt, Anchor: start.anchor}
 		if start.hasAnchor {
 			c.anchors[start.anchor] = n
 		}

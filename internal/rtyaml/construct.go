@@ -328,6 +328,9 @@ func (c *constructor) unknown(n *pyyaml.Node) any {
 
 // tagSuffix is the Tag's suffix as scanned (handle stripped).
 func tagSuffix(n *pyyaml.Node) string {
+	if n.TagSuffix != "" {
+		return n.TagSuffix
+	}
 	if n.TagHandle == "!!" {
 		return strings.TrimPrefix(n.Tag, "tag:yaml.org,2002:")
 	}
