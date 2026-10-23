@@ -72,6 +72,7 @@ func init() {
 			Run: runRetroSummary,
 		})
 		ar := app.Group(agent, "retrospect", "Retrospective synthesis commands")
+		ar.NoArgsIsHelp = true
 		ar.Add(&cli.Command{
 			Name:  "synthesize",
 			Short: "Apply staged proposals from a mission's retrospective record.",
@@ -422,17 +423,19 @@ func runRetroBackfill(ctx *cli.Context) error {
 	}
 	type createdRec struct{ slug, path string }
 	var authored []createdRec
-	for _, c := range work {
+	// _process_candidate; human mode runs the loop under a transient rich
+	// Progress spinner.
+	processCandidate := func(c candidate) {
 		id, slug := c.id, c.slug
 		path := filepath.Join(root, "kitty-specs", slug, retrospective.FileName)
 		if _, err := os.Stat(path); err == nil {
 			skipped = append(skipped, jsonx.NewObject("mission_id", id, "mission_slug", slug, "reason", "already_exists", "record_path", path))
 			maybeEmitSkip(id, slug, "already_exists")
-			continue
+			return
 		}
 		if dry {
 			created++
-			continue
+			return
 		}
 		_, p, err := retrospective.Author(root, slug, "backfill", "spec-kitty retrospect backfill")
 		var nf *retrospective.NotFoundError
@@ -454,6 +457,23 @@ func runRetroBackfill(ctx *cli.Context) error {
 			}
 		}
 	}
+	var prog *rich.SpinnerProgress
+	if !ctx.Bool("json") {
+		prog = rich.NewSpinnerProgress(ctx.Stdout)
+		prog.AddTask("Processing missions...", len(work))
+	}
+	for _, c := range work {
+		if prog != nil {
+			prog.Update("Processing " + c.slug + "...")
+		}
+		processCandidate(c)
+		if prog != nil {
+			prog.Advance()
+		}
+	}
+	if prog != nil {
+		prog.Stop()
+	}
 	for _, a := range authored {
 		retroCommit(root, a.slug, "chore(retrospective): backfill retrospective for "+a.slug, a.path, status.EventsPath(projectSpecs(root, a.slug)))
 	}
@@ -474,7 +494,6 @@ func runRetroBackfill(ctx *cli.Context) error {
 	if dry {
 		suffix = " [yellow](dry-run — no files written)[/yellow]"
 	}
-	fmt.Fprintln(ctx.Stdout)
 	fitPanel(ctx.Stdout, fmt.Sprintf("[bold]Backfill complete[/bold]\n\nWindow: %s to %s\nScanned: %d | Created: %d | Skipped: %d | Failed: %d%s",
 		window.GetString("since"), window.GetString("until"), scanned, created, len(skipped), len(failed), suffix), "spec-kitty retrospect backfill")
 	return nil

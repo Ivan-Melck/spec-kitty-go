@@ -1824,13 +1824,13 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 				commitHashes = append(commitHashes, jsonx.NewObject("branch", h[0], "hash", h[1]))
 			}
 			if !f.json {
-				r.PrintRendered(f.ctx.Stdout, wrapPlain)
+				printRendered(f.ctx.Stdout, r)
 				say(f.ctx.Stdout, fmt.Sprintf("[dim]Updated %d WP files with dependencies[/dim]", f.updated))
 			}
 		case safecommit.StatusUnchanged:
 			if !f.json {
 				if lines := r.Render(); len(lines) > 0 {
-					r.PrintRendered(f.ctx.Stdout, wrapPlain)
+					printRendered(f.ctx.Stdout, r)
 				} else {
 					say(f.ctx.Stdout, "[dim]Tasks unchanged, no commit needed[/dim]")
 				}
@@ -1843,7 +1843,7 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 			if f.json {
 				printCompact(f.ctx.Stdout, jsonx.NewObject("error", "Git commit failed: "+d))
 			} else {
-				r.PrintRendered(f.ctx.Stdout, wrapPlain)
+				printRendered(f.ctx.Stdout, r)
 				say(f.ctx.Stdout, "[red]Error:[/red] Git commit failed: "+d)
 			}
 			return cli.Exit(1)

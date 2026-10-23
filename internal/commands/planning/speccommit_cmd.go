@@ -286,7 +286,7 @@ func renderRouterResult(ctx *cli.Context, jsonMode bool, res *safecommit.RouterR
 		printPretty(ctx.Stdout, reorderSpecPayload(payload))
 	} else {
 		if len(res.Surfaces) > 0 {
-			res.PrintRendered(ctx.Stdout, wrapPlain)
+			printRendered(ctx.Stdout, res)
 			for _, a := range args {
 				if a.fate == "committed" {
 					continue

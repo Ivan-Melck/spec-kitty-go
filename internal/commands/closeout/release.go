@@ -19,6 +19,7 @@ import (
 func init() {
 	addCommands(func(_, agent, _ *cli.Command) {
 		rel := app.Group(agent, "release", "Release packaging commands for AI agents")
+		rel.NoArgsIsHelp = true
 		rel.Add(&cli.Command{
 			Name:  "prep",
 			Short: "Prepare release artifacts (changelog draft, version bump, structured inputs).",

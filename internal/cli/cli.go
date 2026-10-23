@@ -110,6 +110,11 @@ type Command struct {
 	InvokeWithoutCommand bool
 	// NoArgsIsError makes a bare group invocation a usage error ("Missing command.").
 	NoArgsIsError bool
+	// NoArgsIsHelp is typer's no_args_is_help on a nested group: a bare
+	// invocation prints the help (WriteNoArgsIsHelp) and exits 2. Without
+	// either flag a bare group prints its help and exits 0 (spec-kitty's
+	// top-level HelpOnEmptyTopLevelGroup).
+	NoArgsIsHelp bool
 	// Callback runs after a group's own options are parsed, before the
 	// subcommand (typer callback). Return Stop() to end successfully.
 	Callback func(*Context) error
@@ -468,6 +473,10 @@ func execute(root *Command, argv []string, io_ IO) error {
 				}
 				if cmd.NoArgsIsError {
 					return Usage(cmd, "Missing command.")
+				}
+				if cmd.NoArgsIsHelp {
+					WriteNoArgsIsHelp(io_.Stdout, cmd)
+					return Exit(2)
 				}
 				WriteHelp(io_.Stdout, cmd)
 				return nil

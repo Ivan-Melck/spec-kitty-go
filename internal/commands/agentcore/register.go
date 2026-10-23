@@ -21,6 +21,8 @@ func Groups(root *cli.Command) (missionG, tasksG, statusG *cli.Command) {
 	missionG = app.Group(agent, "mission", missionHelp)
 	tasksG = app.Group(agent, "tasks", tasksHelp)
 	statusG = app.Group(agent, "status", statusHelp)
+	// typer no_args_is_help on these nested groups: help, exit 2.
+	missionG.NoArgsIsHelp, tasksG.NoArgsIsHelp, statusG.NoArgsIsHelp = true, true, true
 	return
 }
 

@@ -2,7 +2,6 @@ package safecommit
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -147,13 +146,6 @@ func (r *RouterResult) Render() []string {
 		}
 	}
 	return lines
-}
-
-// PrintRendered prints Render() lines (markup=False).
-func (r *RouterResult) PrintRendered(w io.Writer, wrap func(string) string) {
-	for _, l := range r.Render() {
-		fmt.Fprintln(w, wrap(l))
-	}
 }
 
 // --- placement --------------------------------------------------------------

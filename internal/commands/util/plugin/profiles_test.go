@@ -18,6 +18,9 @@ var sitePackages = regexp.MustCompile(`/\S*/site-packages/`)
 // and drops the console padding (whose length follows the path length).
 func normWarnings(s string) string {
 	s = sitePackages.ReplaceAllString(s, "<spec-kitty>/")
+	// Colour runs: the highlighter reads Go's "<spec-kitty>" placeholder as
+	// a tag; the oracle's absolute path starts the magenta path span there.
+	s = strings.ReplaceAll(s, "\x1b[1m<\x1b[0m\x1b[1;95mspec-kitty\x1b[0m\x1b[1m>\x1b[0m\x1b[35m/", "\x1b[35m<spec-kitty>/")
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		lines[i] = strings.TrimRight(l, " ")

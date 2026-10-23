@@ -309,7 +309,7 @@ func commitArtifact(ctx *cli.Context, jsonMode bool, root, slug, file, artifactT
 	}
 	r := safecommit.CommitForMission(root, slug, []string{file}, msg, kind, safecommit.RouterOptions{})
 	if !jsonMode && len(r.Surfaces) > 0 {
-		r.PrintRendered(ctx.Stdout, wrapPlain)
+		printRendered(ctx.Stdout, r)
 	}
 	title := strings.ToUpper(artifactType[:1]) + artifactType[1:]
 	switch r.Status {

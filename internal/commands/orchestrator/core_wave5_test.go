@@ -43,7 +43,7 @@ func TestDiffAmbiguousMissionHandle(t *testing.T) {
 		g, o := step(t, p, args...)
 		gl := reCalcMid8.ReplaceAllString(lastLine(g.Stderr), "calc-ops-<MID8>")
 		ol := reCalcMid8.ReplaceAllString(lastLine(o.Stderr), "calc-ops-<MID8>")
-		if gl != ol || !strings.HasPrefix(ol, "MissionSelectorAmbiguous: ") {
+		if gl != ol || !strings.HasPrefix(testkit.StripANSI(ol), "MissionSelectorAmbiguous: ") {
 			t.Errorf("%s: final stderr line differs\n go: %s\n oracle: %s", v[0], gl, ol)
 		}
 	}

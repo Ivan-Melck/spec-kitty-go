@@ -50,6 +50,7 @@ func init() {
 		agent := app.Group(root, "agent", "Commands for AI agents to execute spec-kitty mission actions programmatically")
 		ap := app.Group(agent, "profile", "Compatibility alias for listing agent profiles")
 		ap.Hidden = true
+		ap.NoArgsIsError = true
 		ap.Add(profileLeaves()...)
 	})
 }

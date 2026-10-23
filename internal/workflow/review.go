@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/review"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
 )
@@ -260,7 +261,11 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 	// claim, so a refusal leaves the WP status untouched.
 	createFrom, rerr := reconcileReviewLane(o, ws, root, wpID, agent)
 	if rerr != nil {
-		o.Console(rerr.Error())
+		if _, ok := rerr.(*reviewLaneRefusal); ok {
+			o.Console("[red]" + rich.EscapeMarkup(rerr.Error()) + "[/red]")
+		} else {
+			o.Console(rerr.Error())
+		}
 		return ExitErr(1)
 	}
 

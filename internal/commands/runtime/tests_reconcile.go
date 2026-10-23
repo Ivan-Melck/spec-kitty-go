@@ -36,7 +36,7 @@ func init() {
 	app.Register(func(root *cli.Command) {
 		agent := app.Group(root, "agent", agentHelp)
 		tests := app.Group(agent, "tests", "Test-related commands for AI agents")
-		tests.NoArgsIsError = true
+		tests.NoArgsIsHelp = true
 		tests.Add(&cli.Command{
 			Name: "stale-check", Short: "Detect test assertions likely invalidated by source changes between two refs.", Long: staleCheckLong,
 			Flags: []*cli.Flag{

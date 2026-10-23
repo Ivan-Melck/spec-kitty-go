@@ -454,6 +454,17 @@ func WriteHelp(w io.Writer, c *Command) {
 		writeSimpleHelp(w, c)
 		return
 	}
+	writeHelpBody(w, c)
+	// click's help callback then echoes the (empty) formatter buffer.
+	fmt.Fprintln(w)
+}
+
+// WriteNoArgsIsHelp is the help a no_args_is_help group prints when invoked
+// bare (click's NoArgsIsHelpError renders it while being raised; typer's
+// error handler then prints nothing, so no trailing echo): exit 2 follows.
+func WriteNoArgsIsHelp(w io.Writer, c *Command) { writeHelpBody(w, c) }
+
+func writeHelpBody(w io.Writer, c *Command) {
 	if c.parent == nil && RootHelpBanner != nil {
 		RootHelpBanner(w, invocationArgs)
 	}
@@ -515,8 +526,6 @@ func WriteHelp(w io.Writer, c *Command) {
 	if c.Epilog != "" {
 		printRenderable(w, con, rich.Pad(rich.AlignLeft(richText(c.Epilog, "")), 1), "")
 	}
-	// click's help callback then echoes the (empty) formatter buffer.
-	fmt.Fprintln(w)
 }
 
 // writeSimpleHelp is upstream's _format_simple_help: click's plain

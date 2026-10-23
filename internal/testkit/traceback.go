@@ -5,7 +5,8 @@ import (
 	"strings"
 )
 
-var reANSI = regexp.MustCompile("\x1b\\[[0-9;?]*[A-Za-z]")
+// reANSI also takes normalized SGR sequences (terminated by SGREnd).
+var reANSI = regexp.MustCompile("\x1b\\[[0-9;?]*(?:[A-Za-z]|\x01)")
 
 // StripANSI removes SGR / CSI escape sequences.
 func StripANSI(s string) string { return reANSI.ReplaceAllString(s, "") }

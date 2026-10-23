@@ -85,7 +85,7 @@ func init() {
 
 // charterMissionTypeGroup is `charter mission-type`.
 func charterMissionTypeGroup() *cli.Command {
-	mt := &cli.Command{Name: "mission-type", Short: "Mission type commands (activated types only)."}
+	mt := &cli.Command{Name: "mission-type", Short: "Mission type commands (activated types only).", NoArgsIsHelp: true}
 	mt.Add(&cli.Command{
 		Name:  "list",
 		Short: "List mission types for the current project (FR-016).",

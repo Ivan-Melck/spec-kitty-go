@@ -16,7 +16,7 @@ import (
 
 // softPrint is console.print(..., soft_wrap=True): markup rendered, no
 // wrapping.
-func softPrint(w io.Writer, s string) { fmt.Fprintln(w, rich.Strip(s)) }
+func softPrint(w io.Writer, s string) { rich.PrintSoftWrap(w, s) }
 
 // runMissionStateFix is _run_mission_repair (doctor mission-state --fix).
 func runMissionStateFix(ctx *cli.Context, root, fixtureDir string, jsonOut bool) error {

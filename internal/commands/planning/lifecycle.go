@@ -16,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // Top-level lifecycle wrappers (cli/commands/lifecycle.py): specify, plan
@@ -411,7 +412,7 @@ func runInterview(ctx *cli.Context, flow string, questions [][2]string, root, di
 		}
 		answer := ""
 		if interactive {
-			sayPlain(ctx.Stdout, "[enter]=accept default | [text]=type answer | [d]efer | [!cancel]")
+			say(ctx.Stdout, "[dim]"+rich.EscapeMarkup("[enter]=accept default | [text]=type answer | [d]efer | [!cancel]")+"[/dim]")
 			fmt.Fprintf(ctx.Stdout, "%s []: ", text)
 			line, err := in.ReadString('\n')
 			if err != nil && line == "" {

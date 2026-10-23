@@ -107,7 +107,7 @@ func runTracerAppend(ctx *cli.Context) error {
 	r := safecommit.CommitForMission(root, slug, []string{path}, fmt.Sprintf("chore(tracer): append %s finding for %s", category, slug), mission.KindTracerFile, safecommit.RouterOptions{})
 	printSurfaces := func() {
 		if !jsonMode {
-			r.PrintRendered(ctx.Stdout, wrapPlain)
+			printRendered(ctx.Stdout, r)
 		}
 	}
 	switch r.Status {

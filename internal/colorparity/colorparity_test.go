@@ -228,7 +228,7 @@ func usageProbes(t *testing.T) []probe {
 	return out
 }
 
-// leafProbes: every inventoried leaf command run bare (no arguments),
+// leafProbes: every inventoried command path (leaves and groups) run bare,
 // except commands that start long-running or interactive work.
 func leafProbes(t *testing.T) []probe {
 	dir := inventoryDir()
@@ -244,20 +244,18 @@ func leafProbes(t *testing.T) []probe {
 	for _, k := range []string{"charter pack asset list", "charter pack regenerate-graph"} {
 		skip[k] = true
 	}
-	groups := map[string]bool{}
+	// Bare groups are probed too (help, "Missing command." or a default
+	// action); `agent config` belongs to the setup package (area TSE).
+	skip["agent config"] = true
 	files, _ := filepath.Glob(filepath.Join(dir, "*.txt"))
 	var paths [][]string
 	for _, f := range files {
-		args := pathArgs(filepath.Base(f))
-		paths = append(paths, args)
-		if len(args) > 1 {
-			groups[strings.Join(args[:len(args)-1], " ")] = true
-		}
+		paths = append(paths, pathArgs(filepath.Base(f)))
 	}
 	var out []probe
 	for _, a := range paths {
 		name := strings.Join(a, " ")
-		if len(a) == 0 || groups[name] || skip[name] || strings.HasPrefix(name, "merge-driver") || strings.HasPrefix(name, "__") {
+		if len(a) == 0 || skip[name] || strings.HasPrefix(name, "merge-driver") || strings.HasPrefix(name, "__") {
 			continue
 		}
 		out = append(out, probe{name, a})
@@ -266,7 +264,7 @@ func leafProbes(t *testing.T) []probe {
 	return out
 }
 
-// TestNoProjectColour runs every leaf command bare in an empty directory
+// TestNoProjectColour runs every command path bare in an empty directory
 // (not a project, not a git repository) and compares the coloured output:
 // the "not in a project" / missing-argument paths of every command family.
 func TestNoProjectColour(t *testing.T) {

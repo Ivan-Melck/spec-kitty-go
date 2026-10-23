@@ -317,7 +317,11 @@ func run(ctx *cli.Context) error {
 				fixed += f
 			}
 			fmt.Fprintln(out)
-			rich.Panel(out, fmt.Sprintf("Summary:\nTotal mismatches found: %d\nTotal mismatches fixed: %d", total, fixed), "Task Metadata Validation Complete")
+			border := "cyan"
+			if total != 0 {
+				border = "yellow"
+			}
+			rich.PanelStyled(out, fmt.Sprintf("[bold]Summary:[/bold]\nTotal mismatches found: [yellow]%d[/yellow]\nTotal mismatches fixed: [green]%d[/green]", total, fixed), "Task Metadata Validation Complete", border)
 			if total == 0 || fix {
 				return cli.Exit(0)
 			}

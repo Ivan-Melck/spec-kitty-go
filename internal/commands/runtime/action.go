@@ -50,7 +50,7 @@ func init() {
 	app.Register(func(root *cli.Command) {
 		agent := app.Group(root, "agent", agentHelp)
 		action := app.Group(agent, "action", "Mission action commands that display prompts and instructions for agents")
-		action.NoArgsIsError = true
+		action.NoArgsIsHelp = true
 		action.Add(&cli.Command{
 			Name: "implement", Short: "Display work package prompt with implementation instructions.", Long: implementLong,
 			Args: []*cli.Arg{{Name: "wp_id", Metavar: "wp_id", Help: "Work package ID (e.g., WP01, wp01, WP01-slug) - auto-detects first planned if omitted"}},

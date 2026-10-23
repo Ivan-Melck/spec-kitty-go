@@ -299,7 +299,30 @@ var (
 	reUUID     = regexp.MustCompile(`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
 	reDur      = regexp.MustCompile(`\b\d+\.\d+s\b`)
 	rePid      = regexp.MustCompile(`"(shell_pid|pid)": \d+`)
+
+	// Colour runs (SPEC_KITTY_TEST_COLOR): rich's highlighter splits values
+	// into styled runs. reSGR's terminator "m" is a word character that
+	// defeats every \b above, so NormalizeValues rewrites each SGR sequence
+	// to end in SGREnd (non-word) and keeps it that way in its output; the
+	// patterns below also allow SGR runs inside a timestamp or duration.
+	reSGR = regexp.MustCompile(`\x1b\[([0-9;]*)m`)
+	// reHLDigits is an all-digit short SHA the repr highlighter coloured as
+	// a number: unwrapped so maskShortSHAs sees it.
+	reHLDigits = regexp.MustCompile("\x1b\\[1;36\x01([0-9]{7,12})\x1b\\[0\x01")
+	reTSAnsi   = regexp.MustCompile(sgrTolerant(`\d{4}`, `-`, `\d{2}`, `-`, `\d{2}[T ]`, `\d{2}`, `:`, `\d{2}`, `:`, `\d{2}`) +
+		`(?:` + sgrRun + sgrTolerant(`\.`, `\d+`) + `)?` +
+		`(?:` + sgrRun + `Z|` + sgrRun + sgrTolerant(`[+-]`, `\d{2}`, `:`, `\d{2}`) + `)?`)
+	reDurAnsi = regexp.MustCompile(`\b` + sgrTolerant(`\d+`, `\.`, `\d+`, `s`) + `\b`)
 )
+
+// SGREnd terminates the SGR sequences in normalized colour output.
+const SGREnd = "\x01"
+
+// sgrRun is any run of normalized SGR sequences.
+const sgrRun = `(?:\x1b\[[0-9;]*\x01)*`
+
+// sgrTolerant joins parts allowing SGR runs between them.
+func sgrTolerant(parts ...string) string { return strings.Join(parts, sgrRun) }
 
 // Normalize masks volatile values in s. Sandbox paths become <BASE>/<HOME>/<PROJ>.
 func (s *Sandbox) Normalize(text string) string {
@@ -311,6 +334,7 @@ func (s *Sandbox) Normalize(text string) string {
 
 // NormalizeValues masks ULIDs, timestamps, hashes and UUIDs.
 func NormalizeValues(text string) string {
+	text = reSGR.ReplaceAllString(text, "\x1b[${1}"+SGREnd)
 	text = reUUID.ReplaceAllString(text, "<UUID>")
 	text = reULID.ReplaceAllString(text, "<ULID>")
 	text = reMid8.ReplaceAllString(text, "-<MID8>")
@@ -323,10 +347,17 @@ func NormalizeValues(text string) string {
 		return m
 	})
 	text = reTS.ReplaceAllString(text, "<TS>")
+	if strings.Contains(text, SGREnd) {
+		text = reTSAnsi.ReplaceAllString(text, "<TS>")
+	}
 	text = reSHA.ReplaceAllString(text, "<SHA>")
 	text = rePid.ReplaceAllString(text, `"$1": <PID>`)
+	text = reHLDigits.ReplaceAllString(text, "$1")
 	text = maskShortSHAs(text)
 	text = reDur.ReplaceAllString(text, "<DUR>")
+	if strings.Contains(text, SGREnd) {
+		text = reDurAnsi.ReplaceAllString(text, "<DUR>")
+	}
 	return text
 }
 

@@ -19,17 +19,8 @@ import (
 
 // synthPanel is render_error_panel: an expanded rounded rich Panel whose
 // body is a plain Text (no markup) with a centred title.
-func synthPanel(w io.Writer, body, title string) {
-	width := rich.Width()
-	inner := width - 4
-	t := " " + title + " "
-	fill := width - 2 - rich.CellLen(t)
-	top := strings.Repeat("─", max(0, fill/2)) + t + strings.Repeat("─", max(0, fill-fill/2))
-	fmt.Fprintln(w, "╭"+top+"╮")
-	for _, l := range rich.WrapText(body, inner, "left", "fold", false) {
-		fmt.Fprintln(w, "│ "+l+" │")
-	}
-	fmt.Fprintln(w, "╰"+strings.Repeat("─", width-2)+"╯")
+func synthPanel(w io.Writer, body, title string, bodyStyle any) {
+	rich.PrintTo(w, &rich.RichPanel{R: rich.NewStyledText(body, bodyStyle), Title: "[bold red]" + title + "[/]", BorderStyle: "red"})
 }
 
 func synthFailureEnvelope(w io.Writer, adapter string, warnings []any) {
@@ -251,13 +242,13 @@ func synthHandleError(ctx *cli.Context, jsonMode bool, adapter string, warnings 
 			cprint(ctx.Stderr, "%s", "[red]Error:[/red] "+detail)
 		}
 	case errors.As(err, &se) && se.Type == "NeutralityGateViolation":
-		synthPanel(ctx.Stderr, se.Msg, se.Type)
+		synthPanel(ctx.Stderr, se.Msg, se.Type, "red")
 		cprint(ctx.Stderr, "%s", "\n[yellow]Staging directory preserved at:[/yellow] "+se.StagingDir+"\nInspect the staged artifacts, adjust the synthesis prompt or scope, and retry.")
 		if jsonMode {
 			synthFailureEnvelope(w, adapter, append(warnings, "NeutralityGateViolation: "+se.Msg))
 		}
 	case errors.As(err, &se):
-		synthPanel(ctx.Stderr, se.Msg, se.Type)
+		synthPanel(ctx.Stderr, se.Msg, se.Type, "red")
 		if se.Type == "GeneratedArtifactMissingError" {
 			hint := "Charter prerequisite missing: no generated charter artifacts found. Run `spec-kitty charter generate` (or `charter interview` first) to produce the artifacts that synthesis needs."
 			if jsonMode {
@@ -390,7 +381,7 @@ func runCharterResynthesize(ctx *cli.Context) error {
 			if jsonMode {
 				emitCharterError(w, true, body, "", nil)
 			} else {
-				synthPanel(ctx.Stderr, body, `Cannot resolve --topic "`+se.Raw+`"`)
+				synthPanel(ctx.Stderr, body, `Cannot resolve --topic "`+se.Raw+`"`, nil)
 			}
 			return cli.Exit(2)
 		}
@@ -398,7 +389,7 @@ func runCharterResynthesize(ctx *cli.Context) error {
 			if jsonMode {
 				emitCharterError(w, true, se.Msg, "", nil)
 			} else {
-				synthPanel(ctx.Stderr, se.Msg, se.Type)
+				synthPanel(ctx.Stderr, se.Msg, se.Type, "red")
 			}
 			return cli.Exit(1)
 		}

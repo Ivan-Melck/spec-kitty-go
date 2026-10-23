@@ -212,7 +212,7 @@ func Run(w io.Writer, root string, o Options) error {
 			sayErr(w, "No interrupted merge to resume.")
 			return exit(1)
 		}
-		say(w, fmt.Sprintf("Resume requested for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
+		say(w, fmt.Sprintf("[bold cyan]Resume requested[/bold cyan] for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
 	}
 	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck, skipLanes: o.SkipLanes, allowSparse: o.AllowSparse, opts: o}
 	return r.execute()
@@ -328,7 +328,7 @@ func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o O
 		"mission_branch", m.MissionBranch, "lanes", lanesJSON(m), "would_assign_mission_number", would,
 		"retention", jsonx.NewObject("branch_source", ret.BranchSource, "worktree_source", ret.WorktreeSource, "warnings", warn))
 	if would != nil && !o.JSON {
-		say(w, fmt.Sprintf("would assign mission_number=%d to mission %s", would, slug))
+		say(w, fmt.Sprintf("[cyan]would assign[/cyan] mission_number=%d to mission %s", would, slug))
 	}
 	fmt.Fprintln(w, jsonx.Dumps(payload, compact))
 	return nil
@@ -670,7 +670,7 @@ func (r *run) execute() error {
 		// attempt; finish the teardown without re-running the phases.
 	} else if err := r.mutationSpan(r.coordDone); err != nil {
 		if e, ok := err.(*Exit); ok && e.Code != 0 && r.state != nil {
-			fmt.Fprintln(r.w, r.state.Rollback(r.root).Render())
+			rich.PrintPlain(r.w, r.state.Rollback(r.root).Render())
 		}
 		return err
 	}
@@ -719,7 +719,7 @@ func (r *run) mutationSpan(coordDone bool) error {
 				r.state.MissionNumberBaked = true
 				r.state.Save(r.root)
 			}
-			say(r.w, fmt.Sprintf("Assigned mission_number=%d to mission %s", r.number, r.slug))
+			say(r.w, fmt.Sprintf("[green]Assigned[/green] mission_number=%d to mission %s", r.number, r.slug))
 		}
 		return nil
 	}); err != nil {

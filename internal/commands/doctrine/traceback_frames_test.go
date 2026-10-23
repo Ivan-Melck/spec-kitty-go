@@ -17,6 +17,7 @@ var (
 // the oracle form ("<path>.py:<line> in <name>", possibly wrapped) or the Go
 // form ("in <name>:<line>", source not on disk).
 func tracebackFrames(s string) []string {
+	s = testkit.StripANSI(s)
 	var lines []string
 	for _, l := range strings.Split(s, "\n") {
 		if !strings.HasPrefix(l, "│") {

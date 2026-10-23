@@ -1159,7 +1159,7 @@ func Abort(w io.Writer, root, handle string, release []string, reason string) er
 		say(w, "[yellow]Notice:[/yellow] no pre-mutation snapshot was recorded for this consolidation (older record); aborting without restoring branches.")
 	} else {
 		rep = st.Rollback(root)
-		fmt.Fprintln(w, rep.Render())
+		rich.PrintOpts(w, rich.PrintOptions{Markup: rich.BoolP(false), Highlight: rich.BoolP(false)}, rep.Render())
 		if !rep.fullyRestored() {
 			say(w, "[red]Kept the consolidation record[/red] so nothing is lost; resolve the branches named above, then re-run `spec-kitty consolidate --abort`.")
 			return exit(1)

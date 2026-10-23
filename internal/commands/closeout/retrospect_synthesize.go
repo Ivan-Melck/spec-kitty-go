@@ -204,7 +204,7 @@ func runRetroSynthesize(ctx *cli.Context) error {
 				}
 				printJSON(ctx.Stderr, jsonx.NewObject("error", "unsupported_generator_record", "detail", detail, "proposal_ids", idl, "statuses", st))
 			} else {
-				fmt.Fprintln(ctx.Stderr, "Error: "+detail)
+				rich.PrintSoftWrap(ctx.Stderr, "[red]Error:[/red] "+rich.EscapeMarkup(detail))
 			}
 			return cli.Exit(1)
 		}
@@ -231,7 +231,7 @@ func runRetroSynthesize(ctx *cli.Context) error {
 			if jsonMode {
 				printJSON(ctx.Stderr, jsonx.NewObject("error", "proposal_not_accepted", "detail", detail, "proposal_ids", offending, "statuses", st))
 			} else {
-				fmt.Fprintln(ctx.Stderr, "Error: "+detail)
+				rich.PrintSoftWrap(ctx.Stderr, "[red]Error:[/red] "+rich.EscapeMarkup(detail))
 			}
 			return cli.Exit(1)
 		}

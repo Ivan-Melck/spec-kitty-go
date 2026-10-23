@@ -21,7 +21,7 @@ func charterBundleCmd() *cli.Command {
 	g := &cli.Command{Name: "bundle", Short: "Charter bundle validation commands."}
 	g.InvokeWithoutCommand = true
 	g.Run = func(ctx *cli.Context) error {
-		cli.WriteHelp(ctx.Stdout, ctx.Cmd)
+		cli.WriteNoArgsIsHelp(ctx.Stdout, ctx.Cmd)
 		return cli.Exit(2)
 	}
 	g.Add(&cli.Command{
