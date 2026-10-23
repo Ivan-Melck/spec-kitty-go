@@ -3,6 +3,7 @@ package agentcore_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -26,11 +27,11 @@ func ownedSteps(t *testing.T, p *testkit.Pair, cwd, goSlug, orSlug string, steps
 			t.Errorf("%v (cwd %q): exit go=%d oracle=%d\ngo stdout:\n%s\ngo stderr:\n%s\noracle stdout:\n%s\noracle stderr:\n%s", s, cwd, g.Code, o.Code, g.Stdout, g.Stderr, o.Stdout, o.Stderr)
 			continue
 		}
-		gs, os_ := shortULID.ReplaceAllString(p.Go.Normalize(g.Stdout), "<ULID12>"), shortULID.ReplaceAllString(p.Oracle.Normalize(o.Stdout), "<ULID12>")
+		gs, os_ := ownedMask(shortULID.ReplaceAllString(p.Go.Normalize(g.Stdout), "<ULID12>")), ownedMask(shortULID.ReplaceAllString(p.Oracle.Normalize(o.Stdout), "<ULID12>"))
 		if gs != os_ {
 			t.Errorf("%v (cwd %q): stdout differs\n%s", s, cwd, testkit.Diff(os_, gs))
 		}
-		ge, oe := p.Go.Normalize(g.Stderr), p.Oracle.Normalize(o.Stderr)
+		ge, oe := ownedMask(p.Go.Normalize(g.Stderr)), ownedMask(p.Oracle.Normalize(o.Stderr))
 		if ge != oe {
 			t.Errorf("%v (cwd %q): stderr differs\n%s", s, cwd, testkit.Diff(oe, ge))
 		}
@@ -151,6 +152,20 @@ func TestDiffOwnedLifecycleWalk(t *testing.T) {
 	}
 }
 
+var (
+	runIDRe      = regexp.MustCompile(`\b[0-9a-f]{32}\b`)
+	promptKeyRe  = regexp.MustCompile(`spec-kitty-prompts/[0-9a-f]{16}/`)
+	issueCountRe = regexp.MustCompile(`"issue_counts": \{[^}]*\}`)
+)
+
+// ownedMask hides run ids (uuid4 hex), the path-derived prompt cache key
+// and issue_counts (a frozenset-ordered dict upstream).
+func ownedMask(s string) string {
+	s = runIDRe.ReplaceAllString(s, "<RUNID>")
+	s = promptKeyRe.ReplaceAllString(s, "spec-kitty-prompts/<KEY>/")
+	return issueCountRe.ReplaceAllString(s, `"issue_counts": <C>`)
+}
+
 // ownedGitState is gitState plus the owned and sibling checkouts' status.
 func ownedGitState(s *testkit.Sandbox) string {
 	var b strings.Builder
@@ -239,4 +254,53 @@ func TestDiffOwnedTasksStatus(t *testing.T) {
 	ownedSteps(t, p, "", g, o, steps[:2])
 	ownedSteps(t, p, missionfx.OwnedRel, g, o, [][]string{{"agent", "tasks", "status", "--mission", "$M", "--json"}})
 	compareOwnedGit(t, p)
+}
+
+// TestDiffOwnedNextAndActions covers OWN-05: `next --owned-checkout`
+// (query, advancing with the owned advancement commit, the analyze-step
+// currency check governed by R) and the `agent action implement|review
+// --owned-checkout` refusals.
+func TestDiffOwnedNextAndActions(t *testing.T) {
+	cases := []struct {
+		name string
+		cwd  string
+		own  []string
+	}{
+		{"flag-from-R", "", []string{"--owned-checkout", missionfx.OwnedRel}},
+		{"adopt-from-P", missionfx.OwnedRel, nil},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			p := missionfx.NewOwnedPair(t)
+			g, o := missionfx.OracleOwnedMissionNamed(t, p, "calc-ops")
+			with := func(args ...string) []string { return append(args, c.own...) }
+			ownedSteps(t, p, c.cwd, g, o, [][]string{
+				{"agent", "action", "implement", "WP01", "--agent", "claude", "--owned-checkout", missionfx.OwnedRel},
+				{"agent", "action", "implement", "WP01", "--agent", "claude", "--owned-checkout", missionfx.OwnedRel, "--mission", "$M"},
+				{"agent", "action", "review", "WP01", "--agent", "claude", "--owned-checkout", ".", "--mission", "$M"},
+				{"agent", "action", "review", "--owned-checkout", "/nonexistent-owned"},
+				{"next", "--json", "--owned-checkout", "/nonexistent-owned"},
+				with("next", "--json"),
+				with("next", "--mission", "$M", "--json"),
+				with("next", "--agent", "claude", "--mission", "$M", "--json"),
+				with("next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"),
+			})
+			p.Both(func(s *testkit.Sandbox) {
+				missionfx.AuthorCalc(t, missionfx.OwnedSandbox(s), missionfx.OwnedMissionSlug(t, s))
+			})
+			ownedSteps(t, p, c.cwd, g, o, [][]string{
+				with("next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"),
+				with("next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"),
+				with("next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"),
+				with("next", "--agent", "claude", "--mission", "$M", "--result", "success"),
+				with("agent", "mission", "finalize-tasks", "--mission", "$M", "--json"),
+				with("agent", "mission", "record-analysis", "--mission", "$M", "--input-file", missionfx.AnalysisReport(), "--json"),
+				with("next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"),
+				with("next", "--agent", "claude", "--mission", "$M"),
+			})
+			compareOwnedGit(t, p)
+		})
+	}
 }

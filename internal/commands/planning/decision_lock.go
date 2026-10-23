@@ -22,7 +22,6 @@ import (
 // stop tracking the exact decision index lock of an explicitly owned
 // mission, adding the exact owner ignore rule when it is missing.
 
-
 // lockRaceError is _RuntimeLockRaceError (RUNTIME_LOCK_RACE).
 type lockRaceError struct{ msg string }
 
