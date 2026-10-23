@@ -9,6 +9,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/decision"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
@@ -24,18 +25,37 @@ const (
 
 func ownedFlag() *cli.Flag { return str("owned-checkout", helpOwnedCheckout, false) }
 
-// decisionContext is _resolve_owned_decision_context (non-owned arm).
+// decisionContext is _resolve_owned_decision_context: a validated
+// --owned-checkout (or a flagless caller checkout that owns the mission) makes
+// every downstream read and write land in the owned checkout; ownership
+// refusals fail before any service call (unregistered codes degrade to the
+// registered fallback with the real code as diagnostic data).
 func (v *verb) decisionContext(ctx *cli.Context) (*orch.Mission, *decision.Context, error) {
 	root := v.root()
-	if claim := ctx.String("owned-checkout"); claim != "" {
-		if _, err := os.Stat(claim); err != nil {
-			return nil, nil, v.fail(decisionFallback, fmt.Sprintf("Cannot validate claimed checkout %s against resolved primary %s: git topology probe failed for PosixPath(%s): git binary not found on PATH",
-				claim, root, pyjson.ReprString(claim)), jsonx.NewObject("unregistered_error_code", "OWNERSHIP_BROKEN_POINTER"))
-		}
-		return nil, nil, v.fail(decisionFallback, "--owned-checkout is not supported by this build",
-			jsonx.NewObject("unregistered_error_code", "OWNED_OPTION_UNSUPPORTED"))
-	}
 	handle := ctx.String("mission")
+	var claim *string
+	if c := ctx.String("owned-checkout"); c != "" {
+		claim = &c
+	}
+	cwd, _ := os.Getwd()
+	owned, oerr := ownedcheckout.ResolveOrAdopt(root, claim, handle, cwd, ownedcheckout.Options{})
+	if oerr != nil {
+		code := "MISSION_CONTEXT_UNRESOLVED"
+		if e, ok := oerr.(*ownedcheckout.Error); ok {
+			code = e.Code
+		}
+		if orch.IsAllowedErrorCode(code) {
+			return nil, nil, v.fail(code, oerr.Error(), nil)
+		}
+		return nil, nil, v.fail(decisionFallback, oerr.Error(), jsonx.NewObject("unregistered_error_code", code))
+	}
+	if owned != nil {
+		m, err := v.mission(owned.OwnedRoot, owned.MissionSlug)
+		if err != nil {
+			return nil, nil, err
+		}
+		return m, &decision.Context{Root: owned.OwnedRoot, Slug: owned.MissionSlug}, nil
+	}
 	m, err := v.mission(root, handle)
 	if err != nil {
 		return nil, nil, err
