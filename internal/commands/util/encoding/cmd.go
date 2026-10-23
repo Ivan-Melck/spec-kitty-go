@@ -181,7 +181,11 @@ func run(ctx *cli.Context) error {
 			totalFixed += f
 		}
 		fmt.Fprintln(out)
-		rich.Panel(out, fmt.Sprintf("Summary:\nTotal files with issues: %d\nTotal files fixed: %d", totalIssues, totalFixed), "Encoding Validation Complete")
+		border := "cyan"
+		if totalIssues != 0 {
+			border = "yellow"
+		}
+		rich.PanelStyled(out, fmt.Sprintf("[bold]Summary:[/bold]\nTotal files with issues: [yellow]%d[/yellow]\nTotal files fixed: [green]%d[/green]", totalIssues, totalFixed), "Encoding Validation Complete", border)
 		if totalIssues == 0 || fix {
 			return cli.Exit(0)
 		}
@@ -246,15 +250,18 @@ func validateDir(out io.Writer, dir string, fix, backup bool) (int, int) {
 		}
 	}
 	if len(withIssues) > 0 {
-		var rows [][]string
+		t := rich.NewTable()
+		t.Title = "Files with Encoding Issues: " + name
+		t.AddColumn("File", rich.Column{Style: "cyan"})
+		t.AddColumn("Status", rich.Column{Style: "yellow"})
 		for _, f := range withIssues {
-			st := "Needs Fix"
+			st := "[yellow]Needs Fix[/yellow]"
 			if fix {
-				st = "Fixed"
+				st = "[green]Fixed[/green]"
 			}
-			rows = append(rows, []string{f, st})
+			t.AddRow(f, st)
 		}
-		rich.Table(out, "Files with Encoding Issues: "+name, []string{"File", "Status"}, rows)
+		rich.PrintTo(out, t)
 		if !fix {
 			raw, err := os.ReadFile(filepath.Join(dir, withIssues[0]))
 			if err == nil {

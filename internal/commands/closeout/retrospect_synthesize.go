@@ -283,39 +283,51 @@ func renderSynthesis(ctx *cli.Context, res *retrospective.SynthResult, dry bool)
 		label = "[green]APPLY[/green]"
 	}
 	say(w, "\n[bold]agent retrospect synthesize[/bold]  ("+label+")\n")
-	if len(res.Planned) > 0 {
-		var rows [][]string
-		for _, p := range res.Planned {
-			rows = append(rows, markupCells(p.ProposalID, p.Kind, p.DiffPreview))
+	tbl := func(title, hs string, cols []string, dimFirst bool) *rich.RichTable {
+		t := rich.NewTable()
+		t.Title, t.HeaderStyle = title, hs
+		for i, c := range cols {
+			col := rich.Column{}
+			if i == 0 && dimFirst {
+				col.Style, col.NoWrap = "dim", true
+			}
+			t.AddColumn(c, col)
 		}
-		rich.Table(w, "Planned Applications", []string{"proposal_id", "kind", "diff_preview"}, rows)
+		return t
+	}
+	if len(res.Planned) > 0 {
+		t := tbl("Planned Applications", "bold cyan", []string{"proposal_id", "kind", "diff_preview"}, true)
+		for _, p := range res.Planned {
+			t.AddRow(p.ProposalID, p.Kind, p.DiffPreview)
+		}
+		rich.PrintTo(w, t)
 	} else {
 		say(w, "[dim]No planned applications.[/dim]")
 	}
 	if len(res.Applied) > 0 {
-		var rows [][]string
+		t := tbl("Applied Changes", "bold green", []string{"proposal_id", "target_urn", "artifact_path", "re_applied"}, true)
 		for _, a := range res.Applied {
 			re := "False"
 			if a.ReApplied {
 				re = "True"
 			}
-			rows = append(rows, markupCells(a.ProposalID, a.TargetURN, a.ArtifactPath, re))
+			t.AddRow(a.ProposalID, a.TargetURN, a.ArtifactPath, re)
 		}
-		rich.Table(w, "Applied Changes", []string{"proposal_id", "target_urn", "artifact_path", "re_applied"}, rows)
+		rich.PrintTo(w, t)
 	}
 	if len(res.Conflicts) > 0 {
-		var rows [][]string
+		t := tbl("Conflicts", "bold red", []string{"proposal_ids", "reason"}, false)
 		for _, c := range res.Conflicts {
-			rows = append(rows, markupCells(strings.Join(c.ProposalIDs, ", "), c.Reason))
+			t.AddRow(strings.Join(c.ProposalIDs, ", "), c.Reason)
 		}
-		rich.Table(w, "Conflicts", []string{"proposal_ids", "reason"}, rows)
+		rich.PrintTo(w, t)
 	}
 	if len(res.Rejected) > 0 {
-		var rows [][]string
+		t := tbl("Rejections", "bold magenta", []string{"proposal_id", "reason", "detail"}, true)
 		for _, x := range res.Rejected {
-			rows = append(rows, markupCells(x.ProposalID, x.Reason, x.Detail))
+			t.AddRow(x.ProposalID, x.Reason, x.Detail)
 		}
-		rich.Table(w, "Rejections", []string{"proposal_id", "reason", "detail"}, rows)
+		rich.PrintTo(w, t)
 	}
 	say(w, fmt.Sprintf("\n[bold]Summary:[/bold] planned=%d applied=%d conflicts=%d rejected=%d events_emitted=%d",
 		len(res.Planned), len(res.Applied), len(res.Conflicts), len(res.Rejected), len(res.EventsEmitted)))

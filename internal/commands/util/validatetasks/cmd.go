@@ -374,17 +374,17 @@ func validateFeature(ctx *cli.Context, dir string, fix bool, agent, shellPID str
 	fixed := 0
 	var rows [][]string
 	for _, m := range mms {
-		status := "Needs Fix"
+		status := "[yellow]Needs Fix[/yellow]"
 		if fix {
 			ok, msg, err := RepairLaneMismatch(filepath.Join(dir, m.rel), agent, shellPID, ctx.Stderr)
 			if err != nil {
 				return 0, 0, err
 			}
 			if ok {
-				status = "Fixed"
+				status = "[green]Fixed[/green]"
 				fixed++
 			} else if msg != "" {
-				status = rich.Strip("Error: " + msg)
+				status = "[red]Error: " + msg + "[/red]"
 			}
 		}
 		exp, act := m.expected, m.actual
@@ -396,7 +396,15 @@ func validateFeature(ctx *cli.Context, dir string, fix bool, agent, shellPID str
 		}
 		rows = append(rows, []string{m.rel, exp, act, status})
 	}
-	rich.Table(out, "Task Metadata Mismatches: "+filepath.Base(dir), []string{"File", "Expected Lane", "Actual Lane", "Status"}, rows)
+	t := rich.NewTable()
+	t.Title = "Task Metadata Mismatches: " + filepath.Base(dir)
+	for i, h := range []string{"File", "Expected Lane", "Actual Lane", "Status"} {
+		t.AddColumn(h, rich.Column{Style: []string{"cyan", "green", "yellow", "white"}[i]})
+	}
+	for _, r := range rows {
+		t.AddRow(r[0], r[1], r[2], r[3])
+	}
+	rich.PrintTo(out, t)
 	if fix {
 		fmt.Fprintln(out)
 		rich.Print(out, fmt.Sprintf("  [green]Fixed %d of %d mismatches[/green]", fixed, len(mms)))
