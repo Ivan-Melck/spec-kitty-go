@@ -58,7 +58,7 @@ func ownedSubst(s *testkit.Sandbox, args []string, slug string) []string {
 // resolve -> in_review/approved/done -> mark-status, from cwd, with
 // --owned-checkout (flag) or by flagless adoption, optionally with a stale
 // copy of the mission in R.
-func ownedWalk(t *testing.T, cwd string, flag, stale bool) {
+func ownedWalk(t *testing.T, cwd string, flag, stale bool, accept ...bool) {
 	p := missionfx.NewOwnedPair(t)
 	p.Both(func(s *testkit.Sandbox) {
 		missionfx.GitIn(t, s, missionfx.OwnedDir(s), "commit", "-q", "--allow-empty", "-m", "owned base")
@@ -120,6 +120,21 @@ func ownedWalk(t *testing.T, cwd string, flag, stale bool) {
 		with("agent", "tasks", "mark-status", "T001", "--status", "done", "--mission", "$M", "--json"),
 		with("agent", "tasks", "status", "--mission", "$M", "--json"),
 	})
+	if len(accept) > 0 && accept[0] {
+		ownedSteps(t, p, cwd, g, o, [][]string{
+			with("agent", "acceptance-verdict", "--mission", "$M", "--criterion", "FR-001", "--result", "pass", "--verification-method", "manual", "--json"),
+			with("agent", "mission", "acceptance-verdict", "--mission", "$M", "--negative-invariant", "NI-001", "--description", "no todo",
+				"--verification-method", "grep_absence", "--verification-command", "TODO_MARKER", "--json"),
+			{"agent", "acceptance-verdict", "--mission", "$M", "--owned-checkout", ".", "--criterion", "FR-001", "--result", "pass", "--json"},
+			with("accept", "--mission", "$M", "--json", "--no-commit"),
+			with("accept", "--mission", "$M", "--diagnose", "--json"),
+			with("accept", "--mission", "$M", "--diagnose", "--normalize-encoding", "--json"),
+			with("accept", "--mission", "$M", "--json"),
+			{"accept", "--mission", "$M", "--owned-checkout", ".", "--json"},
+			{"accept", "--mission", "$M", "--owned-checkout", "/nonexistent-owned"},
+			with("agent", "mission", "accept", "--mission", "$M", "--json"),
+		})
+	}
 	p.CompareTree(missionfx.OwnedRel+"/kitty-specs", true)
 	compareOwnedGit(t, p)
 }
@@ -301,6 +316,27 @@ func TestDiffOwnedNextAndActions(t *testing.T) {
 				with("next", "--agent", "claude", "--mission", "$M"),
 			})
 			compareOwnedGit(t, p)
+		})
+	}
+}
+
+// TestDiffOwnedAcceptance covers OWN-06: agent [mission] acceptance-verdict
+// and accept with --owned-checkout and by flagless adoption (refusals:
+// repository root, --diagnose --normalize-encoding).
+func TestDiffOwnedAcceptance(t *testing.T) {
+	cases := []struct {
+		name string
+		cwd  string
+		flag bool
+	}{
+		{"flag-from-R", "", true},
+		{"adopt-from-P", missionfx.OwnedRel, false},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ownedWalk(t, c.cwd, c.flag, false, true)
 		})
 	}
 }

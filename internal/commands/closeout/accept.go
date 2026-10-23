@@ -2,6 +2,7 @@ package closeout
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/acceptance"
@@ -9,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/originfresh"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 )
 
 const originCheckHelp = "Refuse (enforce, the default) or only warn (warn) when the mission's status evidence is behind or unreachable on its remote; off contacts nothing and accepts stale evidence. Overrides SPEC_KITTY_ORIGIN_CHECK. --no-commit and --diagnose always warn."
@@ -39,7 +41,7 @@ func init() {
 				return runAccept(ctx, acceptOpts{
 					mission: ctx.String("mission"), mode: ctx.String("mode"), actor: ctx.String("actor"), tests: ctx.Strings("test"),
 					json: ctx.Bool("json"), lenient: ctx.Bool("lenient"), noCommit: ctx.Bool("no-commit"), diagnose: ctx.Bool("diagnose"),
-					allowFail: ctx.Bool("allow-fail"), owned: ctx.IsSet("owned-checkout"), mergeCommit: ctx.String("merge-commit"),
+					allowFail: ctx.Bool("allow-fail"), owned: ctx.IsSet("owned-checkout"), ownedClaim: ctx.String("owned-checkout"), mergeCommit: ctx.String("merge-commit"),
 					targetBranch: ctx.OptString("target-branch"), originCheck: ctx.OptString("origin-check"), attest: ctx.Bool("attest-first-landing-commit"),
 					normalizeEncoding: ctx.Bool("normalize-encoding"),
 				})
@@ -78,6 +80,7 @@ type acceptOpts struct {
 	tests                                        []string
 	json, lenient, noCommit, diagnose, allowFail bool
 	owned, agent                                 bool
+	ownedClaim                                   string
 	targetBranch, originCheck                    *string
 	attest                                       bool
 	normalizeEncoding                            bool
@@ -120,8 +123,20 @@ func runAccept(ctx *cli.Context, o acceptOpts) error {
 	if root == "" {
 		return r.fail("Could not locate project root", 1, "", nil)
 	}
-	if o.owned {
-		return r.fail("--owned-checkout is not supported by this build.", 1, "", nil)
+	// Validate opt-in ownership (explicit --owned-checkout or flagless
+	// adoption) once, before any acceptance read or write.
+	owned, oerr := ownedAcceptContext(root, o)
+	if oerr != nil {
+		if e, ok := oerr.(*ownedcheckout.Error); ok {
+			ownedcheckout.Emit(ctx.Stdout, ctx.Stderr, e, o.json, func(code, msg string) *jsonx.Object {
+				return jsonx.NewObject("error_code", code, "error", msg)
+			})
+			return cli.Exit(1)
+		}
+		return r.fail(oerr.Error(), 1, "", nil)
+	}
+	if owned != nil {
+		root = owned.OwnedRoot
 	}
 	r.tr = newTracker("Mission Acceptance")
 	if !o.json {
@@ -133,8 +148,11 @@ func runAccept(ctx *cli.Context, o acceptOpts) error {
 	if o.mission == "" {
 		return r.fail("--mission <slug> is required", 2, "detect", nil)
 	}
-	slug, err := resolveWithBareFold(ctx, root, o.mission, o.json)
-	if err != nil {
+	var slug string
+	var err error
+	if owned != nil {
+		slug = owned.MissionSlug
+	} else if slug, err = resolveWithBareFold(ctx, root, o.mission, o.json); err != nil {
 		return err
 	}
 	if !o.json {
@@ -428,4 +446,27 @@ func printResult(ctx *cli.Context, r *acceptance.Result) {
 			say(ctx.Stdout, "  - "+n)
 		}
 	}
+}
+
+// ownedAcceptContext is accept._owned_accept_context.
+func ownedAcceptContext(root string, o acceptOpts) (*ownedcheckout.Fact, error) {
+	var claim *string
+	if o.owned {
+		c := o.ownedClaim
+		claim = &c
+	}
+	cwd, _ := os.Getwd()
+	f, err := ownedcheckout.ResolveOrAdopt(root, claim, o.mission, cwd, ownedcheckout.Options{})
+	if err != nil || f == nil {
+		return nil, err
+	}
+	if o.diagnose && o.normalizeEncoding {
+		return nil, &ownedcheckout.Error{Code: ownedcheckout.OwnedOptionUnsupported, Message: "--diagnose cannot repair encoding in an owned checkout."}
+	}
+	if !o.diagnose {
+		if err := ownedcheckout.RequireUnstagedIndex(f); err != nil {
+			return nil, err
+		}
+	}
+	return f, nil
 }
