@@ -21,7 +21,7 @@ func init() { registerCharterLeaf(charterPackGroup) }
 // packLeafBuilders collects charter pack subcommands (other files append).
 var packLeafBuilders = []func() *cli.Command{packListCmd, packPathCmd, packAssetGroup}
 
-var packOrder = []string{"list", "path", "validate", "assemble", "regenerate-graph", "asset"}
+var packOrder = []string{"list", "path", "validate", "assemble", "regenerate-graph", "vendor", "asset"}
 
 func charterPackGroup() *cli.Command {
 	g := &cli.Command{Name: "pack", Short: "Charter pack management commands."}

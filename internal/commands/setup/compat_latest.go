@@ -169,10 +169,10 @@ func highestVersion(versions []string, includePre bool) string {
 		if !ok {
 			continue
 		}
-		if bestAny == "" || anyV.cmp(v) < 0 {
+		if bestAny == "" || anyV.Compare(v) < 0 {
 			bestAny, anyV = raw, v
 		}
-		if v.preKind == 3 && v.dev == -1 && (bestStable == "" || stableV.cmp(v) < 0) {
+		if v.PreKind == 3 && v.Dev == -1 && (bestStable == "" || stableV.Compare(v) < 0) {
 			bestStable, stableV = raw, v
 		}
 	}

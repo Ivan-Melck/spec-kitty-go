@@ -115,7 +115,7 @@ func validateUpgradeTarget(from, target string) string {
 	if !ok {
 		return "Invalid project metadata version: " + displayVersion(from)
 	}
-	if t.cmp(f) < 0 {
+	if t.Compare(f) < 0 {
 		return fmt.Sprintf("Refusing to downgrade project metadata from %s to %s", displayVersion(from), displayVersion(target))
 	}
 	return ""
@@ -430,7 +430,7 @@ func runFullPlanJSON(w io.Writer, root string, requested any, target string, pro
 		relation = "invalid"
 	} else if current != "unknown" {
 		if c, ok := parsePEP440(current); ok {
-			switch t.cmp(c) {
+			switch t.Compare(c) {
 			case -1:
 				relation = "lower"
 			case 0:

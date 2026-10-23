@@ -142,7 +142,7 @@ func (m migrationInfo) targetSchema() int {
 	if !ok {
 		return 0
 	}
-	return v.major()
+	return v.Major()
 }
 
 // applicableMigrations is MigrationRegistry.get_applicable.
