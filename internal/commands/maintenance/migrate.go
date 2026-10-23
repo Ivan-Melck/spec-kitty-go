@@ -119,7 +119,7 @@ func runMigrateLayout(ctx *cli.Context) error {
 		fmt.Fprint(out, "Migrate .kittify/ to centralized model? [y/N]: ")
 		yes, _ := readYes(ctx)
 		if !yes {
-			fmt.Fprintln(ctx.Stderr, "Aborted.")
+			rich.TyperAbort(ctx.Stderr)
 			return cli.Exit(1)
 		}
 	}

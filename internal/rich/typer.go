@@ -4,6 +4,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"io"
 )
 
 // typer.rich_utils (typer 0.27) console, theme and highlighters: the help
@@ -143,4 +145,10 @@ func (TypesHighlighter) Highlight(t *Text) {
 	for _, re := range []*regexp.Regexp{reTypesSep1, reTypesSep2, reTypesSep3} {
 		t.highlightRegex(re, "")
 	}
+}
+
+// TyperAbort is typer.rich_utils.rich_abort_error: "Aborted." in red on
+// the stderr console.
+func TyperAbort(w io.Writer) {
+	TyperConsole(true).PrintWith(w, PrintOptions{Style: TyperStyleAborted}, "Aborted.")
 }
