@@ -6,7 +6,7 @@ from rich.console import Console
 words = ["hello", "Mission", "WP01", "42", "3.14", "-7", "1e5", "0x1F", "True", "False", "None",
          "'quoted'", '"dq"', "/tmp/x/file.txt", "src/a.py", "https://example.com/a?b=1", "...",
          "(a, b)", "[1, 2]", "{x: 1}", "fn(x)", "k=v", "<tag a=1>", "192.168.0.1",
-         "123e4567-e89b-12d3-a456-426614174000", "café", "→", "x_1", "v2.0.1", "1+2j", ""]
+         "123e4567-e89b-12d3-a456-426614174000", "café", "→", "x_1", "v2.0.1", "1+2j", "", "a.0.b", "1.2.3", "3.14e5x", "x=1", "k=\"v\"", "<a b>", "foo(1)", "None.", "-5.", "0x1fz", "2001:db8::1", "aa:bb:cc:dd:ee:ff", "C:\\x", "\"a\"b", "it's", "e1", "1e", "1_000"]
 tags = ["bold", "red", "green", "cyan", "yellow", "dim", "bold red", "italic blue", "#ff8800",
         "color(200)", "rgb(10,200,30)", "on blue", "white on red", "not bold", "underline",
         "bright_magenta", "grey50", "reverse", "strike", "b i u"]

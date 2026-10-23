@@ -111,8 +111,12 @@ type hlAlt struct {
 
 func notWordBefore(prev rune, has bool) bool { return !has || !isWord(prev) }
 
+// boundaryAfter is Python's \b at end: the characters on either side differ
+// in wordness (text edges count as non-word).
 func boundaryAfter(text []rune, end int) bool {
-	return end >= len(text) || !isWord(text[end])
+	before := end > 0 && isWord(text[end-1])
+	after := end < len(text) && isWord(text[end])
+	return before != after
 }
 
 var reprSimple = []string{
