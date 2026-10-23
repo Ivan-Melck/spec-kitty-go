@@ -20,6 +20,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lifecycle"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
+	"github.com/spec-kitty/go-kitty3/internal/missionstate"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
 	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
@@ -685,6 +686,9 @@ func (f *finalizeRun) resolveDeps() error {
 		}
 		w, err := wp.Read(p)
 		if err != nil {
+			if message := missionstate.FrontmatterReadError(p); message != "" {
+				return f.emitErr(message)
+			}
 			return f.emitErr(err.Error())
 		}
 		if d := w.Dependencies(); len(d) > 0 {
