@@ -247,7 +247,7 @@ func NormalizeTasksMD(t string) string {
 var HashInputNames = []string{"spec.md", "plan.md", "tasks.md"}
 
 // defaultAuthorityPaths is DEFAULT_AUTHORITY_PATHS (key order).
-var defaultAuthorityPaths = []string{"docs/context/", "docs/adr/3.x/"}
+var defaultAuthorityPaths = []string{"docs/context/", "docs/adr/"}
 
 func references(v any, field string) []string {
 	var out []string

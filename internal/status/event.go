@@ -579,15 +579,15 @@ func reviewResultFromObject(o *jsonx.Object) (*ReviewResult, error) {
 }
 
 // AnnotationFromObject decodes an InnerStateChanged row.
-func AnnotationFromObject(o *jsonx.Object) (*Annotation, error) { return annotationFromObject(o, true) }
+func AnnotationFromObject(o *jsonx.Object) (*Annotation, error) { return annotationFromObject(o) }
 
-// DiaryAnnotationFromObject decodes with the shared diary rules (subtask values
-// must be lanes; "skipped" is rejected).
+// DiaryAnnotationFromObject uses the same subtask contract as producer rows:
+// work-package lanes plus the subtask-only terminal value "skipped".
 func DiaryAnnotationFromObject(o *jsonx.Object) (*Annotation, error) {
-	return annotationFromObject(o, false)
+	return AnnotationFromObject(o)
 }
 
-func annotationFromObject(o *jsonx.Object, allowSkipped bool) (*Annotation, error) {
+func annotationFromObject(o *jsonx.Object) (*Annotation, error) {
 	v, err := reqKey(o, "event_id")
 	if err != nil {
 		return nil, err
@@ -619,7 +619,7 @@ func annotationFromObject(o *jsonx.Object, allowSkipped bool) (*Annotation, erro
 	if do == nil {
 		do = &jsonx.Object{}
 	}
-	d, err := deltaFromObject(do, allowSkipped)
+	d, err := deltaFromObject(do)
 	if err != nil {
 		return nil, err
 	}
@@ -627,13 +627,13 @@ func annotationFromObject(o *jsonx.Object, allowSkipped bool) (*Annotation, erro
 	return a, nil
 }
 
-func deltaFromObject(o *jsonx.Object, allowSkipped bool) (*Delta, error) {
+func deltaFromObject(o *jsonx.Object) (*Delta, error) {
 	d := &Delta{}
 	if st := o.GetObject("subtasks"); st != nil {
 		sub := &jsonx.Object{}
 		for _, kv := range st.Pairs() {
 			s := PyStr(kv.Value)
-			if !IsLane(s) && !(allowSkipped && s == "skipped") {
+			if !IsLane(s) && s != "skipped" {
 				return nil, fmt.Errorf("%s is not a valid Lane", reprAny(kv.Value))
 			}
 			sub.Set(kv.Key, s)
