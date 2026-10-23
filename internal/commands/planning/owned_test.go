@@ -86,3 +86,50 @@ func TestDiffOwnedPlanningCommands(t *testing.T) {
 		})
 	}
 }
+
+const ownedPolicy = `'{"orchestrator_id":"orch","orchestrator_version":"1.0","agent_family":"claude","approval_mode":"auto","sandbox_mode":"workspace","network_mode":"none","dangerous_flags":[]}'`
+
+// maskCorr hides the orchestrator-api correlation id (uuid4 hex).
+const maskCorr = ` | sed -E 's/corr-[0-9a-f]{32}/corr-<C>/g'`
+
+// didOf prints the decision id for input key k in P's decisions index.
+const didOf = `$(python3 -c 'import json,sys; print([e for e in json.load(open(sys.argv[1]))["entries"] if e["input_key"]==sys.argv[2]][0]["decision_id"])' ../owned/kitty-specs/$M/decisions/index.json `
+
+// TestDiffOwnedCharterAndOrchestratorDecisions covers OWN-07 (charter
+// generate --owned-checkout/--mission-handle) and OWN-08 (orchestrator-api
+// open/resolve/defer/cancel-decision with --owned-checkout or adoption).
+func TestDiffOwnedCharterAndOrchestratorDecisions(t *testing.T) {
+	cases := []struct{ name, own, cd string }{
+		{"flag-from-R", "--owned-checkout ../owned", ""},
+		{"adopt-from-P", "", "cd ../owned &&"},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			p := missionfx.NewOwnedPair(t)
+			g, o := missionfx.OracleOwnedMission(t, p)
+			r := strings.NewReplacer("$OWN", c.own, "$CD", c.cd, "$POL", ownedPolicy)
+			steps := []string{
+				`$SK charter generate --owned-checkout ../owned --mission-handle $M --no-from-interview --json`,
+				`$SK charter generate --owned-checkout ../owned --no-from-interview --json`,
+				`$SK charter generate --owned-checkout . --mission-handle $M --no-from-interview --json`,
+				`$SK charter generate --mission-handle $M --no-from-interview --json`,
+				`$CD $SK orchestrator-api open-decision --mission $M --origin specify --input-key k1 --step-id s1 --question Q --actor me --policy $POL $OWN` + maskCorr,
+				`$SK orchestrator-api open-decision --mission $M --origin specify --input-key k1 --step-id s1 --question Q --actor me --policy $POL --owned-checkout .` + maskCorr,
+				`$SK orchestrator-api open-decision --mission $M --origin specify --input-key k2 --step-id s2 --question Q --actor me --policy $POL --owned-checkout /nonexistent-owned` + maskCorr,
+				`$CD $SK orchestrator-api resolve-decision --mission $M --decision-id ` + didOf + `k1) --final-answer yes --actor me --policy $POL $OWN` + maskCorr,
+				`$CD $SK orchestrator-api open-decision --mission $M --origin plan --input-key k3 --step-id s3 --question Q --actor me --policy $POL $OWN` + maskCorr,
+				`$CD $SK orchestrator-api defer-decision --mission $M --decision-id ` + didOf + `k3) --rationale later --actor me --policy $POL $OWN` + maskCorr,
+				`$CD $SK orchestrator-api cancel-decision --mission $M --decision-id ` + didOf + `k3) --rationale nope --actor me --policy $POL $OWN` + maskCorr,
+			}
+			for i, s := range steps {
+				steps[i] = r.Replace(s)
+			}
+			shellSteps(t, p, g, o, steps...)
+			compareOwnedGit(t, p)
+			p.CompareTree(missionfx.OwnedRel+"/kitty-specs", true)
+			p.CompareTree(missionfx.OwnedRel+"/.kittify/charter", true)
+		})
+	}
+}
