@@ -135,7 +135,7 @@ func writeTemplatelessPrompt(m *missionCtx, action, agent string) (string, error
 }
 
 // buildTemplatePrompt is _build_template_prompt.
-func buildTemplatePrompt(m *missionCtx, featureDir, action, agent string) (string, error) {
+func buildTemplatePromptLoud(m *missionCtx, featureDir, action, agent string) (string, error) {
 	tpl, ok := resolveCommandTemplate(action+".md", m.Root, m.MissionType)
 	if !ok {
 		return "", fmt.Errorf("Asset '%s.md' not found in any resolution tier (subdir='command-templates', mission='%s', project=%s)", action, m.MissionType, m.Root)
@@ -147,7 +147,7 @@ func buildTemplatePrompt(m *missionCtx, featureDir, action, agent string) (strin
 }
 
 // buildWPPrompt is _build_wp_prompt.
-func buildWPPrompt(m *missionCtx, action, wpID, agent string) (string, error) {
+func buildWPPromptLoud(m *missionCtx, action, wpID, agent string) (string, error) {
 	f, err := wp.Find(m.Primary, wpID)
 	if err != nil || f == "" {
 		return "", fmt.Errorf("Canonical WORK_PACKAGE_TASK file for %s is missing", wpID)
