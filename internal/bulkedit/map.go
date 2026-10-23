@@ -13,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -271,10 +272,7 @@ type GateResult struct {
 
 func Ready(dir string) (GateResult, error) {
 	r := GateResult{Passed: true, Errors: []string{}, Warnings: []string{}}
-	meta, err := mission.ReadMeta(dir)
-	if err == mission.ErrNoMeta {
-		return r, nil
-	}
+	meta, err := ownedcheckout.LoadMetaFailClosed(dir)
 	if err != nil {
 		return r, err
 	}

@@ -56,6 +56,10 @@ func (e *MetaReadError) Error() string {
 	return fmt.Sprintf("Cannot read %s: %s — fail-closed (meta.json exists but is corrupt or unreadable)", e.Path, e.Cause)
 }
 
+// LoadMetaFailClosed reads mission metadata through the guarded parser.
+// Missing metadata is absent; malformed or unreadable metadata is an error.
+func LoadMetaFailClosed(dir string) (*jsonx.Object, error) { return loadMetaFailClosed(dir) }
+
 // loadMetaFailClosed is core.paths.load_meta_fail_closed.
 func loadMetaFailClosed(dir string) (*jsonx.Object, error) {
 	p := filepath.Join(dir, mission.MetaFile)

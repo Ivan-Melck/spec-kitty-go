@@ -7,17 +7,15 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 )
 
 func ReviewDiff(dir, root, base, head string) (*DiffResult, error) {
-	meta, err := mission.ReadMeta(dir)
-	if err == mission.ErrNoMeta {
-		return nil, nil
-	}
+	meta, err := ownedcheckout.LoadMetaFailClosed(dir)
 	if err != nil {
 		return nil, err
 	}
-	if meta.GetString("change_mode") != "bulk_edit" {
+	if meta == nil || meta.GetString("change_mode") != "bulk_edit" {
 		return nil, nil
 	}
 	m, err := Load(dir)

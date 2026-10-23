@@ -56,3 +56,36 @@ func TestOccurrenceGateMatchesOracle(t *testing.T) {
 		t.Error(testkit.Diff(oracle.Stdout, got))
 	}
 }
+
+func TestMetadataGuardMatchesOracle(t *testing.T) {
+	b, err := os.ReadFile(testkit.Oracle(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	python := strings.TrimPrefix(strings.SplitN(string(b), "\n", 2)[0], "#!")
+	s := testkit.NewSandbox(t)
+	inputs := []string{"absent", "", "null", "[]", "{bad", "{}", `{"change_mode":"semantic"}`, `{"change_mode":"bulk_edit"}`, "\ufeff{}"}
+	actual := []any{}
+	for i, input := range inputs {
+		dir := fmt.Sprintf("cases/%d", i)
+		s.WriteFile(dir+"/marker", "")
+		if input != "absent" {
+			s.WriteFile(dir+"/meta.json", input)
+		}
+		r, err := Ready(filepath.Join(s.Dir, dir))
+		if err != nil {
+			actual = append(actual, jsonx.NewObject("exception", err.Error()))
+			continue
+		}
+		actual = append(actual, jsonx.NewObject("passed", r.Passed, "bulk", r.BulkEdit, "errors", r.Errors, "warnings", r.Warnings))
+	}
+	script := fmt.Sprintf("import json\nfrom pathlib import Path\nfrom specify_cli.bulk_edit.gate import ensure_occurrence_classification_ready\nout=[]\nfor i in range(%d):\n try:\n  r=ensure_occurrence_classification_ready(Path.cwd()/'cases'/str(i))\n  out.append(dict(passed=r.passed,bulk=r.change_mode=='bulk_edit',errors=r.errors,warnings=r.warnings))\n except Exception as e: out.append(dict(exception=str(e)))\nprint(json.dumps(out,sort_keys=True,indent=2))", len(inputs))
+	oracle := s.Exec("", python, "-c", script)
+	if oracle.Code != 0 {
+		t.Fatal(oracle.Stderr)
+	}
+	got := jsonx.Dumps(actual, jsonx.SortedPretty) + "\n"
+	if got != oracle.Stdout {
+		t.Error(testkit.Diff(oracle.Stdout, got))
+	}
+}
