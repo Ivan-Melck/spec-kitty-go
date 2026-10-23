@@ -80,15 +80,19 @@ func runComplete(ctx *cli.Context) error {
 	if !jsonMode && commit != nil && commit.Warning != "" {
 		rich.LogWarning(ctx.Stderr, commit.Warning)
 	}
-	if !jsonMode && commit != nil && !commit.Committed && commit.Refusal != "not a git worktree" {
+	if !jsonMode && commit != nil && !commit.Committed && commit.Refusal != "" && commit.Refusal != "not a git worktree" && !strings.HasPrefix(commit.Refusal, "protected branch ") {
 		rich.LogWarning(ctx.Stderr, fmt.Sprintf("Op record auto-commit failed for %s: %s", id, commit.Refusal))
 	}
 	if !jsonMode && commit != nil && !commit.Committed {
-		ref := commit.Refusal
-		if ref == "" {
-			ref = "unknown refusal"
+		if commit.Skipped != "" {
+			cprintRaw(ctx.Stdout, fmt.Sprintf("[dim]Op record kept on disk at kitty-ops/%s.jsonl, not committed: %s.[/dim]", id, rich.EscapeMarkup(commit.Skipped)))
+		} else {
+			ref := commit.Refusal
+			if ref == "" {
+				ref = "unknown refusal"
+			}
+			cprintRaw(ctx.Stdout, fmt.Sprintf("[yellow]Warning:[/yellow] Op record auto-commit was refused (%s). The completed event is on disk at kitty-ops/%s.jsonl but uncommitted. Commit the Op record yourself on the branch where it belongs.", rich.EscapeMarkup(ref), id))
 		}
-		cprintRaw(ctx.Stdout, fmt.Sprintf("[yellow]Warning:[/yellow] Op record auto-commit was refused (%s). The completed event is on disk but not committed — it will not survive a checkout or reset. Commit the Op record yourself, or set SPEC_KITTY_ALLOW_PROTECTED_BRANCH_COMMITS if you own this branch.", ref))
 	}
 	if jsonMode {
 		links := []any{}

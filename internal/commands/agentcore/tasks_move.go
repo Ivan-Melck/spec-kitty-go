@@ -220,7 +220,7 @@ func runMoveTask(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	var oe *ownedcheckout.Error
-	if st.owned != nil && errors.As(err, &oe) {
+	if errors.As(err, &oe) {
 		emitOwnedError(st, oe)
 		return cli.Exit(1)
 	}
@@ -259,6 +259,9 @@ func (st *moveState) run() error {
 		return err
 	}
 	if err := st.runPreReviewGate(); err != nil {
+		return err
+	}
+	if err := st.requireSingleBranchImplementation(); err != nil {
 		return err
 	}
 	if err := st.completeDeferredReadiness(); err != nil {

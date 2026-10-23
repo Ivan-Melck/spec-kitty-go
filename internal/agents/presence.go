@@ -8,13 +8,15 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 )
 
 // Orientation section markers.
 const (
-	SectionOpen  = "<!-- spec-kitty:orientation -->"
-	SectionClose = "<!-- /spec-kitty:orientation -->"
+	SectionOpen       = "<!-- spec-kitty:orientation -->"
+	SectionClose      = "<!-- /spec-kitty:orientation -->"
+	SpecifyInvocation = "`/spec-kitty.specify` (slash-command agents), `$spec-kitty-specify` (codex), `/skill:spec-kitty-specify` (pi) or `/spec-kitty-specify` (antigravity, letta, vibe)"
 )
 
 // Presence is SessionPresenceContent.
@@ -38,7 +40,7 @@ func (c Presence) Render() string {
 		"Two usage patterns:\n" +
 		"- **Full mission** (spec → plan → tasks → implement → review → merge):\n" +
 		"  trigger: \"spec out\", \"create a mission\", \"write a spec\", \"plan this\"\n" +
-		"  → run `/spec-kitty.specify` (slash-command agents), `$spec-kitty-specify` (codex), `/skill:spec-kitty-specify` (pi) or `/spec-kitty-specify` (antigravity, letta, vibe)\n" +
+		"  → run " + SpecifyInvocation + "\n" +
 		"- **Lightweight dispatch** (ad-hoc fix, question, or advice — no mission created):\n" +
 		"  trigger: \"hey spec kitty\", \"use spec kitty to\", \"spec kitty <anything>\"\n" +
 		"  → **ALWAYS run `spec-kitty dispatch \"<request verbatim>\"` — do NOT answer directly.**\n" +
@@ -131,7 +133,9 @@ func canonicalSection(block string, c Presence) bool {
 		}
 		old.AvailableVersion = w[1]
 	}
-	return n == strings.TrimRight(old.Render(), "\n")
+	canonical := strings.TrimRight(old.Render(), "\n")
+	legacy := strings.Replace(canonical, "  → run "+SpecifyInvocation+"\n", "  → run `/spec-kitty.specify`\n", 1)
+	return n == canonical || n == legacy
 }
 
 // PrepareOrientation returns the desired file content (nil = leave alone)
@@ -163,7 +167,7 @@ func (w PresenceWriter) PrepareOrientation(root string, c Presence) ([]byte, str
 		if !canonicalSection(block, c) {
 			return nil, "Edited managed orientation", nil
 		}
-		if strings.Contains(block, "**Spec Kitty v"+c.Version+"**") {
+		if strings.Contains(block, "**Spec Kitty v"+c.Version+"**") && strings.Contains(strings.ReplaceAll(block, "\r\n", "\n"), "  → run "+SpecifyInvocation+"\n") {
 			return nil, "", nil
 		}
 		desired = existing[:start] + strings.TrimRight(rendered, "\r\n") + existing[end:]
@@ -203,11 +207,26 @@ func (w PresenceWriter) WriteOrientation(root string, c Presence) error {
 		}
 	}
 	if settings != nil {
+		if ClaudeSettingsCommitted(root) {
+			return nil
+		}
 		if err := writePresenceFile(filepath.Join(root, ".claude", "settings.json"), settings); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func ClaudeSettingsCommitted(root string) bool {
+	r, err := gitx.Exec(root, nil, nil, "ls-files", "-z", "--", ".claude/settings.json")
+	return err == nil && r.Code == 0 && r.Stdout != ""
+}
+
+func CommittedSettingsNotice(root string) string {
+	if !ClaudeSettingsCommitted(root) || HookRegistered(root, "SessionStart", "spec-kitty session-start") && HookRegistered(root, "Stop", "spec-kitty session-stop") {
+		return ""
+	}
+	return ".claude/settings.json is committed, so Spec Kitty did not edit it. To enable session orientation, add a SessionStart hook running `spec-kitty session-start` and a Stop hook running `spec-kitty session-stop` to .claude/settings.json and commit the change."
 }
 
 func writePresenceFile(target string, data []byte) error {

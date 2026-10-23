@@ -555,8 +555,12 @@ func runInit(ctx *cli.Context) error {
 	} else if len(commandSkillAgents) > 0 {
 		out(w, "[yellow]Command delivery is incomplete; retry init after resolving the reported error.[/yellow]")
 	}
-	for _, c := range InstallPresence(projectPath, selected) {
+	var presenceNotices []string
+	for _, c := range InstallPresence(projectPath, selected, &presenceNotices) {
 		outf(w, "[dim]%s[/dim]", c)
+	}
+	for _, notice := range presenceNotices {
+		outf(w, "[yellow]Note:[/yellow] %s", escapeMarkup(notice))
 	}
 	stdin := bufio.NewReader(ctx.Stdin)
 	summary := toolsurface.RunSurfaceRepair(projectPath, !nonInteractive, false, func(path string) bool {

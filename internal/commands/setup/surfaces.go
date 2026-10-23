@@ -36,22 +36,15 @@ func activationProvisioningPending(root string) bool {
 // signal admits all). Like one service build, the languages are inferred
 // once per gate.
 func profileAdmitter(root string) func(p agents.Profile) bool {
-	lists, present, err := charter.ListActivated(root)
-	gated := err == nil && present["agent-profile"]
+	act, err := dct.LoadActivation(root)
 	langs, known := charter.InferRepoLanguages(root, nil, false)
 	have := map[string]bool{}
 	for _, l := range charter.NormalizeLanguages(langs) {
 		have[l] = true
 	}
 	return func(p agents.Profile) bool {
-		if gated {
-			found := false
-			for _, id := range lists["agent-profile"] {
-				found = found || id == p.ID
-			}
-			if !found {
-				return false
-			}
+		if err != nil || !act.Admits(dct.AgentProfile, p.ID) {
+			return false
 		}
 		if len(p.AppliesToLanguages) == 0 || !known {
 			return true
@@ -90,7 +83,7 @@ func presenceContent(root string) agents.Presence {
 
 // InstallPresence is SessionPresenceManager.install: writes orientation for
 // configured agents lacking it; returns the change lines.
-func InstallPresence(root string, keys []string) []string {
+func InstallPresence(root string, keys []string, notices ...*[]string) []string {
 	c := presenceContent(root)
 	var changes []string
 	for _, k := range keys {
@@ -98,6 +91,11 @@ func InstallPresence(root string, keys []string) []string {
 		if w.CanWrite(root) && !w.HasPresence(root) {
 			if err := w.WriteOrientation(root, c); err == nil {
 				changes = append(changes, "Wrote orientation for "+k)
+				if w.Claude && len(notices) > 0 {
+					if n := agents.CommittedSettingsNotice(root); n != "" {
+						*notices[0] = append(*notices[0], n)
+					}
+				}
 			}
 		}
 	}

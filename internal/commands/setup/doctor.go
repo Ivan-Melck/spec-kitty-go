@@ -339,7 +339,10 @@ func runDoctorEnvFile(ctx *cli.Context) error {
 
 func agentDirsForProject(root string) [][2]string {
 	ac, err := kittify.LoadAgentConfig(root)
-	if err != nil || len(ac.Available) == 0 {
+	if err != nil {
+		return nil
+	}
+	if len(ac.Available) == 0 && !ac.ExplicitAgentList {
 		return agents.AgentDirs
 	}
 	var out [][2]string

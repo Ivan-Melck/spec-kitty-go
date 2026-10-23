@@ -8,11 +8,13 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
+	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
@@ -175,6 +177,36 @@ func (st *moveState) requireOwnedImplementation() error {
 		return ownedRefusal("OWNED_IMPLEMENTATION_MISSING", "Owned review requires a committed change matching WP owned_files.")
 	}
 	return nil
+}
+
+func (st *moveState) requireSingleBranchImplementation() error {
+	reviewWard := func(l string) bool { return l == "for_review" || l == "in_review" || l == "approved" || l == "done" }
+	if st.force || st.owned != nil || !reviewWard(st.target) || reviewWard(st.oldLane) {
+		return nil
+	}
+	m, err := lanes.Read(st.featureDir)
+	if err != nil || m == nil {
+		return nil
+	}
+	meta := mission.ReadMetaOrEmpty(project.Specs(st.root, m.MissionSlug))
+	if meta.GetString("topology") != coord.SingleBranch {
+		return nil
+	}
+	if m.PlanningCommitSHA == nil || *m.PlanningCommitSHA == "" || m.MissionBranch == "" {
+		return ownedRefusal("SINGLE_BRANCH_EVIDENCE_WINDOW_UNCOMPUTABLE", fmt.Sprintf("Cannot verify a committed implementation for %s: this single_branch mission records no planning commit, so the implementation-evidence window cannot be computed. Run `spec-kitty agent mission finalize-tasks` to record the planning commit, then retry.", st.taskID))
+	}
+	base, tip := *m.PlanningCommitSHA, m.MissionBranch
+	r, err := gitx.Exec(st.root, nil, nil, "-c", "diff.relative=false", "diff", "--name-only", "-z", "-M", "--diff-filter=ACDMRTUXB", base, tip, "--")
+	if err != nil || r.Code != 0 {
+		return ownedRefusal("SINGLE_BRANCH_IMPLEMENTATION_UNREADABLE", fmt.Sprintf("Could not read the single_branch implementation window %s..%s in %s; cannot verify %s has a committed implementation. Make sure the mission branch is checked out and its planning commit is reachable, then retry.", base, tip, st.root, st.taskID))
+	}
+	patterns := st.ownedFilePatterns()
+	for _, p := range strings.Split(r.Stdout, "\x00") {
+		if matchesOwnedFile(p, patterns) {
+			return nil
+		}
+	}
+	return ownedRefusal("SINGLE_BRANCH_IMPLEMENTATION_MISSING", fmt.Sprintf("%s cannot move into review: no implementation commit touching its owned_files on the single_branch mission branch. Commit the work package's implementation to its owned_files, then retry (ticked subtask checkboxes are not shipped code).", st.taskID))
 }
 
 // ownedDeliverableScope refuses an owned auto-commit that carries files

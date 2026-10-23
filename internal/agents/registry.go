@@ -201,7 +201,7 @@ var GitignoreDirectories = []AgentDirectory{
 var AgentDirs = [][2]string{
 	{".claude", "commands"}, {".github", "prompts"}, {".gemini", "commands"}, {".cursor", "commands"},
 	{".qwen", "commands"}, {".opencode", "command"}, {".windsurf", "workflows"}, {".kilocode", "workflows"},
-	{".augment", "commands"}, {".amazonq", "prompts"}, {".kiro", "prompts"}, {".agent", "workflows"},
+	{".augment", "commands"}, {".amazonq", "prompts"}, {".kiro", "prompts"},
 	{".llxprt", "commands"},
 }
 
@@ -209,7 +209,7 @@ var AgentDirs = [][2]string{
 var AgentDirToKey = map[string]string{
 	".claude": "claude", ".github": "copilot", ".gemini": "gemini", ".cursor": "cursor",
 	".qwen": "qwen", ".opencode": "opencode", ".windsurf": "windsurf", ".kilocode": "kilocode",
-	".augment": "auggie", ".amazonq": "q", ".kiro": "kiro", ".agent": "antigravity",
+	".augment": "auggie", ".amazonq": "q", ".kiro": "kiro",
 	".llxprt": "llxprt",
 }
 

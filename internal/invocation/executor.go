@@ -246,6 +246,7 @@ type CommitOutcome struct {
 	Committed bool
 	Warning   string // stderr of a successful commit (logged at WARNING)
 	Refusal   string
+	Skipped   string
 }
 
 func readStarted(root, id string) (*jsonx.Object, error) {

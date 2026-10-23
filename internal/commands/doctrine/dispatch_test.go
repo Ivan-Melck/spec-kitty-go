@@ -34,9 +34,9 @@ func TestDispatchOpenCompleteList(t *testing.T) {
 	if !strings.Contains(l.Stdout, `"status": "open"`) {
 		t.Fatalf("list: %s", l.Stdout)
 	}
-	// Close on protected main: event written, commit refused.
+	// A repository whose primary branch tracks no Ops keeps the record on disk.
 	c := s.MustRun("profile-invocation", "complete", "--invocation-id", id, "--outcome", "done", "--artifact", "README.md", "--commit", "abc123")
-	if !strings.Contains(c.Stdout, "Invocation "+id+" closed.") || !strings.Contains(c.Stdout, "auto-commit was refused") {
+	if !strings.Contains(c.Stdout, "Invocation "+id+" closed.") || !strings.Contains(c.Stdout, "Op record kept on disk") {
 		t.Fatalf("complete: %s", c.Stdout)
 	}
 	rec = s.ReadFile("kitty-ops/" + id + ".jsonl")
@@ -57,6 +57,9 @@ func TestDispatchOpenCompleteList(t *testing.T) {
 
 func TestDispatchCommitOnTopicBranch(t *testing.T) {
 	s := newProject(t)
+	s.WriteFile("kitty-ops/01ARZ3NDEKTSV4RRFFQ69G5FAV.jsonl", "{}\n")
+	s.Git("add", "kitty-ops")
+	s.Git("commit", "-qm", "track Op audit records")
 	s.Git("checkout", "-q", "-b", "feat/x")
 	r := s.MustRun("dispatch", "review the code", "--profile", "reviewer-renata", "--json")
 	var payload map[string]any

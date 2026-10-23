@@ -225,7 +225,7 @@ func closeOnSpine(root, id string, c *Completed) error {
 
 // sweepClose is complete_invocation(outcome="abandoned",
 // closed_by="doctor_sweep") with the per-executor spine snapshot.
-func sweepClose(root, id string, closed map[string]bool) (*CommitOutcome, error) {
+func sweepClose(root, id string, closed map[string]bool, policy *commitPolicy) (*CommitOutcome, error) {
 	p, err := RecordPath(root, id)
 	if err != nil {
 		return nil, err
@@ -254,7 +254,7 @@ func sweepClose(root, id string, closed map[string]bool) (*CommitOutcome, error)
 	if err != nil {
 		return &CommitOutcome{Refusal: errRepr(err)}, nil
 	}
-	return commitOp(root, id, first, true), nil
+	return commitOp(root, id, first, true, policy), nil
 }
 
 // CloseStaleOps is close_stale_ops: close open Ops older than
@@ -266,6 +266,7 @@ func CloseStaleOps(root string, thresholdHours float64, now time.Time) *SweepRep
 		return rep
 	}
 	var closed map[string]bool
+	policy := &commitPolicy{}
 	for _, p := range orphans {
 		id := strings.TrimSuffix(filepath.Base(p), ".jsonl")
 		profile, started := readStartedFields(p)
@@ -283,7 +284,7 @@ func CloseStaleOps(root string, thresholdHours float64, now time.Time) *SweepRep
 		if closed == nil {
 			closed = ClosedIDs(root)
 		}
-		out, err := sweepClose(root, id, closed)
+		out, err := sweepClose(root, id, closed, policy)
 		var ac *AlreadyClosedError
 		switch {
 		case errors.As(err, &ac):
@@ -296,11 +297,13 @@ func CloseStaleOps(root string, thresholdHours float64, now time.Time) *SweepRep
 			if out != nil && out.Warning != "" {
 				rep.Warnings = append(rep.Warnings, out.Warning)
 			}
-			if out != nil && !out.Committed && out.Refusal != "not a git worktree" {
+			if out != nil && !out.Committed && out.Refusal != "" && out.Refusal != "not a git worktree" && !strings.HasPrefix(out.Refusal, "protected branch ") {
 				rep.Warnings = append(rep.Warnings, "Op record auto-commit failed for "+id+": "+out.Refusal)
 			}
 			if out != nil && out.Committed {
 				e.Commit = "committed"
+			} else if out != nil && out.Skipped != "" {
+				e.Commit = "skipped:" + out.Skipped
 			} else if out != nil {
 				r := out.Refusal
 				if r == "" {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
@@ -223,15 +224,26 @@ func runOpsSweep(ctx *cli.Context, root string, threshold float64, jsonMode bool
 	}
 	if rep.Swept > 0 {
 		uncommitted := false
+		skippedReasons := map[string]bool{}
 		for _, e := range rep.OpenOps {
-			if e.Commit != "" && e.Commit != "committed" {
+			if strings.HasPrefix(e.Commit, "skipped:") {
+				skippedReasons[strings.TrimPrefix(e.Commit, "skipped:")] = true
+			} else if e.Commit != "" && e.Commit != "committed" {
 				uncommitted = true
 			}
 		}
 		spine := invocation.ClosureSpine
+		if len(skippedReasons) > 0 {
+			var reasons []string
+			for r := range skippedReasons {
+				reasons = append(reasons, r)
+			}
+			sort.Strings(reasons)
+			cprint(w, "\nClosures kept on disk in the append-only spine [cyan]%s[/cyan], not committed: %s.", spine, rich.EscapeMarkup(strings.Join(reasons, "; ")))
+		}
 		if uncommitted {
-			cprint(w, "\n[yellow]Closures recorded on the append-only spine [cyan]%s[/cyan] but NOT committed[/yellow] (guard refusal or no git worktree). An uncommitted closure will not survive a checkout or reset — commit the spine yourself to make it durable.", spine)
-		} else {
+			cprint(w, "\n[yellow]Closures recorded on the append-only spine [cyan]%s[/cyan] but NOT committed[/yellow] (guard refusal, detached HEAD, or no git worktree). They are uncommitted; commit the spine yourself if you want it in history.", spine)
+		} else if len(skippedReasons) == 0 {
 			cprint(w, "\nClosures recorded on the append-only spine [cyan]%s[/cyan] and committed to the current branch. They are visible only on branches that carry that commit.", spine)
 		}
 	}
