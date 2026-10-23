@@ -45,6 +45,14 @@ func observe(path string) (FileState, error) {
 		return FileState{}, err
 	}
 	mode := int(info.Mode().Perm())
+	for _, bit := range []struct {
+		goBit   os.FileMode
+		unixBit int
+	}{{os.ModeSetuid, 0o4000}, {os.ModeSetgid, 0o2000}, {os.ModeSticky, 0o1000}} {
+		if info.Mode()&bit.goBit != 0 {
+			mode |= bit.unixBit
+		}
+	}
 	switch {
 	case info.Mode()&os.ModeSymlink != 0:
 		t, _ := os.Readlink(path)
@@ -94,6 +102,8 @@ type prep struct {
 	selected  map[string]bool
 	disp      []Disposition
 	observed  map[string]FileState
+	checks    map[string]assetObservation
+	environ   map[string]*string
 }
 
 func newPrep(owner, anchor, cache, lockName string) (*prep, error) {
@@ -103,6 +113,7 @@ func newPrep(owner, anchor, cache, lockName string) (*prep, error) {
 		inventory: filepath.Join(cache, owner+"-assets.json"),
 		previous:  map[string]FileState{}, entries: map[string]FileState{},
 		writes: map[string]*write{}, selected: map[string]bool{}, observed: map[string]FileState{},
+		checks: map[string]assetObservation{}, environ: assetEnvironment(),
 	}
 	st, err := p.observe(p.inventory)
 	if err != nil {
@@ -146,15 +157,7 @@ func newPrep(owner, anchor, cache, lockName string) (*prep, error) {
 }
 
 func (p *prep) observe(path string) (FileState, error) {
-	if st, ok := p.observed[path]; ok {
-		return st, nil
-	}
-	st, err := observe(path)
-	if err != nil {
-		return st, err
-	}
-	p.observed[path] = st
-	return st, nil
+	return p.observeAsset(path, false, false)
 }
 
 func (p *prep) rel(path string) string {
@@ -283,7 +286,7 @@ func (p *prep) asset(path string, content []byte, mode int, managedTree, predece
 
 // retire removes exact inventory-owned unchanged nodes, retaining drift.
 func (p *prep) retire(path string) (bool, error) {
-	before, err := p.observe(path)
+	before, err := p.observeAsset(path, true, false)
 	if err != nil {
 		return false, err
 	}
@@ -484,6 +487,20 @@ func (p *prep) sortedWrites() []*write {
 	return ws
 }
 
+func assetMode(mode int) os.FileMode {
+	out := os.FileMode(mode & 0o777)
+	if mode&0o4000 != 0 {
+		out |= os.ModeSetuid
+	}
+	if mode&0o2000 != 0 {
+		out |= os.ModeSetgid
+	}
+	if mode&0o1000 != 0 {
+		out |= os.ModeSticky
+	}
+	return out
+}
+
 func applyWrite(w *write) error {
 	switch {
 	case w.action == "delete":
@@ -492,17 +509,17 @@ func applyWrite(w *write) error {
 		}
 		return os.Remove(w.path)
 	case w.action == "chmod":
-		return os.Chmod(w.path, os.FileMode(w.after.Mode))
+		return os.Chmod(w.path, assetMode(w.after.Mode))
 	case w.after.Kind == "directory":
-		if err := os.Mkdir(w.path, os.FileMode(w.after.Mode)); err != nil && !os.IsExist(err) {
+		if err := os.Mkdir(w.path, assetMode(w.after.Mode)); err != nil && !os.IsExist(err) {
 			return err
 		}
-		return os.Chmod(w.path, os.FileMode(w.after.Mode))
+		return os.Chmod(w.path, assetMode(w.after.Mode))
 	}
 	if w.before.Kind == "symlink" {
 		os.Remove(w.path)
 	}
-	return writeFileAtomic(w.path, w.content, os.FileMode(w.after.Mode))
+	return writeFileAtomic(w.path, w.content, assetMode(w.after.Mode))
 }
 
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
@@ -542,11 +559,26 @@ func (p *prep) apply() error {
 		return err
 	}
 	defer unlock()
+	if err := p.checkAssets(); err != nil {
+		return err
+	}
 	for _, w := range p.sortedWrites() {
+		current, err := observe(w.path)
+		if err != nil {
+			return err
+		}
+		if current == w.after {
+			continue
+		}
 		if w.path == p.lockPath && w.action == "create" {
-			if err := os.WriteFile(w.path, nil, 0o644); err != nil {
+			// A cold install owns the sentinel so the first persistent lock
+			// can be created and held until this batch finishes. A peer must
+			// never enter through the new lock while the batch is incomplete.
+			release, err := lockFile(w.path, 0)
+			if err != nil {
 				return err
 			}
+			defer release()
 			os.Chmod(w.path, 0o644)
 			continue
 		}
@@ -561,7 +593,19 @@ func (p *prep) apply() error {
 // else the owner lock itself.
 func (p *prep) serialize() (func(), error) {
 	if _, err := os.Stat(p.lockPath); os.IsNotExist(err) {
-		return lockFile(coldInstallSentinel(p.anchor), 0o700)
+		release, err := lockFile(coldInstallSentinel(p.anchor), 0o700)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(p.lockPath); err == nil {
+			ownerRelease, err := lockFile(p.lockPath, 0)
+			if err != nil {
+				release()
+				return nil, err
+			}
+			return func() { ownerRelease(); release() }, nil
+		}
+		return release, nil
 	}
 	return lockFile(p.lockPath, 0)
 }

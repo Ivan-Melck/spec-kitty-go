@@ -135,6 +135,17 @@ func EnsureSkillsSelection(agentKeys []string) error {
 }
 
 func assessSkillsSelection(agentKeys []string) (*prep, []string, string, error) {
+	var selected []string
+	var anchor string
+	p, err := buildSerialized(func() (*prep, error) {
+		prepared, keys, root, err := prepareSkillsSelection(agentKeys)
+		selected, anchor = keys, root
+		return prepared, err
+	})
+	return p, selected, anchor, err
+}
+
+func prepareSkillsSelection(agentKeys []string) (*prep, []string, string, error) {
 	home := KittifyHome()
 	var sel []string
 	for _, a := range agentKeys {
@@ -164,7 +175,7 @@ func assessSkillsSelection(agentKeys []string) (*prep, []string, string, error) 
 	}
 	err = func() error {
 		for _, root := range roots {
-			st, err := p.observe(root)
+			st, err := p.observeAsset(root, true, false)
 			if err != nil {
 				return err
 			}

@@ -129,7 +129,9 @@ func EnsureRuntime() error {
 }
 
 // AssessRuntime plans the runtime_bootstrap owner without writing.
-func AssessRuntime() (*prep, error) {
+func AssessRuntime() (*prep, error) { return buildSerialized(assessRuntime) }
+
+func assessRuntime() (*prep, error) {
 	assets.WarnPackRoot(assets.MissionAssetRoot)
 	home := KittifyHome()
 	p, err := newPrep("runtime_bootstrap", anchorFor(home), filepath.Join(home, "cache"), ".update.lock")
@@ -157,7 +159,12 @@ func AssessRuntime() (*prep, error) {
 
 // assetTree mirrors AssetPreparation.tree for an embedded source tree.
 func (p *prep) assetTree(src, dst string, readonly, managed bool) error {
-	st, err := p.observe(dst)
+	if source := assets.DiskSource(src); source != "" {
+		if _, err := p.observeAsset(source, true, true); err != nil {
+			return err
+		}
+	}
+	st, err := p.observeAsset(dst, true, false)
 	if err != nil {
 		return err
 	}
@@ -187,6 +194,11 @@ func (p *prep) assetTree(src, dst string, readonly, managed bool) error {
 			}
 			continue
 		}
+		if source := assets.DiskSource(src + "/" + n); source != "" {
+			if _, err := p.observeAsset(source, false, true); err != nil {
+				return err
+			}
+		}
 		b, err := assets.ReadFile(src + "/" + n)
 		if err != nil {
 			return err
@@ -215,7 +227,9 @@ func EnsureGlobalSkills() error {
 }
 
 // AssessGlobalSkills plans the global_skills owner.
-func AssessGlobalSkills() (*prep, error) {
+func AssessGlobalSkills() (*prep, error) { return buildSerialized(assessGlobalSkills) }
+
+func assessGlobalSkills() (*prep, error) {
 	home := KittifyHome()
 	roots := agents.UniqueGlobalSkillRoots()
 	p, err := newPrep("global_skills", anchorFor(append([]string{home}, roots...)...), filepath.Join(home, "cache"), ".agent-skills.lock")
@@ -231,7 +245,7 @@ func AssessGlobalSkills() (*prep, error) {
 		canonical[s.Name] = true
 	}
 	for _, root := range roots {
-		st, err := p.observe(root)
+		st, err := p.observeAsset(root, true, false)
 		if err != nil {
 			return nil, err
 		}
@@ -270,7 +284,7 @@ func AssessGlobalSkills() (*prep, error) {
 }
 
 func (p *prep) skillTree(s agents.Skill, rel, dst string) error {
-	st, err := p.observe(dst)
+	st, err := p.observeAsset(dst, true, false)
 	if err != nil {
 		return err
 	}
@@ -526,6 +540,16 @@ func EnsureGlobalCommands(keys []string) ([]string, error) {
 
 // AssessGlobalCommands plans the slash_commands owner.
 func AssessGlobalCommands(keys []string) (*prep, map[string]bool, error) {
+	var names map[string]bool
+	p, err := buildSerialized(func() (*prep, error) {
+		prepared, canonical, err := assessGlobalCommands(keys)
+		names = canonical
+		return prepared, err
+	})
+	return p, names, err
+}
+
+func assessGlobalCommands(keys []string) (*prep, map[string]bool, error) {
 	home := KittifyHome()
 	var roots []string
 	for _, k := range agents.CommandAgents {
@@ -534,6 +558,11 @@ func AssessGlobalCommands(keys []string) (*prep, map[string]bool, error) {
 	p, err := newPrep("slash_commands", anchorFor(append([]string{home}, roots...)...), filepath.Join(home, "cache"), commandsLockFile)
 	if err != nil {
 		return nil, nil, err
+	}
+	if source := assets.DiskSource(agents.CommandTemplatesDir); source != "" {
+		if err := p.observeSourceTree(source); err != nil {
+			return nil, nil, err
+		}
 	}
 	full := keys == nil
 	if full {
@@ -548,7 +577,7 @@ func AssessGlobalCommands(keys []string) (*prep, map[string]bool, error) {
 			return nil, nil, fmt.Errorf("Unknown slash-command agent: %s", k)
 		}
 		out := agents.GlobalCommandDir(k)
-		st, err := p.observe(out)
+		st, err := p.observeAsset(out, true, false)
 		if err != nil {
 			return nil, nil, err
 		}

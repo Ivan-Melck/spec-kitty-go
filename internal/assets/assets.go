@@ -48,6 +48,16 @@ func packsOverride() string {
 	return ""
 }
 
+// DiskSource returns the mutable source behind a pack override. Embedded
+// assets have no filesystem observation to retain for an install batch.
+func DiskSource(name string) string {
+	name = path.Clean(name)
+	if root := packsOverride(); root != "" && strings.HasPrefix(name, "packs/") {
+		return filepath.Join(root, strings.TrimPrefix(name, "packs/"))
+	}
+	return ""
+}
+
 // ReadFile reads an asset. Paths under packs/ honour SPEC_KITTY_PACKS_ROOT.
 func ReadFile(name string) ([]byte, error) {
 	name = path.Clean(name)
