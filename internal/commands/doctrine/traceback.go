@@ -6,6 +6,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
@@ -81,6 +82,7 @@ func init() {
 	}
 	charter.WarnLog = func(m string) { rich.LogWarning(os.Stderr, m) }
 	status.SlugWarnLog = func(m string) { rich.LogWarning(os.Stderr, m) }
+	kittify.WarnLog = func(m string) { rich.LogWarning(os.Stderr, m) }
 	charter.PyWarnLog = func(module string, line int, category, msg, source string) {
 		rich.LogWarning(os.Stderr, fmt.Sprintf("%s:%d: %s: %s\n  %s\n", module, line, category, msg, source))
 	}

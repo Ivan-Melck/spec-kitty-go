@@ -69,6 +69,10 @@ func runSessionStart(ctx *cli.Context) error {
 	if root == "" {
 		return nil
 	}
+	// load_agent_config (its failure is swallowed with everything else).
+	if _, err := kittify.LoadAgentConfig(root); err != nil {
+		return nil
+	}
 	fmt.Fprintln(ctx.Stdout, SessionPresence(root).Render())
 	if s := RenderOpenOpsSection(root, time.Time{}); s != "" {
 		fmt.Fprintln(ctx.Stdout, s)

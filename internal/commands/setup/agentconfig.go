@@ -253,6 +253,9 @@ func invalidAgentKeys(w io.Writer, keys []string) error {
 // registerSkillAgent is _register_skill_agent. With sink non-nil the
 // regenerated paths are collected instead of printed.
 func registerSkillAgent(w io.Writer, root string, ac *kittify.AgentConfig, key string, updateConfig bool, sink *[]string) (bool, string) {
+	// command_installer.install -> prepare_commands -> rendering_inputs
+	// loads the agent config again.
+	kittify.AgentConfigMissingWarning(root, 1)
 	rep, err := agents.InstallCommandSkills(root, key, clock.NowUTCISO())
 	if err == nil && key == "vibe" {
 		err = agents.EnsureVibeSkillPath(root)

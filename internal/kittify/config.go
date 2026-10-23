@@ -214,6 +214,9 @@ var ValidAgentKeys = func() []string { return nil }
 func LoadAgentConfig(root string) (AgentConfig, error) {
 	out := AgentConfig{AutoCommit: true}
 	if !ConfigExists(root) {
+		if WarnLog != nil && quietAgentConfig == 0 {
+			WarnLog("Config file not found: " + ConfigPath(root))
+		}
 		return out, nil
 	}
 	data, err := LoadConfig(root)
