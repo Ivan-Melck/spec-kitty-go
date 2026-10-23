@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
+	"github.com/spec-kitty/go-kitty3/internal/languagecatalog"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -26,19 +27,22 @@ var (
 
 // languagePatterns is language_scope._LANGUAGE_PATTERNS (each word is
 // matched as \bword\b, guarded against a preceding "\w-").
-var languagePatterns = []struct {
+var languagePatterns = func() []struct {
 	lang string
 	res  []*regexp.Regexp
-}{
-	{"python", words(`python`, `pytest`, `mypy`, `ruff`)},
-	{"typescript", words(`typescript`, `tsc`)},
-	{"javascript", words(`javascript`, `jest`, `node(?:\.js)?`, `npm`, `pnpm`, `yarn`)},
-	{"rust", words(`rust`, `cargo`, `rustc`)},
-	{"java", words(`java`, `junit`, `gradle`, `maven`)},
-	{"swift", words(`swift`, `xctest`)},
-	{"ruby", words(`ruby`, `rspec`, `rails`)},
-	{"php", words(`php`, `phpunit`)},
-}
+} { specs := append([]languagecatalog.Spec(nil), languagecatalog.Languages...); sort.SliceStable(specs, func(i, j int) bool { return specs[i].DeclaredRank < specs[j].DeclaredRank }); var out []struct {
+	lang string
+	res  []*regexp.Regexp
+}; for _, spec := range specs {
+	var patterns []*regexp.Regexp
+	for _, pattern := range spec.Patterns {
+		patterns = append(patterns, regexp.MustCompile(pattern))
+	}
+	out = append(out, struct {
+		lang string
+		res  []*regexp.Regexp
+	}{spec.Token, patterns})
+}; return out }()
 
 func words(ps ...string) []*regexp.Regexp {
 	out := make([]*regexp.Regexp, len(ps))
@@ -91,6 +95,30 @@ func ExtractDeclaredLanguages(text string) []string {
 				out = append(out, lp.lang)
 				break
 			}
+		}
+	}
+	if !contains(out, "java") && !contains(out, "kotlin") {
+		for _, re := range words(`gradle`, `maven`, `junit`) {
+			if searchGuarded(re, h) {
+				out = append(out, "jvm")
+				break
+			}
+		}
+		if contains(out, "jvm") {
+			sort.SliceStable(out, func(i, j int) bool {
+				rank := func(token string) int {
+					if token == "jvm" {
+						return 4
+					}
+					for _, spec := range languagecatalog.Languages {
+						if spec.Token == token {
+							return spec.DeclaredRank
+						}
+					}
+					return 99
+				}
+				return rank(out[i]) < rank(out[j])
+			})
 		}
 	}
 	return NormalizeLanguages(out)
@@ -324,6 +352,11 @@ func readCompiledLanguages(root string) ([]string, bool) {
 // InferRepoLanguages is language_scope.infer_repo_languages. The second
 // result is false for "no signal" (None).
 func InferRepoLanguages(root string, iv *Interview, preferInterview bool) ([]string, bool) {
+	if root != "" {
+		if configured := ConfiguredLanguages(root); len(configured) > 0 {
+			return configured, true
+		}
+	}
 	resolved := iv
 	if preferInterview && resolved == nil && root != "" {
 		resolved = ReadInterview(InterviewPath(root))
@@ -359,7 +392,7 @@ func LacksSpecialistGuidance(langs []string, known bool, root string) bool {
 		return false
 	}
 	vocab := ScopedLanguageVocabulary(root)
-	for _, l := range norm {
+	for _, l := range languagecatalog.Expand(norm) {
 		if !reservedLanguageTokens[l] && vocab[l] {
 			return false
 		}

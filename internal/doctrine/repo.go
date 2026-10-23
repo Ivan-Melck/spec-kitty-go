@@ -1,6 +1,7 @@
 package doctrine
 
 import (
+	"github.com/spec-kitty/go-kitty3/internal/languagecatalog"
 	"path"
 	"path/filepath"
 	"sort"
@@ -238,7 +239,7 @@ func languageMatch(o *jsonx.Object, active []string) bool {
 	if onlySentinel || active == nil {
 		return true
 	}
-	act := norm(active)
+	act := norm(languagecatalog.Expand(active))
 	delete(act, "unknown")
 	for t := range scope {
 		if act[t] {

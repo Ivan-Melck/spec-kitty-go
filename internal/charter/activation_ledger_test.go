@@ -90,3 +90,26 @@ func TestActivationLedgerFlowRoot(t *testing.T) {
 		t.Fatalf("flow round trip=%q", b)
 	}
 }
+
+func TestActivationLedgerSequentialWritesRetainConcurrentEditGuard(t *testing.T) {
+	root := t.TempDir()
+	activationFixture(t, root, ".kittify/config.yaml", "agents: {}\n")
+	activationFixture(t, root, dct.ActivationLedgerRelative, "activated_tactics: []\nactivated_styleguides: []\n")
+	target, err := LoadWriteTarget(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target.Data.Set("activated_tactics", []any{"first"})
+	if err := target.Save(); err != nil {
+		t.Fatal(err)
+	}
+	target.Data.Set("activated_styleguides", []any{"second"})
+	if err := target.Save(); err != nil {
+		t.Fatalf("own previous save was mistaken for a concurrent edit: %v", err)
+	}
+	activationFixture(t, root, dct.ActivationLedgerRelative, "activated_tactics: [operator-edit]\n")
+	target.Data.Set("activated_tactics", []any{"third"})
+	if err := target.Save(); err == nil {
+		t.Fatal("concurrent edit overwritten after sequential saves")
+	}
+}

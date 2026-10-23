@@ -27,6 +27,7 @@ func charterInterviewCmd() *cli.Command {
 			{Name: "selected-paradigms", Kind: cli.String, Help: "Comma-separated paradigm IDs override"},
 			{Name: "selected-directives", Kind: cli.String, Help: "Comma-separated directive IDs override"},
 			{Name: "available-tools", Kind: cli.String, Help: "Comma-separated tool IDs override"},
+			{Name: "narrow-activation", Kind: cli.Bool, Help: "Replace (not append to) activated directives, tactics and paradigms with the selection plus org-required ids"},
 			{Name: "json", Kind: cli.Bool, Help: "Output JSON"},
 			{Name: "mission-slug", Kind: cli.String, Help: "Mission slug for Decision Moment paper trail (optional)"},
 		},
@@ -91,6 +92,27 @@ func runCharterInterview(ctx *cli.Context) error {
 			cprint(w, "[cyan]Org charter:[/cyan] %s", m)
 		}
 	}
+	in := bufio.NewReader(ctx.Stdin)
+	var askLanguages func(string) (string, error)
+	if !ctx.Bool("defaults") && interviewInteractive() {
+		askLanguages = func(proposal string) (string, error) {
+			fmt.Fprintf(w, "Project languages (comma-separated catalog tokens, primary first; 'none' to leave unset) [%s]: ", proposal)
+			answer, err := in.ReadString('\n')
+			if err != nil && answer == "" {
+				return "", fmt.Errorf("")
+			}
+			answer = strings.TrimRight(answer, "\r\n")
+			if answer == "" {
+				answer = proposal
+			}
+			return answer, nil
+		}
+	}
+	languageSettlement, err := charter.SettleProjectLanguages(root, askLanguages, func(message string) { fmt.Fprintln(ctx.Stderr, message) })
+	if err != nil {
+		emitCharterError(w, jsonMode, err.Error(), "", nil)
+		return cli.Exit(1)
+	}
 	paradigms, hasP := parseCSVOpt(ctx.OptString("selected-paradigms"))
 	directives, hasD := parseCSVOpt(ctx.OptString("selected-directives"))
 	tools, hasT := parseCSVOpt(ctx.OptString("available-tools"))
@@ -99,7 +121,6 @@ func runCharterInterview(ctx *cli.Context) error {
 		if profile != "minimal" {
 			order = charter.QuestionOrder
 		}
-		in := bufio.NewReader(ctx.Stdin)
 		// typer.prompt: end of input raises click.Abort, which the
 		// command's `except Exception` reports as an empty "Unexpected
 		// error" (exit 1).
@@ -164,8 +185,23 @@ func runCharterInterview(ctx *cli.Context) error {
 		emitCharterError(w, jsonMode, err.Error(), "", nil)
 		return cli.Exit(1)
 	}
-	warnings, err := charter.PromoteSelections(root, iv)
+	wrote, err := charter.StoreLanguageSettlement(root, languageSettlement)
 	if err != nil {
+		emitCharterError(w, jsonMode, "Could not write the project languages to .kittify/config.yaml: "+err.Error()+". The interview answers were saved and re-running is safe; re-run the interview interactively to re-confirm the languages, because a non-interactive re-run re-detects them instead.", "", nil)
+		return cli.Exit(1)
+	}
+	if languageSettlement.Source == "detected" && !wrote {
+		languageSettlement.Languages = charter.ConfiguredLanguages(root)
+		languageSettlement.Source = "stored"
+		languageSettlement.ToStore = nil
+		languageSettlement.Notice = nil
+	}
+	warnings, narrowed, err := charter.PromoteSelectionsWithOptions(root, iv, ctx.Bool("narrow-activation"))
+	if err != nil {
+		if ctx.Bool("narrow-activation") {
+			emitCharterError(w, jsonMode, "--narrow-activation could not be applied: "+err.Error(), "", nil)
+			return cli.Exit(1)
+		}
 		warnings = []string{"Selection promotion skipped: " + err.Error()}
 		if !jsonMode {
 			cprint(w, "[yellow]Selection promotion skipped:[/yellow] %s", err.Error())
@@ -175,18 +211,53 @@ func runCharterInterview(ctx *cli.Context) error {
 	if jsonMode {
 		jsonOut(w, jsonx.NewObject("result", "success", "success", true, "interview_path", rel, "mission", iv.Mission, "profile", iv.Profile,
 			"selected_paradigms", strs(nzs(iv.SelectedParadigms)), "selected_directives", strs(nzs(iv.SelectedDirectives)),
-			"available_tools", strs(nzs(iv.AvailableTools)), "org_prefill_messages", strs(nzs(orgMsgs)), "org_prefill_warning", orgWarning,
-			"promotion_warnings", strs(nzs(warnings))), jsonx.Pretty)
+			"available_tools", strs(nzs(iv.AvailableTools)), "languages", strs(languageSettlement.Languages), "languages_source", languageSettlement.Source, "languages_notice", languageSettlement.Notice, "org_prefill_messages", strs(nzs(orgMsgs)), "org_prefill_warning", orgWarning,
+			"promotion_warnings", strs(nzs(warnings)), "narrowed", narrowed), jsonx.Pretty)
 		return nil
 	}
 	cprint(w, "[green]Charter interview answers saved[/green]")
 	cprintRaw(w, "Interview file: "+rel)
 	cprintRaw(w, "Mission: "+iv.Mission)
 	cprintRaw(w, "Profile: "+iv.Profile)
+	if len(languageSettlement.Languages) > 0 {
+		cprint(w, "Languages (%s): %s", languageSettlement.Source, strings.Join(languageSettlement.Languages, ", "))
+	}
+	if languageSettlement.Notice != nil {
+		cprint(w, "[yellow]Notice:[/yellow] %s", uconsoleEscape(*languageSettlement.Notice))
+	}
 	for _, m := range warnings {
 		cprint(w, "[yellow]Selection promotion:[/yellow] %s", m)
 	}
+	for _, kv := range narrowed.Pairs() {
+		ids := []string{}
+		if values, ok := kv.Value.([]any); ok {
+			for _, value := range values {
+				if id, ok := value.(string); ok {
+					ids = append(ids, id)
+				}
+			}
+		}
+		cprint(w, "[yellow]No longer in force (%d) for %s:[/yellow] %s", len(ids), kv.Key, uconsoleEscape(strings.Join(ids, ", ")))
+	}
 	return nil
+}
+
+func interviewInteractive() bool {
+	truthy := func(key string) bool {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+		case "1", "true", "yes", "on":
+			return true
+		}
+		return false
+	}
+	if truthy("SPEC_KITTY_FORCE_INTERACTIVE") {
+		return true
+	}
+	if truthy("SPEC_KITTY_NON_INTERACTIVE") {
+		return false
+	}
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func nzs(xs []string) []string {

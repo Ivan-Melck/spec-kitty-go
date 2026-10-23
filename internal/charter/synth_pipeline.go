@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/languagecatalog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -142,6 +143,9 @@ func evidenceJSONable(e *SynthEvidence) *jsonx.Object {
 		o.Set("code_signals", jsonx.NewObject("frameworks", sortedCopy(e.Code.Frameworks), "primary_language", e.Code.PrimaryLanguage,
 			"representative_files", sortedCopy(e.Code.Representative), "scope_tag", e.Code.PrimaryLanguage, "stack_id", e.Code.StackID,
 			"test_frameworks", sortedCopy(e.Code.TestFramework)))
+	}
+	if e.Code != nil && len(e.Code.Languages) > 1 {
+		o.GetObject("code_signals").Set("languages", strs(e.Code.Languages))
 	}
 	if len(e.URLs) > 0 {
 		o.Set("url_list", sortedCopy(e.URLs))
@@ -383,8 +387,20 @@ func iterCleanStrings(raw any) []string {
 func realLanguages(vals []string) []string {
 	var out []string
 	for _, v := range vals {
-		if !isPlaceholderLanguageAnswer(v) {
-			out = append(out, v)
+		if isPlaceholderLanguageAnswer(v) {
+			continue
+		}
+		token := strings.ToLower(strings.TrimSpace(v))
+		named := []string{token}
+		if !languagecatalog.IsLanguage(token) {
+			if resolved := ExtractDeclaredLanguages(v); len(resolved) > 0 {
+				named = resolved
+			}
+		}
+		for _, name := range named {
+			if !languagecatalog.IsFamily(name) {
+				out = appendUnique(out, name)
+			}
 		}
 	}
 	return out
@@ -392,7 +408,7 @@ func realLanguages(vals []string) []string {
 
 func extractLanguagesFromAlias(raw any) []string {
 	if s, ok := raw.(string); ok {
-		return ExtractDeclaredLanguages(s)
+		return realLanguages(ExtractDeclaredLanguages(s))
 	}
 	return realLanguages(iterCleanStrings(raw))
 }
@@ -437,6 +453,7 @@ func NormalizeInterviewSnapshot(snap *jsonx.Object) *jsonx.Object {
 		}
 	}
 	if len(langs) > 0 {
+		n.Set("language_scope", strs(langs))
 		n = objDelete(n, "languages_frameworks")
 	}
 	return n
@@ -505,7 +522,7 @@ func slugForSection(c sectionCtx, kind string) string {
 			return "testing-style-guide"
 		}
 	case "mission_type":
-		return "mission-type-scope-directive"
+		return "project-intent-directive"
 	case "neutrality_posture":
 		return "neutrality-posture-directive"
 	case "risk_appetite":
@@ -555,6 +572,8 @@ func titleForSection(c sectionCtx, kind string) string {
 		return "How We Apply " + c.directiveID
 	case "language_scope":
 		return pyCapitalize(c.language) + " Style Guide"
+	case "mission_type":
+		return "Project Intent Directive"
 	}
 	return pyTitle(strings.ReplaceAll(c.label, "_", " ")) + " " + pyCapitalize(kind)
 }
@@ -575,11 +594,7 @@ func buildTargets(req *SynthesisRequest, snap *jsonx.Object) ([]SynthTarget, err
 	dirIdx := 0
 	for _, c := range resolveSections(snap) {
 		urns := c.sourceURNs
-		if len(urns) == 0 && c.label == "mission_type" && c.answer != "" {
-			if cand, ok := missionIdentifierAnswer(normalizeSectionSelector(c.answer)); ok && known[cand] {
-				urns = []string{cand}
-			}
-		}
+
 		if len(urns) > 0 {
 			var dangling []string
 			for _, u := range urns {
@@ -608,7 +623,16 @@ func buildTargets(req *SynthesisRequest, snap *jsonx.Object) ([]SynthTarget, err
 				s := c.sourceSection
 				ss = &s
 			}
-			t, err := newSynthTarget(SynthTarget{Kind: kind, Slug: slug, Title: titleForSection(c, kind), ArtifactID: id, SourceSection: ss, SourceURNs: urns})
+			sourceURNs := append([]string(nil), urns...)
+			if kind == "styleguide" {
+				table := map[string]string{"testing_philosophy": "DIRECTIVE_034", "quality_gates": "DIRECTIVE_030", "documentation_policy": "DIRECTIVE_037"}
+				if id := table[c.label]; id != "" {
+					if graph, err := dct.BuiltInGraph(); err == nil && graph.NodeURNs()["directive:"+id] {
+						sourceURNs = appendUnique(sourceURNs, "directive:"+id)
+					}
+				}
+			}
+			t, err := newSynthTarget(SynthTarget{Kind: kind, Slug: slug, Title: titleForSection(c, kind), ArtifactID: id, SourceSection: ss, SourceURNs: sourceURNs})
 			if err != nil {
 				return nil, err
 			}

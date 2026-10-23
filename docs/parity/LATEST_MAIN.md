@@ -24,9 +24,9 @@ files (the pack is no longer tracked in the core repository).
 | Reference and assets | refreshed | Separate wheel-installed oracle and 279-path help inventory; old reference retained. Asset/reference scripts updated for fetched packs and exact revision selection. |
 | Mission capability | implemented; broader verification pending | `requires_substantive_spec` schema and prerequisite resolution, including explicit false and built-in fallback. |
 | Activation ledger | implemented; broader verification ongoing | Source precedence, identity-aware exclusions, organization-required floor, guarded writes, migration CLI, presets, cascade barriers, list and health diagnostics, and bundle freshness. Basic migration, activation, preset, health, list and cascade differential scenarios pass; remaining consumers and edge cases are being audited. |
-| Migration ledger and upgrade | in progress | Manifest order, tracked/clone-local persistence, read-only report, success-only settlement, init seeding, adoption/backfill and repository gates implemented. Report oracle scenarios and foundational unit checks pass. New migration implementations and complete runner/worktree differentials remain. |
+| Migration ledger and upgrade | in progress | Manifest order, tracked/clone-local persistence, read-only report, success-only settlement, init seeding, adoption/backfill and repository gates implemented. Report oracle scenarios and foundational unit checks pass. All new RC8 migration implementations are present, including project-intent rename and ownership-proven stale-template repair. Complete runner/worktree differentials remain. |
 | Agent and skill delivery | implemented; broad verification ongoing | Hyphenated command skills, shared/native frontmatter projection, configured-agent global commands and scoped freshness, Antigravity retirement, narrow gitignore rules, ownership-aware legacy retirement and collision diagnostics. Init agent matrix, eight migration fixtures (dry/real plus trees), six diagnostic/repair fixtures and native ownership/race checks pass. |
-| Charter and languages | pending | Language settlement, synthesis soundness gate, context/identity changes, pack vendor and updated freshness behavior. |
+| Charter and languages | implemented in part; verification ongoing | Language catalog, configured-language authority, observed polyglot/JVM detection, interview settlement and narrowing, synthesis soundness gate, project-intent rename, reach-only edges/roots, creation records and activation memory. Pipeline, language, interview, soundness, migration and activation-memory oracle scenarios pass. Pack vendor and remaining context/identity edges are still pending. |
 | Runtime and owned checkout | pending | Review-lock validation, owned issue-verdict and acceptance changes, exact mission lookup and degraded startup handling. |
 | Consolidation | pending | Canceled contribution attribution, binary/mode/rename cases and review evidence changes. |
 | Full verification | in progress | Initial differential campaign against the new oracle; rerun affected packages after fixes, then the complete suite and help/colour matrix. |
@@ -41,3 +41,14 @@ some test packages built the executable while source edits were in progress.
 It is a gap inventory, not final verification. Future broad runs use a fixed
 `SPEC_KITTY_GO_BIN` snapshot. Native checks found two legacy metadata test
 expectations (updated for ledger authority) and the outstanding help changes.
+
+A later survey runs from an immutable source copy and binary, with bounded
+package/test concurrency. Its early mission-create failures exposed a direct
+legacy config reader; the implementation now uses the activation seam, and
+focused documentation/unknown-type mission-create scenarios pass. The survey
+is still in progress and is not a final acceptance run.
+
+The shell-invoked oracle wraps long usage lines differently from a
+`CliRunner(terminal_width=...)` capture. The help snapshots are being recaptured
+with `scripts/capture-reference-help.py` in the same subprocess environment as
+the parity test.

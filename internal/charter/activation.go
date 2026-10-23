@@ -145,9 +145,18 @@ func (t *WriteTarget) SaveWithChoice(choice string) error {
 			return err
 		}
 		if t.Data.Len() == 0 {
-			return os.WriteFile(t.Path, []byte("{}\n"), 0o644)
+			err = os.WriteFile(t.Path, []byte("{}\n"), 0o644)
+		} else {
+			err = writeYAMLDocument(t.Path, t.Data, 80)
 		}
-		return writeYAMLDocument(t.Path, t.Data, 80)
+		if err != nil {
+			return err
+		}
+		t.observed, err = os.ReadFile(t.Path)
+		if err == nil {
+			t.original = t.Data.Clone()
+		}
+		return err
 	}
 	if !t.IsCharter {
 		os.MkdirAll(filepath.Dir(t.Path), 0o755)

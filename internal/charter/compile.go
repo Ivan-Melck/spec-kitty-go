@@ -302,7 +302,14 @@ func CompileCharterWith(root, mission string, iv *Interview, templateSet string,
 		start["directive:"+d] = true
 	}
 	for _, k := range []dct.Kind{dct.Tactic, dct.Styleguide, dct.Toolguide, dct.Procedure, dct.AgentProfile} {
+		reachOnly := map[string]bool{}
+		if k == dct.Tactic || k == dct.Styleguide {
+			reachOnly = ReachOnlyIDs(root, string(k))
+		}
 		for _, id := range cr.byKind[k] {
+			if reachOnly[id] {
+				continue
+			}
 			start[string(k)+":"+id] = true
 		}
 	}

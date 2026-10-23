@@ -24,11 +24,11 @@ enforcement: required
 
 // synthFiles are the agent-authored artifacts the default interview targets.
 var synthFiles = map[string]string{
-	".kittify/charter/generated/directives/001-mission-type-scope-directive.directive.yaml": synthGenerated,
-	".kittify/charter/generated/tactics/review-policy-tactic.tactic.yaml":                   "id: review-policy-tactic\nschema_version: \"1.0\"\nname: Review policy\nsteps:\n  - title: Get one focused reviewer\n",
-	".kittify/charter/generated/tactics/testing-philosophy-tactic.tactic.yaml":              "id: testing-philosophy-tactic\nschema_version: \"1.0\"\nname: Testing philosophy\npurpose: Keep tests honest and fast, with a long sentence that goes on and on to exceed the eighty column width limit.\nsteps:\n  - title: Write the test first\n    description: Red, green, refactor.\n",
-	".kittify/charter/generated/styleguides/quality-gates-style-guide.styleguide.yaml":      "id: quality-gates-style-guide\nschema_version: \"1.0\"\ntitle: Quality gates\nscope: code\nprinciples:\n  - Only declared gates.\n",
-	".kittify/charter/generated/styleguides/testing-style-guide.styleguide.yaml":            "id: testing-style-guide\nschema_version: \"1.0\"\ntitle: Testing style\nscope: testing\nprinciples:\n  - Tests are documentation.\n",
+	".kittify/charter/generated/directives/001-project-intent-directive.directive.yaml": synthGenerated,
+	".kittify/charter/generated/tactics/review-policy-tactic.tactic.yaml":               "id: review-policy-tactic\nschema_version: \"1.0\"\nname: Review policy\nsteps:\n  - title: Get one focused reviewer\n",
+	".kittify/charter/generated/tactics/testing-philosophy-tactic.tactic.yaml":          "id: testing-philosophy-tactic\nschema_version: \"1.0\"\nname: Testing philosophy\npurpose: Keep tests honest and fast, with a long sentence that goes on and on to exceed the eighty column width limit.\nsteps:\n  - title: Write the test first\n    description: Red, green, refactor.\n",
+	".kittify/charter/generated/styleguides/quality-gates-style-guide.styleguide.yaml":  "id: quality-gates-style-guide\nschema_version: \"1.0\"\ntitle: Quality gates\nscope: code\nprinciples:\n  - Only declared gates.\n",
+	".kittify/charter/generated/styleguides/testing-style-guide.styleguide.yaml":        "id: testing-style-guide\nschema_version: \"1.0\"\ntitle: Testing style\nscope: testing\nprinciples:\n  - Tests are documentation.\n",
 }
 
 // newSynthPair builds two oracle-initialised projects whose interview and
@@ -88,12 +88,12 @@ func compareSynthFile(t *testing.T, p *testkit.Pair, rel string) {
 
 var synthOutputs = []string{
 	".kittify/charter-packs/graph.yaml",
-	".kittify/charter-packs/directive/001-mission-type-scope-directive.directive.yaml",
+	".kittify/charter-packs/directive/001-project-intent-directive.directive.yaml",
 	".kittify/charter-packs/tactic/review-policy-tactic.tactic.yaml",
 	".kittify/charter-packs/tactic/testing-philosophy-tactic.tactic.yaml",
 	".kittify/charter-packs/styleguide/quality-gates-style-guide.styleguide.yaml",
 	".kittify/charter-packs/styleguide/testing-style-guide.styleguide.yaml",
-	".kittify/charter/provenance/directive-mission-type-scope-directive.yaml",
+	".kittify/charter/provenance/directive-project-intent-directive.yaml",
 	".kittify/charter/provenance/tactic-review-policy-tactic.yaml",
 	".kittify/charter/provenance/styleguide-testing-style-guide.yaml",
 	".kittify/charter/synthesis-manifest.yaml",
@@ -104,7 +104,7 @@ func TestParityCharterSynthesizePipeline(t *testing.T) {
 	p := newSynthPair(t)
 	// Missing generated artifacts (one written, the rest absent).
 	p.Both(func(s *testkit.Sandbox) {
-		s.WriteFile(".kittify/charter/generated/directives/001-mission-type-scope-directive.directive.yaml", synthGenerated)
+		s.WriteFile(".kittify/charter/generated/directives/001-project-intent-directive.directive.yaml", synthGenerated)
 	})
 	compareSynth(t, p, false, "charter", "synthesize", "--json")
 	compareSynth(t, p, false, "charter", "synthesize")

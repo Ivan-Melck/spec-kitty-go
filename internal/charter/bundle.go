@@ -92,6 +92,9 @@ func ResolveActionBundle(root, action, missionType string, depth int) *ActionBun
 		directives[dct.NormalizeDirectiveID(id)] = true
 	}
 	tactics, paradigms := pick(dct.Tactic), pick(dct.Paradigm)
+	for id := range ReachOnlyIDs(root, "tactic") {
+		delete(tactics, id)
+	}
 	local := map[string]bool{}
 	if act.Activated(dct.Directive) != nil {
 		for _, n := range merged.Nodes {

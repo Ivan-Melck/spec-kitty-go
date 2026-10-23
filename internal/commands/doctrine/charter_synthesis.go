@@ -110,6 +110,12 @@ func runCharterSynthesize(ctx *cli.Context) error {
 	if root == "" {
 		return synthFailure(ctx, jsonMode, adapter, warnings, repoRootMissing)
 	}
+	if err := charter.AssertCharterYAMLSound(root); err != nil {
+		return synthHandleError(ctx, jsonMode, adapter, warnings, err)
+	}
+	if err := convergeLegacyProjectIntent(ctx, root, dryRun || ctx.Bool("dry-run-evidence")); err != nil {
+		return synthHandleError(ctx, jsonMode, adapter, warnings, err)
+	}
 	fresh := adapter == "generated" && !charter.HasGeneratedArtifacts(root) && !ctx.Bool("dry-run-evidence") && fileExists(charter.Path(root, charter.CharterYAML))
 	if fresh {
 		res, err := charter.SynthesizeProjectLayer(root, app.Version, dryRun)
