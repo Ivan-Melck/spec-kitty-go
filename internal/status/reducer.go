@@ -757,13 +757,13 @@ func ReduceDir(dir string) (*Snapshot, error) {
 
 // MaterializeSnapshot computes exactly the snapshot Materialize writes.
 func MaterializeSnapshot(dir string) (*Snapshot, error) {
-	rows, err := ReadRows(dir)
-	if err != nil {
-		return nil, err
-	}
 	// materialize_snapshot reads the CLI stream first (store errors), then
 	// reduces the raw rows through the shared diary parser.
 	if _, err := ReadStream(dir, ""); err != nil {
+		return nil, err
+	}
+	rows, err := ReadRows(dir)
+	if err != nil {
 		return nil, err
 	}
 	st, err := ParseDiary(rows)

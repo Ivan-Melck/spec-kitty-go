@@ -344,7 +344,11 @@ func runTasksStatusFor(ctx *cli.Context, jsonMode bool, root, slug string, owned
 	var transitions *status.Snapshot
 	var events []*status.Event
 	full := &status.Snapshot{WorkPackages: &jsonx.Object{}}
-	if stream, err := status.ReadStream(readDir, ""); err == nil {
+	// A corrupt log degrades the board to no events, but the per-WP runtime
+	// row (reconstruct_wp_view -> wp_snapshot_state) re-reads it and fails
+	// the command with the exception text.
+	stream, streamErr := status.ReadStream(readDir, "")
+	if streamErr == nil {
 		events = stream.Transitions
 		if len(stream.Transitions) > 0 {
 			transitions = status.Reduce(stream.Transitions, nil, true)
@@ -363,6 +367,9 @@ func runTasksStatusFor(ctx *cli.Context, jsonMode bool, root, slug string, owned
 		id := ""
 		if hasID && idRaw != nil {
 			id = w.String("work_package_id")
+		}
+		if id != "" && streamErr != nil {
+			return statusError(ctx, jsonMode, streamErr.Error())
 		}
 		state := full.WP(id)
 		lane := string(status.Genesis)

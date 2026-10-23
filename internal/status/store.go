@@ -2,13 +2,16 @@ package status
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
 
 // EventsFile is the event log filename.
@@ -18,7 +21,10 @@ const EventsFile = "status.events.jsonl"
 const SnapshotFile = "status.json"
 
 // StoreError is a corrupted or unreadable event log.
-type StoreError struct{ Msg string }
+type StoreError struct {
+	Msg   string
+	Cause error // the chained exception (raise ... from exc), e.g. a *pyjson.DecodeError
+}
 
 func (e *StoreError) Error() string { return e.Msg }
 
@@ -169,41 +175,69 @@ func AppendEvents(dir string, items ...any) error {
 // ReadRows reads raw JSON objects from <dir>/status.events.jsonl (missing →
 // nil). Blank lines are skipped.
 func ReadRows(dir string) ([]*jsonx.Object, error) {
-	b, err := os.ReadFile(EventsPath(dir))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
+	text, ok, err := readLogText(EventsPath(dir))
+	if err != nil || !ok {
 		return nil, err
 	}
 	var out []*jsonx.Object
-	for i, line := range splitLines(string(b)) {
-		s := strings.TrimSpace(line)
+	// read_events_raw iterates the text file (`for line in fh`).
+	for i, line := range pyjson.FileLines(text) {
+		s := pyjson.Strip(line)
 		if s == "" {
 			continue
 		}
-		v, err := jsonx.Decode([]byte(s))
+		o, err := decodeRow(s, i+1)
 		if err != nil {
-			return nil, &StoreError{Msg: fmt.Sprintf("Invalid JSON on line %d: %v", i+1, err)}
-		}
-		o, ok := v.(*jsonx.Object)
-		if !ok {
-			return nil, &StoreError{Msg: fmt.Sprintf("Invalid event structure on line %d: expected JSON object", i+1)}
+			return nil, err
 		}
 		out = append(out, o)
 	}
 	return out, nil
 }
 
-// splitLines mirrors str.splitlines() for \n, \r\n and \r.
-func splitLines(s string) []string {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
-	lines := strings.Split(s, "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
+// readLogText is Path.exists() + Path.read_text(encoding="utf-8") of the
+// event log: (text, exists, error). A missing log (ENOENT, ENOTDIR, ELOOP)
+// is ("", false, nil); any other OS failure is a *pyjson.OSError and invalid
+// UTF-8 a *pyjson.UnicodeError, worded like CPython's exceptions. Line
+// endings are left untranslated.
+func readLogText(path string) (string, bool, error) {
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP) ||
+			errors.Is(err, syscall.EBADF) || errors.Is(err, syscall.ENAMETOOLONG) {
+			return "", false, nil
+		}
+		return "", false, pyOSError(err)
 	}
-	return lines
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", true, pyOSError(err)
+	}
+	s, err := pyjson.DecodeUTF8(b)
+	if err != nil {
+		return "", true, err
+	}
+	return s, true, nil
+}
+
+func pyOSError(err error) error {
+	if oe, ok := pyjson.AsOSError(err); ok {
+		return oe
+	}
+	return err
+}
+
+// decodeRow is json.loads of one stripped line plus the object check, with
+// StoreError wording ("Invalid JSON on line N: <JSONDecodeError>").
+func decodeRow(s string, lineNo int) (*jsonx.Object, error) {
+	v, err := pyjson.Loads(s)
+	if err != nil {
+		return nil, &StoreError{Msg: fmt.Sprintf("Invalid JSON on line %d: %v", lineNo, err), Cause: err}
+	}
+	o, ok := v.(*jsonx.Object)
+	if !ok {
+		return nil, &StoreError{Msg: fmt.Sprintf("Invalid event structure on line %d: expected JSON object", lineNo)}
+	}
+	return o, nil
 }
 
 var retrospectiveTypes = map[string]bool{
@@ -240,27 +274,21 @@ func ReadStream(dir string, missionID string) (*Stream, error) {
 }
 
 func readRowsWithLines(dir string) ([]*jsonx.Object, []int, error) {
-	b, err := os.ReadFile(EventsPath(dir))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil, nil
-		}
+	text, ok, err := readLogText(EventsPath(dir))
+	if err != nil || !ok {
 		return nil, nil, err
 	}
 	var out []*jsonx.Object
 	var nos []int
-	for i, line := range splitLines(string(b)) {
-		s := strings.TrimSpace(line)
+	// read_text translates newlines, then str.splitlines() splits.
+	for i, line := range pyjson.Splitlines(pyjson.TranslateNewlines(text)) {
+		s := pyjson.Strip(line)
 		if s == "" {
 			continue
 		}
-		v, err := jsonx.Decode([]byte(s))
+		o, err := decodeRow(s, i+1)
 		if err != nil {
-			return nil, nil, &StoreError{Msg: fmt.Sprintf("Invalid JSON on line %d: %v", i+1, err)}
-		}
-		o, ok := v.(*jsonx.Object)
-		if !ok {
-			return nil, nil, &StoreError{Msg: fmt.Sprintf("Invalid event structure on line %d: expected JSON object", i+1)}
+			return nil, nil, err
 		}
 		out = append(out, o)
 		nos = append(nos, i+1)
