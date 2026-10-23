@@ -43,7 +43,12 @@ type LayoutReport struct {
 const packageAssetRoot = "packs/built-in/missions"
 
 func packageCounterpart(rel, mission string) []byte {
-	for _, p := range []string{path.Join(packageAssetRoot, mission, rel), path.Join(packageAssetRoot, rel)} {
+	var candidates []string
+	if parts := strings.Split(rel, "/"); len(parts) > 2 && parts[0] == "missions" {
+		candidates = append(candidates, path.Join(packageAssetRoot, strings.Join(parts[1:], "/")))
+	}
+	candidates = append(candidates, path.Join(packageAssetRoot, mission, rel), path.Join(packageAssetRoot, rel))
+	for _, p := range candidates {
 		if st, err := assets.Stat(p); err == nil && !st.IsDir() {
 			if b, err := assets.ReadFile(p); err == nil {
 				return b

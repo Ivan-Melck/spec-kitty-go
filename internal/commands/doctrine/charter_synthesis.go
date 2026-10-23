@@ -138,7 +138,15 @@ func runCharterSynthesize(ctx *cli.Context) error {
 			return nil
 		}
 	}
-	if fresh && !charter.CatalogIsEstablished(root) {
+	established := false
+	if fresh {
+		var err error
+		established, err = charter.CatalogIsEstablished(root)
+		if err != nil {
+			return synthHandleError(ctx, jsonMode, adapter, warnings, err)
+		}
+	}
+	if fresh && !established {
 		if dryRun {
 			planned, deletes := charter.PlannedFreshPaths(), charter.PlannedFreshDeletes(root)
 			if jsonMode {

@@ -32,8 +32,8 @@ func (s site) crash(typ, msg string, tail ...fr) *RegenCrash {
 var (
 	// frNormalize is artifact_to_urn("directive", raw) reaching re.match
 	// with a non-str raw id.
-	frNormalize = []fr{{Name: "artifact_to_urn", Line: 61}, {Name: "directive_to_urn", Line: 52},
-		{Name: "normalize_directive_id", Line: 35}, {Name: "match", Line: 167}}
+	frNormalize = []fr{{Name: "artifact_to_urn", Line: 60}, {Name: "directive_to_urn", Line: 51},
+		{Name: "normalize_directive_id", Line: 34}, {Name: "match", Line: 167}}
 	// frModelInit is pydantic BaseModel.__init__.
 	frModelInit = fr{Name: "__init__", Line: 280}
 	// frEnsureNode is _ensure_node constructing a DRGNode.
