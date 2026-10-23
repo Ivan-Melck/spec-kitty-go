@@ -16,11 +16,43 @@ import (
 // Repr renders v like Python's repr().
 func Repr(v any) string {
 	var b strings.Builder
-	repr(&b, v)
+	r := &reprState{active: map[any]bool{}}
+	r.repr(&b, v)
 	return b.String()
 }
 
-func repr(b *strings.Builder, v any) {
+// reprState tracks the containers being rendered: a container met again
+// inside itself renders as "[...]" / "{...}" (Py_ReprEnter).
+type reprState struct{ active map[any]bool }
+
+// identity is a container's object identity (nil for an empty list, which
+// cannot contain itself).
+func identity(v any) any {
+	switch t := v.(type) {
+	case *jsonx.Object:
+		return t
+	case []any:
+		if len(t) > 0 {
+			return &t[0]
+		}
+	}
+	return nil
+}
+
+
+func (r *reprState) repr(b *strings.Builder, v any) {
+	if id := identity(v); id != nil {
+		if r.active[id] {
+			if _, isList := v.([]any); isList {
+				b.WriteString("[...]")
+			} else {
+				b.WriteString("{...}")
+			}
+			return
+		}
+		r.active[id] = true
+		defer delete(r.active, id)
+	}
 	switch t := v.(type) {
 	case nil:
 		b.WriteString("None")
@@ -52,7 +84,7 @@ func repr(b *strings.Builder, v any) {
 			}
 			b.WriteString(ReprString(kv.Key))
 			b.WriteString(": ")
-			repr(b, kv.Value)
+			r.repr(b, kv.Value)
 		}
 		b.WriteByte('}')
 	case []any:
@@ -61,7 +93,7 @@ func repr(b *strings.Builder, v any) {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			repr(b, x)
+			r.repr(b, x)
 		}
 		b.WriteByte(']')
 	case []string:
