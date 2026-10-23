@@ -3,6 +3,7 @@ package kittify
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,5 +75,32 @@ func TestConfigRoundTrip(t *testing.T) {
 	st, _ := os.Stat(ConfigPath(root))
 	if st.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode %o", st.Mode().Perm())
+	}
+}
+
+func TestNoOpSchemaStampPreservesFormattingAndMode(t *testing.T) {
+	root := t.TempDir()
+	path := MetadataPath(root)
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	content := "# operator formatting\nspec_kitty:\n  schema_version: 3\n  last_upgraded_at:\n  schema_capabilities: {custom: true}\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if wrote, err := StampSchemaVersion(root); err != nil || wrote {
+		t.Fatalf("unchanged stamp wrote=%v err=%v", wrote, err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != content {
+		t.Fatalf("unchanged stamp reformatted metadata: %s", got)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o644 {
+		t.Fatal("unchanged stamp changed mode")
+	}
+	content = strings.Replace(content, "schema_version: 3", "schema_version: 2", 1)
+	os.WriteFile(path, []byte(content), 0o644)
+	if wrote, err := StampSchemaVersion(root); err != nil || !wrote {
+		t.Fatalf("old stamp wrote=%v err=%v", wrote, err)
+	}
+	if LoadMetadata(root).SchemaVersion == nil || *LoadMetadata(root).SchemaVersion != 3 {
+		t.Fatal("old stamp was not advanced")
 	}
 }

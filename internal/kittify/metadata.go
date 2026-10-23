@@ -216,8 +216,11 @@ func (m *Metadata) Save(root string) (bool, error) {
 		}
 		merged.Set(kv.Key, block)
 	}
-	if st, err := os.Stat((migrationledger.Ledger{Root: root}).Path(false)); err == nil && st.Mode().IsRegular() {
-		merged.Delete("migrations")
+	for _, local := range []bool{false, true} {
+		if _, err := os.Stat((migrationledger.Ledger{Root: root}).Path(local)); err == nil {
+			merged.Delete("migrations")
+			break
+		}
 	}
 	content := MetadataHeader + pyyaml.Dump(merged, pyyaml.Options{})
 	if hasExisting && maskVolatile(string(bytes.TrimPrefix(existingText, []byte("\xef\xbb\xbf")))) == maskVolatile(content) {

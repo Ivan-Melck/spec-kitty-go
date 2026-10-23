@@ -13,7 +13,7 @@ import (
 // re-dump metadata.yaml (PyYAML style, header kept) with
 // spec_kitty.schema_version set to the current schema and the canonical
 // capability map (an existing map is left alone, a legacy list is folded
-// in). The file is rewritten only when the rendered bytes differ.
+// in). The file is rewritten only when the parsed stamp values change.
 func StampSchemaVersion(root string) (bool, error) {
 	path := MetadataPath(root)
 	b, err := os.ReadFile(path)
@@ -30,6 +30,7 @@ func StampSchemaVersion(root string) (bool, error) {
 		return false, nil
 	}
 	sk, _ := mustGet(doc, "spec_kitty").(*jsonx.Object)
+	before := jsonx.Dumps(sk, jsonx.Options{Indent: -1, SortKeys: true})
 	if sk == nil {
 		sk = &jsonx.Object{}
 		doc.Set("spec_kitty", sk)
@@ -47,6 +48,9 @@ func StampSchemaVersion(root string) (bool, error) {
 		}
 	}
 	sk.Set("schema_capabilities", caps)
+	if before == jsonx.Dumps(sk, jsonx.Options{Indent: -1, SortKeys: true}) {
+		return false, nil
+	}
 	rendered := MetadataHeader + pyyaml.Dump(doc, pyyaml.Options{})
 	if string(text) == rendered {
 		return false, nil

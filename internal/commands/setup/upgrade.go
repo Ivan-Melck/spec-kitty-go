@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
@@ -805,9 +806,6 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 			line, err := bufio.NewReader(ctx.Stdin).ReadString('\n')
 			ans := strings.ToLower(strings.TrimSpace(line))
 			if (err != nil && line == "") || (ans != "" && ans != "y" && ans != "yes") {
-				if err != nil && line == "" {
-					fmt.Fprintln(w)
-				}
 				out(w, "[yellow]Upgrade cancelled.[/yellow]")
 				return nil
 			}
@@ -1070,6 +1068,9 @@ func finalizeSurfaceRepair(root string, o *upgradeOutcome) {
 	o.driftedReasons = rep.DriftedReasons
 	o.surfaceRepairFailed = rep.Failed
 	o.surfaceRepairMessages = rep.FailureMessages
+	if warning := agents.RefreshAgentBlock(root); warning != "" && !contains(o.warnings, warning) {
+		o.warnings = append(o.warnings, warning)
+	}
 }
 
 // supportingRepairNotice is _supporting_repair_preview: the count of the
