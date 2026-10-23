@@ -34,8 +34,9 @@ func comparePairSteps(t *testing.T, p *testkit.Pair, goSlug, orSlug string, step
 	}
 }
 
-// shortULID masks the 12-char event id prefixes status emit prints.
-var shortULID = regexp.MustCompile(`\b0[0-9A-HJKMNP-TV-Z]{11}\.\.\.`)
+// shortULID masks the 12-char event id prefixes status emit prints (the
+// "..." is a separate highlighted span in colour mode).
+var shortULID = regexp.MustCompile(`\b0[0-9A-HJKMNP-TV-Z]{11}(?:\x1b\[[0-9;]*m)*\.\.\.`)
 
 func subst(args []string, slug string) []string {
 	out := make([]string, len(args))
