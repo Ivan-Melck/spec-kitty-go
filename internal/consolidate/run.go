@@ -379,6 +379,9 @@ type run struct {
 	verifiedLanding bool
 	excluded        map[string]bool
 	checkpoint      *coordCheckpoint
+	// disposableFn overrides the residue classifier for the checkout being
+	// judged (nil: spec-kitty's own bookkeeping only).
+	disposableFn func(string) bool
 }
 
 func hasRemote(root, name string) bool {
@@ -884,6 +887,9 @@ func porcelainAll(dir string) []dirtyEntry {
 }
 
 func (r *run) disposable(p string) bool {
+	if r.disposableFn != nil {
+		return r.disposableFn(p)
+	}
 	return acceptance.IsSelfBookkeeping(p)
 }
 
@@ -973,6 +979,24 @@ func (r *run) preflight() error {
 		return nil
 	}
 	if r.sf.Routed() && dirExists(r.sf.CoordWorktree) {
+		// Judged as a MISSION checkout (_as_mission_checkout): besides
+		// spec-kitty's own bookkeeping, this Mission's coordination-partition
+		// residue (its status log and snapshot, ...) under the stored coord
+		// topology is disposable there.
+		defer func(prev func(string) bool) { r.disposableFn = prev }(r.disposableFn)
+		dirs := map[string]bool{r.slug: true, mission.CoordMissionDirName(r.slug, r.sf.Mid8): true}
+		r.disposableFn = func(p string) bool {
+			if acceptance.IsSelfBookkeeping(p) {
+				return true
+			}
+			n := filepath.ToSlash(p)
+			for d := range dirs {
+				if strings.HasPrefix(n, "kitty-specs/"+d+"/") {
+					return mission.IsCoordResidue(n)
+				}
+			}
+			return false
+		}
 		return r.checkClean(r.sf.CoordWorktree, "MERGE_UNSAFE_WORKTREE_DIRTY", true)
 	}
 	return nil

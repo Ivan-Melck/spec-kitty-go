@@ -35,11 +35,11 @@ func corruptLog(t *testing.T, s *testkit.Sandbox, coordSide bool, kind string) {
 		os.Mkdir(ev, 0o755)
 	case "badutf8":
 		os.WriteFile(ev, append(b, []byte("\xff\n")...), 0o644)
-	case "drift":
+	case "drift", "driftdirty":
 		st := filepath.Join(filepath.Dir(ev), "status.json")
 		sb, _ := os.ReadFile(st)
 		os.WriteFile(st, []byte(strings.Replace(string(sb), `"event_count": `, `"event_count": 1`, 1)), 0o644)
-		if coordSide {
+		if coordSide && kind == "drift" {
 			s.Exec(filepath.Dir(filepath.Dir(filepath.Dir(ev))), "git", "commit", "-q", "-am", "drift")
 		}
 	}
@@ -62,7 +62,7 @@ func unlockLogs(s *testkit.Sandbox) {
 // the dry-run review-artifact preview and of the real run's
 // materialization-drift check (coordination log); plus the drift warning.
 func TestDiffConsolidateUnreadableStatus(t *testing.T) {
-	for _, sc := range []string{"coord-badjson", "coord-nonobj", "coord-dir", "coord-badutf8", "coord-eperm", "coord-drift",
+	for _, sc := range []string{"coord-badjson", "coord-nonobj", "coord-dir", "coord-badutf8", "coord-eperm", "coord-drift", "coord-driftdirty",
 		"primary-badjson", "primary-badutf8", "primary-dir", "primary-eperm"} {
 		sc := sc
 		t.Run(sc, func(t *testing.T) {
