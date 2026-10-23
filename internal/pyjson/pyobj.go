@@ -39,7 +39,6 @@ func identity(v any) any {
 	return nil
 }
 
-
 func (r *reprState) repr(b *strings.Builder, v any) {
 	if id := identity(v); id != nil {
 		if r.active[id] {
