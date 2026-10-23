@@ -3,6 +3,8 @@ package agentcore
 import (
 	"fmt"
 	"github.com/spec-kitty/go-kitty3/internal/dossier"
+	"github.com/spec-kitty/go-kitty3/internal/missionstate"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"io"
 	"os"
 	"path/filepath"
@@ -360,15 +362,19 @@ func runTasksStatusFor(ctx *cli.Context, jsonMode bool, root, slug string, owned
 	var rows []*boardRow
 	staleVerdicts := []any{}
 	for _, p := range wpGlob(tasksDir) {
-		w, err := wp.Read(p)
+		// The board reads frontmatter scalars textually (split_frontmatter +
+		// extract_scalar), not through a YAML parse.
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return statusError(ctx, jsonMode, pyjson.OSErrorString(err))
+		}
+		text, err := pyjson.DecodeUTF8(raw)
 		if err != nil {
 			return statusError(ctx, jsonMode, err.Error())
 		}
-		idRaw, hasID := w.Meta().Get("work_package_id")
-		id := ""
-		if hasID && idRaw != nil {
-			id = w.String("work_package_id")
-		}
+		front, _ := splitFrontmatterText(text)
+		scalar := func(k string) string { v, _ := extractScalar(front, k); return v }
+		id := scalar("work_package_id")
 		if id != "" && streamErr != nil {
 			return statusError(ctx, jsonMode, streamErr.Error())
 		}
@@ -396,11 +402,11 @@ func runTasksStatusFor(ctx *cli.Context, jsonMode bool, root, slug string, owned
 		if lane == "doing" {
 			lane = string(status.InProgress)
 		}
-		phase := w.String("phase")
+		phase := scalar("phase")
 		if phase == "" {
 			phase = "Unknown Phase"
 		}
-		execMode, kind := workspaceFor(w, manifest, id)
+		execMode, kind := workspaceFor(p, scalar("execution_mode"), manifest, id)
 		if owned != nil && id != "" {
 			kind = lanes.OwnedCheckoutKind
 		}
@@ -409,23 +415,24 @@ func runTasksStatusFor(ctx *cli.Context, jsonMode bool, root, slug string, owned
 			idVal = id
 		}
 		var titleVal any
-		if t, ok := w.Meta().Get("title"); ok && t != nil {
-			titleVal = w.String("title")
+		title, hasTitle := extractScalar(front, "title")
+		if hasTitle {
+			titleVal = title
 		}
 		spca := get("shell_pid_created_at")
 		if spca == "" {
 			spca = nil
 		}
 		o := jsonx.NewObject("id", idVal, "title", titleVal, "lane", lane, "phase", phase, "file", filepath.Base(p),
-			"agent", get("agent"), "agent_profile", w.String("agent_profile"),
+			"agent", get("agent"), "agent_profile", scalar("agent_profile"),
 			"resolved_agent_profile", get("agent_profile"), "resolved_role", get("role"), "resolved_model", get("model"),
 			"shell_pid", get("shell_pid"), "shell_pid_created_at", spca,
 			"execution_mode", execMode, "workspace_kind", kind)
 		key := id
 		if key == "" {
-			key = w.Stem()
+			key = strings.TrimSuffix(filepath.Base(p), ".md")
 		}
-		row := &boardRow{obj: o, id: id, title: w.String("title"), lane: lane, deps: w.Dependencies()}
+		row := &boardRow{obj: o, id: id, title: title, lane: lane}
 		if id != "" && state != nil {
 			if rv := state.GetObject("review"); rv != nil {
 				if rv.GetString("at") != "" && rv.GetString("actor") != "" && rv.GetString("wp_id") != "" && rv.GetString("reason") != "" {
@@ -590,8 +597,7 @@ func runTasksStatusFor(ctx *cli.Context, jsonMode bool, root, slug string, owned
 }
 
 // workspaceFor resolves (execution_mode, workspace_kind) for a WP row.
-func workspaceFor(w *wp.WP, manifest *lanes.Manifest, id string) (string, string) {
-	mode := w.String("execution_mode")
+func workspaceFor(path, mode string, manifest *lanes.Manifest, id string) (string, string) {
 	if id == "" {
 		if mode == "" {
 			mode = "code_change"
@@ -603,7 +609,10 @@ func workspaceFor(w *wp.WP, manifest *lanes.Manifest, id string) (string, string
 	}
 	// resolve_workspace_for_wp reads the WP through WPMetadata: a schema
 	// failure (a ValueError) leaves the row unclassified.
-	if msg, _ := dossier.AuthoredWPValidationError(w.Path); msg != "" {
+	if missionstate.FrontmatterReadError(path) != "" {
+		return mode, "unknown"
+	}
+	if msg, _ := dossier.AuthoredWPValidationError(path); msg != "" {
 		return mode, "unknown"
 	}
 	if mode == "planning_artifact" {

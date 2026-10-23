@@ -12,7 +12,7 @@ import (
 
 // TestDiffWPMetadataValidation covers WP frontmatter that parses but fails
 // WPMetadata (a non-string list item, a recursive alias that ruamel builds
-// as None, an unknown key): `next` reports the unreadable canonical task,
+// as None, an unknown key) or does not parse at all: `next` reports the unreadable canonical task,
 // `agent action implement` refuses with the ValidationError text and the
 // status board leaves the row's workspace unclassified.
 func TestDiffWPMetadataValidation(t *testing.T) {
@@ -20,6 +20,7 @@ func TestDiffWPMetadataValidation(t *testing.T) {
 		"nonstring": "dependencies: [WP01, 5]\n",
 		"recursive": "requirement_refs: &cyc [x, *cyc]\n",
 		"extra":     "bogus_field: 1\n",
+		"badyaml":   "bad_yaml: [unclosed\n",
 	}
 	for name, line := range cases {
 		name, line := name, line
@@ -49,6 +50,7 @@ func TestDiffWPMetadataValidation(t *testing.T) {
 			})
 			for _, args := range [][]string{
 				{"agent", "tasks", "status", "--mission", "$M", "--json"},
+				{"agent", "tasks", "status", "--mission", "$M"},
 				{"next", "--mission", "$M", "--json"},
 				{"agent", "action", "implement", "WP02", "--agent", "claude", "--mission", "$M"},
 			} {
