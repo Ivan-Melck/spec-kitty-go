@@ -305,6 +305,7 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 			d.Role, d.AgentProfile, d.AgentProfileVersion, d.Model, d.Provider = bd.Role, bd.AgentProfile, bd.AgentProfileVersion, bd.Model, bd.Provider
 		}
 		actor := status.SelfAssertingActor("reviewer", agent, "", binding)
+		rb := CaptureRollbackPoint(s.StatusDir())
 		if _, err := StartReview(s, wpID, actor, "action-review:"+root, ws.StatusExecutionMode(), pm, &d); err != nil {
 			o.Printf("Error: %v", err)
 			return ExitErr(1)
@@ -317,7 +318,7 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 		}
 		paths := append([]string{w.Path}, statusPair(s.StatusDir())...)
 		if err := CommitWorkflowChange(o, rc, root, slug, target, paths, fmt.Sprintf("chore: Start %s review [%s]", wpID, agent),
-			"for_review -> in_review for "+wpID, wpID, true); err != nil {
+			"for_review -> in_review for "+wpID, wpID, true, rb); err != nil {
 			return err
 		}
 		o.Printf("✓ Claimed %s for review (agent: %s, PID: %d, target: %s)", wpID, agent, pid, target)

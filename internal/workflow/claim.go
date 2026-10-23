@@ -9,7 +9,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
-	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -251,98 +250,6 @@ func commitIdempotent(dir, message string, paths []string) (string, bool, error)
 		return h, false, nil
 	}
 	return sha, true, nil
-}
-
-// CommitWorkflowChange is workflow_executor.commit_workflow_change: commit
-// the workflow's paths (coordination transaction for coord missions, the
-// legacy safe-commit path otherwise), record the receipts and, when asked,
-// merge the coordination branch into the WP's lane.
-func CommitWorkflowChange(o *Out, rc *Receipts, root, slug, targetBranch string, paths []string, message, operation, wpID string, autoRebase bool) error {
-	s := coord.Resolve(root, slug)
-	coordBranch := strings.TrimSpace(s.Meta.GetString("coordination_branch"))
-	mid := s.Meta.GetString("mission_id")
-	mid8 := s.Meta.GetString("mid8")
-	if mid8 == "" && len(mid) >= 8 {
-		mid8 = mission.ResolveMid8(slug, mid)
-	}
-	if coordBranch != "" && mid != "" && mid8 != "" {
-		var primary, coordPaths []string
-		for _, p := range paths {
-			if isPrimaryPartition(slug, p) {
-				primary = append(primary, p)
-			} else {
-				coordPaths = append(coordPaths, p)
-			}
-		}
-		if len(primary) > 0 {
-			primaryRef := s.TargetBranch()
-			if primaryRef == "" {
-				primaryRef = targetBranch
-			}
-			sha, _, err := commitIdempotent(root, message, primary)
-			if err != nil {
-				rc.Record(primaryRef, message, "refused", "", wpID)
-				o.Printf("Error: Failed to record %s via BookkeepingTransaction: %v", operation, err)
-				return ExitErr(1)
-			}
-			rc.Record(primaryRef, message, "committed", sha, wpID)
-		}
-		wt := s.CommitRoot()
-		sha, committed, err := commitIdempotent(wt, message, coordPaths)
-		if err != nil {
-			rc.Record(coordBranch, message, "refused", "", wpID)
-			o.Printf("Error: Failed to record %s via BookkeepingTransaction: %v", operation, err)
-			return ExitErr(1)
-		}
-		rc.Record(coordBranch, message, "committed", sha, wpID)
-		if autoRebase {
-			if err := SyncLaneAfterCoordinationCommit(root, slug, wpID, coordBranch); err != nil {
-				if committed {
-					if gitOut(wt, "rev-parse", "HEAD") == sha {
-						git(wt, "-c", "commit.gpgsign=false", "revert", "--no-edit", sha)
-					}
-					rc.MarkRefused(sha)
-				}
-				if se, ok := err.(*LaneSyncError); ok {
-					se.Render(o)
-				} else {
-					o.Printf("Error: %v", err)
-				}
-				return ExitErr(1)
-			}
-		}
-		return nil
-	}
-	if coordBranch != "" {
-		o.Printf("Error: coord-commit misroute prevented for %s: mission '%s' declares coordination_branch '%s' but its identity triple is incomplete (mission_id/mid8 unresolved). Refusing to commit coordination artifacts from the repository root. Repair meta.json (mission_id/mid8) and retry.", wpID, slug, coordBranch)
-		return ExitErr(1)
-	}
-	ref := s.TargetBranch()
-	if ref == "" {
-		ref = targetBranch
-	}
-	porcelain := root
-	if s.CoordWorktree != "" {
-		if _, err := os.Stat(s.CoordWorktree); err == nil {
-			porcelain = s.CoordWorktree
-		}
-	}
-	var rels []string
-	for _, p := range paths {
-		rels = append(rels, relTo(porcelain, p))
-	}
-	if r := git(porcelain, append([]string{"status", "--porcelain", "--"}, rels...)...); r.Code == 0 && strings.TrimSpace(r.Stdout) == "" {
-		rc.Record(ref, message, "committed", alreadyPresentSHA(porcelain, ref, rels), wpID)
-		return nil
-	}
-	sha, _, err := commitIdempotent(root, message, paths)
-	if err != nil {
-		rc.Record(ref, message, "refused", "", wpID)
-		o.Printf("Error: Failed to commit workflow status update for %s: %v. Event log rolled back to pre-emit state.", wpID, err)
-		return ExitErr(1)
-	}
-	rc.Record(ref, message, "committed", sha, wpID)
-	return nil
 }
 
 // alreadyPresentSHA is _already_present_receipt_sha.

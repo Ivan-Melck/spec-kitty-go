@@ -355,6 +355,9 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 	needsAgent := assign.Tool == "unknown"
 	fixMode := hasPriorRejection(s, w.Stem(), wpID)
 	execMode := ws.StatusExecutionMode()
+	// captured before every status mutation (the bare resume too) so a
+	// failed commit restores both status artifacts
+	rb := CaptureRollbackPoint(s.StatusDir())
 	if lane != "in_progress" || needsAgent || opt.Agent != "" {
 		if opt.Agent == "" && !(lane == "in_progress" && !needsAgent) {
 			o.Print("Error: --agent parameter required when starting implementation.")
@@ -395,7 +398,7 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 			}
 		}
 		if err := CommitWorkflowChange(o, rc, root, slug, target, statusPair(s.StatusDir()),
-			fmt.Sprintf("chore: Start %s implementation [%s]", wpID, opt.Agent), "planned -> claimed for "+wpID, wpID, true); err != nil {
+			fmt.Sprintf("chore: Start %s implementation [%s]", wpID, opt.Agent), "planned -> claimed for "+wpID, wpID, true, rb); err != nil {
 			return err
 		}
 		o.Printf("✓ Claimed %s (agent: %s, PID: %d, target: %s)", wpID, opt.Agent, pid, target)
@@ -407,7 +410,7 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 			return ExitErr(1)
 		}
 		if err := CommitWorkflowChange(o, rc, root, slug, target, statusPair(s.StatusDir()),
-			fmt.Sprintf("chore: Refresh %s implementation liveness", wpID), "refresh implementation liveness for "+wpID, wpID, true); err != nil {
+			fmt.Sprintf("chore: Refresh %s implementation liveness", wpID), "refresh implementation liveness for "+wpID, wpID, true, rb); err != nil {
 			return err
 		}
 	}
