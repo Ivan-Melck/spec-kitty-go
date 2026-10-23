@@ -100,14 +100,33 @@ func runCharterInterview(ctx *cli.Context) error {
 			order = charter.QuestionOrder
 		}
 		in := bufio.NewReader(ctx.Stdin)
+		// typer.prompt: end of input raises click.Abort, which the
+		// command's `except Exception` reports as an empty "Unexpected
+		// error" (exit 1).
+		eof := false
 		prompt := func(text, def string) string {
+			if eof {
+				return def
+			}
 			fmt.Fprintf(w, "%s [%s]: ", text, def)
 			line, err := in.ReadString('\n')
+			if err != nil && line == "" {
+				eof = true
+				return def
+			}
 			line = strings.TrimRight(line, "\r\n")
-			if (err != nil && line == "") || line == "" {
+			if line == "" {
 				return def
 			}
 			return line
+		}
+		aborted := func() error {
+			if jsonMode {
+				emitCharterError(w, true, "", "", nil)
+			} else {
+				cprint(w, "[red]Unexpected error:[/red] ")
+			}
+			return cli.Exit(1)
 		}
 		answers := &jsonx.Object{}
 		for _, q := range order {
@@ -115,6 +134,9 @@ func runCharterInterview(ctx *cli.Context) error {
 			def := iv.Answers.GetString(q)
 			cprint(w, "[dim][enter]=accept default | [text]=type answer | [d]efer | [!cancel][/dim]")
 			answers.Set(q, prompt(text, def))
+			if eof {
+				return aborted()
+			}
 		}
 		pDef, dDef, tDef := strings.Join(iv.SelectedParadigms, ", "), strings.Join(iv.SelectedDirectives, ", "), strings.Join(iv.AvailableTools, ", ")
 		if hasP {
@@ -127,6 +149,9 @@ func runCharterInterview(ctx *cli.Context) error {
 			tDef = strings.Join(tools, ", ")
 		}
 		ps, ds, ts := prompt("Selected paradigms (comma-separated)", pDef), prompt("Selected directives (comma-separated)", dDef), prompt("Available tools (comma-separated)", tDef)
+		if eof {
+			return aborted()
+		}
 		paradigms, _ = parseCSVOpt(&ps)
 		directives, _ = parseCSVOpt(&ds)
 		tools, _ = parseCSVOpt(&ts)
