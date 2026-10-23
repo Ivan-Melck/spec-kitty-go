@@ -333,12 +333,3 @@ func renderSynthesis(ctx *cli.Context, res *retrospective.SynthResult, dry bool)
 		len(res.Planned), len(res.Applied), len(res.Conflicts), len(res.Rejected), len(res.EventsEmitted)))
 }
 
-// markupCells renders str cells the way rich.Table does: as console markup
-// (so "--[requires]-->" loses its tag-shaped segment).
-func markupCells(cells ...string) []string {
-	out := make([]string, len(cells))
-	for i, c := range cells {
-		out[i] = rich.Strip(c)
-	}
-	return out
-}
