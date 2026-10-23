@@ -51,9 +51,9 @@ func FutureSelections(root string, requested map[string][]string) (map[string][]
 				set[id] = true
 			}
 		case token != "skill" && token != dct.MissionTypeToken:
-			ids, ok := EffectiveIDs(root, token)
-			if !ok {
-				return nil, fmt.Errorf("Cannot resolve the effective %s set for resynthesis: the effective set is unresolvable. The activation was not written.", token)
+			ids, reason := EffectiveSet(root, token)
+			if reason != "" {
+				return nil, fmt.Errorf("Cannot resolve the effective %s set for resynthesis: %s. The activation was not written.", token, reason)
 			}
 			for _, id := range ids {
 				set[id] = true

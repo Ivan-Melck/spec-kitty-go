@@ -217,9 +217,9 @@ func promoteOrgRequired(repoRoot string, pol *OrgPolicy) ([]string, error) {
 					tok = x
 				}
 			}
-			eff, ok := EffectiveIDs(repoRoot, tok)
-			if !ok {
-				leftAbsent = append(leftAbsent, fmt.Sprintf("%s was left absent and nothing was promoted into it: the effective set could not be resolved (no effective set was resolved for this key).", p.key))
+			eff, reason := EffectiveSet(repoRoot, tok)
+			if reason != "" {
+				leftAbsent = append(leftAbsent, fmt.Sprintf("%s was left absent and nothing was promoted into it: the effective set could not be resolved (%s).", p.key, reason))
 				continue
 			}
 			list = append([]string{}, eff...)

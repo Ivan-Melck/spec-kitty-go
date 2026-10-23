@@ -384,9 +384,9 @@ func PromoteSelections(root string, iv *Interview) ([]string, error) {
 		}
 		var newList []string
 		if !present {
-			eff, ok := EffectiveIDs(root, p.token)
-			if !ok {
-				leftAbsent = append(leftAbsent, fmt.Sprintf("%s was left absent and nothing was promoted into it: the effective set could not be resolved (no effective set was resolved for this key).", p.key))
+			eff, reason := EffectiveSet(root, p.token)
+			if reason != "" {
+				leftAbsent = append(leftAbsent, fmt.Sprintf("%s was left absent and nothing was promoted into it: the effective set could not be resolved (%s).", p.key, reason))
 				continue
 			}
 			newList = append([]string{}, eff...)

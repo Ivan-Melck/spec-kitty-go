@@ -11,6 +11,7 @@ import (
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
 // This file ports charter.offering.drg.org_pack_config: the
@@ -351,6 +352,71 @@ func ResolvePackChain(repoRoot string) []string {
 		}
 	}
 	return out
+}
+
+// WarnDroppedOrgDirs emits resolve_org_dirs' NFR-002 WARNING for every
+// configured org pack root that does not exist on disk (its contribution
+// to subdir is dropped). Upstream logs it each time a layered repository
+// is built over the org `mission_types` / `mission_step_contracts` dirs
+// (resolve_mission_type_context, the runtime step-contract resolution).
+func WarnDroppedOrgDirs(repoRoot, subdir string) {
+	for _, p := range LoadPackRegistry(repoRoot).Packs {
+		r, err := p.EffectiveRoot(repoRoot)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(r); err != nil {
+			warnLog("Configured org pack root %s does not exist on disk; dropping its contribution to %s (stale local_path, or the pack has not been fetched yet).", r, dct.PyRepr(subdir))
+		}
+	}
+}
+
+// WarnMissionTypeContext is the resolve_org_dirs warning side effect of
+// resolve_mission_type_context(repo_root, mission_type=typeKey): its
+// governance slot builds the layered profile repository (and so logs the
+// dropped org roots) whenever the type is registered or the project
+// charter declares selections. A typeless call ("") never reaches it.
+func WarnMissionTypeContext(repoRoot, typeKey string) {
+	if typeKey == "" {
+		return
+	}
+	registered, _ := dct.ActivatedMissionTypes(repoRoot)
+	for _, r := range registered {
+		if r == typeKey {
+			WarnDroppedOrgDirs(repoRoot, "mission_types")
+			return
+		}
+	}
+	if ProjectHasPackOverrides(repoRoot) {
+		WarnDroppedOrgDirs(repoRoot, "mission_types")
+	}
+}
+
+// ProjectHasPackOverrides is mission_type_profiles._project_has_pack_overrides:
+// charter.yaml's governance.charter declares a non-empty selected_<kind> list.
+func ProjectHasPackOverrides(repoRoot string) bool {
+	b, err := os.ReadFile(filepath.Join(repoRoot, ".kittify", "charter", "charter.yaml"))
+	if err != nil {
+		return false
+	}
+	o, err := yamlx.ParseObject(b)
+	if err != nil || o == nil {
+		return false
+	}
+	gov := o.GetObject("governance")
+	if gov == nil {
+		return false
+	}
+	ch := gov.GetObject("charter")
+	if ch == nil {
+		return false
+	}
+	for _, kv := range ch.Pairs() {
+		if l, ok := kv.Value.([]any); ok && strings.HasPrefix(kv.Key, "selected_") && len(l) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ProjectPackRootIfExists is the project pack root (.kittify/charter-packs)

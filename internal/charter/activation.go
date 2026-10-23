@@ -205,9 +205,51 @@ type ActivationResult struct {
 // existing org root, plus (non-directive kinds) the resolved artifact ids.
 // ok=false means unresolved (mission-type ledger, skill required-only).
 func EffectiveIDs(root, token string) ([]string, bool) {
-	if token == dct.MissionTypeToken || token == "skill" {
-		return nil, false
+	ids, reason := EffectiveSet(root, token)
+	return ids, reason == ""
+}
+
+// Unresolved effective-set reasons (charter.activation.effective_set).
+const (
+	effectiveRequiredOnly = "kind is required-only: an absent key puts only org-required entries in force"
+	effectiveLedger       = "mission_type_activations is an activation ledger, not a corpus: an absent key puts no mission type in force"
+)
+
+// EffectiveSet is resolve_effective_sets for one kind: the effective ids
+// while the key is absent, or (reason != "") why the set is unresolved.
+// It fails closed like upstream: every declared org pack root must be
+// fetched (resolve_pack_chain(strict=True)), and an empty set while
+// built-in artifacts of the kind ship is unresolved.
+func EffectiveSet(root, token string) ([]string, string) {
+	if token == dct.MissionTypeToken {
+		return nil, effectiveLedger
 	}
+	if token == "skill" {
+		return nil, effectiveRequiredOnly
+	}
+	if _, err := RequireDeclaredOrgRoots(root); err != nil {
+		return nil, err.Error()
+	}
+	ids := effectiveScan(root, token)
+	if len(ids) == 0 {
+		if k, err := dct.ParseKind(token); err == nil && builtInShips(k) {
+			return nil, fmt.Sprintf("empty effective set while built-in artifacts of %s ship", token)
+		}
+	}
+	return ids, ""
+}
+
+// builtInShips is effective_set._built_in_ships.
+func builtInShips(k dct.Kind) bool {
+	if !k.HasBuiltInContentDir() {
+		return false
+	}
+	return len(dct.BuiltIn().Walk(k.Plural(), ".yaml", true)) > 0
+}
+
+// effectiveScan is the resolved effective set's scan (_scanned_ids plus
+// the service keys).
+func effectiveScan(root, token string) []string {
 	lr := dct.LayerRoots(root)
 	base := map[string]string{}
 	if p := lr[dct.LayerProject]; p != "" {
@@ -236,7 +278,7 @@ func EffectiveIDs(root, token string) ([]string, bool) {
 		out = append(out, id)
 	}
 	sort.Strings(out)
-	return out, true
+	return out
 }
 
 // fallbackIDs is EffectiveSet.fallback_ids for the tolerant single activation.
@@ -297,7 +339,7 @@ func Activate(root, token, id string) (*ActivationResult, error) {
 			preserved = OrgRequiredIDs(root, "skills")
 			sort.Strings(preserved)
 		default:
-			if eff, ok := EffectiveIDs(root, token); ok {
+			if eff, reason := EffectiveSet(root, token); reason == "" {
 				preserved = eff
 			} else {
 				seen := map[string]bool{}
@@ -314,6 +356,8 @@ func Activate(root, token, id string) (*ActivationResult, error) {
 				inForce = false
 				if token == dct.MissionTypeToken {
 					res.Warnings = append(res.Warnings, fmt.Sprintf("Kind %s had no explicit activation set, so no mission type was in force; initialized from the %d mission types available across all readable layers.", dct.PyRepr(token), len(preserved)))
+				} else {
+					res.Warnings = append(res.Warnings, fmt.Sprintf("The effective %s set could not be resolved because %s; initialized from the %d ids available across all readable layers.", token, reason, len(preserved)))
 				}
 			}
 		}
