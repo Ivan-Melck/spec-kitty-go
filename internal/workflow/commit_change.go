@@ -7,6 +7,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/missionwrite"
 )
 
 // CommitWorkflowChange is workflow_executor.commit_workflow_change: commit
@@ -17,7 +18,7 @@ import (
 // commit or a refused lane sync cuts only the rows appended since, and a
 // rollback that refuses because those rows are already committed reports
 // the claim as committed (#5819, #5804).
-func CommitWorkflowChange(o *Out, rc *Receipts, root, slug, targetBranch string, paths []string, message, operation, wpID string, autoRebase bool, rb *RollbackPoint) error {
+func CommitWorkflowChange(o *Out, rc *Receipts, root, slug, targetBranch string, paths []string, message, operation, wpID string, autoRebase bool, rb *missionwrite.RollbackPoint) error {
 	s := coord.Resolve(root, slug)
 	coordBranch := strings.TrimSpace(s.Meta.GetString("coordination_branch"))
 	mid := s.Meta.GetString("mission_id")
@@ -100,8 +101,8 @@ func CommitWorkflowChange(o *Out, rc *Receipts, root, slug, targetBranch string,
 
 // reportRefusedRollback is _report_refused_rollback: print the account of
 // a rollback that left the files alone; true when the claim was committed.
-func reportRefusedRollback(o *Out, out RollbackOutcome, wpID, operation string, exc error, failedStep string) bool {
-	if out.Refusal == RefusalTailAlreadyCommitted {
+func reportRefusedRollback(o *Out, out missionwrite.RollbackOutcome, wpID, operation string, exc error, failedStep string) bool {
+	if out.Refusal == missionwrite.RefusalTailAlreadyCommitted {
 		cause := ""
 		if exc != nil {
 			cause = ": " + exc.Error()
@@ -119,13 +120,13 @@ func reportRefusedRollback(o *Out, out RollbackOutcome, wpID, operation string, 
 
 // handleCommitFailure is _handle_commit_failure: roll the status files back
 // to rb, record the receipt and print the failure (exit 1).
-func handleCommitFailure(o *Out, rc *Receipts, root string, exc error, ref, message, wpID, operation string, rb *RollbackPoint, prefix string, recoveryNote bool) error {
-	var out *RollbackOutcome
+func handleCommitFailure(o *Out, rc *Receipts, root string, exc error, ref, message, wpID, operation string, rb *missionwrite.RollbackPoint, prefix string, recoveryNote bool) error {
+	var out *missionwrite.RollbackOutcome
 	if rb != nil {
 		r := rb.Restore(o.Err, nil, false)
 		out = &r
 	}
-	if out != nil && out.Refusal == RefusalTailAlreadyCommitted {
+	if out != nil && out.Refusal == missionwrite.RefusalTailAlreadyCommitted {
 		rc.Record(ref, message, "committed", committedReceiptSHA(root, ref), wpID)
 		reportRefusedRollback(o, *out, wpID, operation, exc, "")
 		return ExitErr(1)
@@ -175,12 +176,12 @@ func firstNonEmpty(a, b string) string {
 // syncLaneRefused is the refusal arm of _sync_lane_or_revert: revert the
 // coordination commit, roll back exactly the claim's rows and render the
 // lane-sync failure.
-func syncLaneRefused(o *Out, rc *Receipts, exc error, wt, sha string, committed bool, slug, wpID, operation string, rb *RollbackPoint, claimIDs []string, claimOK bool) {
+func syncLaneRefused(o *Out, rc *Receipts, exc error, wt, sha string, committed bool, slug, wpID, operation string, rb *missionwrite.RollbackPoint, claimIDs []string, claimOK bool) {
 	if err := revertCoordinationCommit(wt, sha, committed); err != nil {
 		o.Printf("Error: Failed to rollback lifecycle state after lane sync refusal: %v", err)
 		o.Printf("  %s stays claimed and its lane was not synced. Resolve the lane conflict, then run `spec-kitty agent action implement %s` again to re-sync, or move it back with `spec-kitty agent tasks move-task %s --to planned --mission %s`.", wpID, wpID, wpID, slug)
 	} else if rb != nil {
-		var out RollbackOutcome
+		var out missionwrite.RollbackOutcome
 		tail, tailOK := rb.AppendedEventIDs()
 		reverted := tailOK && len(tail) == 0
 		switch {
@@ -189,9 +190,9 @@ func syncLaneRefused(o *Out, rc *Receipts, exc error, wt, sha string, committed 
 		case claimOK:
 			out = rb.Restore(o.Err, claimIDs, true)
 		default:
-			out = RollbackOutcome{Refusal: RefusalTailUnparseable, EventsPath: rb.EventsPath}
+			out = missionwrite.RollbackOutcome{Refusal: missionwrite.RefusalTailUnparseable, EventsPath: rb.EventsPath}
 		}
-		if out.Refusal != RefusalTailAlreadyCommitted {
+		if out.Refusal != missionwrite.RefusalTailAlreadyCommitted {
 			rc.MarkRefused(sha)
 		}
 		if !out.RolledBack {

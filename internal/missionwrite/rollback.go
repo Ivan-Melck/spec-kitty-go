@@ -1,4 +1,8 @@
-package workflow
+// Package missionwrite ports status/mission_write.py: the verified rollback
+// of a Mission's status files (cut only the rows an operation appended;
+// refuse with STATUS_ROLLBACK_REFUSED and leave the files byte-identical
+// otherwise).
+package missionwrite
 
 import (
 	"bytes"
@@ -11,9 +15,19 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
+
+// git runs git in dir (gitx pins LC_ALL=C).
+func git(dir string, args ...string) gitx.Result {
+	r, err := gitx.Exec(dir, nil, nil, args...)
+	if err != nil {
+		return gitx.Result{Code: 127, Stderr: err.Error()}
+	}
+	return r
+}
 
 // StatusRollbackRefused is mission_write.STATUS_ROLLBACK_REFUSED.
 const StatusRollbackRefused = "STATUS_ROLLBACK_REFUSED"
@@ -42,9 +56,9 @@ type RollbackPoint struct {
 	EventsExisted          bool
 }
 
-// CaptureRollbackPoint is capture_rollback_point for the status directory
+// Capture is capture_rollback_point for the status directory
 // dir (the coordination worktree's Mission directory on a coord Mission).
-func CaptureRollbackPoint(dir string) *RollbackPoint {
+func Capture(dir string) *RollbackPoint {
 	p := &RollbackPoint{EventsPath: filepath.Join(dir, status.EventsFile), StatusPath: filepath.Join(dir, status.SnapshotFile)}
 	if st, err := os.Stat(p.EventsPath); err == nil {
 		p.EventsExisted = true

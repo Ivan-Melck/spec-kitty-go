@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/assetpreserve"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 )
@@ -160,9 +161,14 @@ func InstallCommitGuard(repo string) string {
 		"exit 1\n"
 	p := filepath.Join(hooks, "pre-commit")
 	backup := ""
-	if b, err := os.ReadFile(p); err == nil && !strings.Contains(string(b), commitGuardSignature) {
-		backup = p + ".spec-kitty-backup-" + clock.Now().UTC().Format("20060102T150405Z")
-		os.WriteFile(backup, b, 0o755)
+	// _backup_foreign_hook_if_present: any pre-existing hook (a broken
+	// symlink too) without the signature gets the "<path>.<stamp>" sidecar.
+	if _, err := os.Lstat(p); err == nil {
+		if b, err := os.ReadFile(p); err != nil || !strings.Contains(string(b), commitGuardSignature) {
+			if sidecar, err := assetpreserve.BackupBeforeOverwrite(p); err == nil {
+				backup = sidecar
+			}
+		}
 	}
 	tmp := p + ".tmp"
 	if os.WriteFile(tmp, []byte(body), 0o700) != nil {

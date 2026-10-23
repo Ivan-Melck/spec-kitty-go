@@ -13,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/missionwrite"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -357,7 +358,7 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 	execMode := ws.StatusExecutionMode()
 	// captured before every status mutation (the bare resume too) so a
 	// failed commit restores both status artifacts
-	rb := CaptureRollbackPoint(s.StatusDir())
+	rb := missionwrite.Capture(s.StatusDir())
 	if lane != "in_progress" || needsAgent || opt.Agent != "" {
 		if opt.Agent == "" && !(lane == "in_progress" && !needsAgent) {
 			o.Print("Error: --agent parameter required when starting implementation.")

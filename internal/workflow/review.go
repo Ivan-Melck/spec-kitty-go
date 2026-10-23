@@ -13,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/missionwrite"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -305,7 +306,7 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 			d.Role, d.AgentProfile, d.AgentProfileVersion, d.Model, d.Provider = bd.Role, bd.AgentProfile, bd.AgentProfileVersion, bd.Model, bd.Provider
 		}
 		actor := status.SelfAssertingActor("reviewer", agent, "", binding)
-		rb := CaptureRollbackPoint(s.StatusDir())
+		rb := missionwrite.Capture(s.StatusDir())
 		if _, err := StartReview(s, wpID, actor, "action-review:"+root, ws.StatusExecutionMode(), pm, &d); err != nil {
 			o.Printf("Error: %v", err)
 			return ExitErr(1)
