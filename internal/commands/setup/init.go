@@ -381,18 +381,23 @@ func runInit(ctx *cli.Context) error {
 		createdDir = true
 	}
 	var commandSkillAgents []string
+	// Live(tracker.render(), transient=True) spans the steps below until
+	// tracker.complete("final"); prints inside it go through lv.print.
+	lv := startLive(w, tr)
 	fail := func(err error) error {
 		tr.fail("final", err.Error())
-		panelStyled(w, "Initialization failed: "+err.Error(), "Failure", "red", 0, 1)
+		lv.print(func(w io.Writer) { panelStyled(w, "Initialization failed: "+err.Error(), "Failure", "red", 0, 1) })
 		if createdDir {
 			os.RemoveAll(projectPath)
 		}
+		lv.stop()
 		return cli.Exit(1)
 	}
 
 	if err := bootstrap.EnsureRuntime(); err != nil {
 		tr.fail("runtime", err.Error())
-		outf(w, "[red]Error:[/red] Failed to bootstrap global runtime: %v", err)
+		lv.print(func(w io.Writer) { outf(w, "[red]Error:[/red] Failed to bootstrap global runtime: %v", err) })
+		lv.stop()
 		return cli.Exit(1)
 	}
 	tr.complete("runtime", "ok")
@@ -440,23 +445,26 @@ func runInit(ctx *cli.Context) error {
 	}
 	res := agents.ProtectAllAgents(projectPath)
 	if res.Modified {
-		out(w, "[cyan]Updated .gitignore to exclude AI agent directories:[/cyan]")
+		lv.print(func(w io.Writer) { out(w, "[cyan]Updated .gitignore to exclude AI agent directories:[/cyan]") })
 		for _, e := range res.Added {
-			raw(w, "  • "+e)
+			lv.print(func(w io.Writer) { out(w, "  • "+e) }) // markup + highlight
 		}
 		if len(res.Skipped) > 0 {
-			outf(w, "  (%d already protected)", len(res.Skipped))
+			lv.print(func(w io.Writer) { outf(w, "  (%d already protected)", len(res.Skipped)) })
 		}
 	} else if len(res.Skipped) > 0 {
-		outf(w, "[dim]All %d agent directories already in .gitignore[/dim]", len(res.Skipped))
+		lv.print(func(w io.Writer) {
+			outf(w, "[dim]All %d agent directories already in .gitignore[/dim]", len(res.Skipped))
+		})
 	}
 	for _, m := range res.Warnings {
-		out(w, "[yellow]⚠️  "+m+"[/yellow]")
+		lv.print(func(w io.Writer) { out(w, "[yellow]⚠️  "+m+"[/yellow]") })
 	}
 	for _, m := range res.Errors {
-		out(w, "[red]❌ "+m+"[/red]")
+		lv.print(func(w io.Writer) { out(w, "[red]❌ "+m+"[/red]") })
 	}
 	if !res.Success {
+		lv.stop()
 		return cli.Exit(1)
 	}
 	if err := writePending(projectPath, commandSkillAgents); err != nil {
@@ -464,11 +472,19 @@ func runInit(ctx *cli.Context) error {
 	}
 	if id, err := kittify.EnsureIdentity(projectPath); err == nil || id.UUID != "" {
 		if err != nil {
-			fmt.Fprintln(ctx.Stderr, "Warning: Config exists but could not be understood; using in-memory identity")
+			// err_console.print: while Live redirects sys.stderr, the line
+			// reaches stdout through rich's FileProxy (with a frame).
+			const msg = "[yellow]Warning: Config exists but could not be understood; using in-memory identity[/yellow]"
+			if lv.on {
+				lv.print(func(w io.Writer) { out(w, msg) })
+			} else {
+				out(ctx.Stderr, msg)
+			}
 		}
 		kittify.EmitProjectInitialized(projectPath, id.UUID, id.Slug, "spec-kitty init", app.Version)
 	}
 	tr.complete("final", "project ready")
+	lv.stop()
 
 	tr.render(w)
 	fmt.Fprintln(w)

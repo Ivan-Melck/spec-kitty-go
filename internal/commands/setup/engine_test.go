@@ -80,7 +80,7 @@ func TestToolSurfaceFixMatchesOracle(t *testing.T) {
 	for _, sel := range []string{"claude", "claude,codex,vibe", "copilot,gemini,cursor"} {
 		t.Run(sel, func(t *testing.T) {
 			p := testkit.NewPair(t)
-			p.Compare(false, "init", ".", "--ai", sel, "--non-interactive")
+			compareInit(p, "init", ".", "--ai", sel, "--non-interactive")
 			compareHashed(t, p, "doctor", "tool-surfaces", "--fix", "--json")
 			p.CompareTree("dist", true)
 			p.Both(drift)
@@ -101,7 +101,7 @@ func TestUpgradePlanEffectsMatchOracle(t *testing.T) {
 	for _, sel := range []string{"claude,codex", "claude,vibe,copilot"} {
 		t.Run(sel, func(t *testing.T) {
 			p := testkit.NewPair(t)
-			p.Compare(false, "init", ".", "--ai", sel, "--non-interactive")
+			compareInit(p, "init", ".", "--ai", sel, "--non-interactive")
 			p.Both(func(s *testkit.Sandbox) { commitAll(s, "init") })
 			compareHashed(t, p, "upgrade", "--plan-json")
 			p.Both(func(s *testkit.Sandbox) { drift(s); commitAll(s, "drift") })
@@ -160,7 +160,7 @@ invocation:
 // MAINT-11: doctor skills reports and projects charter-pack skills.
 func TestPackSkillsMatchOracle(t *testing.T) {
 	p := testkit.NewPair(t)
-	p.Compare(false, "init", ".", "--ai", "claude,codex", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude,codex", "--non-interactive")
 	p.Both(writeOrgPack)
 	compareHashed(t, p, "doctor", "skills", "--json")
 	p.Compare(true, "doctor", "skills")
@@ -186,7 +186,7 @@ func TestPackSkillsMatchOracle(t *testing.T) {
 // re-seeds mission_type_activations into a commented file.
 func TestCommentedConfigMatchesOracle(t *testing.T) {
 	p := testkit.NewPair(t)
-	p.Compare(false, "init", ".", "--ai", "claude", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude", "--non-interactive")
 	p.Both(func(s *testkit.Sandbox) {
 		cfg := s.ReadFile(".kittify/config.yaml")
 		cfg = regexp.MustCompile(`(?s)mission_type_activations:\n(- [^\n]*\n)+`).ReplaceAllString(cfg, "")
@@ -210,7 +210,7 @@ func TestCommentedConfigMatchesOracle(t *testing.T) {
 // edited ones preserved.
 func TestCharterSkillReprojectionMatchesOracle(t *testing.T) {
 	p := testkit.NewPair(t)
-	p.Compare(false, "init", ".", "--ai", "claude,codex", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude,codex", "--non-interactive")
 	p.Both(writeOrgPack)
 	p.Both(func(s *testkit.Sandbox) {
 		os.WriteFile(filepath.Join(s.Base, "orgpack", "org-charter.yaml"), []byte("skill_namespace: acme\nrequired_skills:\n  - review-helper\n"), 0o644)

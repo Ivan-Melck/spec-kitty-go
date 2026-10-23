@@ -38,3 +38,13 @@ func rawMode(fd uintptr) (func(), bool) {
 		syscall.Syscall(syscall.SYS_IOCTL, fd, syscall.TCSETS, uintptr(unsafe.Pointer(&old)))
 	}, true
 }
+
+// termRows is os.get_terminal_size(fd).lines (ok=false when fd is not a
+// terminal).
+func termRows(fd uintptr) (int, bool) {
+	var ws struct{ Row, Col, X, Y uint16 }
+	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, fd, syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&ws))); e != 0 {
+		return 0, false
+	}
+	return int(ws.Row), true
+}

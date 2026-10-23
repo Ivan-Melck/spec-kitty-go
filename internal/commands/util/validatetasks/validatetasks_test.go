@@ -172,11 +172,11 @@ func TestValidateTasksE2E(t *testing.T) {
 	s := testkit.NewGitSandbox(t)
 	legacyFixtures(s)
 	r := s.Run("validate-tasks", "--mission", "001-legacy")
-	if r.Code != 1 || !strings.Contains(r.Stdout, "Found 4 metadata mismatch(es).") {
+	if r.Code != 1 || !strings.Contains(testkit.StripANSI(r.Stdout), "Found 4 metadata mismatch(es).") {
 		t.Fatalf("code=%d\n%s%s", r.Code, r.Stdout, r.Stderr)
 	}
 	r = s.Run("validate-tasks", "--mission", "001-legacy", "--fix", "--agent", "codex", "--shell-pid", "1")
-	if r.Code != 0 || !strings.Contains(r.Stdout, "Fixed 4 metadata mismatch(es).") {
+	if r.Code != 0 || !strings.Contains(testkit.StripANSI(r.Stdout), "Fixed 4 metadata mismatch(es).") {
 		t.Fatalf("code=%d\n%s%s", r.Code, r.Stdout, r.Stderr)
 	}
 	got := s.ReadFile("kitty-specs/001-legacy/tasks/done/WP04.md")

@@ -3,6 +3,7 @@ package setup_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -13,7 +14,7 @@ func TestVerifySetupMatchesOracle(t *testing.T) {
 	p := testkit.NewPair(t)
 	p.Compare(false, "verify-setup", "--json")
 	p.Compare(false, "verify-setup", "--check-tools")
-	p.Compare(false, "init", ".", "--ai", "claude,codex", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude,codex", "--non-interactive")
 	p.Compare(false, "verify-setup")
 	p.Compare(false, "verify-setup", "--json")
 	p.Compare(false, "verify-setup", "--diagnostics")
@@ -40,7 +41,7 @@ func TestConfigAndSessionsMatchOracle(t *testing.T) {
 	p.Compare(false, "config")
 	p.Compare(false, "session-start")
 	p.Compare(false, "session-stop")
-	p.Compare(false, "init", ".", "--ai", "claude", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude", "--non-interactive")
 	p.Compare(false, "session-start")
 	p.Compare(false, "session-stop")
 	p.Both(func(s *testkit.Sandbox) {
@@ -81,7 +82,20 @@ func originCols(s string) string {
 		if len(f) < 4 {
 			continue
 		}
-		b.WriteString(strings.TrimSpace(f[1]) + "|" + strings.TrimSpace(f[2]) + "|" + strings.TrimSpace(f[3]) + "\n")
+		b.WriteString(originCell(f[1]) + "|" + originCell(f[2]) + "|" + originCell(f[3]) + "\n")
 	}
 	return b.String()
+}
+
+var (
+	reBlankSpan    = regexp.MustCompile(`\x1b\[[0-9;]*m( *)\x1b\[0m`)
+	reTrailPadSpan = regexp.MustCompile(`(\x1b\[[0-9;]*m)([^\x1b]*?) +(\x1b\[0m)`)
+)
+
+// originCell trims a table cell's padding, including padding inside the
+// column style's SGR span on a colour run (the style codes are kept).
+func originCell(c string) string {
+	c = reBlankSpan.ReplaceAllString(c, "$1")
+	c = reTrailPadSpan.ReplaceAllString(c, "$1$2$3")
+	return strings.TrimSpace(c)
 }

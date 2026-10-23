@@ -635,7 +635,11 @@ func runEnhancedVerify(w io.Writer, repoRoot, projectRoot, cwd, feature string, 
 				break
 			}
 			st := ws.featureStatus(f)
-			stateDisp := map[string]string{"merged": "MERGED", "in_development": "ACTIVE", "ready_to_merge": "READY", "not_started": "NOT STARTED", "unknown": "?"}[st.GetString("state")]
+			stateDisp, ok := map[string]string{"merged": "[green]MERGED[/green]", "in_development": "[yellow]ACTIVE[/yellow]",
+				"ready_to_merge": "[blue]READY[/blue]", "not_started": "[dim]NOT STARTED[/dim]", "unknown": "[dim]?[/dim]"}[st.GetString("state")]
+			if !ok {
+				stateDisp = st.GetString("state")
+			}
 			br := "-"
 			if st.GetBool("branch_exists") {
 				br = "✓"
@@ -654,7 +658,16 @@ func runEnhancedVerify(w io.Writer, repoRoot, projectRoot, cwd, feature string, 
 			}
 			rows = append(rows, []string{f, stateDisp, br, wt, art})
 		}
-		rich.HeavyTable(w, "", []string{"Feature", "State", "Branch", "Worktree", "Artifacts"}, nil, rows)
+		t := rich.NewTable()
+		t.HeaderStyle = "bold"
+		t.AddColumn("Feature", rich.Column{Style: "cyan"})
+		for _, h := range []string{"State", "Branch", "Worktree", "Artifacts"} {
+			t.AddColumn(h, rich.Column{Style: "white"})
+		}
+		for _, r := range rows {
+			t.AddRow(r[0], r[1], r[2], r[3], r[4])
+		}
+		rich.PrintTo(w, t)
 		if len(all) > 10 {
 			out(w, fmt.Sprintf("   [dim]... and %d more features[/dim]", len(all)-10))
 		}
@@ -1004,8 +1017,8 @@ func printDiagnostics(w io.Writer, d *jsonx.Object, withTools bool, status map[s
 	if active == "" {
 		active = "[yellow]None[/yellow]"
 	}
-	rich.Panel(w, fmt.Sprintf("[bold]Project Path:[/bold] %s\n[bold]Current Directory:[/bold] %s\n[bold]Git Branch:[/bold] %s\n[bold]Active Mission:[/bold] %s",
-		d.GetString("project_path"), d.GetString("current_working_directory"), branch, active), "Project Information")
+	panelStyled(w, fmt.Sprintf("[bold]Project Path:[/bold] %s\n[bold]Current Directory:[/bold] %s\n[bold]Git Branch:[/bold] %s\n[bold]Active Mission:[/bold] %s",
+		d.GetString("project_path"), d.GetString("current_working_directory"), branch, active), "Project Information", "cyan", 0, 1)
 	fi := d.GetObject("file_integrity")
 	te, _ := fi.GetInt("total_expected")
 	tp, _ := fi.GetInt("total_present")
@@ -1027,18 +1040,18 @@ func printDiagnostics(w io.Writer, d *jsonx.Object, withTools bool, status map[s
 			info += fmt.Sprintf("\n  ... and %d more", len(mf)-5)
 		}
 	}
-	rich.Panel(w, info, "File Integrity")
+	panelStyled(w, info, "File Integrity", "cyan", 0, 1)
 	wo := d.GetObject("worktree_overview")
 	aw, _ := wo.GetInt("active_worktrees")
 	tf, _ := wo.GetInt("total_features")
-	rich.Panel(w, fmt.Sprintf("[bold]Worktrees Exist:[/bold] %s\n[bold]Currently in Worktree:[/bold] %s\n[bold]Active Worktrees:[/bold] %d\n[bold]Total Features:[/bold] %d",
-		yesNo(d.GetBool("worktrees_exist")), yesNo(d.GetBool("in_worktree")), aw, tf), "Worktrees")
+	panelStyled(w, fmt.Sprintf("[bold]Worktrees Exist:[/bold] %s\n[bold]Currently in Worktree:[/bold] %s\n[bold]Active Worktrees:[/bold] %d\n[bold]Total Features:[/bold] %d",
+		yesNo(d.GetBool("worktrees_exist")), yesNo(d.GetBool("in_worktree")), aw, tf), "Worktrees", "cyan", 0, 1)
 	cf := d.GetObject("current_feature")
 	if cf.GetBool("detected") {
-		rich.Panel(w, fmt.Sprintf("[bold]Detected Feature:[/bold] %s\n[bold]State:[/bold] %s\n[bold]Branch Exists:[/bold] %s\n[bold]Worktree Exists:[/bold] %s",
-			cf.GetString("name"), cf.GetString("state"), yesNo(cf.GetBool("branch_exists")), yesNo(cf.GetBool("worktree_exists"))), "Current Feature")
+		panelStyled(w, fmt.Sprintf("[bold]Detected Feature:[/bold] %s\n[bold]State:[/bold] %s\n[bold]Branch Exists:[/bold] %s\n[bold]Worktree Exists:[/bold] %s",
+			cf.GetString("name"), cf.GetString("state"), yesNo(cf.GetBool("branch_exists")), yesNo(cf.GetBool("worktree_exists"))), "Current Feature", "cyan", 0, 1)
 	} else {
-		rich.Panel(w, "[yellow]No feature detected in current context[/yellow]", "Current Feature")
+		panelStyled(w, "[yellow]No feature detected in current context[/yellow]", "Current Feature", "cyan", 0, 1)
 	}
 	if all := d.GetList("all_features"); len(all) > 0 {
 		var rows [][]string
@@ -1056,7 +1069,17 @@ func printDiagnostics(w io.Writer, d *jsonx.Object, withTools bool, status map[s
 			}
 			rows = append(rows, []string{f.GetString("name"), f.GetString("state"), b, m, wt})
 		}
-		rich.HeavyTable(w, "All Features", []string{"Feature", "State", "Branch", "Merged", "Worktree"}, []byte("llccc"), rows)
+		t := rich.NewTable()
+		t.Title, t.HeaderStyle = "All Features", "bold cyan"
+		t.AddColumn("Feature", rich.Column{Style: "bright_cyan"})
+		t.AddColumn("State", rich.Column{Style: "bright_white"})
+		for _, h := range []string{"Branch", "Merged", "Worktree"} {
+			t.AddColumn(h, rich.Column{Justify: "center"})
+		}
+		for _, r := range rows {
+			t.AddRow(r[0], r[1], r[2], r[3], r[4])
+		}
+		rich.PrintTo(w, t)
 	} else {
 		out(w, "[yellow]No features found[/yellow]")
 	}

@@ -187,9 +187,16 @@ func (t *tracker) fail(key, detail string)     { t.set(key, "error", detail) }
 // render prints StepTracker.render()'s Tree: a cyan title and one
 // markup label per step under grey50 guides.
 func (t *tracker) render(w io.Writer) {
+	for _, l := range t.lines(w) {
+		fmt.Fprintln(w, l)
+	}
+}
+
+// lines renders the tree's lines (styled for w's colour system).
+func (t *tracker) lines(w io.Writer) []string {
 	sys := rich.ColorSystemOf(w)
 	guide := func(g string) string { return rich.RenderStyled(g, "grey50", sys) }
-	fmt.Fprintln(w, rich.RenderStyled(t.title, "cyan", sys))
+	out := []string{rich.RenderStyled(t.title, "cyan", sys)}
 	for i, s := range t.steps {
 		branch, cont := "├── ", "│   "
 		if i == len(t.steps)-1 {
@@ -226,9 +233,24 @@ func (t *tracker) render(w io.Writer) {
 			if j > 0 {
 				g = cont
 			}
-			fmt.Fprintln(w, guide(g)+l.Styled)
+			out = append(out, guide(g)+l.Styled)
 		}
 	}
+	return out
 }
 
 func printJSON(w io.Writer, v any) { fmt.Fprintln(w, jsonx.Dumps(v, jsonx.Pretty)) }
+
+// printStyled is console.print(s, style=style, markup=False,
+// highlight=False) (style "" = none).
+func printStyled(w io.Writer, s, style string) {
+	po := rich.PrintOptions{Markup: rich.BoolP(false), Highlight: rich.BoolP(false)}
+	if style != "" {
+		po.Style = style
+	}
+	rich.PrintOpts(w, po, s)
+}
+
+// softWrap is console.print(s, soft_wrap=True): markup and highlighting,
+// no wrapping.
+func softWrap(w io.Writer, s string) { rich.PrintSoftWrap(w, s) }

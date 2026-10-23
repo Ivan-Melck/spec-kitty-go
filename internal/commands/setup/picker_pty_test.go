@@ -318,52 +318,48 @@ func TestDoctorColourTablesMatchOracle(t *testing.T) {
 
 var reSpaces = regexp.MustCompile(" {2,}")
 
-// initColourParts splits a coloured `init --ai` transcript into the part
-// before the progress tree and the final tree onwards (rich's transient
-// Live frames in between are timing-dependent), sandbox paths masked.
-func initColourParts(out, dir string) (head, tail string) {
-	clean := strings.ReplaceAll(reNonSGR.ReplaceAllString(out, ""), "\r", "")
+// initColourTranscript canonicalizes a coloured `init --ai` PTY
+// transcript: CRs dropped (the tty maps \n to \r\n), init's Live region
+// collapsed (collapseLive: start and final frames and every printed line
+// kept, timing-dependent refresh frames folded), sandbox paths masked.
+// Cursor and SGR codes are compared as written.
+func initColourTranscript(out string, s *testkit.Sandbox) string {
+	clean := collapseLive(strings.ReplaceAll(out, "\r", ""))
 	var lines []string
 	for _, l := range strings.Split(clean, "\n") {
-		if strings.Contains(l, dir) {
-			l = reSpaces.ReplaceAllString(strings.ReplaceAll(l, dir, "<D>"), "  ")
+		if strings.Contains(l, s.Base) {
+			// A path wrapped in a panel may split anywhere after Base.
+			l = strings.ReplaceAll(strings.ReplaceAll(l, s.Dir, "<D>"), s.Base, "<B>")
+			l = reSpaces.ReplaceAllString(l, "  ")
 		}
 		lines = append(lines, l)
 	}
-	clean = strings.Join(lines, "\n")
-	title := "\x1b[36mInitialize Specify Project\x1b[0m"
-	i, j := strings.Index(clean, title), strings.LastIndex(clean, title)
-	if i < 0 {
-		return clean, ""
-	}
-	head = clean[:i]
-	// Go prints the ignore-file notice before the tree; rich prints it
-	// above the live region (between transient frames).
-	if k := strings.Index(head, "\x1b[36mUpdated ."); k >= 0 {
-		head = head[:k]
-	}
-	return head, clean[j:]
+	return strings.Join(lines, "\n")
 }
 
-// PYF-14 follow-up: on a colour terminal init's banner gradient, setup
-// panel, final step tree and closing panels carry rich's styles.
+// PYF-14 follow-up (FIX3): on a colour terminal init's banner gradient,
+// setup panel, live step tree (start frame, a frame after every print, the
+// final frame, erase codes), final static tree and closing panels carry
+// rich's styles, byte for byte.
 func TestInitColourOutputMatchesOracle(t *testing.T) {
 	oracle := testkit.Oracle(t)
-	args := []string{"init", "proj", "--ai", "claude,vibe"}
-	gout, gs, gcode := runPTY(t, testkit.Binary(t), true, false, args)
-	oout, osb, ocode := runPTY(t, oracle, true, false, args)
-	if gcode != ocode {
-		t.Errorf("exit go=%d oracle=%d", gcode, ocode)
-	}
-	gh, gt := initColourParts(gout, gs.Dir)
-	oh, ot := initColourParts(oout, osb.Dir)
-	if ot == "" || !strings.Contains(oh, "\x1b[3;93mSpec Kitty") {
-		t.Fatalf("oracle transcript not coloured:\n%q", oout)
-	}
-	if gh != oh {
-		t.Errorf("head differs:\n%s", testkit.Diff(oh, gh))
-	}
-	if gt != ot {
-		t.Errorf("tail differs:\n%s", testkit.Diff(ot, gt))
+	for _, sel := range []string{"claude,vibe", "codex", "copilot,gemini,cursor"} {
+		sel := sel
+		t.Run(strings.ReplaceAll(sel, ",", "_"), func(t *testing.T) {
+			t.Parallel()
+			args := []string{"init", "proj", "--ai", sel}
+			gout, gs, gcode := runPTY(t, testkit.Binary(t), true, false, args)
+			oout, osb, ocode := runPTY(t, oracle, true, false, args)
+			if gcode != ocode {
+				t.Errorf("exit go=%d oracle=%d", gcode, ocode)
+			}
+			g, o := initColourTranscript(gout, gs), initColourTranscript(oout, osb)
+			if !strings.Contains(o, "\x1b[3;93mSpec Kitty") || !strings.Contains(o, "\x1b[?25l") {
+				t.Fatalf("oracle transcript not coloured / no live region:\n%q", oout)
+			}
+			if g != o {
+				t.Errorf("transcript differs:\n%s", testkit.Diff(o, g))
+			}
+		})
 	}
 }

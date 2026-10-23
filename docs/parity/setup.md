@@ -17,7 +17,7 @@ test: `testkit` points its PyPI lookups at a closed local port (see
 | *(root callback)* startup bootstrap | done | `bootstrap_test.go`, all oracle tests compare `$HOME` trees | Freshness-lock signature (irreducible, see below). |
 | *(root callback)* schema gate + upgrade nag | done | `TestUpgradeStaleAndLegacyMatchOracle`, `TestUpgradeWithoutOracle`, `TestUpgradeCLIQueriesFakeIndex`, `TestNagColourMatchesOracle` (PTY), `TestSafetyModes` | |
 | *(startup)* `.kitty.env` operator env loading | done | `TestDoctorSetupLeavesMatchOracle`, `TestKittyEnvHomeLineWarnsLikeOracle` | The `UserWarning` names `<spec-kitty>/specify_cli/__init__.py:34` instead of the site-packages path. |
-| `init` | done | `TestInitMatchesOracle`, `TestInitErrorsMatchOracle`, `TestInitNamedDirAndNoGit`, `TestInitWithoutOracle`, `TestInitArrowKeyPicker*` and `TestInitColourOutputMatchesOracle` (PTY, SGR compared) | `metadata.yaml` `python_version` and the transient progress frames (irreducible, below). With a non-terminal stdin and `SPEC_KITTY_FORCE_INTERACTIVE` a line prompt is used (upstream's readchar crashes there). |
+| `init` | done | `TestInitMatchesOracle`, `TestInitErrorsMatchOracle`, `TestInitNamedDirAndNoGit`, `TestInitWithoutOracle`, `TestInitArrowKeyPicker*`, `TestInitColourOutputMatchesOracle` (PTY, 3 `--ai` selections, whole transcript with SGR and cursor codes compared) and `TestInitLiveColourMatchesOracle` (FORCE_COLOR capture: 8 cases incl. all agents with 25-row cropping, `LINES=10`, `NO_COLOR=1`, 256 colours) | `metadata.yaml` `python_version` and rich's auto-refresh live frames (irreducible, below). With a non-terminal stdin and `SPEC_KITTY_FORCE_INTERACTIVE` a line prompt is used (upstream's readchar crashes there). |
 | `agent config` (group + list/add/remove/status/sync/set) | done | `TestAgentConfigMatchesOracle`, `TestAgentConfigOrphansMatchOracle`, `TestAgentConfigWithoutOracle` | `sync` orphan scan order (irreducible). |
 | `verify-setup` | done | `TestVerifySetupMatchesOracle` | |
 | `config` | done | `TestConfigAndSessionsMatchOracle`, `TestConfigShowOriginOrgPackTier` | `--show-origin` package-default paths name embedded assets (`packs/built-in/...`). |
@@ -158,6 +158,23 @@ test: `testkit` points its PyPI lookups at a closed local port (see
   pack before `load_org_pack` (no spurious `PACK_LEVEL_MISSING`
   UserWarning). Test: `TestCharterSkillReprojectionMatchesOracle`.
 
+* Wave 5 FIX3 (colour runs, `SPEC_KITTY_TEST_COLOR=standard`): every
+  setup differential test passes with colour on. The legacy plain table and
+  panel helpers are gone from setup: `upgrade` (Migration Plan
+  `rich.RichTable` with `bold cyan` header and bright_white/dim/cyan
+  columns, yellow-bordered DRY RUN panel, soft-wrapped highlighted section
+  items, `_CLOSING_STYLES` closing line, dim notices), `agent config status`
+  (Agent Status table with column styles and status markup), `agent config
+  sync --json` (`console.print(json.dumps(...))`, highlighted),
+  `config --show-origin` (styled columns, `_format_tier` colours),
+  `verify-setup` (cyan-bordered panels, the two feature tables) and the
+  roo deprecation notice (yellow panel on stderr). `init` draws the Live
+  step tree (`setup/live.go`, see Irreducible differences). Helpers:
+  `printStyled` (`console.print(markup=False, highlight=False, style=)`),
+  `softWrap`. Foundation change (additive, test-only): `testkit`
+  `Sandbox.Normalize` also masks sandbox paths the highlighter split into
+  styled runs (`replaceSGRTolerant`).
+
 ## Irreducible differences
 
 * Freshness-lock `template_source_signature` (MAINT-05): upstream hashes
@@ -176,11 +193,20 @@ test: `testkit` points its PyPI lookups at a closed local port (see
   of these, so `install_method` is always `unknown` — the same answer
   upstream gives for an install outside those channels (the oracle venv
   install also reports `unknown`).
-* `init` progress tree on a TTY: upstream drives a rich `Live` display
-  whose transient redraw frames depend on wall-clock refresh timing (8/s)
-  and step durations; Go prints only the final coloured tree, so the
-  visible end state matches (`TestInitColourOutputMatchesOracle` compares
-  everything before and after the transient region).
+* `init` progress tree on a terminal (TTY or `FORCE_COLOR`, TERM not
+  dumb): upstream draws the tracker through `Live(..., transient=True,
+  refresh_per_second=8)` on the `CliConsole`, whose segment sanitizer strips
+  the cursor-positioning codes, so every frame is appended rather than
+  redrawn. Go reproduces the deterministic part byte for byte
+  (`setup/live.go`): hide-cursor, the start frame, after each print inside
+  the block the printed text plus a frame showing the last refreshed state
+  (cropped at the console height with rich's centred `...` line), the final
+  frame, newline, show-cursor and the `restore_cursor` erase codes, then the
+  static final tree. What Go leaves out are the auto-refresh frames: their
+  number, and the tracker state the frames after them show, depend on
+  wall-clock timing (upstream draws none when the block ends inside the
+  first 125 ms tick). The tests fold those frames (`collapseLive`) and
+  compare everything else exactly.
 
 ## Remaining work
 

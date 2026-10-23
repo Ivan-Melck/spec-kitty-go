@@ -12,7 +12,7 @@ import (
 func TestAgentConfigMatchesOracle(t *testing.T) {
 	p := testkit.NewPair(t)
 	p.Compare(false, "agent", "config", "list")
-	p.Compare(false, "init", ".", "--ai", "claude,codex", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude,codex", "--non-interactive")
 	for _, args := range [][]string{
 		{"list"}, {"status"},
 		{"add", "gemini", "vibe", "codex"},
@@ -48,7 +48,7 @@ func TestAgentConfigMatchesOracle(t *testing.T) {
 
 func TestAgentConfigOrphansMatchOracle(t *testing.T) {
 	p := testkit.NewPair(t)
-	p.Compare(false, "init", ".", "--ai", "claude", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude", "--non-interactive")
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile(".gemini/commands/spec-kitty.plan.md", "user file\n")
 		s.WriteFile(".kittify/x", "")
@@ -73,14 +73,14 @@ func TestAgentConfigWithoutOracle(t *testing.T) {
 	s := testkit.NewGitSandbox(t)
 	s.MustRun("init", ".", "--ai", "claude", "--non-interactive")
 	r := s.MustRun("agent", "config", "add", "codex")
-	if !strings.Contains(r.Stdout, "Registered codex (14 command skills in .agents/skills/)") {
+	if !strings.Contains(testkit.StripANSI(r.Stdout), "Registered codex (14 command skills in .agents/skills/)") {
 		t.Fatalf("add:\n%s", r.Stdout)
 	}
 	if !strings.Contains(s.ReadFile(".kittify/config.yaml"), "  - codex\n") {
 		t.Fatal("codex not saved")
 	}
 	r = s.MustRun("agent", "config", "remove", "codex")
-	if !strings.Contains(r.Stdout, "Removed skills for codex (14 files deleted)") || s.Exists(".agents/skills/spec-kitty.plan/SKILL.md") {
+	if !strings.Contains(testkit.StripANSI(r.Stdout), "Removed skills for codex (14 files deleted)") || s.Exists(".agents/skills/spec-kitty.plan/SKILL.md") {
 		t.Fatalf("remove:\n%s", r.Stdout)
 	}
 	s.MustRun("agent", "config", "set", "lint_on_edit", "true")
