@@ -11,9 +11,12 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/consolidate"
+	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -126,7 +129,29 @@ func runReview(ctx *cli.Context) error {
 	} else {
 		say(w, fmt.Sprintf("  [green]✓[/green]  WP lane check: all %d WP(s) in done", total))
 	}
-	say(w, "  [green]✓[/green]  Review artifact consistency: no terminal WP has a blocking latest review artifact")
+	conflicts, cerr := consolidate.ReviewArtifactFindings(coord.Resolve(root, slug).StatusDir(), nil)
+	if cerr != nil {
+		rich.PrintTraceback(ctx.Stderr, rich.ParseException(cerr.Error(), rich.Frame{Name: "find_rejected_review_artifact_conflicts", Line: 208}))
+		return cli.Exit(1)
+	}
+	if len(conflicts) > 0 {
+		say(w, "  [red]✗[/red]  Review artifact consistency: blocking latest review artifact exists for terminal WP(s)")
+		for _, c := range conflicts {
+			say(w, "       "+c.Format())
+			say(w, "       diagnostic_code: REJECTED_REVIEW_ARTIFACT_CONFLICT")
+			say(w, "       branch_or_work_package: "+c.WPID)
+			say(w, "       violated_invariant: terminal_wp_latest_review_artifact_must_not_be_rejected")
+			say(w, "       remediation: Run another review cycle that writes an approved review-cycle artifact.")
+			say(w, "       remediation: Or move the WP out of approved/done before merge.")
+			findings = append(findings, finding{"type": "rejected_review_artifact", "wp_id": c.WPID, "lane": c.Lane,
+				"artifact_path": "<no review artifact>", "diagnostic_code": "REJECTED_REVIEW_ARTIFACT_CONFLICT",
+				"branch_or_work_package": c.WPID, "violated_invariant": "terminal_wp_latest_review_artifact_must_not_be_rejected",
+				"remediation":                 "Run another review cycle that writes an approved review-cycle artifact.; Or move the WP out of approved/done before merge.",
+				"latest_review_cycle_verdict": c.Verdict})
+		}
+	} else {
+		say(w, "  [green]✓[/green]  Review artifact consistency: no terminal WP has a blocking latest review artifact")
+	}
 	gates = append(gates, gateRecord{"gate_1", "wp_lane_check", passFail(len(findings) > before)})
 
 	// Gate 2: dead-code scan.
@@ -221,6 +246,10 @@ func formatFinding(f finding) string {
 	switch f["type"] {
 	case "wp_not_done":
 		return fmt.Sprintf("- **wp_not_done** `%s`: lane is `%s`", f["wp_id"], get("lane", "unknown"))
+	case "rejected_review_artifact":
+		return fmt.Sprintf("- **rejected_review_artifact** `%s`: lane is `%s`, latest artifact is `%s`; diagnostic_code=`%s`, branch_or_work_package=`%s`, violated_invariant=`%s`, remediation=`%s`",
+			f["wp_id"], get("lane", "unknown"), get("artifact_path", "unknown"), get("diagnostic_code", "unknown"),
+			get("branch_or_work_package", "unknown"), get("violated_invariant", "unknown"), get("remediation", "unknown"))
 	case "dead_code":
 		return fmt.Sprintf("- **dead_code** `%s` — `%s`: no non-test callers found", f["file"], f["symbol"])
 	case "dead_code_baseline_missing":

@@ -114,7 +114,7 @@ type nameStatus struct{ status, path string }
 // changedPathsInRange is changed_paths_in_range (git diff --name-status
 // --no-renames base..tip).
 func changedPathsInRange(root, base, tip string) ([]nameStatus, error) {
-	res := git(root, "-c", "core.quotePath=false", "diff", "--name-status", "-z", "--no-renames", base+".."+tip)
+	res := git(root, "-c", "diff.relative=false", "diff", "--name-status", "-z", "--no-renames", base+".."+tip, "--")
 	if res.Code != 0 {
 		return nil, probeErr("git diff --name-status %s..%s failed (exit %d): %s", base, tip, res.Code, strings.TrimSpace(res.Stderr))
 	}
@@ -134,7 +134,7 @@ func changedPathsOf(root, sha string) ([]string, error) {
 	if sha == "" {
 		return nil, nil
 	}
-	res := git(root, "-c", "core.quotePath=false", "show", "--name-only", "--format=", "-z", "--no-renames", sha)
+	res := git(root, "-c", "diff.relative=false", "show", "--name-only", "--format=", "-z", "--no-renames", sha, "--")
 	if res.Code != 0 {
 		return nil, probeErr("git show --name-only %s failed (exit %d): %s", sha, res.Code, strings.TrimSpace(res.Stderr))
 	}
@@ -150,7 +150,7 @@ func changedPathsOf(root, sha string) ([]string, error) {
 // pathStateAt is path_state_at: the blob of path at ref, "" (with ok=false)
 // when absent; an unreadable ref is an error.
 func pathStateAt(root, ref, path string) (string, bool, error) {
-	res := git(root, "-c", "core.quotePath=false", "ls-tree", "--full-tree", "-z", ref, "--", path)
+	res := git(root, "--literal-pathspecs", "ls-tree", "--full-tree", "-z", ref, "--", path)
 	if res.Code != 0 {
 		return "", false, probeErr("git ls-tree %s -- %s failed (exit %d): %s", ref, path, res.Code, strings.TrimSpace(res.Stderr))
 	}

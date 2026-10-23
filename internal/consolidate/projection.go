@@ -34,7 +34,7 @@ func readBlobBytes(root, ref, rel string) ([]byte, bool) {
 // postCheckpointMissionPaths is _post_checkpoint_mission_paths.
 func postCheckpointMissionPaths(root, slug, checkpoint, coordRef string) ([]string, error) {
 	prefix := "kitty-specs/" + slug + "/"
-	res := git(root, "-c", "core.quotePath=false", "diff", "--name-only", "-z", "-M", checkpoint, coordRef, "--", prefix)
+	res := git(root, "--literal-pathspecs", "-c", "diff.relative=false", "diff", "--name-only", "-z", "-M", checkpoint, coordRef, "--", prefix)
 	if res.Code != 0 {
 		return nil, probeErr("git diff --name-only %s %s failed (exit %d): %s", checkpoint, coordRef, res.Code, strings.TrimSpace(res.Stderr))
 	}
@@ -92,7 +92,7 @@ func projectPostCheckpoint(root, slug, coordRef, checkpoint, primaryDir string) 
 func driverReplay(root, rel, baseRef, oursRef, theirsRef string) ([]byte, error) {
 	res := git(root, "check-attr", "--source", oursRef, "merge", "--", rel)
 	if res.Code != 0 {
-		return nil, probeErr("driver replay for '%s': no registered merge driver at %s", rel, oursRef)
+		return nil, probeErr("driver replay for %s: no registered merge driver at %s", pyRepr(rel), oursRef)
 	}
 	line := strings.TrimSpace(res.Stdout)
 	value := line
@@ -101,16 +101,16 @@ func driverReplay(root, rel, baseRef, oursRef, theirsRef string) ([]byte, error)
 	}
 	switch value {
 	case "", "unspecified", "unset", "set":
-		return nil, probeErr("driver replay for '%s': no registered merge driver at %s", rel, oursRef)
+		return nil, probeErr("driver replay for %s: no registered merge driver at %s", pyRepr(rel), oursRef)
 	}
 	body := mergedriver.Bodies[strings.Replace(value, "spec-kitty-", "merge-driver-", 1)]
 	if body == nil {
-		return nil, probeErr("no merge-driver registry entry for config key '%s'", value)
+		return nil, probeErr("no merge-driver registry entry for config key %s", pyRepr(value))
 	}
 	ours, ok1 := readBlobBytes(root, oursRef, rel)
 	theirs, ok2 := readBlobBytes(root, theirsRef, rel)
 	if !ok1 || !ok2 {
-		return nil, probeErr("driver replay for '%s': missing ours (%s) or theirs (%s) blob", rel, oursRef, theirsRef)
+		return nil, probeErr("driver replay for %s: missing ours (%s) or theirs (%s) blob", pyRepr(rel), oursRef, theirsRef)
 	}
 	base, _ := readBlobBytes(root, baseRef, rel)
 	dir, err := os.MkdirTemp("", "kitty-driver-replay-")
@@ -123,7 +123,7 @@ func driverReplay(root, rel, baseRef, oursRef, theirsRef string) ([]byte, error)
 	os.WriteFile(a, ours, 0o644)
 	os.WriteFile(b, theirs, 0o644)
 	if _, err := body(o, a, b); err != nil {
-		return nil, probeErr("driver replay for '%s' (%s) failed: %s", rel, value, err)
+		return nil, probeErr("driver replay for %s (%s) failed: %s", pyRepr(rel), value, pyStr(err))
 	}
 	return os.ReadFile(a)
 }
@@ -174,4 +174,13 @@ func projectedContentMatches(root, coordRef, targetRef string, paths []string, c
 		}
 	}
 	return true
+}
+
+// pyStr is str(exc) for an error a merge-driver body raised: a *Crash
+// carries the exception type in Error() but str() is the message alone.
+func pyStr(err error) string {
+	if c, ok := err.(*mergedriver.Crash); ok {
+		return c.Msg
+	}
+	return err.Error()
 }

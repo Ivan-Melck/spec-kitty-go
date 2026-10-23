@@ -157,7 +157,13 @@ func (s *Surface) EmitTransition(req *status.TransitionRequest) (*EmitResult, er
 // committed ("chore(spec-kitty): inner-state annotation WPnn") and the
 // derived views refreshed; otherwise it is an uncommitted write.
 func (s *Surface) EmitAnnotation(wpID string, delta status.Delta, actor status.Actor, autoCommit bool) (*status.Annotation, error) {
-	a, err := status.NewAnnotation(wpID, delta, actor, "")
+	return s.EmitAnnotationAt(wpID, delta, actor, autoCommit, "")
+}
+
+// EmitAnnotationAt is EmitAnnotation with an explicit event timestamp ("" =
+// now), like emit_inner_state_changed_transactional(at=...).
+func (s *Surface) EmitAnnotationAt(wpID string, delta status.Delta, actor status.Actor, autoCommit bool, at string) (*status.Annotation, error) {
+	a, err := status.NewAnnotation(wpID, delta, actor, at)
 	if err != nil {
 		return nil, err
 	}

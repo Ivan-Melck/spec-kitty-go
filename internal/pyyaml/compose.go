@@ -1,6 +1,6 @@
 package pyyaml
 
-import ()
+import "github.com/spec-kitty/go-kitty3/internal/pyjson"
 
 // NodeKind is the kind of a composed node.
 type NodeKind int
@@ -216,6 +216,8 @@ func run(fn func()) (err error) {
 			case *ReaderError:
 				err = e
 			case *PyError:
+				err = e
+			case *pyjson.UnicodeError:
 				err = e
 			default:
 				panic(r)

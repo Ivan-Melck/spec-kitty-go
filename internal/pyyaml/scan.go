@@ -83,7 +83,8 @@ type simpleKey struct {
 type scanner struct {
 	dialect Dialect
 	name    string
-	stream  bool // file input: marks carry no snippet
+	stream  bool        // file input: marks carry no snippet
+	lazy    *lazyReader // stream input: chunked reads (reader.go); nil for a str
 	buffer  []rune
 	pointer int
 	index   int
@@ -108,7 +109,9 @@ type scanner struct {
 
 func newScanner(in Input, d Dialect) *scanner {
 	s := &scanner{dialect: d, name: "<unicode string>"}
-	var runes []rune
+	s.indent = -1
+	s.allowSimpleKey = true
+	s.possibleSimpleKeys = map[int]*simpleKey{}
 	if in.Stream {
 		s.stream = true
 		s.name = in.Name
@@ -116,18 +119,20 @@ func newScanner(in Input, d Dialect) *scanner {
 			s.name = "<file>"
 		}
 		if in.Binary {
-			runes = s.decodeStream(in.Data)
+			s.lazy = &lazyReader{binary: true, data: in.Data}
 		} else {
-			runes = []rune(in.Text)
+			data := in.Data
+			if data == nil {
+				data = []byte(in.Text)
+			}
+			s.lazy = &lazyReader{tw: &textWrapper{data: data}}
 		}
+		s.determineEncoding()
 	} else {
-		runes = []rune(in.Text)
+		runes := []rune(in.Text)
+		s.checkPrintable(runes)
+		s.buffer = append(runes, 0)
 	}
-	s.checkPrintable(runes)
-	s.buffer = append(runes, 0)
-	s.indent = -1
-	s.allowSimpleKey = true
-	s.possibleSimpleKeys = map[int]*simpleKey{}
 	s.fetchStreamStart()
 	return s
 }
@@ -171,27 +176,45 @@ func (s *scanner) checkPrintable(data []rune) {
 }
 
 func (s *scanner) peek(i int) rune {
-	if p := s.pointer + i; p < len(s.buffer) {
+	p := s.pointer + i
+	if p >= len(s.buffer) {
+		s.update(i + 1)
+	}
+	if p < len(s.buffer) {
 		return s.buffer[p]
 	}
 	return 0
 }
 
 func (s *scanner) prefix(n int) string {
+	if s.pointer+n >= len(s.buffer) {
+		s.update(n)
+	}
 	end := min(s.pointer+n, len(s.buffer))
 	return string(s.buffer[s.pointer:end])
 }
 
+// at is a direct buffer index (no read), 0 past the end.
+func (s *scanner) at(p int) rune {
+	if p < len(s.buffer) {
+		return s.buffer[p]
+	}
+	return 0
+}
+
 func (s *scanner) forward(n int) {
+	if s.pointer+n+1 >= len(s.buffer) {
+		s.update(n + 1)
+	}
 	for ; n > 0 && s.pointer < len(s.buffer); n-- {
 		ch := s.buffer[s.pointer]
 		s.pointer++
 		s.index++
 		var isBreak bool
 		if s.dialect.ruamel() {
-			isBreak = ch == '\n' || (ch == '\r' && s.peek(0) != '\n')
+			isBreak = ch == '\n' || (ch == '\r' && s.at(s.pointer) != '\n')
 		} else {
-			isBreak = ch == '\n' || ch == 0x85 || ch == 0x2028 || ch == 0x2029 || (ch == '\r' && s.peek(0) != '\n')
+			isBreak = ch == '\n' || ch == 0x85 || ch == 0x2028 || ch == 0x2029 || (ch == '\r' && s.at(s.pointer) != '\n')
 		}
 		if isBreak {
 			s.line++
@@ -230,35 +253,12 @@ func FileInput(data []byte, name string) Input {
 }
 
 // TextFileInput is a text-mode stream (open(path, encoding="utf-8")):
-// strict UTF-8 decoding (a failure is the *pyjson.UnicodeError the read
-// raises, not a YAML error) and universal newlines.
+// strict UTF-8 decoding in TextIOWrapper chunks (a failure is the
+// *pyjson.UnicodeError the read raises, not a YAML error, and surfaces when
+// the reader reaches it) and universal newlines. The error result is
+// always nil (kept for callers).
 func TextFileInput(data []byte, name string) (Input, error) {
-	text, err := pyjson.DecodeUTF8(data)
-	if err != nil {
-		return Input{}, err
-	}
-	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
-	return Input{Text: text, Name: name, Stream: true}, nil
-}
-
-// decodeStream is Reader.determine_encoding + update for a whole stream
-// (UTF-16 by BOM, else strict UTF-8). Decoding and printable checks run
-// eagerly; upstream reads 4 KiB chunks lazily, so a bad byte past the
-// first 8 KiB of a long file would surface later there.
-func (s *scanner) decodeStream(b []byte) []rune {
-	switch {
-	case len(b) >= 2 && b[0] == 0xff && b[1] == 0xfe:
-		return decodeUTF16(b, false)
-	case len(b) >= 2 && b[0] == 0xfe && b[1] == 0xff:
-		return decodeUTF16(b, true)
-	}
-	text, err := pyjson.DecodeUTF8(b)
-	if err != nil {
-		ue := err.(*pyjson.UnicodeError)
-		// raw_buffer[exc.start] is an int, so the "unacceptable character" form is used
-		panic(&ReaderError{Name: s.name, Position: ue.Start, Character: rune(ue.Byte), Byte: -1, Encoding: "utf-8", Reason: ue.Reason})
-	}
-	return []rune(text)
+	return Input{Data: data, Name: name, Stream: true}, nil
 }
 
 func decodeUTF16(b []byte, big bool) []rune {

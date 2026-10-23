@@ -77,17 +77,23 @@ library goldens (`internal/pydantic`, `internal/pydifflib`, `internal/jsonschema
   upstream (`<site-packages>/../../tests/charter/fixtures/synthesizer`); the
   Go binary uses `<exe dir>/tests/charter/fixtures/synthesizer`
   (`SPEC_KITTY_SYNTH_FIXTURE_ROOT` overrides). Neither exists in an install;
-  only the path in the "fixture not found" text differs.
+  only the site-packages-derived path in the "fixture not found" text differs.
 - DOC-06: `.failed/cause.yaml` `traceback` is `traceback.format_exc()` upstream
-  (frames with site-packages paths and line numbers of the Python source);
+  (Python source frames: site-packages paths, line numbers and excerpts);
   Go records the reason instead.
-- Python `warnings` lines name the emitting site-packages file and line
-  (`.../charter/org_pack_loader.py:624: UserWarning: ...`); Go prints the
-  same text with the upstream relative module path.
-- Set-iteration order upstream (nondeterministic): additionalProperties
-  jsonschema messages listing several keys, and the order of
-  `retrospective.proposal.rejected` events for multi-proposal conflict groups
-  (Go uses first-group order).
+- Python `warnings` records name the emitting file by its absolute
+  site-packages path (`.../charter/org_pack_loader.py:624: UserWarning: ...`);
+  Go prints the same text with the site-packages-relative module path, so
+  rich's wrapping of the record (by that path's length) differs too.
+- `additionalProperties` with a schema value: errors for several extra keys
+  come in the iteration order of jsonschema's
+  `set(find_additional_properties(...))`, which follows per-process
+  string-hash randomisation. (FIX5 check: the `additionalProperties: false`
+  message is not affected — python-jsonschema 4.26 sorts the keys,
+  `sorted(extras, key=str)`, and Go matches.)
+- `retrospective.proposal.rejected` events for multi-proposal conflict
+  groups: upstream iterates a `set[str]` of proposal ids (hash-randomised per
+  process); Go uses first-group order.
 
 ## Remaining work
 

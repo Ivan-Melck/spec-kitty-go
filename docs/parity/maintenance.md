@@ -31,7 +31,7 @@ the help text of every command below. Go-only tests (`*WithoutOracle`,
 | `migrate backfill-wp-status` | done | `TestDiffMigrateBackfillWPStatus` (evidence manifest good/bad/missing; strict `WPMetadata` validation: wrong types, bad lane, legacy `work_package_title`, timestamps, duplicate keys, non-mapping / missing frontmatter, non-UTF-8), `TestDiffMigrateBackfillWPStatusTypeError` (the uncaught `shell_pid` TypeError) | |
 | `migrate charter-encoding` | done | `TestDiffMigrateCharterEncoding` (`--dry-run`, `--yes`, `--json`), `TestDiffMigrateCharterEncodingCorpus` (37-file corpus: cp1252/latin-1/cp1250-1256/koi8-r/Shift-JIS/EUC-JP/GB2312/GBK/Big5/EUC-KR, UTF-8/16/32 with BOMs, stray bytes, binary junk, 1-4 byte files; dry-run, `--yes --json`, rewritten files, `.bak` backups, per-mission and global provenance), `TestDiffMigrateCharterEncodingAmbiguousOnly`, `TestDiffMigrateCharterEncodingBOMDecodeErrors` | Detection is the charset_normalizer port (see "Charset detection" below). BOM decode failures print the plain `Traceback` header plus the exact exception line (and the `[NOTE]` line), not rich's framed traceback (PYF-01). |
 | `migrate normalize-lifecycle` | done | `TestDiffMigrateNormalizeLifecycle`, `TestNormalizeLifecycleWithoutOracle` | |
-| `migrate rebaseline-dossier-hashes` | done | `TestDiffMigrateRebaselineDossierHashes` (canonical / unreadable / non-object snapshots), `TestDiffMigrateRebaselineReindex` (software-dev / typeless / research / custom / documentation missions, per-file classification and keys, invalid UTF-8, hidden files, the rewritten snapshot file, hashes compared unmasked), `TestDiffMigrateRebaselineReindexFailures` (invalid artifact key, schema-invalid and TypeError WP frontmatter, org-pack manifest override with ghost artifacts, schema-invalid and malformed org manifests) | Artifacts sharing an `artifact_key` keep upstream's `rglob` (directory) order in `artifact_summaries`; Go walks in name order (Irreducible differences). |
+| `migrate rebaseline-dossier-hashes` | done | `TestDiffMigrateRebaselineDossierHashes` (canonical / unreadable / non-object snapshots), `TestDiffMigrateRebaselineReindex` (software-dev / typeless / research / custom / documentation missions, per-file classification and keys, invalid UTF-8, hidden files, the rewritten snapshot file, hashes compared unmasked), `TestDiffMigrateRebaselineReindexFailures` (invalid artifact key, schema-invalid and TypeError WP frontmatter, org-pack manifest override with ghost artifacts, schema-invalid and malformed org manifests) | Artifacts sharing an `artifact_key` keep upstream's `Path.rglob("*")` order in `artifact_summaries` (FIX5: `TestDiffMigrateRebaselineRglobOrder`). |
 | `migrate repin-hooks` | done | `TestDiffMigrateRepinHooks`, `TestRepinHooksWithoutOracle` | |
 | `migrate rewrite-opposed-by` | done | `TestDiffMigrateRewriteOpposedBy`, `TestDiffMigrateRewriteOpposedByNonCanonical` | The artifact rewrite and the graph dump go through `internal/rtyaml` (ruamel round trip, width 4096), so a non-canonically formatted artifact (`---`, indented sequences, key spacing, trailing spaces, comments, quote styles) is re-dumped exactly like upstream. |
 | `doctor mission-state` (`--audit`) | done | `TestDiffDoctorMissionStateAudit` (mode validation, `--fail-on`, `--mission`, legacy/corrupt corpora), `TestDiffDoctorMissionStateFixCalc` (audit from a coordination worktree: `CHECKOUT_DISAGREEMENT` findings + disagreement report) | |
@@ -131,16 +131,29 @@ Exported API (`internal/charsetnorm`): `FromBytes(seq) *Matches`,
 
 ## Irreducible differences
 
-- Encoding-provenance records written by charter loads of built-in doctrine assets carry the installed pack path (site-packages upstream, the materialized embedded pack under `~/.kittify/cache/packs/` in Go); `TestDiffCharterReadProvenance` compares them by their pack-relative part.
+- Encoding-provenance records written by charter loads of built-in doctrine assets carry the installed pack path (site-packages upstream, the materialized embedded pack under `~/.kittify/cache/packs/` in Go); `TestDiffCharterReadProvenance` compares them by their pack-relative part. Site-packages path.
+- `doctor provenance`: "the installed built-in pack root" is the Python wheel's site-packages location; the Go binary embeds its packs and has no such tree, so without `SPEC_KITTY_PACKS_ROOT` nothing classifies as under it. Site-packages path.
+- Uncaught exceptions (`migrate rebaseline-dossier-hashes` non-object snapshot, `migrate backfill-wp-status` TypeError, `doctor mission-state --fix` symlinked lock, `--teamspace-dry-run --mission` selection errors) print rich's framed traceback (`rich.Traceback` via `uncaught`; PYF-01 sweep) with the exact final exception line; the frames inside the panel are sourceless (upstream shows site-packages paths and Python source excerpts).
 
-- `doctor provenance`: "the installed built-in pack root" is the Python wheel's site-packages location; the Go binary embeds its packs and has no such tree, so without `SPEC_KITTY_PACKS_ROOT` nothing classifies as under it.
-- A misconfigured `SPEC_KITTY_PACKS_ROOT` makes upstream log `UserWarning` lines that carry site-packages source paths, line numbers and source excerpts; Go prints nothing (`TestDiffDoctorProvenanceBadPacksRoot` compares stdout and exit code).
-- `migrate rebaseline-dossier-hashes`: artifacts that share an `artifact_key` are ordered by upstream's `Path.rglob` (filesystem directory order) inside `artifact_summaries`; Go uses name order. Hashes and counts do not depend on it.
-- Uncaught exceptions (`migrate rebaseline-dossier-hashes` non-object snapshot, `migrate backfill-wp-status` TypeError, `doctor mission-state --fix` symlinked lock, `--teamspace-dry-run --mission` selection errors) print rich's framed traceback (`rich.Traceback` via `uncaught`; PYF-01 sweep) with the exact final exception line; the frames inside the panel are sourceless (upstream shows site-packages paths and source excerpts: irreducible).
+(FIX5: the `rglob` order entry is fixed — the re-index walks in CPython 3.13
+`Path.rglob("*")` order, `TestDiffMigrateRebaselineRglobOrder`,
+`TestOraclePyRglobAll`.)
 
 ## Remaining work
 
-None. (Verified in wave 5 FIX4: `migrate rewrite-opposed-by` re-dumps through
+- Misconfigured `SPEC_KITTY_PACKS_ROOT` (set, but `<value>/built-in` is not a
+  directory): upstream logs a `UserWarning` record ("SPEC_KITTY_PACKS_ROOT=...
+  does not resolve to a directory ...") once per `get_built_in_pack_root()`
+  caller location per warnings registry (`kernel/paths.py:435`,
+  `charter/offering/pack_paths.py:237`, `charter/offering/provenance.py:71`,
+  ...) in every command that resolves the built-in packs; Go logs none
+  (stdout and exit code match, `TestDiffDoctorProvenanceBadPacksRoot`). The
+  record's location and source excerpt are site-packages-specific (Go would
+  print the site-packages-relative path, like the doctrine warnings), but the
+  message is deterministic; reproducing it needs the per-command sequence of
+  upstream's call sites, which is not modelled.
+
+Otherwise none. (Verified in wave 5 FIX4: `migrate rewrite-opposed-by` re-dumps through
 `internal/rtyaml` (`TestDiffMigrateRewriteOpposedByNonCanonical`); an
 ambiguous charter inside `next` / `agent action implement|review` follows
 each command's own upstream handling (`internal/charterenc`

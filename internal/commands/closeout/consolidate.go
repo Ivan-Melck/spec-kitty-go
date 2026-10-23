@@ -191,7 +191,8 @@ func runConsolidate(ctx *cli.Context) error {
 		DeleteBranch: optBool(ctx, "delete-branch"), RemoveWorktree: optBool(ctx, "remove-worktree"),
 		Push: ctx.Bool("push"), DryRun: ctx.Bool("dry-run"), JSON: ctx.Bool("json"), Yes: ctx.Bool("yes"), Resume: ctx.Bool("resume"),
 		OriginCheck: ctx.OptString("origin-check"), SkipLanes: ctx.Bool("skip-lanes"), DryRunNotes: notes,
-		AllowSparse: ctx.Bool("allow-sparse-checkout"), AttestCanceled: canceledWPs, AttestApproved: approvedWPs, AttestReason: attestReason, Stderr: ctx.Stderr}
+		AllowSparse: ctx.Bool("allow-sparse-checkout"), AttestCanceled: canceledWPs, AttestApproved: approvedWPs, AttestReason: attestReason, Stderr: ctx.Stderr,
+		SkipReviewArtifact: ctx.Bool("skip-review-artifact-check"), Note: note}
 	if err := consolidate.Run(ctx.Stdout, root, o); err != nil {
 		return exitFrom(err)
 	}
@@ -249,7 +250,7 @@ func runAgentMerge(ctx *cli.Context) error {
 		return err
 	}
 	o := consolidate.Options{Mission: slug, Target: target, Strategy: ctx.String("strategy"),
-		DeleteBranch: inv("keep-branch"), RemoveWorktree: inv("keep-worktree"), Push: ctx.Bool("push"), DryRun: ctx.Bool("dry-run")}
+		DeleteBranch: inv("keep-branch"), RemoveWorktree: inv("keep-worktree"), Push: ctx.Bool("push"), DryRun: ctx.Bool("dry-run"), Stderr: ctx.Stderr}
 	if err := consolidate.Run(ctx.Stdout, root, o); err != nil {
 		return exitFrom(err)
 	}

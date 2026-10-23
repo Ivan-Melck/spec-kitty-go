@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/dossier"
+	"github.com/spec-kitty/go-kitty3/internal/missionstate"
 	"os"
 	"path/filepath"
 	"sort"
@@ -255,8 +257,11 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 		o.Printf("Error locating work package: %v", ferr)
 		return ExitErr(1)
 	}
+	// locate_work_package reads leniently; read_wp_frontmatter (after the
+	// canonical-status check) raises the FrontmatterError.
+	fmErr := missionstate.FrontmatterReadError(wpFile)
 	w, err := wp.Read(wpFile)
-	if err != nil {
+	if err != nil && fmErr == "" {
 		o.Printf("Error locating work package: %v", err)
 		return ExitErr(1)
 	}
@@ -265,6 +270,15 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 	snap := statusSnapshot(s)
 	if snap.WP(wpID) == nil {
 		o.Printf("Error: %s", MissingCanonicalStatus(wpID, slug))
+		return ExitErr(1)
+	}
+	if fmErr != "" {
+		o.Printf("Error: %s", fmErr)
+		return ExitErr(1)
+	}
+	// read_wp_frontmatter validates the WP against WPMetadata.
+	if msg, _ := dossier.AuthoredWPValidationError(wpFile); msg != "" {
+		o.Printf("Error: %s", msg)
 		return ExitErr(1)
 	}
 	selfLane := status.ResolveLaneAlias(string(snap.Lane(wpID)))

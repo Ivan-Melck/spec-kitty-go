@@ -280,7 +280,8 @@ type constructor struct {
 	dialect     Dialect
 	version     func() [2]int
 	constructed map[*Node]any
-	deep        bool // BaseConstructor.deep_construct
+	recursive   map[*Node]bool // BaseConstructor.recursive_objects (nodes being constructed)
+	deep        bool           // BaseConstructor.deep_construct
 	pending     []func()
 }
 
@@ -310,7 +311,12 @@ func (c *constructor) document(n *Node) any {
 	return data
 }
 
-// object is construct_object(node, deep).
+// object is construct_object(node, deep). A node reached again while it is
+// still being constructed (an alias to an ancestor met during a deep
+// construction) is PyYAML's "found unconstructable recursive node"; ruamel
+// returns recursive_objects[node], i.e. None (leaving deep_construct set,
+// as upstream does). Outside deep construction the generator constructors
+// finish later, so such an alias yields the object itself (a cycle).
 func (c *constructor) object(n *Node, deep bool) any {
 	if v, ok := c.constructed[n]; ok {
 		return v
@@ -319,16 +325,27 @@ func (c *constructor) object(n *Node, deep bool) any {
 	if deep {
 		c.deep = true
 	}
+	if c.recursive[n] {
+		if c.dialect == PyYAML {
+			c.err("", nil, "found unconstructable recursive node", n.Start)
+		}
+		return nil
+	}
+	c.recursive[n] = true
 	v, fill := c.byTag(n)
-	c.constructed[n] = v
 	if fill != nil {
 		if c.deep {
+			// constructed_objects is only set once the generator is exhausted
 			fill()
 		} else {
 			c.pending = append(c.pending, fill)
 		}
 	}
-	c.deep = old
+	c.constructed[n] = v
+	delete(c.recursive, n)
+	if deep {
+		c.deep = old
+	}
 	return v
 }
 
@@ -1094,7 +1111,7 @@ func load(in Input, d Dialect) (any, error) {
 		if n == nil {
 			return
 		}
-		c := &constructor{dialect: d, constructed: map[*Node]any{}, version: p.scanner.version}
+		c := &constructor{dialect: d, constructed: map[*Node]any{}, recursive: map[*Node]bool{}, version: p.scanner.version}
 		out = c.document(n)
 	})
 	return out, err

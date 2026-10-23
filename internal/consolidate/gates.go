@@ -19,7 +19,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/status"
-	"github.com/spec-kitty/go-kitty3/internal/wp"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -258,20 +257,16 @@ func EvaluateGates(root, primaryDir, statusDir, matrixDir string, wpIDs []string
 		}
 	}
 	if pol.RequireDeps {
-		if snapErr != nil {
-			out = append(out, GateResult{"dependency", "skip", "Dependency check unavailable: " + snapErr.Error(), false})
+		graph, graphErr := dependencyGraph(primaryDir)
+		if graphErr == nil {
+			graphErr = snapErr
+		}
+		if graphErr != nil {
+			out = append(out, GateResult{"dependency", "skip", "Dependency check unavailable: " + graphErr.Error(), false})
 		} else {
 			var incomplete []string
 			for _, id := range wpIDs {
-				f, err := wp.Find(primaryDir, id)
-				if err != nil || f == "" {
-					continue
-				}
-				w, err := wp.Read(f)
-				if err != nil {
-					continue
-				}
-				for _, d := range w.Dependencies() {
+				for _, d := range graph[id] {
 					if lane, ok := acceptableLane(snap.WP(d)); !ok {
 						incomplete = append(incomplete, fmt.Sprintf("%s (lane=%s)", d, lane))
 					}

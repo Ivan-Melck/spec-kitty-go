@@ -1,6 +1,7 @@
 package runtime_test
 
 import (
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -9,6 +10,23 @@ import (
 )
 
 var reScanTime = regexp.MustCompile(`in [0-9.]+s \|`)
+
+var reSitePackages = regexp.MustCompile(`\S*/site-packages/`)
+
+// fpRecord is the run_check FP-ceiling UserWarning record (location made
+// site-packages-relative, whitespace folded), "" when absent.
+func fpRecord(stderr string) string {
+	s := strings.Join(strings.Fields(reSitePackages.ReplaceAllString(stderr, "")), " ")
+	i := strings.Index(s, "WARNING specify_cli/cli/commands/agent/tests.py:72:")
+	if i < 0 {
+		return ""
+	}
+	s = s[i:]
+	if j := strings.Index(s, "resolved_root)"); j >= 0 {
+		s = s[:j+len("resolved_root)")]
+	}
+	return s
+}
 
 func lastLine(s string) string {
 	ls := strings.Split(strings.TrimRight(s, "\n"), "\n")
@@ -129,11 +147,20 @@ func TestDiffStaleCheck(t *testing.T) {
 		if g.Code != o.Code || gs != os_ {
 			t.Errorf("%v: exit %d/%d\n%s", args, g.Code, o.Code, testkit.Diff(os_, gs))
 		}
-		// stderr: upstream also logs Python UserWarnings (SyntaxError
-		// while parsing <file>) with its site-packages paths; only the
-		// command's own FP-ceiling line is comparable.
+		// stderr: the command's own FP-ceiling line compares exactly; the
+		// captured run_check UserWarning record compares with its location
+		// reduced to the site-packages-relative module path (whitespace
+		// folded: rich wraps the record by that path's length). Upstream's
+		// "SyntaxError while parsing <file>" record carries CPython's parser
+		// diagnostic and is not reproduced.
+		if os.Getenv("KITTY_TEST_TRACE") != "" {
+			t.Logf("GO:\n%s\nORACLE:\n%s", g.Stderr, o.Stderr)
+		}
 		if ge, oe := lastLine(norm(p.Go, g.Stderr)), lastLine(norm(p.Oracle, o.Stderr)); ge != oe {
 			t.Errorf("%v: stderr differs\n%s", args, testkit.Diff(oe, ge))
+		}
+		if gr, or := fpRecord(g.Stderr), fpRecord(o.Stderr); gr != or {
+			t.Errorf("%v: FP-ceiling warning record differs\n go:     %s\n oracle: %s", args, gr, or)
 		}
 	}
 }

@@ -75,6 +75,14 @@ func runStaleCheck(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	if rep.FindingsPer100LOC > staleassert.FPCeiling {
+		if !ctx.Bool("json") {
+			// run_check's warnings.warn(..., stacklevel=2), captured by the CLI
+			// logging bootstrap (silenced under --json); its location is the
+			// caller's module path relative to site-packages (the absolute
+			// install prefix cannot be reproduced).
+			rich.LogWarning(ctx.Stderr, fmt.Sprintf("specify_cli/cli/commands/agent/tests.py:72: UserWarning: stale-assertion analyzer: findings_per_100_loc=%.1f exceeds NFR-002 ceiling of %s. Consider narrowing scope to function-rename detection only (FR-022).\n  report = run_check(base_ref=base, head_ref=head, repo_root=resolved_root)\n",
+				rep.FindingsPer100LOC, pyjson.ReprFloat(staleassert.FPCeiling)))
+		}
 		rich.Print(ctx.Stderr, fmt.Sprintf("[yellow]WARNING[/yellow]: findings_per_100_loc=%.1f exceeds NFR-002 ceiling of %.1f. Consider narrowing scope to function-rename detection only (FR-022).", rep.FindingsPer100LOC, staleassert.FPCeiling))
 	}
 	if ctx.Bool("json") {
