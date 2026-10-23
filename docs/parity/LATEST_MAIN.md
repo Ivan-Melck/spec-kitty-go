@@ -1,54 +1,72 @@
 # Current RC8 parity target
 
-The target selected on 2026-10-23 is upstream `main` at
-`ae979820332ee259eba467d03a00e8bb50196237` (version `4.0.0rc8`, not yet a
-published/tagged release). The latest published/tagged release candidate at
-selection time was `4.0.0rc7`; this port intentionally advances to main's RC8.
-The previous reference was `dccf199f7a42fd91556610163c989794d210eac9`.
+The selected target is upstream `main` at
+`ae979820332ee259eba467d03a00e8bb50196237`, reporting the unreleased
+`4.0.0rc8`. The latest published/tagged release candidate at selection time
+was `4.0.0rc7`; this port advances the existing main-based RC8 port from
+`dccf199f7a42fd91556610163c989794d210eac9`.
 
-This document tracks the update; it does not claim completed parity.
+Implementation and focused comparisons are complete for the areas below.
+Full-suite verification is still running; completed parity is not yet claimed.
 
-The updated reference has 279 command paths (previously 276). New commands
-are `charter pack vendor`, `migrate ledger`, and `migrate activation-ledger`.
-Five existing command definitions also changed. Across the source packages,
-285 paths changed; source-only refactors are checked for observable effects
-before any port is needed.
+The reference contains 279 command paths (previously 276). New commands are
+`charter pack vendor`, `migrate ledger`, and `migrate activation-ledger`.
+Five existing command definitions changed. The source comparison covers
+285 changed paths, including refactors checked for observable effects.
 
-The exact built-in pack is upstream's pinned external open-packs snapshot
-`af1c370f34601f2aa00d45a7a9597ab8d6a46ea1`. Assets are now taken from the
-wheel after its build hook verifies that pin, rather than from git-tracked
-files (the pack is no longer tracked in the core repository).
+The built-in pack is the external open-packs snapshot
+`af1c370f34601f2aa00d45a7a9597ab8d6a46ea1`. Assets come from the wheel after
+its build hook verifies that pin. All 724 embedded assets match an independently
+rebuilt reference wheel byte for byte.
 
-| Area | State | Work |
-|---|---|---|
-| Reference and assets | refreshed | Separate wheel-installed oracle and 279-path help inventory; old reference retained. Asset/reference scripts updated for fetched packs and exact revision selection. |
-| Mission capability | implemented; broader verification pending | `requires_substantive_spec` schema and prerequisite resolution, including explicit false and built-in fallback. |
-| Activation ledger | implemented; broader verification ongoing | Source precedence, identity-aware exclusions, organization-required floor, guarded writes, migration CLI, presets, cascade barriers, list and health diagnostics, and bundle freshness. Basic migration, activation, preset, health, list and cascade differential scenarios pass; remaining consumers and edge cases are being audited. |
-| Migration ledger and upgrade | in progress | Manifest order, tracked/clone-local persistence, read-only report, success-only settlement, init seeding, adoption/backfill and repository gates implemented. Report oracle scenarios and foundational unit checks pass. All new RC8 migration implementations are present, including project-intent rename and ownership-proven stale-template repair. Complete runner/worktree differentials remain. |
-| Agent and skill delivery | implemented; broad verification ongoing | Hyphenated command skills, shared/native frontmatter projection, configured-agent global commands and scoped freshness, Antigravity retirement, narrow gitignore rules, ownership-aware legacy retirement and collision diagnostics. Init agent matrix, eight migration fixtures (dry/real plus trees), six diagnostic/repair fixtures and native ownership/race checks pass. |
-| Charter and languages | implemented in part; verification ongoing | Language catalog, configured-language authority, observed polyglot/JVM detection, interview settlement and narrowing, synthesis soundness gate, project-intent rename, reach-only edges/roots, creation records and activation memory. Pipeline, language, interview, soundness, migration and activation-memory oracle scenarios pass. Pack vendor and remaining context/identity edges are still pending. |
-| Runtime and owned checkout | pending | Review-lock validation, owned issue-verdict and acceptance changes, exact mission lookup and degraded startup handling. |
-| Consolidation | pending | Canceled contribution attribution, binary/mode/rename cases and review evidence changes. |
-| Full verification | in progress | Initial differential campaign against the new oracle; rerun affected packages after fixes, then the complete suite and help/colour matrix. |
+| Area | Implemented behavior and focused evidence |
+|---|---|
+| Mission capability | `requires_substantive_spec`, explicit false and built-in fallback; mission creation reads the activation authority. |
+| Activation | Tracked allow/deny ledger, cross-layer identity, organization-required floor, guarded writes, migration, presets, cascade barriers, diagnostics and bundle freshness. Activation, context, collision and consistency oracle scenarios pass. |
+| Migration and upgrade | Ordered 131-entry manifest, tracked/clone-local records, read-only report, settlement, init seeding and adoption. All new RC8 migrations are present. Legacy upgrade corpora, already-current projects and worktree fan-out pass focused comparisons. |
+| Agent delivery | Hyphenated command skills, shared/native frontmatter, configured-agent global commands, freshness, Antigravity retirement, narrow ignore rules and ownership-aware legacy retirement. Init matrices, configuration, repair and exported plugin bundles pass comparisons. |
+| Global assets | Full-batch recheck under the owner lock, source-role retention, environment/membership/identity checks and bounded rebuild after a destination changes during preparation. Nine recheck scenarios match the oracle; concurrent cold-start issue writers pass. |
+| Charter and languages | Language catalog, configured-language authority, polyglot/JVM detection, interview settlement, synthesis soundness, reach-only edges and creation records. Context 1.4.0, declared identities, denial consumers, optional activation-ledger bundle reporting and authority paths pass integration comparisons. |
+| Pack vendor | Offline digest/compatibility checks and scratch fetches that update the pin without replacing the live tree. Local-repository matrix and 75 PEP 440 specifier cases pass. |
+| Runtime and owned checkout | Strict review locks, preclaim refusals, owned issue-verdict/acceptance, exact mission lookup, degraded startup, single-branch evidence and profile denials. Concurrent sibling-row preservation, remote-only refusal, owned planning and analysis freshness pass. |
+| Bulk edit | Occurrence-map readiness, finalization, implementation inference and review-diff gates. Sixteen readiness cases, 1,800 path/policy/status cases, git-history/ref cases, rendering and CLI refusal scenarios pass. |
+| Consolidation and placement | Canceled-contribution attribution, rename/binary/mode/Unicode cases, known coordination-kind projection, single-branch evidence and explicit research/documentation artifact kinds. Fourteen attribution histories, evidence cases and classifier comparisons pass. |
+| Glossary events | Pinned event-contract validation before writes, resolution-batch prevalidation, provenance timestamps and locked torn-tail quarantine. All 408 validation cases and five interactive resolution/write/refusal/recovery scenarios match RC8. |
+| Governance and diagnostics | Primary-tracking-aware Op commits, tracked team settings preservation, orientation, diagnostic roots, guarded agent configuration and current event-contract version. Focused Op, health, malformed-file and warning comparisons pass. |
 
-The isolated reference for this update is
-`$HOME/.cache/spec-kitty-parity/rc8-ae97982033`. Run the oracle with an isolated
-`HOME` and `SPEC_KITTY_NO_UPGRADE_CHECK=1`, as described in
-[the porting guide](../PORTING.md).
+The Go executable has no Python runtime dependency. Python is used only to
+build the development oracle and compare behavior. Differential fixtures
+normalize random IDs, timestamps, local paths and runtime environment metadata.
+Renderer freshness signatures include implementation code and its installation
+path, so legacy-project upgrade fixtures warm each executable's own global
+cache before comparing project changes.
 
-The first broad oracle survey was stopped after collecting failures because
-some test packages built the executable while source edits were in progress.
-It is a gap inventory, not final verification. Future broad runs use a fixed
-`SPEC_KITTY_GO_BIN` snapshot. Native checks found two legacy metadata test
-expectations (updated for ledger authority) and the outstanding help changes.
+## Reference and verification
 
-A later survey runs from an immutable source copy and binary, with bounded
-package/test concurrency. Its early mission-create failures exposed a direct
-legacy config reader; the implementation now uses the activation seam, and
-focused documentation/unknown-type mission-create scenarios pass. The survey
-is still in progress and is not a final acceptance run.
+The isolated reference is `$HOME/.cache/spec-kitty-parity/rc8-ae97982033`.
+Use an isolated `HOME` and `SPEC_KITTY_NO_UPGRADE_CHECK=1`, as described in
+[the porting guide](../PORTING.md). The reference setup script has been run
+end to end, including rebuilding its wheel and comparing assets. Optional
+reference-agent and Python autorebase checks also pass.
 
-The shell-invoked oracle wraps long usage lines differently from a
-`CliRunner(terminal_width=...)` capture. The help snapshots are being recaptured
-with `scripts/capture-reference-help.py` in the same subprocess environment as
-the parity test.
+All 279 plain help snapshots were captured with
+`scripts/capture-reference-help.py` in the subprocess environment used by the
+parity test. A `CliRunner` capture wraps long usage lines differently.
+The full colour and usage-error matrices are included in the broad campaign.
+
+The complete updated campaign uses immutable source at
+`/tmp/spec-kitty-rc8-final-source` and executable
+`/tmp/spec-kitty-rc8-final-bin`, with bounded package/test concurrency.
+It follows an earlier immutable survey used to identify gaps. Follow-up
+artifact-classification and glossary-ledger changes are verified separately
+and must be included in final acceptance.
+
+Glossary producer model and JSON Schema data can be reproduced with the
+reference interpreter:
+
+```sh
+$REF/oracle-venv/bin/python scripts/sync-event-contracts.py --check
+```
+
+Full differential completion, the post-change native suite and final vet
+results remain to be recorded here before declaring parity.
