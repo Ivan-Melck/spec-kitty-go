@@ -9,12 +9,15 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
+	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/issuematrix"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
+	"github.com/spec-kitty/go-kitty3/internal/placement"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
+	"github.com/spec-kitty/go-kitty3/internal/writecheckout"
 )
 
 func init() {
@@ -150,7 +153,7 @@ func runIssueVerdict(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
 	fail := func(msg, code string) error {
 		if jsonMode {
-			printCompact(ctx.Stdout, jsonx.NewObject("error", msg, "code", code))
+			fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("error", msg, "code", code), jsonx.Options{Indent: -1, EnsureASCII: false}))
 		} else {
 			say(ctx.Stdout, "[red]Error:[/red] "+msg)
 		}
@@ -194,6 +197,21 @@ func runIssueVerdict(ctx *cli.Context) error {
 	readDir := issueMatrixReadDir(root, slug)
 	if owned != nil {
 		readDir = owned.MissionDir
+	} else {
+		surface := coord.Resolve(root, slug)
+		if surface.Routed() {
+			if !fileExists(filepath.Join(surface.CoordWorktree, ".git")) && !gitx.OK(root, "show-ref", "--verify", "--quiet", "refs/heads/"+surface.CoordBranch) {
+				branch := surface.CoordBranch
+				return fail(fmt.Sprintf("Refusing a terminus WRITE of 'issue_matrix' for mission %s: its authoritative coordination surface (branch %s) is unresolved or unmaterialized on this checkout — the coordination worktree is absent and %s is not a local branch head (e.g. a fresh clone / CI checkout where the lane exists only on origin). Writing would degrade to the primary directory and overwrite committed coordination state (#4970). Materialize the coordination surface first: `git fetch`, create the local branch (`git branch %s origin/%s`), then run `spec-kitty doctor coordination --mission %s --fix`; or check out %s locally before retrying.", mission.PyRepr(slug), mission.PyRepr(branch), mission.PyRepr(branch), branch, branch, slug, mission.PyRepr(branch)), "coord_surface_unmaterialized")
+			}
+			if err := surface.EnsureWorktree(); err != nil {
+				return fail(err.Error(), "coord_surface_unmaterialized")
+			}
+			if err := placement.RequireCoordWorktreeBranch(surface.CoordWorktree, surface.CoordBranch); err != nil {
+				return fail(err.Error(), "coord_surface_unmaterialized")
+			}
+			readDir = surface.StatusDir()
+		}
 	}
 	migrated := false
 	if !fileExists(filepath.Join(readDir, issuematrix.JSONFile)) {
@@ -225,6 +243,16 @@ func runIssueVerdict(ctx *cli.Context) error {
 			entry.WP = wpFlag
 		}
 	}
+	const lockTimeout = 10.0
+	unlock, err := writecheckout.AcquireMissionLock(root, matrixDir, lockTimeout)
+	if err != nil {
+		if _, timeout := err.(*writecheckout.LockTimeoutError); timeout {
+			return fail(fmt.Sprintf("Could not acquire the issue-matrix lock for mission %s within 10.0s: %v", mission.PyRepr(slug), err), "lock_timeout")
+		}
+		return fail(err.Error(), "write_failed")
+	}
+	defer unlock()
+	rows = issuematrix.LoadRows(matrixDir)
 	rows.Set(ref, entry)
 	r, err := writeIssueMatrix(root, slug, rows, matrixDir, owned)
 	if err != nil {

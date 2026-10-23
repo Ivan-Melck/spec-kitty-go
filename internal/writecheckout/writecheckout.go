@@ -118,6 +118,45 @@ func AcquireClaimLock(checkout string, timeout float64) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
+	return acquireStatusLock(lockPath, timeout)
+}
+
+// AcquireMissionLock serializes a mission's read, splice, write and commit on
+// the same common-directory lock across primary and coordination checkouts.
+func AcquireMissionLock(root, featureDir string, timeout float64) (func(), error) {
+	common, err := gitx.CommonDir(root)
+	if err != nil {
+		common = filepath.Join(root, ".spec-kitty")
+		for _, marker := range []string{".git", ".kittify"} {
+			if st, e := os.Stat(filepath.Join(root, marker)); e == nil && st.IsDir() {
+				common = filepath.Join(root, marker)
+				break
+			}
+		}
+	}
+	key := filepath.Base(featureDir)
+	meta := mission.ReadMetaOrEmpty(featureDir)
+	if strings.TrimSpace(meta.GetString("coordination_branch")) != "" {
+		slug := meta.GetString("mission_slug")
+		if slug == "" {
+			slug = key
+		}
+		mid8 := meta.GetString("mid8")
+		if mid8 == "" {
+			mid8 = mission.ResolveMid8(slug, meta.GetString("mission_id"))
+		}
+		if mid8 == "" {
+			mid8 = mission.Mid8FromSlug(slug)
+		}
+		if mid8 == "" {
+			return nil, fmt.Errorf("Cannot resolve mission lock key for %s: coordination-routed mission has no resolvable mid8", featureDir)
+		}
+		key = mission.CoordMissionDirName(slug, mid8)
+	}
+	return acquireStatusLock(filepath.Join(common, "spec-kitty-locks", key+".status.lock"), timeout)
+}
+
+func acquireStatusLock(lockPath string, timeout float64) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return nil, err
 	}
