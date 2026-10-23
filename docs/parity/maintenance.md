@@ -33,7 +33,7 @@ the help text of every command below. Go-only tests (`*WithoutOracle`,
 | `migrate normalize-lifecycle` | done | `TestDiffMigrateNormalizeLifecycle`, `TestNormalizeLifecycleWithoutOracle` | |
 | `migrate rebaseline-dossier-hashes` | done | `TestDiffMigrateRebaselineDossierHashes` (canonical / unreadable / non-object snapshots), `TestDiffMigrateRebaselineReindex` (software-dev / typeless / research / custom / documentation missions, per-file classification and keys, invalid UTF-8, hidden files, the rewritten snapshot file, hashes compared unmasked), `TestDiffMigrateRebaselineReindexFailures` (invalid artifact key, schema-invalid and TypeError WP frontmatter, org-pack manifest override with ghost artifacts, schema-invalid and malformed org manifests) | Artifacts sharing an `artifact_key` keep upstream's `rglob` (directory) order in `artifact_summaries`; Go walks in name order (Irreducible differences). |
 | `migrate repin-hooks` | done | `TestDiffMigrateRepinHooks`, `TestRepinHooksWithoutOracle` | |
-| `migrate rewrite-opposed-by` | done | `TestDiffMigrateRewriteOpposedBy` | The edited artifact keeps every byte except the removed top-level `opposed_by:` block; upstream re-dumps it through ruamel round-trip, which also normalises `---`, key spacing, sequence/mapping indentation and trailing spaces. Identical for canonically formatted files (see Remaining work). |
+| `migrate rewrite-opposed-by` | done | `TestDiffMigrateRewriteOpposedBy`, `TestDiffMigrateRewriteOpposedByNonCanonical` | The artifact rewrite and the graph dump go through `internal/rtyaml` (ruamel round trip, width 4096), so a non-canonically formatted artifact (`---`, indented sequences, key spacing, trailing spaces, comments, quote styles) is re-dumped exactly like upstream. |
 | `doctor mission-state` (`--audit`) | done | `TestDiffDoctorMissionStateAudit` (mode validation, `--fail-on`, `--mission`, legacy/corrupt corpora), `TestDiffDoctorMissionStateFixCalc` (audit from a coordination worktree: `CHECKOUT_DISAGREEMENT` findings + disagreement report) | |
 | `doctor mission-state --fix` | done | `TestDiffDoctorMissionStateFix` (dup-key heal, dirty-tree refusal, `--allow-dirty`, `--mission` not found / residue, `--manifest-path`, legacy status rows: aliases, typed lane rows, duplicates, quarantine, coercions, CRLF, drifted `status.json`; manifest, quarantine and every rewritten file compared), `TestDiffDoctorMissionStateFixCalc` (refusal from a lane/coordination worktree), `TestDiffDoctorMissionStateFixWedgedLanes` (wedged `lanes.json` rebuild; literal `owned_files` zero-match refusal with nearest-match suggestions, `create_intent` suppression, glob entries skipped), `TestDiffDoctorMissionStateFixLock` (lock contention, record truncated on release, planted symlink refused), `TestMissionStateFixWithoutOracle` | |
 | `doctor mission-state --teamspace-dry-run` | done | `TestDiffDoctorMissionStateTeamspaceDryRun` (empty project, calc mission, audit blockers, transition-matrix/business-rule violations, side logs; envelope sha256 values compared unmasked), `TestDiffDoctorMissionStateTeamspaceEnvelopes` (`ENVELOPE_INVALID`: speedate timestamp errors, event_id and aggregate_id errors), `TestPydanticDatetimeAgainstPython` | A `--mission` selection error prints the exception line instead of rich's traceback box (PYF-01). |
@@ -140,8 +140,13 @@ Exported API (`internal/charsetnorm`): `FromBytes(seq) *Matches`,
 
 ## Remaining work
 
-- `migrate rewrite-opposed-by`: the artifact rewrite and the graph dump go through `internal/rtyaml` (ruamel round trip, width 4096; PYF-04), so comments and styles of non-canonically formatted artifacts are kept as upstream.
-- Charset detection (ENC): a charter-read encoding failure inside a runtime command that renders charter context (`next`, `agent action implement/review` prompts) unwinds to `encguard`'s uncaught-exception line; those commands' own upstream handlers for `CharterEncodingError` were not individually compared (`charter context` / `charter generate` were). Rich's framed traceback for these and for the `migrate charter-encoding` BOM decode errors is PYF-01's sweep (its helper was not yet in functional-parity at 608d3f50).
+None. (Verified in wave 5 FIX4: `migrate rewrite-opposed-by` re-dumps through
+`internal/rtyaml` (`TestDiffMigrateRewriteOpposedByNonCanonical`); an
+ambiguous charter inside `next` / `agent action implement|review` follows
+each command's own upstream handling (`internal/charterenc`
+`TestDiffPromptCommandsAmbiguousCharter`), and the uncaught paths
+(`encguard`, `migrate charter-encoding` BOM decode errors) print rich's
+framed traceback through `rich.PrintTraceback`.)
 
 ## Exported library API
 

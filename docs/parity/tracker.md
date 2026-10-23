@@ -72,12 +72,12 @@ actor lookup order and the 30 s `bd`/`fp` timeout (`TestOracleSyncActorLookup`,
 
 ## Remaining work
 
-- `agent tasks map-requirements --tracker-ref` / `move-task --tracker-ref`
-  (areas E/A) only record free-form `tracker_refs` strings, as upstream; no
-  link to tracker bindings is needed.
-- Observed but out of scope: upstream `agent mission create` raises
-  `PendingOriginConsumerNotRegisteredError` when `.kittify/pending-origin.yaml`
-  exists; the Go mission-create port does not check for that file (area A).
+None. (`agent tasks map-requirements --tracker-ref` / `move-task
+--tracker-ref` record free-form `tracker_refs` strings exactly as upstream,
+with no link to tracker bindings: not a difference. `agent mission create`
+refuses a staged `.kittify/pending-origin.yaml` with upstream's
+`PendingOriginConsumerNotRegisteredError` text, CORE-09,
+`TestDiffMissionCreatePendingOrigin`.)
 
 ## Library API
 

@@ -176,6 +176,30 @@ New / extended library API (additive):
 - `internal/migrate` renders `str(ValidationError)` through `internal/pydantic`
   (its private formatter is gone; output unchanged, maintenance reindex tests).
 
+## Wave 5 FIX4: declared-but-unfetched org packs
+
+Every upstream caller of the strict chain (`resolve_pack_chain(strict=True)`
+/ `require_declared_org_roots`) and of the effective-set seam was audited
+against the oracle with a declared `charter_packs.org.packs` entry whose
+root is missing.
+
+| Command path(s) | Status | Differential test | Notes |
+|---|---|---|---|
+| `upgrade --yes [--json]` | done | `TestUpgradeCutoverUnfetchedOrgPackMatchesOracle` (setup) | agent-profile assessment (`_profile_input_roots`) fails closed: `repair_preparation_failed`, the not-fetched error, the repair-errors no-commit warning, no commit, old version stamp kept; the re-run re-reports (human output compared too) |
+| `upgrade` (`unify_charter_activation_promote_answers`) | done | `TestUpgradePromoteAnswersMatchesOracle`, `TestUpgradePromoteAnswersUnfetchedPackMatchesOracle` | selections resolve via `resolve_selected_id_to_stem` (declared directive ids); an absent key is seeded from the effective set (absent-key parity warnings) or left absent with the reason; dry-run preview |
+| `charter activate <kind> <id>` | done | `TestUnfetchedOrgPackMutationsMatchOracle` | strict chain read before the activation (`Error: declared org pack ...`) |
+| `charter activate ... --resynthesize` | done | same | preflight reports the effective-set reason |
+| `charter activate mission-type`, `mission-type list/show`, `charter mission-type list`, `agent mission setup-plan`, `agent mission create`, `orchestrator-api design-context` | done | `TestUnfetchedOrgPackSweepMatchesOracle`, `TestUnfetchedOrgPackMutationsMatchOracle`, `TestDiffUnfetchedOrgPackMissionFlow` (runtime) | `resolve_org_dirs`' dropped-root WARNING per `resolve_mission_type_context` call (`charter.WarnMissionTypeContext`) |
+| `agent tasks move-task --to for_review` | done | `TestDiffUnfetchedOrgPackMissionFlow` | gate bindings read the chain strictly: `Pre-review regression gate: no_coverage — pre-review gate resolution failed — unverified: ...`, plus the `mission_step_contracts` WARNING |
+| `dispatch` | done | `TestUnfetchedOrgPackMutationsMatchOracle` | `is_charter_empty` counts declared packs (`PackContext.org_roots`), so the router runs (`ROUTER_AMBIGUOUS`) instead of the generic fallback |
+| `charter deactivate/interview/generate/synthesize/resynthesize/status/context/list/lint/validate/consistency-check/preflight/bundle validate/pack list/pack validate`, `doctor skills/charter-packs/tool-surfaces`, `profiles list`, `agent profile list`, `agent config status/sync`, `verify-setup`, `regen`, `next`, `agent action implement/review`, `agent mission check-prerequisites/record-analysis`, `mission info` | matched (no change needed) | the three sweeps above, `TestDiffUnfetchedOrgPackNextEarly` | lenient surfaces skip the pack exactly as upstream |
+
+Library: `charter.EffectiveSet(root, token) (ids, reason)` (fail-closed
+effective set; `EffectiveIDs` wraps it), `charter.WarnDroppedOrgDirs(root,
+subdir)`, `charter.WarnMissionTypeContext(root, typeKey)`,
+`charter.ProjectHasPackOverrides(root)`; `agents.ProfileAdmitter` (one
+profile gate per projector build, replacing `agents.ProfileAdmit`).
+
 ## Wave 5 (area DOC) library additions
 
 New packages / files (all additive):

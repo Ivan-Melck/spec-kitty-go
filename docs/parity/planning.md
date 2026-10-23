@@ -83,11 +83,9 @@ cancels, blank defers, anything else resolves), matching
 
 ## Remaining work
 
-* The analysis-report freshness check (`internal/workflow.CheckAnalysisReport`,
-  area CORE) does not yet consult `report_transaction` receipts and the
-  material manifest that `--report-only` records
-  (`missionart.CollectMaterialInputs`, `planning.ReportIsQualified` are the
-  helpers it needs).
+None. The analysis-report freshness check (`workflow.CheckAnalysisReportIn`)
+consults the `report_transaction` receipt and the material manifest that
+`--report-only` records (`TestDiffAnalysisFreshnessReportOnly`).
 
 ## Library API
 

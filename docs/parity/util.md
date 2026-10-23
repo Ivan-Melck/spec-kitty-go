@@ -63,15 +63,18 @@ and compare exit code, normalized stdout/stderr and the resulting file trees
 
 ## Remaining work
 
-- Round-trip config writers (PYF-04): the tracker, `internal/kittify`
-  (agent config add/remove/sync, init vcs/agents) and
-  `migrate rewrite-opposed-by` use `internal/rtyaml`. Other areas'
-  config.yaml writers (charter activation and the `charter:` pointer,
-  `ProvisionMissionTypes`, upgrade migrations) still emit via `yamlx.Emit`
-  and drop comments; each switch is `rtyaml.Load` + `Doc.Apply(cfg,
-  rtyaml.Snap(cfg_before_edit))` + `Doc.Dump`.
-- `internal/dossier` and `internal/commands/planning/flowfm.go` still use
-  gopkg.in/yaml.v3 for node-style inspection (no error text involved).
+None. Every config.yaml writer goes through the ruamel round trip
+(`internal/rtyaml`): the tracker, `internal/kittify.SaveConfig` /
+`UpdateConfig` (agent config, init, the upgrade migrations'
+`writeConfigRoundTrip`), the charter activation / `charter:` pointer writers
+(`charter.writeYAMLDocument` over `rtyaml`, which `ProvisionMissionTypes`
+uses through `WriteTarget.Save`) and the 4.0.0rc6 cutover
+(`TestParityCommentedConfigRoundTrip`, `TestCommentedConfigMatchesOracle`,
+`TestUpgradeCutoverCommentedConfigMatchesOracle`).
+
+Non-difference: `internal/dossier` and
+`internal/commands/planning/flowfm.go` use gopkg.in/yaml.v3 only to inspect
+node styles; no output or error text depends on it.
 
 ## Library API
 

@@ -80,12 +80,11 @@ the inventory (`go test ./internal/helpparity`).
 
 ## Remaining work (design / planning verbs)
 
-* `--owned-checkout` on the decision verbs and the `start-implementation`
-  single_branch write-checkout refusals / claim lock are ported by area OWN
-  (see [owned.md](owned.md)).
-* Mission resolution (`internal/orchestrator/mission.go`, area CORE): an
-  ambiguous handle still returns `MISSION_NOT_FOUND` where upstream crashes
-  with a traceback (`MissionSelectorAmbiguous`).
+None. `--owned-checkout` on the decision verbs and the
+`start-implementation` single_branch write-checkout refusals / claim lock
+are ported (see [owned.md](owned.md)); an ambiguous `--mission` handle
+crashes with upstream's `MissionSelectorAmbiguous` traceback
+(`orchestrator.SelectorAmbiguousCrash`, `TestDiffAmbiguousMissionHandle`).
 
 ## Exported API (`internal/orchestrator`)
 

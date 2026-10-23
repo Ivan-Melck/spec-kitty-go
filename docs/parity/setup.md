@@ -93,6 +93,14 @@ test: `testkit` points its PyPI lookups at a closed local port (see
 * **config.yaml writers** keep comments and styles (rtyaml round trip):
   provisioning (`mission_type_activations`), charter seeding and the
   identity writer (`TestCommentedConfigMatchesOracle`).
+* **Unfetched org pack** (wave 5 FIX4): a declared-but-unfetched
+  `charter_packs.org.packs` root fails the agent-profile repair
+  preparation closed (`repair_preparation_failed`, no commit, old version
+  stamp; `TestUpgradeCutoverUnfetchedOrgPackMatchesOracle`), and the
+  answers promotion migration seeds absent keys from the fail-closed
+  effective set (`TestUpgradePromoteAnswers*`). See doctrine.md "Wave 5
+  FIX4". The profile gate infers the repo languages once per projector
+  build, so dry-run encoding-provenance records match upstream's count.
 
 ## Library API added in wave 5
 
