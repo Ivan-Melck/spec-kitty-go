@@ -442,27 +442,71 @@ func hashIndexed(p string) (string, string, error) {
 }
 
 // scanFeature is Indexer._scan_directory: every non-hidden regular file
-// below dir (rglob order approximated by a depth-first walk in name order).
+// below dir, in Path.rglob("*") order.
 func scanFeature(dir string) []string {
 	var out []string
-	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || p == dir {
-			return nil
+	for _, p := range PyRglobAll(dir) {
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			continue
 		}
-		if strings.HasPrefix(d.Name(), ".") {
-			if d.IsDir() {
-				return filepath.SkipDir
+		hidden := false
+		for _, part := range strings.Split(rel, string(filepath.Separator)) {
+			if strings.HasPrefix(part, ".") {
+				hidden = true
+				break
 			}
-			return nil
 		}
-		if d.IsDir() {
-			return nil
+		if hidden {
+			continue
 		}
 		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+// scandir is os.scandir order (the directory's own entry order, unsorted);
+// an unreadable directory lists nothing.
+func scandir(dir string) []fs.DirEntry {
+	f, err := os.Open(dir)
+	if err != nil {
 		return nil
-	})
+	}
+	defer f.Close()
+	es, err := f.ReadDir(-1)
+	if err != nil {
+		return nil
+	}
+	return es
+}
+
+// PyRglobAll is CPython 3.13's Path(dir).rglob("*") (recurse_symlinks=False):
+// the children of dir in scandir order, then a LIFO walk in which each
+// popped directory lists the children of each of its subdirectories (in
+// scandir order) and pushes those subdirectories. Symlinked directories are
+// listed but not descended.
+func PyRglobAll(dir string) []string {
+	var out []string
+	for _, e := range scandir(dir) {
+		out = append(out, filepath.Join(dir, e.Name()))
+	}
+	stack := []string{dir}
+	for len(stack) > 0 {
+		p := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, e := range scandir(p) {
+			if !e.IsDir() {
+				continue
+			}
+			sub := filepath.Join(p, e.Name())
+			for _, c := range scandir(sub) {
+				out = append(out, filepath.Join(sub, c.Name()))
+			}
+			stack = append(stack, sub)
+		}
+	}
 	return out
 }
 
