@@ -159,7 +159,7 @@ func runActionImplement(ctx *cli.Context) error {
 	rc := &workflow.Receipts{}
 	err = workflow.ActionImplement(o, rc, root, slug, workflow.ActionImplementOptions{
 		Root: root, Mission: slug, WPID: ctx.Arg("wp_id"), Agent: agent, Force: force, Note: note,
-		Dispatch: actionBinding(ctx, root),
+		Dispatch: actionBinding(ctx, root), AcknowledgeNotBulkEdit: ctx.Bool("acknowledge-not-bulk-edit"),
 	}, nil)
 	if workflow.IsFixModeDone(err) {
 		return nil

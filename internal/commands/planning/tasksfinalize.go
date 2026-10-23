@@ -69,6 +69,9 @@ func runTasksFinalize(ctx *cli.Context) error {
 	if _, err := os.Stat(tasksDir); err != nil {
 		return fail("Tasks directory not found: " + tasksDir)
 	}
+	if err := finalizeBulkEditGate(ctx, dir, jsonMode, func(o *jsonx.Object) { printCompact(ctx.Stdout, o) }); err != nil {
+		return err
+	}
 	depsMap, _ := parseDependenciesFromTasksMD(string(b))
 	var expected []string
 	for _, p := range scandirGlob(tasksDir, "WP*.md") {

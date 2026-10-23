@@ -302,6 +302,9 @@ func (f *finalizeRun) runResolved(dir string) error {
 func (f *finalizeRun) noWrite() bool { return f.validateOnly || f.refresh }
 
 func (f *finalizeRun) run() error {
+	if err := finalizeBulkEditGate(f.ctx, f.dir, f.json, f.emitJSON); err != nil {
+		return err
+	}
 	if err := f.resolveBranches(); err != nil {
 		return err
 	}

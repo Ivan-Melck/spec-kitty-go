@@ -32,7 +32,8 @@ type ImplementOptions struct {
 	// the charter preflight (the command resolves --mission after them).
 	SkipPreamble bool
 	// Base is the explicit --base ref ("" = auto-detect).
-	Base string
+	Base                   string
+	AcknowledgeNotBulkEdit bool
 }
 
 // ImplementResult is the outcome of the top-level implement.
@@ -342,6 +343,12 @@ func TopImplement(o *Out, opt ImplementOptions) (*ImplementResult, error) {
 		tracker.Error("validate", detail)
 		o.ConsoleR(tracker.Render())
 		return nil, err
+	}
+	if err := bulkImplementGate(o, primary, slug, wpID, w, opt.AcknowledgeNotBulkEdit); err != nil {
+		if e, ok := err.(*Exit); ok {
+			return fail(fmt.Sprint(e.Code))
+		}
+		return fail(err.Error())
 	}
 	ws, err := lanes.ResolveWorkspace(root, slug, wpID)
 	if err != nil {

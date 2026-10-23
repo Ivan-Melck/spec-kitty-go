@@ -273,6 +273,9 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 		}
 		return ExitErr(1)
 	}
+	if err := bulkReviewGate(o, primary, root, slug, target, ws); err != nil {
+		return err
+	}
 	if msg := reviewLockRefusalMessage(ws, root, createFrom, false); msg != "" {
 		o.ConsoleSoftWrap("[red]" + rich.EscapeMarkup(msg) + "[/red]")
 		return ExitErr(1)

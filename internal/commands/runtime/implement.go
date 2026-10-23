@@ -110,7 +110,7 @@ func runTopImplement(ctx *cli.Context) error {
 		ac = &v
 	}
 	res, err := workflow.TopImplement(o, workflow.ImplementOptions{Root: root, MissionDir: slug, WPID: wpID, AutoCommit: ac,
-		JSON: jsonMode, Actor: ctx.String("actor"), SkipPreamble: true, Base: ctx.String("base")})
+		JSON: jsonMode, Actor: ctx.String("actor"), SkipPreamble: true, Base: ctx.String("base"), AcknowledgeNotBulkEdit: ctx.Bool("acknowledge-not-bulk-edit")})
 	if err != nil {
 		if jsonMode {
 			emitJSONError(summary())

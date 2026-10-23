@@ -202,6 +202,7 @@ type ActionImplementOptions struct {
 	Root, Mission, WPID, Agent string
 	Profile                    *string
 	Force                      bool
+	AcknowledgeNotBulkEdit     bool
 	Note                       *string
 	// Dispatch, when set, is resolved at the claim point (after workspace
 	// creation) and replaces the binding argument.
@@ -378,7 +379,7 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 			return ExitErr(1)
 		}
 		o.Printf("Creating workspace for %s...", wpID)
-		res, err := TopImplement(o, ImplementOptions{Root: root, MissionDir: slug, WPID: wpID, Actor: opt.Agent})
+		res, err := TopImplement(o, ImplementOptions{Root: root, MissionDir: slug, WPID: wpID, Actor: opt.Agent, AcknowledgeNotBulkEdit: opt.AcknowledgeNotBulkEdit})
 		if err != nil {
 			return err
 		}
