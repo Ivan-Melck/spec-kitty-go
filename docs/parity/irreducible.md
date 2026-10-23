@@ -57,9 +57,14 @@ page layout. Deterministic Python text and behaviour were ported.
 | util | colour note | not a difference | moved out of the list |
 | help | none | — | — |
 
-Found while checking, not on any list (see the docs' Remaining work):
-`next` / `agent action implement` / the status board do not run
-`WPMetadata` validation on WP frontmatter (a non-string list item such as a
-recursive alias that ruamel resolves to None is refused upstream); the
-status board reads frontmatter scalars leniently upstream
-(`extract_scalar`), so an invalid-YAML frontmatter still renders there.
+Found while checking, not on any list:
+- fixed: `next` / `agent action implement` / the status board validate WP
+  frontmatter against `WPMetadata` (`TestDiffWPMetadataValidation`); the
+  coordination worktree is judged as a MISSION checkout before the merge
+  (its stale status state is disposable,
+  `TestDiffConsolidateUnreadableStatus/coord-driftdirty`).
+- fixed: the status board reads frontmatter scalars leniently
+  (`extract_scalar`) and `next` / `implement` report the `FrontmatterError`
+  text (`TestDiffWPMetadataValidation/badyaml`).
+- open (maintenance.md, Remaining work): `SPEC_KITTY_PACKS_ROOT`
+  misconfiguration warning records.

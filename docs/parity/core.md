@@ -241,18 +241,14 @@ Not a difference, a coverage note: claim liveness on darwin is Go-only tested (t
 ## Remaining work
 
 * None for CORE-01..CORE-20 / DOCS-01 / DOCS-07.
-* Found in wave 5 FIX5 (not on the inventory): `next`, `agent action
-  implement` and the status board's execution-mode probe validate WP
-  frontmatter through `WPMetadata` upstream (pydantic `1 validation error for
-  WPMetadata ...`; `next` reports `Could not read canonical WORK_PACKAGE_TASK
-  file <path>: <error>` with `mission_state: blocked`, the board shows
-  `workspace_kind: unknown`); Go does not, e.g. for a non-string list item.
-  The validator exists (`dossier.WPMetadataValidationError`) but is not wired
-  into these paths.
-* Found in wave 5 FIX5: the status board reads frontmatter scalars with the
-  lenient `extract_scalar` upstream, so a WP whose frontmatter is not valid
-  YAML still renders; Go parses the frontmatter and fails with
-  `status_failed`.
+* (Fixed in FIX5: `next`, `agent action implement` and the status board's
+  execution-mode probe now validate WP frontmatter through `WPMetadata`
+  (`dossier.AuthoredWPValidationError`), `TestDiffWPMetadataValidation`.)
+* (Fixed in FIX5: the status board reads frontmatter scalars textually like
+  `extract_scalar`, so an invalid-YAML frontmatter renders with an unknown
+  workspace; `next` / `implement` report `FrontmatterManager.read`'s
+  `FrontmatterError` text — `missionstate.FrontmatterReadError` —
+  `TestDiffWPMetadataValidation/badyaml`.)
 
 ## Wave 5 sweep (area SWEEP)
 
