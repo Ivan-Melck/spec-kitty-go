@@ -9,7 +9,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 )
 
-var staleMinutes = regexp.MustCompile(`("minutes_since_commit": |stale: )(?:\x1b\[[0-9;]*[m\x01])*[0-9]+\.(?:\x1b\[[0-9;]*[m\x01])*[0-9]+`)
+var staleMinutes = regexp.MustCompile(`("minutes_since_commit": |stale: )(?:\x1b\[[0-9;]*[m\x01])*(?:[0-9]+|<SHORTSHA>)\.(?:\x1b\[[0-9;]*[m\x01])*[0-9]+`)
 
 // TestDiffTasksStatusStaleness covers in_progress staleness (lane worktree
 // with an old own commit), the in_review stall label and their human

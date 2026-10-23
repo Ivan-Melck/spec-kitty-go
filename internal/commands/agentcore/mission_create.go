@@ -355,7 +355,7 @@ func runCreate(ctx *cli.Context) error {
 		cr, err := ownedcheckout.ResolveCreateRoot(root, claim)
 		if err != nil {
 			if e, ok := err.(*ownedcheckout.Error); ok {
-				return errOut(jsonx.NewObject("success", false, "error_code", e.Code, "error", e.Message), "Error: "+e.Message)
+				return errOut(jsonx.NewObject("success", false, "error_code", e.Code, "error", e.Message), "[bold red]Error:[/bold red] "+e.Message)
 			}
 			return renderCreateError(ctx, err, jsonMode, slug)
 		}
