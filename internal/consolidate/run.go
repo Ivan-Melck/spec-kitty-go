@@ -50,6 +50,10 @@ type Options struct {
 	AttestApproved []string  // --attest-approved-reviewed
 	AttestReason   string    // --attest-reason
 	Stderr         io.Writer // logging records (RichHandler on stderr)
+	// SkipReviewArtifact (--skip-review-artifact-check) bypasses the
+	// review-artifact consistency gate, recording Note as override evidence.
+	SkipReviewArtifact bool
+	Note               string
 }
 
 // synthesizeNoLaneManifest is _synthesize_no_lane_manifest: one planning
@@ -305,6 +309,13 @@ func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o O
 		}
 		return exit(1)
 	}
+	var all []string
+	for _, l := range m.Lanes {
+		all = append(all, l.WPIDs...)
+	}
+	if handled, err := forecastReviewArtifacts(w, o, coord.Resolve(root, slug).StatusDir(), slug, target, all); handled {
+		return err
+	}
 	var would any
 	if needsNumber(primary) {
 		would = NextMissionNumber(root)
@@ -482,6 +493,9 @@ func (r *run) execute() error {
 			rich.PrintPlain(r.w, w)
 		}
 	}
+	if err := r.warnOnMaterializationDrift(); err != nil {
+		return err
+	}
 	if !r.allowSparse {
 		if msg := SparseCheckoutRefusal(r.root, "spec-kitty consolidate"); msg != "" {
 			sayErr(r.w, msg)
@@ -553,6 +567,22 @@ func (r *run) execute() error {
 	var attErr error
 	if r.attested, attErr = r.recordAttestations(r.opts.AttestCanceled, r.opts.AttestApproved, r.opts.AttestReason); attErr != nil {
 		return attErr
+	}
+	// The review-artifact consistency gate runs before merge state is
+	// loaded or created.
+	{
+		excluded := r.acceptablyCanceled()
+		var ids []string
+		for _, l := range m.Lanes {
+			for _, id := range l.WPIDs {
+				if !excluded[id] {
+					ids = append(ids, id)
+				}
+			}
+		}
+		if err := r.enforceReviewArtifacts(ids); err != nil {
+			return err
+		}
 	}
 	// merge-ready precondition
 	snap, err := status.ReduceDir(r.sf.StatusDir())

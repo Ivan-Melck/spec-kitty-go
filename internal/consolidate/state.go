@@ -6,6 +6,7 @@ package consolidate
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"io"
 	"os"
 	"path/filepath"
@@ -970,12 +971,8 @@ func restoreBranchRef(root, slug, branch, to, expected string) error {
 	return nil
 }
 
-func pyRepr(s string) string {
-	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
-		return `"` + s + `"`
-	}
-	return "'" + strings.ReplaceAll(s, "'", `\'`) + "'"
-}
+// pyRepr is repr(str).
+func pyRepr(s string) string { return pyjson.ReprString(s) }
 
 func (s *MergeState) rollbackBranch(root, b, snap string) branchOutcome {
 	live := liveTip(root, b)
