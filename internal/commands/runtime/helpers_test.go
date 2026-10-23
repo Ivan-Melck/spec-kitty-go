@@ -25,7 +25,7 @@ var (
 	// all-digit short SHAs escape testkit.Normalize (lane listings)
 	reDigitSHA = regexp.MustCompile(`  [0-9]{7}  `)
 	// mkstemp-named templateless step prompts
-	reStepPrompt = regexp.MustCompile(`(spec-kitty-step-[^\s"]*)-[a-z0-9_]{8}\.md`)
+	reStepPrompt = regexp.MustCompile(`(spec-kitty-step-[^\s"]*)-(?:[a-z0-9_]{8}|<SHORTSHA>)\.md`)
 	// backup_before_overwrite sidecar stamps (now_utc_compact_stamp)
 	reCompactStamp = regexp.MustCompile(`\.[0-9]{8}T[0-9]{6}Z\b`)
 )
