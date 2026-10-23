@@ -175,6 +175,16 @@ sync (`internal/workflow/lanesync.go`) the way upstream's
 `worktree_allocator` does: a failed sync auto-rebase whose lane worktree
 holds an operator edit leaves the merge in progress and says so.
 
+Wave 5 (area FIX2, test harness only): the closeout git-state and bare-remote
+comparisons (`gitState`, `remoteLog`) render history with
+`testkit.Sandbox.GitHistory` (refs in name order, commits depth-first from
+each tip) instead of `git log --all --topo-order`, which interleaved
+independent branches by commit date and flaked `TestDiffConsolidatePush`
+when the two sandboxes' commits fell into different seconds;
+`testkit.Normalize` now masks all-letter (a-f) short SHAs, which flaked
+`TestDiffConsolidateRollbackAuthority` about once per thousand abbreviations
+(the closeout-local rollback-line mask is gone).
+
 ## Irreducible differences
 
 - Excluded (canceled) commits are listed in a stable sorted order; upstream

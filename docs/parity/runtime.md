@@ -18,9 +18,9 @@ timestamps, prompt hashes). `TestLocalRuntimeLoop` runs without the oracle.
 
 | Command | Status | Differential tests (TRACE steps) | Deviations |
 |---|---|---|---|
-| `agent action implement` | done | `TestDiffImplementReviewLoop` (4.7, 5.F1, 5.F1b, 5.1, 5.3, 5.13–5.15), `TestDiffPostMerge` (9.10), `TestDiffActionInvocationID`, `TestDiffMergeDriverActivation`, `TestDiffAnalysisFreshnessReportOnly`, `TestDiffCharterPreflightFreshness`, `TestLocalRuntimeLoop`, Go-only `TestCheckClaimAncestry` | ephemeral merge-driver activation around planning-commit / dependency-lane merges (CORE-10); shared claim-ancestry gate (CORE-18); the commit-guard hook pins the Go binary (irreducible, CORE-11) |
+| `agent action implement` | done | `TestDiffImplementReviewLoop` (4.7, 5.F1, 5.F1b, 5.1, 5.3, 5.13–5.15), `TestDiffPostMerge` (9.10), `TestDiffActionInvocationID`, `TestDiffMergeDriverActivation`, `TestDiffAnalysisFreshnessReportOnly`, `TestDiffCharterPreflightFreshness`, `TestLocalRuntimeLoop`, Go-only `TestCheckClaimAncestry`, `TestDiffImplementResumeLaneSyncConflict` (claim committed, lane sync halts: coordination commit reverted, receipt `[refused]`), `TestDiffClaimCommitRefusedByHook` (foreign pre-commit hook backed up to the `<hook>.<stamp>` sidecar), Go-only `TestHandleCommitFailure*` | claim rollback point (FIX2): a failed follow-up commit or a refused lane sync cuts only the claim's rows; rows already committed at HEAD are reported as `WPnn claim was committed; the <step> failed: <exc>` plus the `STATUS_ROLLBACK_REFUSED` WARNING record; ephemeral merge-driver activation around planning-commit / dependency-lane merges (CORE-10); shared claim-ancestry gate (CORE-18); the commit-guard hook pins the Go binary (irreducible, CORE-11) |
 | `agent action implement/review --invocation-id` / `--model` / `--profile` (dispatch→claim resolved binding read from `kitty-ops/<ULID>.jsonl`) | done | `TestDiffActionInvocationID` (missing/malformed/mismatched Op records, `--model` without invocation, correlated claim) | — |
-| `agent action review` | done | `TestDiffImplementReviewLoop` (5.4, 5.8, 5.11, 5.19), `TestDiffReviewLaneOriginFreshness` | — (origin-freshness review-lane reconcile: fast-forward, create-from, diverged refusal / warn, CORE-12) |
+| `agent action review` | done | `TestDiffImplementReviewLoop` (5.4, 5.8, 5.11, 5.19), `TestDiffReviewLaneOriginFreshness`, `TestDiffReviewForceMovedUnimplemented` (force-moved WP never implemented: claim committed, lane sync fails, `WP02 claim was committed; the lane sync ... failed` + `STATUS_ROLLBACK_REFUSED`), `TestDiffClaimCommitRefusedByHook` (transactional emit refused by a hook: rows cut, staging restored, `safe_commit failed on '<ref>'`; the same door under `agent tasks move-task`) | — (origin-freshness review-lane reconcile: fast-forward, create-from, diverged refusal / warn, CORE-12) |
 | `implement` (top level) | done | `TestDiffImplementReviewLoop`, `TestDiffCharterPreflightFreshness`, `TestLocalRuntimeLoop` | `--owned-checkout` is area OWN's |
 | `implement --base` (explicit base ref, unresolved/unhonorable refusals, fresh-base guard) | done | `TestDiffImplementBaseRecover` | — |
 | `implement --recover` (crash recovery: lane worktree / workspace context rebuilt) | done | `TestDiffImplementBaseRecover` | — |
@@ -39,6 +39,15 @@ timestamps, prompt hashes). `TestLocalRuntimeLoop` runs without the oracle.
 | `agent tests stale-check` (Python AST port: `internal/pyast` + `internal/staleassert`) | done | `TestDiffRuntimeMisc`, `TestDiffStaleCheck` | test-only: stderr compares the last line (irreducible, CORE-20: the oracle prints interpreter `UserWarning`s with site-packages paths first) |
 | `reconcile` (dossier projection: every non-hidden file of the feature dir, WP static-projection hash, fail-closed schema-invalid WPs, all three divergence kinds) | done | `TestDiffRuntimeMisc` (no snapshot), `TestDiffReconcileDossier`, `TestDiffReconcileSnapshotLoadErrors` | — (snapshot load errors carry upstream's json / UnicodeDecodeError / mapping TypeError / pydantic texts, CORE-16) |
 | help pages of all of the above | done | `TestDiffRuntimeHelp`, `go test ./internal/helpparity` | — |
+
+Claim failure paths (wave 5 FIX2): the legacy follow-up commit (a mission
+without `meta.json`, whose emit does not commit) cannot be set up with the
+oracle's create; its failure arm (`Error: Failed to commit workflow status
+update for WPnn: <exc>. Event log rolled back to pre-emit state.`, or the
+committed-claim report) is covered by Go-only `TestHandleCommitFailure*`.
+Upstream's follow-up `BookkeepingPolicyRefused` arm is not ported: the
+claim's own transactional emit runs the same preflight policy on the same
+destination first, so the follow-up transaction cannot be the one refused.
 
 The charter preflight (`implement`, `next`) evaluates the three-layer charter freshness (abort in advancing mode with the `CHARTER_PREFLIGHT_FAILED` JSON envelope, logged warning in query mode, opt-in auto-refresh, deactivated default-profile advisories). See docs/parity/core.md for the wave-5 API, irreducible differences and remaining work.
 
@@ -67,8 +76,15 @@ The charter preflight (`implement`, `next`) evaluates the three-layer charter fr
 - Lifecycle side effects: `PairPreviousLifecycleRecord`, `WriteIssuanceRecord`, `EmitMissionNextInvoked`.
 - Run store: `Template`, `TemplateStep`, `ParseTemplate`, `(*Template).HasStep`, `Snapshot`, `ReadSnapshot`, `RunRef`, `ExistingRun`, `GetOrStartRun`.
 
-### internal/coord (additive, `emit_batch.go`)
+### internal/missionwrite (wave 5 FIX2, new)
 
+Port of `status/mission_write.py`'s verified rollback: `StatusRollbackRefused`, `RollbackRefusal` (and the seven `Refusal*` values), `RollbackPoint{EventsPath, StatusPath, PreEventSize, PreStatus, EventsExisted}`, `Capture(dir)`, `(*RollbackPoint).AppendedEventIDs() ([]string, ok)`, `(*RollbackPoint).Restore(errw, expected, hasExpected) RollbackOutcome` (cuts only the expected, uncommitted tail, then restores status.json; a refusal is logged as a rich WARNING record on errw and leaves both files byte-identical), `RollbackOutcome{RolledBack, Refusal, EventsPath}.Message()`.
+
+`workflow.CommitWorkflowChange` takes the claim's `*missionwrite.RollbackPoint` as its last argument (wave 5 FIX2); `workflow.InstallCommitGuard` backs a foreign hook up with `assetpreserve.BackupBeforeOverwrite`.
+
+### internal/coord (additive, `emit_batch.go`; wave 5 FIX2 `emit_txn.go`)
+
+- Transactional emits (`EmitTransition`, `EmitTransitionBatch`, auto-committed `EmitAnnotation`) commit like `BookkeepingTransaction.commit`: on a refused commit the appended rows are cut (`internal/missionwrite`), status.json and the paths' staging are restored, and the error reads `safe_commit failed on '<ref>': safe_commit: git commit failed in <checkout> for destination_ref='<ref>': <git output>[ [STATUS_ROLLBACK_REFUSED: ...]]`.
 - `(*Surface).EmitTransitionBatch(reqs []*status.TransitionRequest) ([]*status.Event, error)` — one "status transition batch" commit for several transitions.
 - `(*Surface).AppendAnnotationUncommitted(wpID, delta, actor)` — append a resolved-binding annotation without committing.
 
