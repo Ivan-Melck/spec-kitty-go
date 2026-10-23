@@ -16,6 +16,8 @@ func TestReprWordBoundary(t *testing.T) {
 		{"3.14e5x", "\x1b[1;36m3.\x1b[0m14e5x\n"},
 		{"42abc", "42abc\n"},
 		{"0.5.", "\x1b[1;36m0.5\x1b[0m.\n"},
+		{"COMMITS=1.", "\x1b[33mCOMMITS\x1b[0m=\x1b[1;36m1\x1b[0m.\n"},
+		{"stale: 3581296.2m", "stale: \x1b[1;36m3581296.\x1b[0m2m\n"},
 	} {
 		var b strings.Builder
 		(&Console{Width: 80, Color: Standard, Highlighter: ReprHighlighter{}}).Print(&b, c[0])
