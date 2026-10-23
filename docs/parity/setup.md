@@ -158,6 +158,23 @@ test: `testkit` points its PyPI lookups at a closed local port (see
   pack before `load_org_pack` (no spurious `PACK_LEVEL_MISSING`
   UserWarning). Test: `TestCharterSkillReprojectionMatchesOracle`.
 
+* Wave 5 FIX3 (colour runs, `SPEC_KITTY_TEST_COLOR=standard`): every
+  setup differential test passes with colour on. The legacy plain table and
+  panel helpers are gone from setup: `upgrade` (Migration Plan
+  `rich.RichTable` with `bold cyan` header and bright_white/dim/cyan
+  columns, yellow-bordered DRY RUN panel, soft-wrapped highlighted section
+  items, `_CLOSING_STYLES` closing line, dim notices), `agent config status`
+  (Agent Status table with column styles and status markup), `agent config
+  sync --json` (`console.print(json.dumps(...))`, highlighted),
+  `config --show-origin` (styled columns, `_format_tier` colours),
+  `verify-setup` (cyan-bordered panels, the two feature tables) and the
+  roo deprecation notice (yellow panel on stderr). `init` draws the Live
+  step tree (`setup/live.go`, see Irreducible differences). Helpers:
+  `printStyled` (`console.print(markup=False, highlight=False, style=)`),
+  `softWrap`. Foundation change (additive, test-only): `testkit`
+  `Sandbox.Normalize` also masks sandbox paths the highlighter split into
+  styled runs (`replaceSGRTolerant`).
+
 ## Irreducible differences
 
 * Freshness-lock `template_source_signature` (MAINT-05): upstream hashes
