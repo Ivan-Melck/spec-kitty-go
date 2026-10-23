@@ -62,13 +62,15 @@ actor lookup order and the 30 s `bd`/`fp` timeout (`TestOracleSyncActorLookup`,
   "The above exception was the direct cause..." separators and exception
   lines; the frames inside the panel are rendered sourceless (`in
   _run_or_exit:98`), because upstream's show the wheel's site-packages paths
-  and source excerpts.
-- `.kittify/config.yaml` written for a document whose merged map is shared
-  by several `<<:` referers: ruamel updates referers on delete (`_ref`);
-  `rtyaml` does not (the tracker never deletes merged keys).
+  and Python source excerpts.
 - The SQLite cache's rewritten tracker tables are laid out by sqlitedb's
   bulk loader, not SQLite's incremental b-tree balancing: same rows, indexes
-  and integrity, different cell placement inside those tables' pages.
+  and integrity, different cell placement inside those tables' pages
+  (SQLite's internal page layout).
+
+(FIX5: the former ruamel `_ref` entry — referers of a shared `<<:` map are
+updated on delete — is not an observable difference: no tracker command
+deletes a key that comes from a merged map.)
 
 ## Remaining work
 

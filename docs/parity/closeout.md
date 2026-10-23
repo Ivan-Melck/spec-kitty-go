@@ -39,10 +39,13 @@ name-status file sets; worktree list; status; branches; all refs).
 | `consolidate --strategy rebase` (rebase + fast-forward, per-SHA reconciliation, rollback) | done | `TestDiffConsolidateRebase`, `TestDiffConsolidateReconcile/teammate-rebase` | — |
 | `consolidate` stale-lane auto-rebase with the conflict classifier (status event-log union, status.json rematerialize, coordination/target-owned take-theirs, pyproject deps / `__init__` imports / URL-list unions, uv.lock regenerate, default manual) and `guarded_merge_abort` (CONS-07) | done | `TestDiffConsolidateAutoRebaseManual` (manual conflict aborts, lane stays stale), `TestDiffConsolidateAutoRebaseGuardedAbort` (an operator edit in the lane worktree keeps the merge in progress); orchestrator `TestDiffConsolidateMissionAutoRebaseClassifier`; classifier and TOML validator against CPython in `internal/autorebase` | — (TOML validation uses PYF's `internal/pytoml` with tomllib's messages) |
 | `consolidate --skip-lanes` (no-lane missions: synthesized manifest, planning-artifact closeout) | done | `TestDiffConsolidateSkipLanes` | — |
+| `consolidate` review-artifact consistency gate (`REJECTED_REVIEW_ARTIFACT_CONFLICT`: a terminal WP whose event-sourced verdict is `changes_requested` without a complete override blocks the dry-run forecast — human block and `--json` `blocked`/`blockers` — and the real merge before any merge state is written; `--skip-review-artifact-check --note` records committed `ReviewOverride` evidence per WP and merges) | done (FIX5) | `TestDiffConsolidateReviewArtifactGate` (forged rejected verdict on the coordination log: dry-run, `--json`, `review`, refusal, skip; git state compared) | — |
+| `consolidate` materialization-drift warning (`_warn_on_materialization_drift`: a present status.json disagreeing with its event log is listed before the run) | done (FIX5) | `TestDiffConsolidateUnreadableStatus/coord-drift` | — |
+| unreadable or corrupt status logs (`StoreError` with its chained `JSONDecodeError`, `UnicodeDecodeError`, `IsADirectoryError`, `PermissionError`): dependency-gate skip text (primary log read through `read_wp_frontmatter`), uncaught tracebacks of the dry-run review-artifact preview and of the run's drift check (coordination log), `agent tasks status` `status_failed` | done (FIX5) | `TestDiffConsolidateUnreadableStatus` (10 cases), `TestOracleGitProbeErrorText` (every `GitProbeError` probe against the oracle's own `git_probes` functions) | traceback frames sourceless (see Irreducible differences) |
 | `consolidate` origin freshness gate (status evidence + approved lane branches, enforce/warn/off) and `--push` (target sync preflight `TARGET_BRANCH_NOT_SYNCHRONIZED`/`REFRESH_FAILED`, push after the stale check) | done | `TestDiffConsolidatePush` (local bare remote) | — |
 | `consolidate` stale-assertion analyzer (`internal/staleassert`, Python AST port) | done | `TestDiffConsolidateTrace`, `TestDiffStaleCheck` (runtime) | — |
 | `agent mission merge` (delegates to consolidate; default strategy `merge`; `--auto-retry` relocation via `spec-kitty` on PATH) | done | `TestDiffConsolidateNotReady`, `TestDiffConsolidateStrategies/coord-agent-merge`, `TestDiffAgentMergeAutoRetry` | — |
-| `review` (merged-mission validation: WP lane gate, dead-code scan, `mission-review-report.md`; `--mode lightweight|post-merge`) | done | `TestDiffConsolidate` (TRACE 8.3), `TestDiffConsolidateTrace`, `TestDiffConsolidateNotReady` | dead-code scan is a port of the upstream Python-symbol heuristic |
+| `review` (merged-mission validation: WP lane gate incl. the review-artifact consistency finding, dead-code scan, `mission-review-report.md`; `--mode lightweight|post-merge`) | done | `TestDiffConsolidate` (TRACE 8.3), `TestDiffConsolidateTrace`, `TestDiffConsolidateNotReady`, `TestDiffConsolidateReviewArtifactGate` | dead-code scan is a port of the upstream Python-symbol heuristic |
 | `retrospect create` (`--overwrite/--update`, `--json`) | done | `TestDiffConsolidate`, `TestDiffConsolidateNotReady` | none known |
 | `retrospect summary` (`--json`, `--json-out`, `--limit`, `--since`, `--filter`, `--include-malformed`) | done | `TestDiffConsolidate` | none known |
 | `retrospect backfill` (`--dry-run`, `--json`, `--since/--until/--mission`, `--emit-skipped`, `--emit-failures`; `.kittify/missions/` registry, pre-screened skips before `already_exists`, `missing_artifacts` / `generator_exception` failures, `RetrospectiveSkipped` / `RetrospectiveCaptureFailed` events, authored record + commit) | done | `TestDiffConsolidate` (`--dry-run --json`), `TestDiffRetrospectBackfill` (CONS-10: dry-run, writing path, emit flags, human panel, filter, bad date) | — |
@@ -117,7 +120,14 @@ done transitions (as upstream), not after the retrospective event.
   `ProtectedStatusTargetRefusal(root, slug, manifest, excluded)
   *PolicyRefusal` (`excluded` nil = acceptably canceled WPs), `PolicyRefusal`.
 - `Options` gained `AllowSparse`, `AttestCanceled`, `AttestApproved`,
-  `AttestReason`.
+  `AttestReason`; FIX5: `SkipReviewArtifact`, `Note`
+  (`--skip-review-artifact-check` / `--note`).
+- Review-artifact consistency gate (FIX5, `review_artifacts.go`):
+  `ReviewArtifactFindings(statusDir, wpIDs) ([]ReviewArtifactFinding, error)`
+  (find_rejected_review_artifact_conflicts over materialize_snapshot; read
+  errors propagate), `ReviewArtifactFinding{WPID, Lane, Verdict}` with
+  `Format()` and `Diagnostic()`. Uncaught-exception rendering of status-log
+  failures and the drift warning live in `pyexc.go` (package-internal).
 - Orchestrator lane merge (area I, extended): `MergePreflight`,
   `RunLaneMerge` (evaluates the merge gates, the protected status target and
   the approved bound), `LaneMergeError`, `ApprovedBoundError{Msg, Codes}`,
@@ -159,6 +169,12 @@ over the whole upstream source tree).
 
 ## Foundation changes / extensions to other areas' packages
 
+FIX5: `internal/status` event-log reads word failures like CPython
+(`StoreError{Msg, Cause}`, `*pyjson.OSError`, `*pyjson.UnicodeError`, JSON
+via `pyjson.Loads`); `coord.Surface.EmitAnnotationAt` (explicit event
+timestamp); `pyjson.AsOSError` / `OSErrorString` / `Strip` / `Splitlines` /
+`TranslateNewlines` / `FileLines` (see util.md).
+
 None to area A. Wave 4 (area L) uses area H's `internal/migrate`
 (`VerifyPrMergeEvidence`, `RecordPrMergeBaseline`) for `accept
 --merge-commit`, and wires the merge gates and origin gate into area I's
@@ -187,13 +203,21 @@ when the two sandboxes' commits fell into different seconds;
 
 ## Irreducible differences
 
-- Excluded (canceled) commits are listed in a stable sorted order; upstream
-  iterates a Python `frozenset` of SHAs, whose order is not deterministic
-  (`excluded (canceled/removed) commit ... IS reachable` clauses of a merge/rebase
-  FAIL naming several canceled commits).
-- Refusal details that quote a Python exception (`coordination surface could
-  not be materialized: <exc>`, the `StoreError` text of an unreadable status log,
-  a `GitProbeError` naming git's stderr) carry the Go error text instead.
+- Excluded (canceled) commits in a merge/rebase FAIL (`excluded
+  (canceled/removed) commit ... IS reachable` clauses naming several
+  commits) are listed in sorted order. Upstream iterates
+  `ApprovedWpCommitSet.excluded_shas`, a `frozenset[str]` of SHAs: string
+  hashing is randomised per process (`PYTHONHASHSEED`), so upstream's own
+  order changes from run to run and has no fixed value to match.
+- Uncaught tracebacks (unreadable coordination log in the dry-run preview or
+  the drift check) render the exact exception lines and chaining, but the
+  frames inside the panel are sourceless: upstream's show site-packages
+  paths and Python source excerpts.
+
+(FIX5: the former "refusal details quote the Go error text" entry is fixed —
+status-log failures now carry CPython's `StoreError` / `JSONDecodeError` /
+`UnicodeDecodeError` / `OSError` text and `GitProbeError` probes run git with
+upstream's argv; see the rows above.)
 
 ## Remaining work
 

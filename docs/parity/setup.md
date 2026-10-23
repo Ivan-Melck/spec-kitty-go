@@ -186,21 +186,23 @@ test: `testkit` points its PyPI lookups at a closed local port (see
 ## Irreducible differences
 
 * Freshness-lock `template_source_signature` (MAINT-05): upstream hashes
-  its own Python module files and their install paths; the Go binary
-  records a signature of its embedded templates and renderer identity.
-* `metadata.yaml` `environment.python_version` (MAINT-07): there is no
-  Python interpreter; the Go toolchain version is recorded.
-  `platform`/`platform_version` match.
-* `agent config sync` orphan order (MAINT-09): upstream iterates a
-  hash-randomised set; Go sorts.
-* `doctor bytecode` / `regen` (MAINT-14): no bytecode exists; fixture
-  regeneration is a Python maintainer tool.
+  its own Python module files and their site-packages install paths; the Go
+  binary records a signature of its embedded templates and renderer identity.
+* `metadata.yaml` `environment.python_version` (MAINT-07): the interpreter's
+  version; there is no Python interpreter, the Go toolchain version is
+  recorded. `platform`/`platform_version` match.
+* `agent config sync` orphan order (MAINT-09): upstream iterates
+  `set(AGENT_DIR_TO_KEY.values())`, a `set[str]` whose order follows
+  per-process string-hash randomisation; Go sorts.
+* `doctor bytecode` / `regen` (MAINT-14): the bytecode doctor inspects the
+  interpreter's installed `.pyc` files and `regen` regenerates fixtures from
+  the upstream source checkout; a Go binary has neither.
 * Install-method detection: upstream inspects the Python interpreter
   (`sys.executable` under uv/pipx/Homebrew prefixes, a source checkout,
   the distribution's `INSTALLER` record). A standalone Go binary has none
   of these, so `install_method` is always `unknown` — the same answer
   upstream gives for an install outside those channels (the oracle venv
-  install also reports `unknown`).
+  install also reports `unknown`). Interpreter identity.
 * `init` progress tree on a terminal (TTY or `FORCE_COLOR`, TERM not
   dumb): upstream draws the tracker through `Live(..., transient=True,
   refresh_per_second=8)` on the `CliConsole`, whose segment sanitizer strips

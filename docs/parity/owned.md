@@ -117,13 +117,18 @@ Additive hooks in other packages: `lanes.OwnedCheckoutKind` /
 * An uncaught seam exception (`MissionSelectorAmbiguous`,
   `UnsafePathSegmentError`, `ActionContextError`, `PlacementMismatchError`)
   prints rich's framed traceback upstream with site-packages frames and
-  source excerpts; Go prints the same panel and exception lines with
+  Python source excerpts; Go prints the same panel and exception lines with
   sourceless frames (the tests compare the exception lines).
-* Values masked in the tests: next run ids (uuid4), prompt cache keys
-  (sha256 of a sandbox path), correlation ids, `report_transaction`
-  tokens, `issue_counts` key order (hash-randomized frozenset).
-* The checkout claim-lock holder sidecar records Go's pid and the thread
-  name `MainThread`.
+* `issue_counts` key order: upstream iterates a `frozenset` of severity
+  strings (hash-randomised per process); Go uses one fixed order.
+
+Values the tests mask that are not differences: next run ids (uuid4),
+correlation ids and `report_transaction` tokens are random per run in both
+implementations; prompt cache keys are the sha256 of the absolute sandbox
+path (equal for equal paths; masked because the two sandboxes live in
+different directories); the checkout claim-lock holder sidecar records the
+writing process's pid (process identity) and the thread name `MainThread`
+(as upstream).
 
 ## Remaining work
 

@@ -42,24 +42,33 @@ and compare exit code, normalized stdout/stderr and the resulting file trees
   "During handling ..." separators, `[NOTE]` lines, exception lines wrapped
   like rich). Frames inside the panel are rendered sourceless
   (`in tail_command:159`): upstream's show wheel site-packages paths and
-  source excerpts. Tests mask the panel body (`testkit.MaskTracebackFrames`).
+  Python source excerpts. Tests mask the panel body
+  (`testkit.MaskTracebackFrames`).
 - `workflow export`: built-in workflows are embedded, so their paths print as
   `<spec-kitty>/charter/offering/workflows/...` instead of the wheel's
   site-packages path (only in the "Unknown workflow_id ... Searched:"
   message); `plugin build` collision warnings name
   `<spec-kitty>/charter/offering/agent_profiles/repository.py:558` likewise.
-- YAML `ReaderError` in files over 8 KiB: PyYAML reports an undecodable /
-  non-printable character when its 8 KiB buffer reaches it, after any earlier
-  syntax error; the port checks the whole input first.
-- Recursive YAML aliases (`&a [*a]`) build cyclic Python objects upstream;
-  the jsonx value space cannot hold cycles.
-- Coloured output: rich's OSC 8 hyperlink ids are random per process, so
-  `[link=...]` markup is not reproducible byte for byte. Traceback frames
-  (above) keep upstream's pygments-styled source excerpts out of reach.
-- Colour (PYF-14, area COLOR): every renderer goes through the segment
-  engine in `internal/rich` (see help.md "Colour" and the engine API there);
-  the `internal/colorparity` harness and `SPEC_KITTY_TEST_COLOR=standard|256|
-  truecolor` (reruns every differential suite with colour on) verify it.
+- Coloured output: rich's OSC 8 hyperlink ids come from
+  `itertools.count(getrandbits(24))`, random per process, so `[link=...]`
+  markup is not reproducible byte for byte. Traceback frames (above) keep
+  upstream's pygments-styled source excerpts out of reach.
+
+(FIX5: two former entries are fixed. YAML stream inputs are read lazily in
+upstream's chunks — a special character or undecodable byte past the part
+read so far surfaces after an earlier scanner error, text streams report
+`UnicodeDecodeError` within TextIOWrapper's 8192-byte chunk
+(`pyyaml.TestOracleStreamReaderChunks`). Recursive aliases follow
+`recursive_objects`: ruamel round-trip mapping values built deep give None,
+PyYAML raises "found unconstructable recursive node" there, cycles elsewhere,
+and `pyjson.Repr` renders them as `[...]` / `{...}`
+(`pyyaml.TestOracleRecursiveAliases`).)
+
+Colour is not a difference: every renderer goes through the segment engine
+in `internal/rich` (PYF-14, area COLOR; see help.md "Colour" and the engine
+API there); the `internal/colorparity` harness and
+`SPEC_KITTY_TEST_COLOR=standard|256|truecolor` (reruns every differential
+suite with colour on) verify it.
 
 ## Remaining work
 
@@ -112,7 +121,11 @@ Shared packages:
   `PyInt`, `PyFloat`, `DecodeBase64`; round-trip comment plumbing
   (`CommentToken`, `PyList`, `NewList`, `Truthy`, `CommentAt`, `ListAt`);
   `Dump` (`yaml.dump` emitter). Corpus tests vs PyYAML/ruamel
-  (`testdata/ygen.py`).
+  (`testdata/ygen.py`). FIX5: stream inputs (`FileInput`, `TextFileInput`)
+  go through the lazy chunked reader of `yaml.reader.Reader` (`reader.go`;
+  `TextFileInput` models TextIOWrapper and no longer fails up front: a
+  decoding error is returned by the load as `*pyjson.UnicodeError`); the
+  constructor keeps `recursive_objects` semantics for recursive aliases.
 - `internal/yamlx`: `Parse`, `ParseWith(src, ParseOptions{Safe, File,
   TextFile})`, `ParseObject` (ruamel loader, jsonx value space), `Emit`,
   `EmitWith`, `FormatScalar`.
@@ -131,7 +144,15 @@ Shared packages:
   `ContentSnapshot(before)`, `Doc.Apply(after, snap)`, `PlainEqual`.
   Verified against ruamel on a 17.5k-case corpus (`testdata/rtgen.py`:
   load/dump, assign a tracker block, delete a key) and `merge_test.go`.
-- `internal/pyjson`: CPython `json` decoding, `repr`/`str` semantics.
+- `internal/pyjson`: CPython `json` decoding, `repr`/`str` semantics
+  (FIX5: `Repr` renders self-containing lists/dicts as `[...]` / `{...}`).
+  FIX5 additions (`oserror.go`): `OSError{Type, Errno, Strerror, Filename,
+  Filename2, HasName, HasName2}` (str(exc) of the errno subclass CPython
+  raises), `AsOSError(err)`, `OSErrorString(err)`; text helpers `IsSpace`,
+  `Strip` (str.strip), `Splitlines` (str.splitlines), `TranslateNewlines`
+  (universal newlines), `FileLines` (`for line in fh`).
+- `internal/migrate` (FIX5): `PyRglobAll(dir)` is CPython 3.13
+  `Path(dir).rglob("*")` order (scandir order, LIFO directory walk).
 
 ## Foundation changes
 

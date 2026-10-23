@@ -229,17 +229,30 @@ Additive exports elsewhere (CORE-owned packages):
 
 ## Irreducible differences
 
-* Commit-guard pre-commit hook (CORE-11): the hook installed by `agent action implement` invokes the running Go binary; upstream's pins its Python entry point. A Go build has no Python entry point to name.
-* `agent tests stale-check` test normalisation (CORE-20): the oracle prints interpreter `UserWarning`s with site-packages paths on stderr first; only the final line is compared.
-* Override-tier pre-review runs (`pre_review_test_scope`): upstream runs `sys.executable -m pytest`; Go runs `python3 -m pytest` (or `uv run … pytest` with uv + pyproject.toml, like upstream).
-* `completeness_status must be one of {...}` (dossier snapshot validation) renders a Python set whose order depends on string-hash randomisation; Go prints one fixed order.
-* Built-in asset paths in prompts (`Reference Docs`) name the Go pack cache instead of site-packages (cross-cutting item 7).
-* Claim liveness on darwin is Go-only tested (no oracle on that platform).
-* `MissionSelectorAmbiguous` traceback (CORE-19): rich's framed traceback with the exact final exception lines (f6127735); the frames inside the panel are sourceless (upstream shows site-packages paths and source excerpts).
+* Commit-guard pre-commit hook (CORE-11): the hook written by `agent action implement` invokes the running Go binary; upstream's pins its own Python interpreter and entry point. Interpreter identity: a Go build has neither.
+* `agent tests stale-check` (CORE-20): for an unparsable test file upstream logs a `SyntaxError while parsing <file>: <exc>` UserWarning record. `<exc>` is CPython's parser diagnostic (PEG-parser wording, interpreter-version specific) and the record's location is the site-packages file with its source excerpt; it is not reproduced. (FIX5: the run_check FP-ceiling UserWarning record is now logged with its site-packages-relative location, `TestDiffStaleCheck`.)
+* Override-tier pre-review runs (`pre_review_test_scope`): upstream runs `sys.executable -m pytest` (its own interpreter); Go runs `python3 -m pytest` (or `uv run … pytest` with uv + pyproject.toml, like upstream). Interpreter identity.
+* `completeness_status must be one of {...}` (dossier snapshot validation): upstream formats a `set` of three strings, whose iteration order follows per-process string-hash randomisation (different `PYTHONHASHSEED` values print different orders); Go prints one fixed order.
+* Built-in asset paths in prompts (`Reference Docs`) name the Go pack cache instead of the wheel's site-packages tree (cross-cutting item 7). Site-packages path.
+* `MissionSelectorAmbiguous` traceback (CORE-19): rich's framed traceback with the exact exception lines; the frames inside the panel are sourceless (upstream shows site-packages paths and Python source excerpts).
+
+Not a difference, a coverage note: claim liveness on darwin is Go-only tested (there is no oracle on that platform).
 
 ## Remaining work
 
 * None for CORE-01..CORE-20 / DOCS-01 / DOCS-07.
+* Found in wave 5 FIX5 (not on the inventory): `next`, `agent action
+  implement` and the status board's execution-mode probe validate WP
+  frontmatter through `WPMetadata` upstream (pydantic `1 validation error for
+  WPMetadata ...`; `next` reports `Could not read canonical WORK_PACKAGE_TASK
+  file <path>: <error>` with `mission_state: blocked`, the board shows
+  `workspace_kind: unknown`); Go does not, e.g. for a non-string list item.
+  The validator exists (`dossier.WPMetadataValidationError`) but is not wired
+  into these paths.
+* Found in wave 5 FIX5: the status board reads frontmatter scalars with the
+  lenient `extract_scalar` upstream, so a WP whose frontmatter is not valid
+  YAML still renders; Go parses the frontmatter and fails with
+  `status_failed`.
 
 ## Wave 5 sweep (area SWEEP)
 

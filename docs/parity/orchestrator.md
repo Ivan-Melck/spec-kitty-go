@@ -75,8 +75,9 @@ the inventory (`go test ./internal/helpparity`).
 ## Irreducible differences (design / planning verbs)
 
 * `artifact-submit`: when several parents are stale, the one reported first
-  follows a fixed order (specification, plan, outline); upstream iterates a
-  Python `set`, whose order is hash-randomized per process.
+  follows a fixed order (specification, plan, outline); upstream iterates
+  `required | request.parents.keys()`, a `set[str]` whose order follows
+  per-process string-hash randomisation.
 
 ## Remaining work (design / planning verbs)
 

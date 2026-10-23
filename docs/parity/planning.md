@@ -74,12 +74,14 @@ cancels, blank defers, anything else resolves), matching
   site-packages path for packaged templates, the Go binary records the
   in-binary asset address (`packs/built-in/missions/...`). The
   `package:built-in` / `package:mission-assets` digests do match (the two
-  wheel-only `__init__.py` markers are folded in).
+  wheel-only `__init__.py` markers are folded in). Site-packages path.
 * Parallelization risk report: `coupling:` lines for more than one coupled
   module of a lane pair are printed in sorted module order; upstream iterates
-  a Python `set`, whose order is hash-randomized per process.
+  `_scope_to_module_paths(...)`, a `set[str]` whose order follows per-process
+  string-hash randomisation.
 * `analysis-findings` `issue_counts` key order: upstream iterates a
-  `frozenset` (hash-randomized); Go uses critical, high, medium, low, info.
+  `frozenset` of severity strings (hash-randomised per process); Go uses
+  critical, high, medium, low, info.
 
 ## Remaining work
 
