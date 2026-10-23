@@ -70,8 +70,9 @@ func TestDiffDoctorProvenanceBadPacksRoot(t *testing.T) {
 		s.WriteFile(".kittify/charter/charter.yaml", "catalog:\n  mission: software-dev\n  template_set: default\n  references:\n"+
 			"  - id: DIRECTIVE:x\n    kind: directive\n    source_path: /nonexistent-packs-root/built-in/directives/x.yaml\n")
 	})
-	// stdout + exit only: upstream's UserWarning lines carry site-packages
-	// source frames (irreducible).
+	// This test compares stdout and exit status. Ordered warning records,
+	// including source lines, are covered by TestParityBadPacksRootWarnings in
+	// commands/doctrine (only the site-packages prefix and wrapping differ).
 	for _, args := range [][]string{{"doctor", "provenance"}, {"doctor", "provenance", "--json"}} {
 		p.Compare(false, args...)
 	}

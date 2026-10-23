@@ -87,6 +87,7 @@ func ParseProfile(b []byte) (Profile, error) {
 // BuiltinProfiles loads the shipped profiles (sorted by id), excluding
 // sentinel profiles (human-in-charge), which have no native projection.
 func BuiltinProfiles() ([]Profile, error) {
+	assets.WarnPackRoot(assets.OfferingPackRoot)
 	ents, err := assets.List(ProfilesAssetDir)
 	if err != nil {
 		return nil, err
@@ -395,6 +396,7 @@ func ProjectProfiles(root string, agentKeys []string) (ProjectionResult, error) 
 					return res, err
 				}
 			}
+			assets.WarnPackRoot(assets.ProvenancePackRoot)
 			manifest[rel] = jsonx.NewObject(
 				"file_hash", sha256Hex([]byte(content)),
 				"format", h.Format,

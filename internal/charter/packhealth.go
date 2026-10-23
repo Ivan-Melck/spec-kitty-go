@@ -14,6 +14,7 @@ import (
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonschema"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pywarnings"
 	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
@@ -529,10 +530,15 @@ func CollectCharterPackHealth(repoRoot string) *CharterPackHealthReport {
 	rep.OrgDRG = CollectOrgLayerData(repoRoot)
 	og, pg := kindDirs(orgRoots, projectRoot, dct.GlossaryPack)
 	var gl *repoLoad
-	catchWarnings(func() { gl = loadKindRepo(dct.GlossaryPack, "glossarypack", nil, og, pg) })
+	captured := pywarnings.Capture(func() { gl = loadKindRepo(dct.GlossaryPack, "glossarypack", nil, og, pg) })
 	rep.GlossaryCount = len(gl.items)
 	for _, d := range gl.items {
 		rep.TermCount += len(d.GetList("terms"))
+	}
+	for _, w := range captured {
+		if w.Category == "UserWarning" {
+			rep.GlossaryBad = append(rep.GlossaryBad, parseSkipped(w.Message))
+		}
 	}
 	for _, s := range gl.skipped {
 		rep.GlossaryBad = append(rep.GlossaryBad, parseSkipped(s))
@@ -540,14 +546,25 @@ func CollectCharterPackHealth(repoRoot string) *CharterPackHealthReport {
 	// _collect_pack_skill_health builds the active charter service, whose
 	// offering service runs infer_repo_languages (a recorded interview read);
 	// a load failure degrades to one synthetic invalid record.
-	if err := CatchLoad(func() { InferRepoLanguages(repoRoot, nil, false) }); err != nil {
-		rep.SkillBad = append(rep.SkillBad, SkippedFile{Layer: "unknown", Path: "unknown", ErrorSummary: "pack-skill health load error: " + ExceptionMessage(err)})
-		return rep
-	}
 	so, sp := kindDirs(orgRoots, projectRoot, dct.Skill)
 	var sk *repoLoad
-	catchWarnings(func() { sk = loadKindRepo(dct.Skill, "pack-skill", nil, so, sp) })
+	var skillErr error
+	captured = pywarnings.Capture(func() {
+		skillErr = CatchLoad(func() { InferRepoLanguages(repoRoot, nil, false) })
+		if skillErr == nil {
+			sk = loadKindRepo(dct.Skill, "pack-skill", nil, so, sp)
+		}
+	})
+	if skillErr != nil {
+		rep.SkillBad = append(rep.SkillBad, SkippedFile{Layer: "unknown", Path: "unknown", ErrorSummary: "pack-skill health load error: " + ExceptionMessage(skillErr)})
+		return rep
+	}
 	rep.SkillCount = len(sk.items)
+	for _, w := range captured {
+		if w.Category == "UserWarning" {
+			rep.SkillBad = append(rep.SkillBad, parseSkipped(w.Message))
+		}
+	}
 	for _, s := range sk.skipped {
 		rep.SkillBad = append(rep.SkillBad, parseSkipped(s))
 	}

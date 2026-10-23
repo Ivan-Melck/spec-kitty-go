@@ -103,6 +103,7 @@ var (
 // (or SPEC_KITTY_PACKS_ROOT/built-in when set); Disk is a real directory
 // holding the same files so that paths shown to agents can be opened.
 func BuiltIn() *PackFS {
+	assets.WarnPackRoot(assets.OfferingPackRoot)
 	builtInOnce.Do(func() {
 		if v := os.Getenv("SPEC_KITTY_PACKS_ROOT"); v != "" {
 			d := filepath.Join(v, "built-in")

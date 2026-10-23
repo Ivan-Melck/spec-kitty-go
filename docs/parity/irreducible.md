@@ -29,7 +29,7 @@ page layout. Deterministic Python text and behaviour were ported.
 | doctrine | `retrospective.proposal.rejected` order | irreducible | `set[str]` of proposal ids |
 | maintenance | encoding-provenance pack path | irreducible | site-packages path |
 | maintenance | doctor provenance built-in root | irreducible | site-packages path |
-| maintenance | misconfigured `SPEC_KITTY_PACKS_ROOT` warnings | moved to Remaining work | location/excerpt are site-packages-specific, but the message is deterministic; the per-command emission sequence is not modelled |
+| maintenance | misconfigured `SPEC_KITTY_PACKS_ROOT` warnings | shared doors fixed; coverage ongoing | caller-specific records, registry resets, capture and unhealthy charter-pack findings are implemented; `TestParityBadPacksRootWarnings`, `TestParityPackRootWarningPaths`. Further command-sequence coverage remains in maintenance.md |
 | maintenance | rebaseline `rglob` order | fixed | CPython 3.13 `Path.rglob` order (`migrate.PyRglobAll`). `TestDiffMigrateRebaselineRglobOrder`, `TestOraclePyRglobAll` |
 | maintenance | uncaught traceback frames | irreducible | site-packages frames and source excerpts |
 | orchestrator | artifact-submit stale-parent order | irreducible | `required | parents.keys()` is a `set[str]` |
@@ -66,5 +66,6 @@ Found while checking, not on any list:
 - fixed: the status board reads frontmatter scalars leniently
   (`extract_scalar`) and `next` / `implement` report the `FrontmatterError`
   text (`TestDiffWPMetadataValidation/badyaml`).
-- open (maintenance.md, Remaining work): `SPEC_KITTY_PACKS_ROOT`
-  misconfiguration warning records.
+- continuation: `SPEC_KITTY_PACKS_ROOT` misconfiguration warning records and
+  captured health findings are implemented at shared resolution doors;
+  broader command-sequence coverage remains (maintenance.md, Remaining work).

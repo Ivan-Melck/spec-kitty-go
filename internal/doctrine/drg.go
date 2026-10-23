@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
@@ -231,6 +232,7 @@ var (
 
 // BuiltInGraph returns (a copy of) the shipped built-in DRG.
 func BuiltInGraph() (*Graph, error) {
+	assets.WarnPackRoot(assets.OfferingPackRoot)
 	builtInGraphOnce.Do(func() { builtInGraph, builtInGraphErr = loadGraphFS(BuiltIn()) })
 	if builtInGraphErr != nil {
 		return nil, builtInGraphErr

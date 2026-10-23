@@ -16,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
+	"github.com/spec-kitty/go-kitty3/internal/toolsurface"
 )
 
 // LintHookCommand / LintHookMatcher are the lint_on_edit harness hook.
@@ -198,11 +199,12 @@ func runAgentConfigList(ctx *cli.Context) error {
 		out(w, "\nRun 'spec-kitty init' or use 'spec-kitty agent config add' to add agents.")
 		return nil
 	}
+	presence := toolsurface.Presence(root, ac.Available)
 	out(w, "[cyan]Configured agents:[/cyan]")
 	for _, k := range ac.Available {
-		loc, ok := agentLocation(root, k)
+		loc, _ := agentLocation(root, k)
 		st := "✓"
-		if !ok {
+		if !presence[k] {
 			st = "⚠"
 		}
 		out(w, fmt.Sprintf("  %s %s (%s)", st, k, loc))
@@ -499,8 +501,10 @@ func runAgentConfigStatus(ctx *cli.Context) error {
 	}
 	var rows [][]string
 	var orphaned []string
+	presence := toolsurface.Presence(root, validAgents())
 	for _, k := range validAgents() {
-		loc, ok := agentLocation(root, k)
+		loc, _ := agentLocation(root, k)
+		ok := presence[k]
 		configured := contains(ac.Available, k)
 		c, e := "✗", "✗"
 		if configured {

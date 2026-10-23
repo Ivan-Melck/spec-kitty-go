@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/pytoml"
 )
@@ -19,6 +20,7 @@ import (
 // Go binary embeds its packs, so it has no installed on-disk pack tree to
 // fall back to (upstream: <site-packages>/packs/built-in); "" then.
 func BuiltInPackRoot() string {
+	assets.WarnPackRoot(assets.ProvenancePackRoot)
 	v := os.Getenv("SPEC_KITTY_PACKS_ROOT")
 	if v == "" {
 		return ""

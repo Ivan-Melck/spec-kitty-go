@@ -102,6 +102,7 @@ type profileModel struct {
 }
 
 func loadProfileModel(root string) (*profileModel, error) {
+	assets.WarnPackRoot(assets.OfferingPackRoot)
 	ents, err := assets.List(agents.ProfilesAssetDir)
 	if err != nil {
 		return nil, err
@@ -174,6 +175,7 @@ func (m *profileModel) project(tool, root string) []nativeProfile {
 	}
 	var out []nativeProfile
 	for _, p := range m.profiles {
+		assets.WarnPackRoot(assets.ProvenancePackRoot)
 		out = append(out, nativeProfile{URN: "agent_profile:" + p.ID, Layer: "built-in", Tool: tool, Output: r.path(p.ID, root), Format: r.format,
 			SourcePath: "${SPEC_KITTY_PACKS_ROOT}/built-in/agent_profiles/" + p.SourceFile, HasSourcePath: true, SourceHash: p.SourceHash, HasSourceHash: true,
 			Version: 1, HasVersion: true})

@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/pywarnings"
 )
 
 // Compat planner (specify_cli.compat). The latest-version lookup, nag cache
@@ -137,6 +138,9 @@ func PlanCompatWith(inv Invocation, root string, opt CompatOptions) CompatPlan {
 	st := kittify.ScanProjectStatus(root)
 	p := CompatPlan{Project: st, Safe: inv.Safe(), Decision: DecisionAllow, Case: "none"}
 	p.CLI = resolveCLIStatus(inv, opt)
+	// Upstream probes the install method with subprocess.run (brew --prefix).
+	// Its warning-filter contexts invalidate every Python warning registry.
+	pywarnings.Reset()
 	switch {
 	case inv.IsHelp || inv.IsVersion:
 	case st.State == kittify.StateCorrupt:

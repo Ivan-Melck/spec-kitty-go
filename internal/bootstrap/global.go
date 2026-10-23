@@ -79,6 +79,7 @@ func EnsureRuntime() error {
 
 // AssessRuntime plans the runtime_bootstrap owner without writing.
 func AssessRuntime() (*prep, error) {
+	assets.WarnPackRoot(assets.MissionAssetRoot)
 	home := KittifyHome()
 	p, err := newPrep("runtime_bootstrap", anchorFor(home), filepath.Join(home, "cache"), ".update.lock")
 	if err != nil {

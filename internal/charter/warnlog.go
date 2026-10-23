@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
+	"github.com/spec-kitty/go-kitty3/internal/pywarnings"
 )
 
 // WarnLog receives the logger.warning records upstream's charter modules
@@ -24,39 +25,15 @@ func warnLog(format string, a ...any) {
 	}
 }
 
-// pyWarnSeen is the warnings registry ("default" action: one emission per
-// (message, category, module, lineno) per process).
-var pyWarnSeen = map[string]bool{}
-
-// pyWarnCapture > 0 while inside a warnings.catch_warnings(record=True)
-// block: records are captured, not emitted.
-var pyWarnCapture int
-
 // catchWarnings runs fn like `with warnings.catch_warnings(record=True)`:
 // nothing is emitted inside, and entering/leaving mutates the filters,
 // which invalidates every warnings registry (dedupe starts over).
 func catchWarnings(fn func()) {
-	pyWarnSeen = map[string]bool{}
-	pyWarnCapture++
-	defer func() {
-		pyWarnCapture--
-		pyWarnSeen = map[string]bool{}
-	}()
-	fn()
+	pywarnings.Catch(fn)
 }
 
 func pyWarn(module string, line int, category, msg, source string) {
-	if pyWarnCapture > 0 {
-		return
-	}
-	key := fmt.Sprintf("%s\x00%d\x00%s\x00%s", module, line, category, msg)
-	if pyWarnSeen[key] {
-		return
-	}
-	pyWarnSeen[key] = true
-	if PyWarnLog != nil {
-		PyWarnLog(module, line, category, msg, source)
-	}
+	pywarnings.Warn(PyWarnLog, module, line, category, msg, source)
 }
 
 // warnDiscardedEdgeRationale is merge._warn_discarded_edge_rationale.

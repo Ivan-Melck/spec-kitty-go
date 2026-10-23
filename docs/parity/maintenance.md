@@ -141,17 +141,28 @@ Exported API (`internal/charsetnorm`): `FromBytes(seq) *Matches`,
 
 ## Remaining work
 
-- Misconfigured `SPEC_KITTY_PACKS_ROOT` (set, but `<value>/built-in` is not a
-  directory): upstream logs a `UserWarning` record ("SPEC_KITTY_PACKS_ROOT=...
-  does not resolve to a directory ...") once per `get_built_in_pack_root()`
-  caller location per warnings registry (`kernel/paths.py:435`,
-  `charter/offering/pack_paths.py:237`, `charter/offering/provenance.py:71`,
-  ...) in every command that resolves the built-in packs; Go logs none
-  (stdout and exit code match, `TestDiffDoctorProvenanceBadPacksRoot`). The
-  record's location and source excerpt are site-packages-specific (Go would
-  print the site-packages-relative path, like the doctrine warnings), but the
-  message is deterministic; reproducing it needs the per-command sequence of
-  upstream's call sites, which is not modelled.
+- Extend command-wide coverage of misconfigured `SPEC_KITTY_PACKS_ROOT`
+  warning sequences beyond the commands below, particularly advancing runtime
+  and upgrade/migration flows. The former "Go logs none" gap is fixed at the
+  shared pack-resolution doors; not every command sequence has been compared.
+
+Pack-root warning continuation: `assets.WarnPackRoot` emits the deterministic
+`UserWarning` message at the three upstream caller locations
+(`kernel/paths.py:435`, `charter/offering/pack_paths.py:237`,
+`charter/offering/provenance.py:71`). `internal/pywarnings` shares deduplication
+and capture/registry invalidation across charter and pack loaders. Import-time
+warnings also appear on eager help/version paths; `--json` silences logging.
+Captured warnings become invalid glossary/skill health records in
+`doctor charter-packs`, including its JSON report and nonzero exit status.
+
+`TestParityBadPacksRootWarnings` compares ordered warning records for help,
+version, mission listing, provenance, skills, tool surfaces, charter-pack
+health, agent config list/status, and charter status. It also compares the
+provenance and charter-pack JSON reports and provenance with repeated catalog
+references. `TestParityPackRootWarningPaths` covers missing roots, a file in
+place of `built-in`, a valid override, Python quoting, parent components and
+double leading slashes. Only Rich wrapping and the oracle's site-packages
+installation prefix are removed from warning comparisons.
 
 Otherwise none. (Verified in wave 5 FIX4: `migrate rewrite-opposed-by` re-dumps through
 `internal/rtyaml` (`TestDiffMigrateRewriteOpposedByNonCanonical`); an

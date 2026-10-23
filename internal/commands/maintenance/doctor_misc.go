@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/healthcheck"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -170,6 +171,10 @@ func templateSetProvenance(cat *jsonx.Object) (leaks, ambiguous []string) {
 	if set == "" {
 		return nil, nil
 	}
+	// _mission_token constructs the default mission repository and normalizes
+	// its source path, even when no matching template-set reference exists.
+	assets.WarnPackRoot(assets.OfferingPackRoot)
+	assets.WarnPackRoot(assets.ProvenancePackRoot)
 	expectedID := "TEMPLATE_SET:" + set
 	refs, ok := valueGet(cat, "references").([]any)
 	if !ok {

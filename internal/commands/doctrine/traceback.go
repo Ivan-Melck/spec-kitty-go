@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
@@ -86,4 +87,8 @@ func init() {
 	charter.PyWarnLog = func(module string, line int, category, msg, source string) {
 		rich.LogWarning(os.Stderr, fmt.Sprintf("%s:%d: %s: %s\n  %s\n", module, line, category, msg, source))
 	}
+	assets.PackWarnLog = charter.PyWarnLog
+	// Upstream imports offering repositories while constructing the CLI, even
+	// for eager help/version and usage-error paths that skip root callbacks.
+	assets.WarnPackRoot(assets.OfferingPackRoot)
 }
