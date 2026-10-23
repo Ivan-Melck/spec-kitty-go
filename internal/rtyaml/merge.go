@@ -70,17 +70,26 @@ func (d *Doc) Apply(after *jsonx.Object, s *Snapshot) {
 }
 
 func mergeMap(m *Map, before, after *jsonx.Object, s *Snapshot) {
-	// keys removed by the writer (string keys only: jsonx keys are text)
+	// keys removed by the writer (string keys only: jsonx keys are text);
+	// their round-trip values stay available for a writer that moved them
+	// (mapping.pop(old) + mapping.insert(pos, new, value)).
+	var moved []movedValue
 	for _, k := range m.Keys() {
 		ks, ok := m.keyText(k)
 		if ok && !after.Has(ks) {
+			if before != nil {
+				if bv, has := before.Get(ks); has {
+					rv, _ := m.Get(k)
+					moved = append(moved, movedValue{plain: bv, rt: rv})
+				}
+			}
 			m.Delete(k)
 		}
 	}
 	for _, kv := range after.Pairs() {
 		rk, found := findKey(m, kv.Key)
 		if !found {
-			m.Set(kv.Key, kv.Value)
+			m.Set(kv.Key, reuseMoved(&moved, kv.Value))
 			continue
 		}
 		rv, _ := m.Get(rk)
@@ -117,12 +126,51 @@ func mergeValue(rv, bv any, hasB bool, av any, s *Snapshot) (any, bool) {
 			}
 		}
 		return a, false
+	case []any:
+		if hasB && plainEqual(bv, av) {
+			return rv, true
+		}
+		// A rebuilt list (config[key] = kept): a new sequence whose items
+		// that come from the old list keep their round-trip objects.
+		if rs, ok := rv.(*Seq); ok {
+			if b, ok := bv.([]any); ok && len(b) == len(rs.Items) {
+				pool := make([]movedValue, len(b))
+				for i := range b {
+					pool[i] = movedValue{plain: b[i], rt: rs.Items[i]}
+				}
+				items := make([]any, len(a))
+				for i, x := range a {
+					items[i] = reuseMoved(&pool, x)
+				}
+				return &Seq{Items: items}, false
+			}
+		}
+		return av, false
 	default:
 		if hasB && plainEqual(bv, av) {
 			return rv, true
 		}
 		return av, false
 	}
+}
+
+// movedValue pairs a value as the writer saw it (plain) with its
+// round-trip object.
+type movedValue struct {
+	plain any
+	rt    any
+}
+
+// reuseMoved returns the round-trip object of the first unused pool entry
+// equal to v (Python moved that very object), else v itself.
+func reuseMoved(pool *[]movedValue, v any) any {
+	for i, mv := range *pool {
+		if mv.rt != nil && plainEqual(mv.plain, v) {
+			(*pool)[i].rt = nil
+			return mv.rt
+		}
+	}
+	return v
 }
 
 // keyText is the yamlx key of a round-trip key: the scalar key's source

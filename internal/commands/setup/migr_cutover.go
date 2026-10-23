@@ -19,6 +19,7 @@ import (
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
+	"github.com/spec-kitty/go-kitty3/internal/rtyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -726,6 +727,20 @@ func mappingEdit(data *jsonx.Object, section, old, nw, label string) []keyEdit {
 	return nil
 }
 
+// roundTripOver is the migration's _dump of the edited round-trip map
+// (YAML() with preserve_quotes, width 4096): the edits in cfg are applied
+// over the file text as loaded, so comments, quote styles and untouched
+// entries are kept.
+func roundTripOver(text string, cfg *jsonx.Object, snap *rtyaml.Snapshot) string {
+	if doc, err := rtyaml.LoadString(text); err == nil {
+		doc.Apply(cfg, snap)
+		if out, err := doc.DumpWidth(4096); err == nil {
+			return out
+		}
+	}
+	return yamlx.EmitWith(cfg, yamlx.Options{Width: 4096})
+}
+
 func readYAMLText(root, p string) (string, *jsonx.Object, bool, error) {
 	if !isFile(p) {
 		return "", nil, false, nil
@@ -755,6 +770,7 @@ func stepRewriteConfigKeys(r *cutoverRun) error {
 	}
 	if present && cfg != nil && (strings.Contains(text, "doctrine") || strings.Contains(text, "organisation_packs")) {
 		rel := r.rel(p)
+		snap := rtyaml.Snap(cfg) // the CommentedMap as loaded, before the in-place edits
 		changed := r.rewriteLegacyOrg(cfg, rel)
 		changed = r.rewriteOrganisationPacks(cfg, rel) || changed
 		edits := mappingEdit(cfg, "governance", "doctrine", "charter", "governance.doctrine")
@@ -766,7 +782,7 @@ func stepRewriteConfigKeys(r *cutoverRun) error {
 				r.rep.rewritten = append(r.rep.rewritten, e.describe(rel))
 				renameInMapping(e)
 			}
-			r.write(p, yamlx.EmitWith(cfg, yamlx.Options{Width: 4096}))
+			r.write(p, roundTripOver(text, cfg, snap))
 		}
 	}
 	// governance selection in charter.yaml and governance.yaml
