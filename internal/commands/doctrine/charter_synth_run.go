@@ -73,7 +73,7 @@ func synthesizeMain(ctx *cli.Context, root, adapterName string) error {
 		if jsonMode {
 			var code, corpus any
 			if ev.Code != nil {
-				code = jsonx.NewObject("stack_id", ev.Code.StackID, "primary_language", ev.Code.PrimaryLanguage, "representative_files_count", len(ev.Code.Representative))
+				code = jsonx.NewObject("stack_id", ev.Code.StackID, "primary_language", ev.Code.PrimaryLanguage, "languages", strs(ev.Code.Languages), "representative_files_count", len(ev.Code.Representative))
 			}
 			if ev.Corpus != nil {
 				corpus = jsonx.NewObject("snapshot_id", ev.Corpus.SnapshotID, "entries_count", len(ev.Corpus.Entries))

@@ -5,6 +5,8 @@ package doctrine
 type IdentityIndex struct {
 	root   string
 	tables map[Kind]*identityTable
+	layers map[string]string
+	orgs   []string
 }
 
 type identityEntry struct{ stem, id, layer string }
@@ -17,12 +19,24 @@ func NewIdentityIndex(root string) *IdentityIndex {
 	return &IdentityIndex{root: root, tables: map[Kind]*identityTable{}}
 }
 
+func identityForOffering(off *Offering) *IdentityIndex {
+	ix := &IdentityIndex{tables: map[Kind]*identityTable{}, layers: map[string]string{}, orgs: off.OrgRoots}
+	if off.ProjectRoot != "" {
+		ix.layers[LayerProject] = off.ProjectRoot
+	}
+	return ix
+}
+
 func (ix *IdentityIndex) table(k Kind) *identityTable {
 	if t := ix.tables[k]; t != nil {
 		return t
 	}
 	t := &identityTable{stems: map[string]identityEntry{}, ids: map[string]identityEntry{}}
-	dirs := scanDirs(k.OperatorToken(), LayerRoots(ix.root), OrgRoots(ix.root))
+	layers, orgs := ix.layers, ix.orgs
+	if layers == nil {
+		layers, orgs = LayerRoots(ix.root), OrgRoots(ix.root)
+	}
+	dirs := scanDirs(k.OperatorToken(), layers, orgs)
 	ordered := make([]scanDir, 0, len(dirs))
 	for _, layer := range []string{LayerProject, LayerOrg, LayerBuiltIn} {
 		for _, sd := range dirs {
@@ -61,7 +75,7 @@ func (ix *IdentityIndex) DeclaredIDInLayer(k Kind, stem, layer string) string {
 			return e.id
 		}
 	}
-	return ix.DeclaredID(k, stem)
+	return ""
 }
 
 func (ix *IdentityIndex) entry(k Kind, token string) (identityEntry, bool) {
@@ -80,8 +94,38 @@ func (ix *IdentityIndex) entry(k Kind, token string) (identityEntry, bool) {
 }
 
 func (ix *IdentityIndex) Stem(k Kind, token string) string {
-	if e, ok := ix.entry(k, token); ok {
-		return e.stem
+	t := ix.table(k)
+	representable := func(id string) string {
+		for _, e := range t.entries {
+			if e.id != id {
+				continue
+			}
+			if k != Directive {
+				return e.stem
+			}
+			if t.stems[e.stem].id != id {
+				continue
+			}
+			ambiguous := false
+			for _, other := range t.entries {
+				ambiguous = ambiguous || (other.stem == e.stem && other.id != id)
+			}
+			if !ambiguous {
+				return e.stem
+			}
+		}
+		return token // Callers retain tokens without a representable stem.
+	}
+	if k == Directive {
+		if _, ok := t.ids[token]; ok {
+			return representable(token)
+		}
+	}
+	if _, ok := t.stems[token]; ok {
+		return token
+	}
+	if id := ix.DeclaredID(k, token); id != "" {
+		return representable(id)
 	}
 	return token
 }
@@ -89,6 +133,38 @@ func (ix *IdentityIndex) Stem(k Kind, token string) string {
 func (ix *IdentityIndex) DeclaredID(k Kind, token string) string {
 	if e, ok := ix.entry(k, token); ok {
 		return e.id
+	}
+	return ""
+}
+
+func (ix *IdentityIndex) SelectionID(k Kind, token string) string {
+	if k == Directive {
+		if _, ok := ix.table(k).ids[token]; ok {
+			return token
+		}
+	}
+	return ix.DeclaredID(k, token)
+}
+
+func (ix *IdentityIndex) LookupKey(k Kind, token string, selection bool) string {
+	id := ""
+	if selection {
+		id = ix.SelectionID(k, token)
+	} else {
+		id = ix.DeclaredID(k, token)
+	}
+	if id != "" {
+		return id
+	}
+	if k == Directive {
+		return NormalizeDirectiveID(token)
+	}
+	return token
+}
+
+func (ix *IdentityIndex) SourceLayer(k Kind, token string) string {
+	if e, ok := ix.entry(k, token); ok {
+		return e.layer
 	}
 	return ""
 }

@@ -167,9 +167,20 @@ func LoadReferences(root string) []Reference {
 		return nil
 	}
 	var out []Reference
+	activation, err := dct.LoadActivation(root)
+	if err != nil {
+		panic(&LoadPanic{Err: err})
+	}
 	for _, x := range c.GetList("references") {
 		o, ok := x.(*jsonx.Object)
 		if !ok {
+			continue
+		}
+		id := o.GetString("id")
+		if _, target, found := strings.Cut(id, ":"); found {
+			id = target
+		}
+		if activation.Denied[dct.Kind(o.GetString("kind"))][id] {
 			continue
 		}
 		out = append(out, Reference{ID: o.GetString("id"), Kind: o.GetString("kind"), Title: o.GetString("title"),

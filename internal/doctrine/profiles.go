@@ -320,11 +320,23 @@ func ActivatedProfiles(repoRoot string) (IDSet, error) {
 		return nil, err
 	}
 	allowed := act.Activated(AgentProfile)
+	identity := NewIdentityIndex(repoRoot)
+	if allowed != nil {
+		resolved := IDSet{}
+		for token := range allowed {
+			id := identity.LookupKey(AgentProfile, token, false)
+			if !act.Denied[AgentProfile][id] {
+				resolved[id] = true
+			}
+		}
+		allowed = resolved
+	}
 	if len(act.Denied[AgentProfile]) > 0 && allowed == nil {
 		allowed = IDSet{}
 		for token := range AvailableIDs("agent-profile", LayerRoots(repoRoot), OrgRoots(repoRoot)) {
-			if !act.Denied[AgentProfile][token] {
-				allowed[token] = true
+			id := identity.LookupKey(AgentProfile, token, false)
+			if !act.Denied[AgentProfile][id] {
+				allowed[id] = true
 			}
 		}
 	}

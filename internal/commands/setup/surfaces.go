@@ -36,14 +36,14 @@ func activationProvisioningPending(root string) bool {
 // signal admits all). Like one service build, the languages are inferred
 // once per gate.
 func profileAdmitter(root string) func(p agents.Profile) bool {
-	act, err := dct.LoadActivation(root)
+	allowed, err := dct.ActivatedProfiles(root)
 	langs, known := charter.InferRepoLanguages(root, nil, false)
 	have := map[string]bool{}
 	for _, l := range charter.NormalizeLanguages(langs) {
 		have[l] = true
 	}
 	return func(p agents.Profile) bool {
-		if err != nil || !act.Admits(dct.AgentProfile, p.ID) {
+		if err != nil || !allowed.Has(p.ID) {
 			return false
 		}
 		if len(p.AppliesToLanguages) == 0 || !known {

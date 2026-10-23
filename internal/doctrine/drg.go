@@ -308,9 +308,9 @@ func ResolveActivatedURNs(off *Offering, k Kind, ids IDSet) map[string]bool {
 		}
 		return out
 	}
-	idx := StemIndex(off, k)
+	idx := identityForOffering(off)
 	for stem := range ids {
-		if id, ok := idx[stem]; ok {
+		if id := idx.DeclaredID(k, stem); id != "" {
 			out[string(k)+":"+id] = true
 		}
 	}
@@ -335,6 +335,9 @@ func FilterByActivation(g *Graph, act *Activation, off *Offering) *Graph {
 	}
 	keep := func(n Node) bool {
 		kind, id := SplitURN(n.URN)
+		if k, ok := activatableSingular(kind); ok && (act.Denied[k][n.URN] || act.Denied[k][id]) {
+			return false
+		}
 		if kind == string(MissionStepContract) {
 			if head, _, ok := strings.Cut(id, "/"); ok && id != "" {
 				return mtSet[head]

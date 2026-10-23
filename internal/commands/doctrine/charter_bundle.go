@@ -83,6 +83,13 @@ func runBundleValidate(ctx *cli.Context) error {
 		}
 	}
 	var outScope, warnings []string
+	optional := ".kittify/charter/activation.yaml"
+	var optionalPresent, optionalMissing []string
+	if fileExists(filepath.Join(root, optional)) {
+		optionalPresent = append(optionalPresent, optional)
+	} else {
+		optionalMissing = append(optionalMissing, optional)
+	}
 	cd := charter.Path(root, charter.Dir)
 	var all []string
 	filepath.WalkDir(cd, func(p string, d os.DirEntry, err error) error {
@@ -94,7 +101,7 @@ func runBundleValidate(ctx *cli.Context) error {
 	})
 	sortPyPaths(all)
 	for _, rel := range all {
-		if rel == charter.CharterMD || rel == charter.CharterYAML {
+		if rel == charter.CharterMD || rel == charter.CharterYAML || rel == optional {
 			continue
 		}
 		outScope = append(outScope, rel)
@@ -124,6 +131,7 @@ func runBundleValidate(ctx *cli.Context) error {
 	}
 	report := jsonx.NewObject("result", result, "canonical_root", root, "manifest_schema_version", "2.0.0", "bundle_compliant", compliant,
 		"tracked_files", jsonx.NewObject("expected", strs(tracked), "present", strs(present), "missing", strs(missing)),
+		"optional_tracked_files", jsonx.NewObject("expected", strs([]string{optional}), "present", strs(optionalPresent), "missing", strs(optionalMissing)),
 		"derived_files", jsonx.NewObject("expected", []any{}, "present", []any{}, "missing", []any{}),
 		"gitignore", jsonx.NewObject("expected_entries", []any{}, "present_entries", []any{}, "missing_entries", []any{}),
 		"out_of_scope_files", strs(outScope), "warnings", strs(warnings), "errors", strs(errs),
@@ -143,6 +151,13 @@ func runBundleValidate(ctx *cli.Context) error {
 			} else {
 				cprint(w, "%s", "    [red]\\[MISSING][/red] "+rel)
 			}
+		}
+		cprintRaw(w, "")
+		cprintRaw(w, "  Optional tracked files:")
+		if len(optionalPresent) > 0 {
+			cprint(w, "%s", "    [green]\\[OK][/green] "+optional)
+		} else {
+			cprint(w, "%s", "    [dim]\\[ABSENT][/dim] "+optional)
 		}
 		cprintRaw(w, "")
 		cprintRaw(w, "  Derived files (v1.0.0 scope):")
