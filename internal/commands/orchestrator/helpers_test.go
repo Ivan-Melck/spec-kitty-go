@@ -22,7 +22,7 @@ var (
 	// prompt directories are keyed by a project-path hash; templateless
 	// step prompts carry a mkstemp suffix
 	rePromptDir  = regexp.MustCompile(`spec-kitty-prompts/[0-9a-f]{16}/`)
-	reStepPrompt = regexp.MustCompile(`(spec-kitty-step-[^"/]*)-[a-z0-9_]{8}\.md`)
+	reStepPrompt = regexp.MustCompile(`(spec-kitty-step-[^"/]*)-(?:[a-z0-9_]{8}|<SHORTSHA>)\.md`)
 )
 
 func normEnvelope(s *testkit.Sandbox, out string) string {
