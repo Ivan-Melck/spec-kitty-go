@@ -13,8 +13,10 @@ import (
 // gitState renders the observable git state of a sandbox for comparison.
 func gitState(s *testkit.Sandbox) string {
 	var b strings.Builder
+	// graph-ordered history: `log --all --topo-order` interleaves
+	// independent branches by commit date (same-second flakes)
+	b.WriteString("$ history\n" + s.GitHistory("", "%s%n%b%n[%D]", "--name-status"))
 	for _, args := range [][]string{
-		{"log", "--all", "--topo-order", "--format=%s%n%b%n[%D]", "--name-status"},
 		{"worktree", "list", "--porcelain"},
 		{"status", "--short", "--untracked-files=all"},
 		{"branch", "-a"},
