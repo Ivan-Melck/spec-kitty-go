@@ -1,11 +1,10 @@
 package rich
 
 import (
+	"io"
 	"os"
 	"regexp"
 	"strings"
-
-	"io"
 )
 
 // typer.rich_utils (typer 0.27) console, theme and highlighters: the help
