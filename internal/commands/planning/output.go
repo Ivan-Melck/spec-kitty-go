@@ -16,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
+	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
 
 // compact is json.dumps(x) (default separators, ensure_ascii).
@@ -38,9 +39,15 @@ func emitJSON(w io.Writer, payload *jsonx.Object) {
 func say(w io.Writer, s string) { rich.Print(w, s) }
 
 // sayPlain is console.print(..., markup=False).
-func sayPlain(w io.Writer, s string) { fmt.Fprintln(w, rich.Wrap(s, rich.Width())) }
+func sayPlain(w io.Writer, s string) { rich.PrintNoMarkup(w, s) }
 
-func wrapPlain(s string) string { return rich.Wrap(s, rich.Width()) }
+// printRendered is `for line in render_commit_outcome(result):
+// console.print(line, markup=False)`.
+func printRendered(w io.Writer, r *safecommit.RouterResult) {
+	for _, l := range r.Render() {
+		rich.PrintPlain(w, l)
+	}
+}
 
 // cwd returns the resolved working directory.
 func cwd() string {
@@ -83,7 +90,7 @@ func joinMessage(paragraphs []string) (string, error) {
 // helpExit2 renders a no_args_is_help group's help on stdout and exits 2
 // (click's NoArgsIsHelpError).
 func helpExit2(ctx *cli.Context) error {
-	cli.WriteHelp(ctx.Stdout, ctx.Cmd)
+	cli.WriteNoArgsIsHelp(ctx.Stdout, ctx.Cmd)
 	return cli.Exit(2)
 }
 

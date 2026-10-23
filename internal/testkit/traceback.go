@@ -1,11 +1,20 @@
 package testkit
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+// reANSI also takes normalized SGR sequences (terminated by SGREnd).
+var reANSI = regexp.MustCompile("\x1b\\[[0-9;?]*(?:[A-Za-z]|\x01)")
+
+// StripANSI removes SGR / CSI escape sequences.
+func StripANSI(s string) string { return reANSI.ReplaceAllString(s, "") }
 
 // IsRichTraceback reports whether s contains a rich traceback panel
 // (upstream's uncaught-exception output).
 func IsRichTraceback(s string) bool {
-	return strings.Contains(s, "Traceback (most recent call last)")
+	return strings.Contains(StripANSI(s), "Traceback (most recent call last)")
 }
 
 // MaskTracebackFrames collapses the body of every rich traceback panel in s
@@ -19,11 +28,12 @@ func MaskTracebackFrames(s string) string {
 	var out []string
 	in := false
 	for _, l := range lines {
+		pl := StripANSI(l)
 		switch {
-		case strings.HasPrefix(l, "╭") && strings.Contains(l, "Traceback (most recent call last)"):
+		case strings.HasPrefix(pl, "╭") && strings.Contains(pl, "Traceback (most recent call last)"):
 			in = true
 			out = append(out, l, "│…│")
-		case in && strings.HasPrefix(l, "╰"):
+		case in && strings.HasPrefix(pl, "╰"):
 			in = false
 			out = append(out, l)
 		case in:

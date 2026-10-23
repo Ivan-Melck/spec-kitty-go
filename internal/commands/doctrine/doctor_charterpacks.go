@@ -9,6 +9,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // doctor charter-packs (cli/commands/doctor.py charter_packs_check,
@@ -154,7 +155,7 @@ func renderCharterPack(w io.Writer, e *jsonx.Object, idx int) {
 			cprint(w, "  [yellow]invalid profiles:[/yellow] %d skipped", len(inv))
 			for _, x := range inv {
 				o := x.(*jsonx.Object)
-				cprintRaw(w, fmt.Sprintf("    • (%s) %s: %s", o.GetString("layer"), o.GetString("path"), o.GetString("error_summary")))
+				cprintPlain(w, fmt.Sprintf("    • (%s) %s: %s", o.GetString("layer"), o.GetString("path"), o.GetString("error_summary")))
 			}
 		}
 	}
@@ -281,7 +282,7 @@ func renderSanctionedOverrides(w io.Writer, rep *charter.CharterPackHealthReport
 			reason = ": " + r
 		}
 		line := fmt.Sprintf("  • %s (%s) sanctioned by %s%s", f.GetString("urn"), f.GetString("kind"), source, reason)
-		cprintRawNoWrap(w, line)
+		cprintRawNoWrap(w, "[dim]"+rich.EscapeMarkup(line)+"[/dim]")
 	}
 }
 
@@ -300,7 +301,7 @@ func renderOverridePolicyErrors(w io.Writer, rep *charter.CharterPackHealthRepor
 	}
 	cprint(w, "\n[bold red]Override sanction file error(s)[/bold red] — %d\n", len(msgs))
 	for _, m := range msgs {
-		cprintRawNoWrap(w, "  • "+m)
+		cprintRawNoWrap(w, "  • [red]"+rich.EscapeMarkup(m)+"[/red]")
 	}
 }
 
@@ -315,7 +316,7 @@ func renderUnsanctionedOverrides(w io.Writer, rep *charter.CharterPackHealthRepo
 		if !ok {
 			continue
 		}
-		cprintRaw(w, fmt.Sprintf("  • %s (%s): %s", f.GetString("urn"), f.GetString("kind"), f.GetString("why")))
+		cprintRaw(w, fmt.Sprintf("  • [red]%s[/red] (%s): %s", rich.EscapeMarkup(f.GetString("urn")), rich.EscapeMarkup(f.GetString("kind")), rich.EscapeMarkup(f.GetString("why"))))
 		if lg := f.GetObject("legacy_template"); lg != nil {
 			path := lg.GetString("path")
 			if path == "" {
@@ -325,19 +326,19 @@ func renderUnsanctionedOverrides(w io.Writer, rep *charter.CharterPackHealthRepo
 			if strings.HasSuffix(filepath.ToSlash(path), charter.LegacyTemplateRelpath) {
 				target = filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(path))), charter.PackPolicyFilename)
 			}
-			cprintRawNoWrap(w, fmt.Sprintf("    pack author: move %s to %s (a template is not a sanction)", path, target))
+			cprintRawNoWrap(w, fmt.Sprintf("    [dim]pack author: move %s to %s (a template is not a sanction)[/dim]", rich.EscapeMarkup(path), rich.EscapeMarkup(target)))
 			lines := charter.SanctionEntrySnippet(f.GetString("urn"), lg.GetString("reason"))
 			if lines == nil {
 				cprint(w, "    [dim]the template entry has no reason; a reason is required for a directive override[/dim]")
 				continue
 			}
-			cprintRawNoWrap(w, "    consumer: add to "+charter.PolicyRelpath)
+			cprintRawNoWrap(w, "    [dim]consumer: add to "+rich.EscapeMarkup(charter.PolicyRelpath)+"[/dim]")
 			for _, l := range lines {
-				cprintRawNoWrap(w, "      "+l)
+				rich.PrintOpts(w, rich.PrintOptions{SoftWrap: rich.BoolP(true), Highlight: rich.BoolP(false)}, "      "+rich.EscapeMarkup(l))
 			}
 		}
 	}
-	cprintRawNoWrap(w, fmt.Sprintf("  Add the URN to %s (with a reason for directives), have the overriding pack ship it in its pack-root %s, or remove the org override.", charter.PolicyRelpath, charter.PackPolicyFilename))
+	cprintRawNoWrap(w, fmt.Sprintf("  [dim]Add the URN to %s (with a reason for directives), have the overriding pack ship it in its pack-root %s, or remove the org override.[/dim]", rich.EscapeMarkup(charter.PolicyRelpath), charter.PackPolicyFilename))
 	cprint(w, "  [dim]Only org-tier overrides are adjudicated; project-tier (.kittify/charter-packs/) overrides are intentionally ungoverned (FR-012).[/dim]")
 }
 
@@ -347,7 +348,7 @@ func renderRetiredKeyFinding(w io.Writer, rep *charter.CharterPackHealthReport) 
 		return
 	}
 	cprint(w, "\n[bold red]Retired charter key[/bold red] — %s is not read; the project's selections are ignored\n", f.GetString("key"))
-	cprintRawNoWrap(w, "  "+f.GetString("message"))
+	cprintPlainNoWrap(w, "  "+f.GetString("message"))
 }
 
 func renderRetiredLayoutFindings(w io.Writer, rep *charter.CharterPackHealthReport) {
@@ -358,7 +359,7 @@ func renderRetiredLayoutFindings(w io.Writer, rep *charter.CharterPackHealthRepo
 	cprint(w, "\n[bold red]Retired layout[/bold red] — %d location(s) no longer read\n", len(fs))
 	for _, x := range fs {
 		if f, ok := x.(*jsonx.Object); ok {
-			cprintRawNoWrap(w, "  • "+f.GetString("message"))
+			cprintPlainNoWrap(w, "  • "+f.GetString("message"))
 		}
 	}
 }
@@ -377,5 +378,8 @@ func renderCrossGrainFindings(w io.Writer, rep *charter.CharterPackHealthReport)
 	cprint(w, "  [dim]Remove the duplicate declaration — an artifact may appear in at most one grain.[/dim]")
 }
 
-// cprintRawNoWrap is console.print(..., soft_wrap=True) of literal text.
-func cprintRawNoWrap(w io.Writer, s string) { fmt.Fprintln(w, s) }
+// cprintRawNoWrap is console.print(..., soft_wrap=True).
+func cprintRawNoWrap(w io.Writer, s string) { rich.PrintSoftWrap(w, s) }
+
+// cprintPlainNoWrap is console.print(..., markup=False, soft_wrap=True).
+func cprintPlainNoWrap(w io.Writer, s string) { rich.PrintPlainSoftWrap(w, s) }

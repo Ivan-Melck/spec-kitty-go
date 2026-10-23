@@ -1,6 +1,7 @@
 package create
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,7 +23,7 @@ func pendingOriginError(root string) error {
 	if err != nil || st.IsDir() {
 		return nil
 	}
-	return fail("A staged pending origin (%s) exists but no pending-origin consumer is registered. Ensure 'import specify_cli.tracker' runs before create_mission_core so the tracker startup hook registers its consumer — otherwise the staged ticket binding would be silently dropped.", p)
+	return &Error{Generic: true, Msg: fmt.Sprintf("A staged pending origin (%s) exists but no pending-origin consumer is registered. Ensure 'import specify_cli.tracker' runs before create_mission_core so the tracker startup hook registers its consumer — otherwise the staged ticket binding would be silently dropped.", p)}
 }
 
 // rollbackState is the pre-create git state upstream's

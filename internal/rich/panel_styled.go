@@ -35,7 +35,7 @@ func StyledPanelLines(spec PanelSpec, sys ColorSystem) []string {
 	if spec.Title == "" {
 		out = append(out, render("╭"+strings.Repeat("─", width-2)+"╮", border))
 	} else {
-		tt, err := renderMarkup(spec.Title)
+		tt, err := renderMarkupRT(spec.Title)
 		if err != nil {
 			tt = &richText{plain: []rune(Strip(spec.Title))}
 		}
@@ -95,7 +95,7 @@ type MarkupLine struct {
 // line's segments styled under sys.
 func StyledMarkupLines(markup string, width int, wrap func(string, int) []string, sys ColorSystem) []MarkupLine {
 	noColor := noColorEnv()
-	t, err := renderMarkup(markup)
+	t, err := renderMarkupRT(markup)
 	if err != nil {
 		t = &richText{plain: []rune(Strip(markup))}
 	}

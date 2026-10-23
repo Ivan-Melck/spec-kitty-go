@@ -76,30 +76,28 @@ func argUsage(a *Arg) string {
 	return v
 }
 
+// writeUsageError is typer's rich_format_error on the stderr console.
 func writeUsageError(w io.Writer, e *UsageError) {
 	c := e.Cmd
-	width := Width()
-	o := rich.Options{MaxWidth: width}
+	con := rich.TyperConsole(true)
+	hl := rich.OptionHighlighter{}
 	if !e.NoContext && c != nil {
 		path := c.Path()
 		if e.parsing && c.ParseUsagePath != "" {
 			path = c.ParseUsagePath
 		}
-		for _, l := range rich.NewText(usageLineFor(c, path)).Render(o) {
-			fmt.Fprintln(w, l)
-		}
+		con.PrintWith(w, rich.PrintOptions{Style: rich.TyperStyleUsageCommand}, rich.Highlight(hl, usageLineFor(c, path)))
 		help := "--help"
-		for _, l := range rich.NewText(fmt.Sprintf("Try '%s %s' for help.", path, help)).Render(o) {
-			fmt.Fprintln(w, l)
-		}
+		con.PrintWith(w, rich.PrintOptions{Style: rich.TyperStyleErrorsSuggestion},
+			fmt.Sprintf("Try [blue]'%s %s'[/] for help.", rich.EscapeMarkup(path), help))
 	}
-	printRenderable(w, &rich.BoxPanel{R: rich.NewText(e.Msg), Title: "Error"}, width)
+	con.Print(w, &rich.RichPanel{R: rich.Highlight(hl, e.Msg), BorderStyle: rich.TyperStyleErrorsBorder,
+		Title: "Error", TitleAlign: "left"})
 }
 
-func printRenderable(w io.Writer, r rich.Renderable, width int) {
-	for _, l := range r.Render(rich.Options{MaxWidth: width}) {
-		fmt.Fprintln(w, l)
-	}
+// printRenderable prints r on typer's stdout help console.
+func printRenderable(w io.Writer, con *rich.Console, r any, style string) {
+	con.PrintWith(w, rich.PrintOptions{Style: style}, r)
 }
 
 // cleandoc is Python's inspect.cleandoc.
@@ -157,8 +155,11 @@ func expandTabs(s string) string {
 	return strings.Join(out, "\n")
 }
 
-// richText is typer's _make_rich_text in "rich" markup mode.
-func richText(s string) *rich.Text { return rich.FromMarkup(cleandoc(s)) }
+// richText is typer's _make_rich_text in "rich" markup mode: the cleaned
+// markup in a base style, highlighted by the OptionHighlighter.
+func richText(s, style string) *rich.Text {
+	return rich.HighlightText(rich.OptionHighlighter{}, rich.FromMarkupStyle(cleandoc(s), style))
+}
 
 // helpText returns the command's full help (click's Command.help).
 func helpText(c *Command) string {
@@ -178,14 +179,14 @@ func listingHelp(c *Command) *rich.Text {
 	if strings.HasPrefix(first, "\b") {
 		first = strings.ReplaceAll(first, "\b\n", "")
 	}
-	return richText(strings.TrimSpace(first))
+	return richText(strings.TrimSpace(first), "")
 }
 
 // helpBlock is typer's _get_help_text.
-func helpBlock(c *Command) rich.Renderable {
+func helpBlock(c *Command) rich.Group {
 	var g rich.Group
 	if c.Deprecated {
-		g = append(g, rich.NewText("(deprecated) "))
+		g = append(g, rich.NewStyledText("(deprecated) ", rich.TyperStyleDeprecated))
 	}
 	h := cleandoc(helpText(c))
 	if i := strings.Index(h, "\f"); i >= 0 {
@@ -195,9 +196,9 @@ func helpBlock(c *Command) rich.Renderable {
 	if !strings.HasPrefix(first, "\b") {
 		first = strings.ReplaceAll(first, "\n", " ")
 	}
-	g = append(g, richText(strings.TrimSpace(first)))
+	g = append(g, richText(strings.TrimSpace(first), ""))
 	if hasRest {
-		g = append(g, rich.NewText(""), richText(rest))
+		g = append(g, rich.NewText(""), richText(rest, rich.TyperStyleHelpText))
 	}
 	return g
 }
@@ -281,43 +282,52 @@ func flagType(f *Flag) string {
 	return "<str>"
 }
 
-func helpColumns(help, def string, required bool) rich.Renderable {
-	var items []rich.Renderable
+func helpColumns(help, def string, required bool) any {
+	var items []any
 	if help != "" {
-		items = append(items, richText(paramHelpText(help)))
+		items = append(items, richText(paramHelpText(help), ""))
 	}
 	if def != "" {
-		items = append(items, rich.NewText("[default: "+def+"]"))
+		items = append(items, rich.NewStyledText("[default: "+def+"]", rich.TyperStyleOptionDefault))
 	}
 	if required {
-		items = append(items, rich.NewText("[required]"))
+		items = append(items, rich.NewStyledText("[required]", rich.TyperStyleRequiredLong))
 	}
 	return &rich.Columns{Items: items}
 }
 
 type paramRow struct {
 	required bool
-	cells    []rich.Renderable // long, short, secondary long, secondary short, type, help
+	cells    []any // long, short, secondary long, secondary short, type, help
 }
 
-func optionsPanel(title string, rows []paramRow) rich.Renderable {
+func optionsPanel(title string, rows []paramRow) any {
 	anyReq := false
 	for _, r := range rows {
 		anyReq = anyReq || r.required
 	}
-	t := &rich.Grid{Padding: [4]int{0, 1, 0, 1}, Expand: true}
+	t := rich.NewTable()
+	t.Box, t.ShowHeader, t.Expand, t.PadEdge, t.Highlight = nil, false, true, false, true
 	for _, r := range rows {
 		cells := r.cells
 		if anyReq {
-			req := ""
+			var req any = ""
 			if r.required {
-				req = "*"
+				req = rich.NewStyledText("*", rich.TyperStyleRequiredShort)
 			}
-			cells = append([]rich.Renderable{rich.NewText(req)}, cells...)
+			cells = append([]any{req}, cells...)
 		}
 		t.AddRow(cells...)
 	}
-	return &rich.BoxPanel{R: t, Title: title}
+	return &rich.RichPanel{R: t, BorderStyle: rich.TyperStyleOptionsBorder, Title: title, TitleAlign: "left"}
+}
+
+// typesText is typer's types column: Text(style=bold yellow,
+// overflow=fold) with the metavar, through the TypesHighlighter.
+func typesText(s string) *rich.Text {
+	t := rich.NewStyledText(s, rich.TyperStyleTypes)
+	t.Overflow = "fold"
+	return rich.HighlightText(rich.TypesHighlighter{}, t)
 }
 
 func flagRow(f *Flag) paramRow {
@@ -333,12 +343,13 @@ func flagRow(f *Flag) paramRow {
 	if f.Kind == Bool && f.Negatable {
 		secondary = "--" + f.negName()
 	}
-	return paramRow{required: f.Required, cells: []rich.Renderable{
-		rich.NewText(strings.Join(longs, ",")),
-		rich.NewText(short),
-		rich.NewText(secondary),
-		rich.NewText(""),
-		&rich.Text{Plain: flagType(f), Overflow: "fold"},
+	hl, neg := rich.OptionHighlighter{}, rich.NegativeOptionHighlighter{}
+	return paramRow{required: f.Required, cells: []any{
+		rich.Highlight(hl, strings.Join(longs, ",")),
+		rich.Highlight(hl, short),
+		rich.Highlight(neg, secondary),
+		rich.Highlight(neg, ""),
+		typesText(flagType(f)),
 		helpColumns(f.Help, flagDefault(f), f.Required),
 	}}
 }
@@ -351,12 +362,13 @@ func argRow(a *Arg) paramRow {
 	if typ == "" {
 		typ = "<str>"
 	}
-	return paramRow{required: a.Required, cells: []rich.Renderable{
-		rich.NewText(""),
-		rich.NewText(argBase(a)),
-		rich.NewText(""),
-		rich.NewText(""),
-		&rich.Text{Plain: typ, Overflow: "fold"},
+	hl, neg := rich.OptionHighlighter{}, rich.NegativeOptionHighlighter{}
+	return paramRow{required: a.Required, cells: []any{
+		rich.Highlight(hl, ""),
+		rich.Highlight(hl, argBase(a)),
+		rich.Highlight(neg, ""),
+		rich.Highlight(neg, ""),
+		typesText(typ),
 		helpColumns(a.Help, a.Default, a.Required),
 	}}
 }
@@ -388,27 +400,33 @@ func visibleSubcommands(c *Command) []*Command {
 	return out
 }
 
-func commandsPanel(cmds []*Command) rich.Renderable {
+func commandsPanel(cmds []*Command) any {
 	cmdLen := 0
 	anyDep := false
 	for _, s := range cmds {
 		cmdLen = max(cmdLen, len(s.Name))
 		anyDep = anyDep || s.Deprecated
 	}
-	t := &rich.Grid{Padding: [4]int{0, 1, 0, 1}, Expand: true,
-		Columns: []*rich.Column{{Width: cmdLen, NoWrap: true}, {Ratio: 10, Justify: "left"}}}
+	t := rich.NewTable()
+	t.Box, t.ShowHeader, t.Expand, t.PadEdge = nil, false, true, false
+	t.AddColumn("", rich.Column{Style: rich.TyperStyleCommandsFirstCol, NoWrap: true, Width: rich.IntP(cmdLen)})
+	t.AddColumn("Description", rich.Column{Justify: "left", Ratio: rich.IntP(10)})
 	for _, s := range cmds {
-		row := []rich.Renderable{rich.NewText(s.Name), listingHelp(s)}
+		name := rich.NewText(s.Name)
+		if s.Deprecated {
+			name = rich.NewStyledText(s.Name, rich.TyperStyleDeprecatedCmd)
+		}
+		row := []any{name, listingHelp(s)}
 		if anyDep {
-			var dep rich.Renderable
+			var dep any
 			if s.Deprecated {
-				dep = rich.NewText("(deprecated) ")
+				dep = rich.NewStyledText("(deprecated) ", rich.TyperStyleDeprecated)
 			}
 			row = append(row, dep)
 		}
 		t.AddRow(row...)
 	}
-	return &rich.BoxPanel{R: t, Title: "Commands"}
+	return &rich.RichPanel{R: t, BorderStyle: rich.TyperStyleCommandsBorder, Title: "Commands", TitleAlign: "left"}
 }
 
 // simpleHelpEnabled is upstream's _should_use_simple_help (root only).
@@ -436,13 +454,24 @@ func WriteHelp(w io.Writer, c *Command) {
 		writeSimpleHelp(w, c)
 		return
 	}
+	writeHelpBody(w, c)
+	// click's help callback then echoes the (empty) formatter buffer.
+	fmt.Fprintln(w)
+}
+
+// WriteNoArgsIsHelp is the help a no_args_is_help group prints when invoked
+// bare (click's NoArgsIsHelpError renders it while being raised; typer's
+// error handler then prints nothing, so no trailing echo): exit 2 follows.
+func WriteNoArgsIsHelp(w io.Writer, c *Command) { writeHelpBody(w, c) }
+
+func writeHelpBody(w io.Writer, c *Command) {
 	if c.parent == nil && RootHelpBanner != nil {
 		RootHelpBanner(w, invocationArgs)
 	}
-	width := Width()
-	printRenderable(w, rich.Pad(rich.NewText(usageLine(c)), 1), width)
+	con := rich.TyperConsole(false)
+	printRenderable(w, con, rich.Pad(rich.Highlight(rich.OptionHighlighter{}, usageLine(c)), 1), rich.TyperStyleUsageCommand)
 	if strings.TrimSpace(helpText(c)) != "" || c.Deprecated {
-		printRenderable(w, rich.Pad(&rich.AlignLeft{R: helpBlock(c)}, 0, 1, 1, 1), width)
+		printRenderable(w, con, rich.Pad(rich.AlignLeft(helpBlock(c)), 0, 1, 1, 1), "")
 	}
 	var argPanels, optPanels []string
 	argRows := map[string][]paramRow{}
@@ -479,11 +508,11 @@ func WriteHelp(w io.Writer, c *Command) {
 	}
 	emit := func(panels []string, rows map[string][]paramRow, def string) {
 		if len(rows[def]) > 0 {
-			printRenderable(w, optionsPanel(def, rows[def]), width)
+			printRenderable(w, con, optionsPanel(def, rows[def]), "")
 		}
 		for _, p := range panels {
 			if p != def {
-				printRenderable(w, optionsPanel(p, rows[p]), width)
+				printRenderable(w, con, optionsPanel(p, rows[p]), "")
 			}
 		}
 	}
@@ -491,14 +520,12 @@ func WriteHelp(w io.Writer, c *Command) {
 	emit(optPanels, optRows, "Options")
 	if c.isGroup() {
 		if cmds := visibleSubcommands(c); len(cmds) > 0 {
-			printRenderable(w, commandsPanel(cmds), width)
+			printRenderable(w, con, commandsPanel(cmds), "")
 		}
 	}
 	if c.Epilog != "" {
-		printRenderable(w, rich.Pad(&rich.AlignLeft{R: richText(c.Epilog)}, 1), width)
+		printRenderable(w, con, rich.Pad(rich.AlignLeft(richText(c.Epilog, "")), 1), "")
 	}
-	// click's help callback then echoes the (empty) formatter buffer.
-	fmt.Fprintln(w)
 }
 
 // writeSimpleHelp is upstream's _format_simple_help: click's plain

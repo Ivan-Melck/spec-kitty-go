@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func newCharterEncodingCmd() *cli.Command {
@@ -94,7 +95,7 @@ func runCharterEncoding(ctx *cli.Context) error {
 			fmt.Fprint(out, "  [y/N/a (yes-all)] [N]: ")
 			line, rerr := reader.ReadString('\n')
 			if rerr != nil && line == "" {
-				fmt.Fprintln(errw, "Aborted.")
+				rich.TyperAbort(errw)
 				return cli.Exit(1)
 			}
 			resp := strings.ToLower(strings.TrimSpace(line))

@@ -96,86 +96,22 @@ func guardDestructiveOverwrite(dest, root string, substantive, authorized bool) 
 
 // --- StepTracker -------------------------------------------------------------
 
-type stepTracker struct {
-	title string
-	steps []*trackerStep
-}
+type stepTracker struct{ t *rich.StepTracker }
 
-type trackerStep struct{ key, label, status, detail string }
+func newStepTracker(title string) *stepTracker     { return &stepTracker{rich.NewStepTracker(title)} }
+func (t *stepTracker) add(key, label string)       { t.t.Add(key, label) }
+func (t *stepTracker) start(key string)            { t.t.Start(key, "") }
+func (t *stepTracker) complete(key, detail string) { t.t.Complete(key, detail) }
+func (t *stepTracker) fail(key, detail string)     { t.t.Error(key, detail) }
+func (t *stepTracker) skip(key, detail string)     { t.t.Skip(key, detail) }
 
-func (t *stepTracker) add(key, label string) {
-	t.steps = append(t.steps, &trackerStep{key: key, label: label, status: "pending"})
-}
+// render is console.print(tracker.render()).
+func (t *stepTracker) render(w io.Writer) { rich.PrintTo(w, t.t.Tree()) }
 
-func (t *stepTracker) update(key, status, detail string) {
-	for _, s := range t.steps {
-		if s.key == key {
-			s.status = status
-			if detail != "" {
-				s.detail = detail
-			}
-			return
-		}
-	}
-	t.steps = append(t.steps, &trackerStep{key: key, label: key, status: status, detail: detail})
-}
-
-func (t *stepTracker) start(key string)            { t.update(key, "running", "") }
-func (t *stepTracker) complete(key, detail string) { t.update(key, "done", detail) }
-func (t *stepTracker) fail(key, detail string)     { t.update(key, "error", detail) }
-func (t *stepTracker) skip(key, detail string)     { t.update(key, "skipped", detail) }
-func trackerSymbol(status string) string {
-	switch status {
-	case "done", "error":
-		return "●"
-	case "pending", "running", "skipped":
-		return "○"
-	}
-	return " "
-}
-
-// render prints the rich Tree (markup stripped, labels wrapped after the
-// guide).
-func (t *stepTracker) render(w io.Writer) {
-	fmt.Fprintln(w, rich.Strip("[cyan]"+t.title+"[/cyan]"))
-	for i, s := range t.steps {
-		detail := strings.TrimSpace(s.detail)
-		line := trackerSymbol(s.status) + " " + s.label
-		if detail != "" {
-			line += " (" + detail + ")"
-		}
-		line = rich.Strip(line)
-		branch, cont := "├── ", "│   "
-		if i == len(t.steps)-1 {
-			branch, cont = "└── ", "    "
-		}
-		for j, l := range rich.WrapWords(line, cli.Width()-4) {
-			if j == 0 {
-				fmt.Fprintln(w, branch+l)
-			} else {
-				fmt.Fprintln(w, cont+l)
-			}
-		}
-	}
-}
-
-// paddedPanel is rich.Panel(..., padding=(1, 2)) at the console width.
-func paddedPanel(w io.Writer, content, title string) {
-	width := cli.Width()
-	inner := width - 6
-	fill := width - 2 - utf8.RuneCountInString(" "+title+" ")
-	l := fill / 2
-	fmt.Fprintln(w, "╭"+strings.Repeat("─", l)+" "+title+" "+strings.Repeat("─", fill-l)+"╮")
-	blank := "│" + strings.Repeat(" ", width-2) + "│"
-	fmt.Fprintln(w, blank)
-	for _, para := range strings.Split(rich.Strip(content), "\n") {
-		for _, wl := range rich.WrapWords(para, inner) {
-			n := utf8.RuneCountInString(wl)
-			fmt.Fprintln(w, "│  "+wl+strings.Repeat(" ", max(inner-n, 0))+"  │")
-		}
-	}
-	fmt.Fprintln(w, blank)
-	fmt.Fprintln(w, "╰"+strings.Repeat("─", width-2)+"╯")
+// paddedPanel is console.print(Panel(content, title=..., border_style=...,
+// padding=(1, 2))).
+func paddedPanel(w io.Writer, content, title, border string) {
+	rich.PrintTo(w, &rich.RichPanel{R: content, Title: title, BorderStyle: border, Padding: []int{1, 2}})
 }
 
 // --- command -----------------------------------------------------------------
@@ -278,7 +214,7 @@ func runResearch(ctx *cli.Context) error {
 		say(out, "[dim]Tip: Initialize a project with 'spec-kitty init <name>' if one does not exist.[/dim]")
 		return cli.Exit(1)
 	}
-	t := &stepTracker{title: "Research Phase Setup"}
+	t := newStepTracker("Research Phase Setup")
 	t.add("project", "Locate project root")
 	t.add("feature", "Resolve mission directory")
 	t.add("research-md", "Ensure research.md")
@@ -433,7 +369,7 @@ func runResearch(ctx *cli.Context) error {
 		if len(skipped) > 0 {
 			summary += "\n\n[yellow]Preserved / skipped:[/yellow]\n" + skipLines()
 		}
-		paddedPanel(out, summary, "Research Artifacts")
+		paddedPanel(out, summary, "Research Artifacts", "cyan")
 	} else {
 		headline := fmt.Sprintf("No research template for mission type '%s'. Nothing was created; any existing files were preserved unchanged.", display)
 		if preservedExisting(skipped) {
@@ -443,7 +379,7 @@ func runResearch(ctx *cli.Context) error {
 		if body == "" {
 			body = "No assets processed."
 		}
-		paddedPanel(out, headline+"\n\n"+body, "Research Artifacts")
+		paddedPanel(out, headline+"\n\n"+body, "Research Artifacts", "yellow")
 	}
 	fmt.Fprintln(out)
 	return nil

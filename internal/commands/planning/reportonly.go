@@ -515,7 +515,7 @@ func runReportOnly(ctx *cli.Context, root, slug string, jsonMode bool, fail func
 	} else {
 		rich.PrintPretty(ctx.Stdout, txn.payload)
 		if txn.router != nil && surfaceNeedsWarningPlain(txn.router) {
-			txn.router.PrintRendered(ctx.Stdout, wrapPlain)
+			printRendered(ctx.Stdout, txn.router)
 		}
 	}
 	if v, _ := txn.payload.Get("success"); v != true {

@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/retrospective"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -71,6 +72,7 @@ func init() {
 			Run: runRetroSummary,
 		})
 		ar := app.Group(agent, "retrospect", "Retrospective synthesis commands")
+		ar.NoArgsIsHelp = true
 		ar.Add(&cli.Command{
 			Name:  "synthesize",
 			Short: "Apply staged proposals from a mission's retrospective record.",
@@ -154,7 +156,7 @@ func runRetroSummary(ctx *cli.Context) error {
 		for _, kv := range agg.Pairs() {
 			rows = append(rows, []string{kv.Key, fmt.Sprint(kv.Value)})
 		}
-		simpleTable(w, "Record State Summary (4-state)", []string{"State", "Count"}, rows, map[int]bool{1: true})
+		simpleTable(w, "Record State Summary (4-state)", []string{"State", "Count"}, rows, map[int]bool{1: true}, "bold cyan")
 	}
 	if out := ctx.String("json-out"); out != "" {
 		os.MkdirAll(filepath.Dir(out), 0o755)
@@ -171,18 +173,18 @@ func runRetroSummary(ctx *cli.Context) error {
 
 func dirOK(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() }
 
-func sayErrStderr(ctx *cli.Context, msg string) { sayLiteral(ctx.Stderr, "Error: ", msg) }
+func sayErrStderr(ctx *cli.Context, msg string) { sayLiteral(ctx.Stderr, "[red]Error:[/red] ", msg) }
 
 func renderSummary(ctx *cli.Context, s *jsonx.Object, includeMalformed bool) {
 	w := ctx.Stdout
-	fitPanel(w, "Cross-Mission Retrospective Summary", "")
+	fitPanel(w, "[bold cyan]Cross-Mission Retrospective Summary[/bold cyan]", "")
 	n := func(k string) string { v, _ := s.GetInt(k); return fmt.Sprint(v) }
 	malformed := s.GetList("malformed")
 	simpleTable(w, "Counts", []string{"Category", "Count"}, [][]string{
 		{"mission_count", n("mission_count")}, {"completed", n("completed_count")}, {"skipped", n("skipped_count")},
 		{"failed", n("failed_count")}, {"in_flight", n("in_flight_count")}, {"legacy_no_retro", n("legacy_no_retro_count")},
-		{"terminus_no_retro", n("terminus_no_retro_count")}, {"malformed", fmt.Sprint(len(malformed))}}, map[int]bool{1: true})
-	section := func(key, title, col, field string) {
+		{"terminus_no_retro", n("terminus_no_retro_count")}, {"malformed", fmt.Sprint(len(malformed))}}, map[int]bool{1: true}, "bold")
+	section := func(key, title, col, field, hs string) {
 		l := s.GetList(key)
 		if len(l) == 0 {
 			return
@@ -193,20 +195,20 @@ func renderSummary(ctx *cli.Context, s *jsonx.Object, includeMalformed bool) {
 			c, _ := o.GetInt("count")
 			rows = append(rows, []string{o.GetString(field), fmt.Sprint(c)})
 		}
-		simpleTable(w, title, []string{col, "Count"}, rows, map[int]bool{1: true})
+		simpleTable(w, title, []string{col, "Count"}, rows, map[int]bool{1: true}, hs)
 	}
-	section("not_helpful_top", "Top Not-Helpful Targets", "URN", "urn")
-	section("missing_terms_top", "Top Missing Glossary Terms", "Term URN", "key")
-	section("missing_edges_top", "Top Missing DRG Edges", "Edge URN", "urn")
-	section("over_inclusion_top", "Top Over-Inclusion Targets", "URN", "urn")
-	section("under_inclusion_top", "Top Under-Inclusion Targets", "URN", "urn")
+	section("not_helpful_top", "Top Not-Helpful Targets", "URN", "urn", "bold yellow")
+	section("missing_terms_top", "Top Missing Glossary Terms", "Term URN", "key", "bold magenta")
+	section("missing_edges_top", "Top Missing DRG Edges", "Edge URN", "urn", "bold magenta")
+	section("over_inclusion_top", "Top Over-Inclusion Targets", "URN", "urn", "bold red")
+	section("under_inclusion_top", "Top Under-Inclusion Targets", "URN", "urn", "bold blue")
 	pa := s.GetObject("proposal_acceptance")
 	var rows [][]string
 	for _, kv := range pa.Pairs() {
 		rows = append(rows, []string{kv.Key, fmt.Sprint(kv.Value)})
 	}
-	simpleTable(w, "Proposal Acceptance Metrics", []string{"Metric", "Count"}, rows, map[int]bool{1: true})
-	section("skip_reasons_top", "Top Skip Reasons", "Reason", "reason")
+	simpleTable(w, "Proposal Acceptance Metrics", []string{"Metric", "Count"}, rows, map[int]bool{1: true}, "bold green")
+	section("skip_reasons_top", "Top Skip Reasons", "Reason", "reason", "bold")
 	if len(malformed) > 0 {
 		say(w, fmt.Sprintf("\n[bold red]Malformed records:[/bold red] %d", len(malformed)))
 		if includeMalformed {
@@ -219,7 +221,7 @@ func renderSummary(ctx *cli.Context, s *jsonx.Object, includeMalformed bool) {
 				}
 				mrows = append(mrows, []string{id, o.GetString("path"), o.GetString("reason")})
 			}
-			simpleTable(w, "Malformed Detail", []string{"mission_id", "path", "reason"}, mrows, nil)
+			simpleTable(w, "Malformed Detail", []string{"mission_id", "path", "reason"}, mrows, nil, "bold red")
 		}
 	}
 }
@@ -231,7 +233,7 @@ func retroBlocked(ctx *cli.Context, jsonMode bool, code, human string, o *jsonx.
 	if jsonMode {
 		printJSON(ctx.Stdout, o)
 	} else {
-		say(ctx.Stderr, "[red]Error "+code+":[/red] "+human)
+		rich.PrintSoftWrap(ctx.Stderr, "[red]Error "+rich.EscapeMarkup(code)+":[/red] "+rich.EscapeMarkup(human))
 	}
 	return cli.Exit(exit)
 }
@@ -323,7 +325,7 @@ func runRetroCreate(ctx *cli.Context) error {
 			"policy_source", jsonx.NewObject("enabled", "<default>", "timing", "<default>", "failure_policy", "<default>"), "next_step", next))
 		return nil
 	}
-	fitPanel(ctx.Stdout, fmt.Sprintf("Retrospective authored\n\nMission: %s\nRecord path: %s\nFindings status: %s\nCounts: helped=%d not_helpful=%d gaps=%d proposals=0\n\n%s",
+	fitPanel(ctx.Stdout, fmt.Sprintf("[bold green]Retrospective authored[/bold green]\n\n[bold]Mission:[/bold] %s\n[bold]Record path:[/bold] %s\n[bold]Findings status:[/bold] %s\n[bold]Counts:[/bold] helped=%d not_helpful=%d gaps=%d proposals=0\n\n[dim]%s[/dim]",
 		r.Slug, path, rec.FindingsStatus, len(rec.Helped), len(rec.NotHelpful), len(rec.Gaps), next), "spec-kitty retrospect create")
 	return nil
 }
@@ -421,17 +423,19 @@ func runRetroBackfill(ctx *cli.Context) error {
 	}
 	type createdRec struct{ slug, path string }
 	var authored []createdRec
-	for _, c := range work {
+	// _process_candidate; human mode runs the loop under a transient rich
+	// Progress spinner.
+	processCandidate := func(c candidate) {
 		id, slug := c.id, c.slug
 		path := filepath.Join(root, "kitty-specs", slug, retrospective.FileName)
 		if _, err := os.Stat(path); err == nil {
 			skipped = append(skipped, jsonx.NewObject("mission_id", id, "mission_slug", slug, "reason", "already_exists", "record_path", path))
 			maybeEmitSkip(id, slug, "already_exists")
-			continue
+			return
 		}
 		if dry {
 			created++
-			continue
+			return
 		}
 		_, p, err := retrospective.Author(root, slug, "backfill", "spec-kitty retrospect backfill")
 		var nf *retrospective.NotFoundError
@@ -453,6 +457,23 @@ func runRetroBackfill(ctx *cli.Context) error {
 			}
 		}
 	}
+	var prog *rich.SpinnerProgress
+	if !ctx.Bool("json") {
+		prog = rich.NewSpinnerProgress(ctx.Stdout)
+		prog.AddTask("Processing missions...", len(work))
+	}
+	for _, c := range work {
+		if prog != nil {
+			prog.Update("Processing " + c.slug + "...")
+		}
+		processCandidate(c)
+		if prog != nil {
+			prog.Advance()
+		}
+	}
+	if prog != nil {
+		prog.Stop()
+	}
 	for _, a := range authored {
 		retroCommit(root, a.slug, "chore(retrospective): backfill retrospective for "+a.slug, a.path, status.EventsPath(projectSpecs(root, a.slug)))
 	}
@@ -471,10 +492,9 @@ func runRetroBackfill(ctx *cli.Context) error {
 	}
 	suffix := ""
 	if dry {
-		suffix = " (dry-run — no files written)"
+		suffix = " [yellow](dry-run — no files written)[/yellow]"
 	}
-	fmt.Fprintln(ctx.Stdout)
-	fitPanel(ctx.Stdout, fmt.Sprintf("Backfill complete\n\nWindow: %s to %s\nScanned: %d | Created: %d | Skipped: %d | Failed: %d%s",
+	fitPanel(ctx.Stdout, fmt.Sprintf("[bold]Backfill complete[/bold]\n\nWindow: %s to %s\nScanned: %d | Created: %d | Skipped: %d | Failed: %d%s",
 		window.GetString("since"), window.GetString("until"), scanned, created, len(skipped), len(failed), suffix), "spec-kitty retrospect backfill")
 	return nil
 }

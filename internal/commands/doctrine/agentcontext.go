@@ -35,7 +35,7 @@ func init() {
 		g := app.Group(agent, "context", "Agent context management commands")
 		g.InvokeWithoutCommand = true
 		g.Run = func(ctx *cli.Context) error { // no_args_is_help: help, exit 2
-			cli.WriteHelp(ctx.Stdout, ctx.Cmd)
+			cli.WriteNoArgsIsHelp(ctx.Stdout, ctx.Cmd)
 			return cli.Exit(2)
 		}
 		g.Add(&cli.Command{
@@ -141,7 +141,7 @@ func runContextResolve(ctx *cli.Context) error {
 		if jsonMode {
 			jsonOut(ctx.Stdout, jsonx.NewObject("success", false, "error_code", code, "error", msg), jsonx.Pretty)
 		} else {
-			cprintRaw(ctx.Stdout, "Error: "+msg)
+			cprintRaw(ctx.Stdout, "[red]Error:[/red] "+msg)
 		}
 		return cli.Exit(1)
 	}

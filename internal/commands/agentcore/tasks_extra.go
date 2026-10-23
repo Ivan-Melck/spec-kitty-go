@@ -186,19 +186,18 @@ func runListDependents(ctx *cli.Context) error {
 		printJSON(ctx.Stdout, jsonx.NewObject("wp_id", wpID, "depends_on", own, "dependents", dependents))
 		return nil
 	}
-	none := "(none)"
-	dep, by := none, none
+	dep, by := "[dim](none)[/dim]", "[dim](none)[/dim]"
 	if len(own) > 0 {
 		dep = strings.Join(own, ", ")
 	}
 	if len(dependents) > 0 {
 		by = strings.Join(dependents, ", ")
 	}
-	consolePrint(ctx.Stdout, fmt.Sprintf("\n%s Dependency Info:", wpID))
+	consolePrint(ctx.Stdout, fmt.Sprintf("\n[bold]%s Dependency Info:[/bold]", wpID))
 	consolePrint(ctx.Stdout, "  Depends on: "+dep)
 	consolePrint(ctx.Stdout, "  Depended on by: "+by)
 	if len(dependents) > 0 {
-		consolePrint(ctx.Stdout, fmt.Sprintf("\n⚠️  Changes to %s may impact: %s", wpID, by))
+		consolePrint(ctx.Stdout, fmt.Sprintf("\n[yellow]⚠️  Changes to %s may impact: %s[/yellow]", wpID, by))
 	}
 	consolePrint(ctx.Stdout, "")
 	return nil
@@ -245,17 +244,17 @@ func runValidateWorkflow(ctx *cli.Context) error {
 		return nil
 	}
 	if valid {
-		consolePrint(ctx.Stdout, fmt.Sprintf("✓ %s validation passed", taskID))
+		consolePrint(ctx.Stdout, fmt.Sprintf("[green]✓[/green] %s validation passed", taskID))
 	} else {
-		consolePrint(ctx.Stdout, fmt.Sprintf("✗ %s validation failed", taskID))
+		consolePrint(ctx.Stdout, fmt.Sprintf("[red]✗[/red] %s validation failed", taskID))
 		for _, e := range errs {
-			consolePrint(ctx.Stdout, "  Error: "+e)
+			consolePrint(ctx.Stdout, "  [red]Error:[/red] "+e)
 		}
 	}
 	if len(warns) > 0 {
-		consolePrint(ctx.Stdout, "\nWarnings:")
+		consolePrint(ctx.Stdout, "\n[yellow]Warnings:[/yellow]")
 		for _, w := range warns {
-			consolePrint(ctx.Stdout, "  • "+w)
+			consolePrint(ctx.Stdout, "  [yellow]•[/yellow] "+w)
 		}
 	}
 	return nil
@@ -343,13 +342,13 @@ func runCheckTerminability(ctx *cli.Context) error {
 		return nil
 	}
 	if len(warnings) == 0 {
-		consolePrint(ctx.Stdout, fmt.Sprintf("✓ No un-terminable-work warnings for %s.", m.Slug))
+		consolePrint(ctx.Stdout, fmt.Sprintf("[green]✓[/green] No un-terminable-work warnings for %s.", m.Slug))
 		return nil
 	}
-	consolePrint(ctx.Stdout, fmt.Sprintf("⚠️  %d un-terminable-work warning(s) for %s (advisory — authoring is not blocked):\n", len(warnings), m.Slug))
+	consolePrint(ctx.Stdout, fmt.Sprintf("[yellow]⚠️  %d un-terminable-work warning(s) for %s (advisory — authoring is not blocked):[/yellow]\n", len(warnings), m.Slug))
 	for _, w := range warnings {
-		consolePrint(ctx.Stdout, fmt.Sprintf("  %s matched %s: %s", w.GetString("wp_id"), status.PyRepr(w.GetString("matched_phrase")), w.GetString("criterion_excerpt")))
+		consolePrint(ctx.Stdout, fmt.Sprintf("  [bold]%s[/bold] matched [cyan]%s[/cyan]: %s", w.GetString("wp_id"), status.PyRepr(w.GetString("matched_phrase")), w.GetString("criterion_excerpt")))
 	}
-	consolePrint(ctx.Stdout, "\n"+terminabilityGuidance)
+	consolePrint(ctx.Stdout, "\n[dim]"+terminabilityGuidance+"[/dim]")
 	return nil
 }

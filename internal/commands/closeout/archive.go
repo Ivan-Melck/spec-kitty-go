@@ -76,7 +76,7 @@ func runArchiveCreate(ctx *cli.Context) error {
 					o.Set("candidates", amb.Candidates)
 					fmt.Fprintln(ctx.Stdout, jsonx.Dumps(o, jsonx.Pretty))
 				} else {
-					sayLiteral(ctx.Stdout, "Error: ", amb.Error())
+					sayLiteral(ctx.Stdout, "[red]Error:[/red] ", amb.Error())
 				}
 				return cli.Exit(1)
 			}
@@ -98,7 +98,7 @@ func runArchiveCreate(ctx *cli.Context) error {
 		if jsonMode {
 			fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonError(code, reason), jsonx.Pretty))
 		} else {
-			sayLiteral(ctx.Stdout, "Archive refused ("+code+"): ", reason)
+			sayLiteral(ctx.Stdout, "[red]Archive refused ("+code+"):[/red] ", reason)
 		}
 		return cli.Exit(1)
 	}
@@ -173,7 +173,8 @@ func runArchiveCreate(ctx *cli.Context) error {
 	fmt.Fprintln(f, jsonx.Dumps(rec, jsonx.Line))
 	f.Close()
 	if jsonMode {
-		fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("record", rec, "cleared_deferrals", cleared), sortedPretty))
+		// console.print(json.dumps(...)): markup, repr highlighting, wrapping.
+		say(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("record", rec, "cleared_deferrals", cleared), sortedPretty))
 		return nil
 	}
 	say(ctx.Stdout, fmt.Sprintf("[green]Archived[/green] %s (%s) by %s.", id, terminal, strings.TrimSpace(by)))
@@ -217,7 +218,7 @@ func runArchiveList(ctx *cli.Context) error {
 		for _, r := range recs {
 			l = append(l, r)
 		}
-		fmt.Fprintln(ctx.Stdout, jsonx.Dumps(l, sortedPretty))
+		say(ctx.Stdout, jsonx.Dumps(l, sortedPretty))
 		return nil
 	}
 	if len(recs) == 0 {

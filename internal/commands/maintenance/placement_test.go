@@ -14,7 +14,7 @@ import (
 
 // rePackPath masks the mission-type definition path (the oracle's
 // site-packages vs the Go pack cache) in `mission current` panels.
-var rePackPath = regexp.MustCompile(`(?m)^│ Path: .*$`)
+var rePackPath = regexp.MustCompile(`(?m)^(?:\x1b\[[0-9;]*[m\x01])*│(?:\x1b\[[0-9;]*[m\x01])* (?:\x1b\[[0-9;]*[m\x01])*Path:.*$`) // colour runs tolerated
 
 // seamTail is the final non-empty line (an uncaught exception's
 // "Type: message" line; the traceback frames above it are Python-specific).

@@ -17,10 +17,13 @@ type rtable rich.BoxTable
 
 func (t *rtable) render(w io.Writer, consoleWidth int) { (*rich.BoxTable)(t).Render(w, consoleWidth) }
 
-// fitPanel renders rich.Panel(..., expand=False).
-func fitPanel(w io.Writer, content, title string) { rich.FitPanel(w, content, title) }
+// fitPanel prints rich.Panel(content, title=..., border_style=...,
+// expand=False); content is console markup.
+func fitPanel(w io.Writer, content, title, borderStyle string) {
+	rich.FitPanelStyled(w, content, title, borderStyle)
+}
 
 // gridTable renders rich Table(box=None, padding=(0, 2), show_edge=False).
 func gridTable(w io.Writer, headers []string, minWidths []int, right []bool, rows [][]string) {
-	rich.GridTable(w, headers, minWidths, right, rows)
+	rich.GridTableStyled(w, headers, minWidths, right, []string{"cyan"}, rows)
 }

@@ -17,7 +17,7 @@ func charterOrgGroup() *cli.Command {
 	g := &cli.Command{Name: "org", Short: short, Long: long}
 	g.InvokeWithoutCommand = true
 	g.Run = func(ctx *cli.Context) error {
-		cli.WriteHelp(ctx.Stdout, ctx.Cmd)
+		cli.WriteNoArgsIsHelp(ctx.Stdout, ctx.Cmd)
 		return cli.Exit(2)
 	}
 	g.Add(orgInitCmd(), orgValidateCmd())

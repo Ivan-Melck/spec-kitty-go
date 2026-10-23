@@ -302,9 +302,9 @@ func runDoctorCutover(ctx *cli.Context) error {
 	cprintf(out, "\n[bold]Cutover Audit[/bold] -- %d/%d mission(s) cut over\n", count, len(entries))
 	var rows [][]string
 	for _, e := range entries {
-		s := "no"
+		s := "[yellow]no[/yellow]"
 		if e.cut {
-			s = "yes"
+			s = "[green]yes[/green]"
 		}
 		rows = append(rows, []string{e.slug, s, e.reason})
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 const (
@@ -1086,18 +1087,18 @@ func (s *MergeState) Rollback(root string) *RollbackReport {
 
 // exitUnexplained is _exit_unexplained_branch_move.
 func exitUnexplained(w io.Writer, rows [][3]string) error {
-	fmt.Fprintln(w, "\nError: Refusing to continue this consolidation: the merge record cannot explain where these branches are now "+
+	rich.PrintSoftWrap(w, "\n[red]Error:[/red] Refusing to continue this consolidation: the merge record cannot explain where these branches are now "+
 		"(neither their restore target nor a tip this consolidation recorded or provably wrote):")
 	for _, r := range rows {
-		fmt.Fprintf(w, "  %s: restore target %s, live %s\n", r[0], r[1], r[2])
+		rich.PrintPlainSoftWrap(w, fmt.Sprintf("  %s: restore target %s, live %s", r[0], r[1], r[2]))
 	}
-	fmt.Fprintln(w, "Nothing was changed and the merge record is kept. To continue:")
+	rich.PrintPlainSoftWrap(w, "Nothing was changed and the merge record is kept. To continue:")
 	for _, r := range rows {
-		fmt.Fprintf(w, "  - inspect the unexplained commits on %s: git log %s..%s\n", r[0], r[1], r[2])
+		rich.PrintPlainSoftWrap(w, fmt.Sprintf("  - inspect the unexplained commits on %s: git log %s..%s", r[0], r[1], r[2]))
 	}
-	fmt.Fprintln(w, "  - if these commits should not stay, move the branch yourself; spec-kitty never moves a commit it cannot prove is its own.")
-	fmt.Fprintf(w, "  - to keep them, release the branch and clear the record: %s --release-branch <branch> --release-reason \"<why>\" (warning: a release keeps every commit listed above on the branch).\n", consolidateAbortCommand)
-	fmt.Fprintf(w, "Error code: %s.\n", UnexplainedBranchMove)
+	rich.PrintPlainSoftWrap(w, "  - if these commits should not stay, move the branch yourself; spec-kitty never moves a commit it cannot prove is its own.")
+	rich.PrintPlainSoftWrap(w, fmt.Sprintf("  - to keep them, release the branch and clear the record: %s --release-branch <branch> --release-reason \"<why>\" (warning: a release keeps every commit listed above on the branch).", consolidateAbortCommand))
+	rich.PrintPlainSoftWrap(w, fmt.Sprintf("Error code: %s.", UnexplainedBranchMove))
 	return exit(1)
 }
 
@@ -1158,7 +1159,7 @@ func Abort(w io.Writer, root, handle string, release []string, reason string) er
 		say(w, "[yellow]Notice:[/yellow] no pre-mutation snapshot was recorded for this consolidation (older record); aborting without restoring branches.")
 	} else {
 		rep = st.Rollback(root)
-		fmt.Fprintln(w, rep.Render())
+		rich.PrintOpts(w, rich.PrintOptions{Markup: rich.BoolP(false), Highlight: rich.BoolP(false)}, rep.Render())
 		if !rep.fullyRestored() {
 			say(w, "[red]Kept the consolidation record[/red] so nothing is lost; resolve the branches named above, then re-run `spec-kitty consolidate --abort`.")
 			return exit(1)

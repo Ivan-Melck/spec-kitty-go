@@ -212,7 +212,7 @@ func (f *finalizeRun) commitPinRefresh(pin *planningPin) error {
 	candidate, _ := os.ReadFile(lanesPath)
 	r := safecommit.CommitForMission(f.root, f.slug, []string{lanesPath}, message, mission.KindLaneState, safecommit.RouterOptions{})
 	if !f.json {
-		r.PrintRendered(f.ctx.Stdout, wrapPlain)
+		printRendered(f.ctx.Stdout, r)
 	}
 	restore := func(detail string) error {
 		if cur, err := os.ReadFile(lanesPath); err == nil && bytes.Equal(cur, candidate) {

@@ -14,7 +14,7 @@ import (
 func excText(s string) string {
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
-		if strings.HasPrefix(l, "│") || strings.HasPrefix(l, "╭") || strings.HasPrefix(l, "╰") {
+		if pl := testkit.StripANSI(l); strings.HasPrefix(pl, "│") || strings.HasPrefix(pl, "╭") || strings.HasPrefix(pl, "╰") {
 			continue
 		}
 		out = append(out, strings.Join(strings.Fields(l), " "))

@@ -385,7 +385,7 @@ func runRecordAnalysis(ctx *cli.Context) error {
 		return nil
 	}
 	if surfaceNeedsWarningPlain(r) {
-		r.PrintRendered(ctx.Stdout, wrapPlain)
+		printRendered(ctx.Stdout, r)
 	}
 	rel, _ := filepath.Rel(root, path)
 	say(ctx.Stdout, "[green]✓[/green] Analysis report persisted: "+rel)

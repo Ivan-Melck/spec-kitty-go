@@ -155,7 +155,7 @@ func (t *PaddedTable) Lines(width int, sys ColorSystem) []string {
 // overflow, each line justified to cellWidth, as styled segments (the
 // justification padding unstyled, under the cell style).
 func markupCellLines(markup string, wrapWidth, cellWidth int, justify byte) [][]segment {
-	t, err := renderMarkup(markup)
+	t, err := renderMarkupRT(markup)
 	if err != nil {
 		t = &richText{plain: []rune(Strip(markup))}
 	}

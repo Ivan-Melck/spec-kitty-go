@@ -106,7 +106,10 @@ func runCharterSynthesize(ctx *cli.Context) error {
 		cprint(ctx.Stderr, "%s", "[red]Error:[/red] "+err.Error())
 		return cli.Exit(1)
 	}
-	root := repoRoot()
+	root := findRepoRoot()
+	if root == "" {
+		return synthFailure(ctx, jsonMode, adapter, warnings, repoRootMissing)
+	}
 	fresh := adapter == "generated" && !charter.HasGeneratedArtifacts(root) && !ctx.Bool("dry-run-evidence") && fileExists(charter.Path(root, charter.CharterYAML))
 	if fresh {
 		res, err := charter.SynthesizeProjectLayer(root, app.Version, dryRun)
@@ -571,7 +574,11 @@ func charterPreflightCmd() *cli.Command {
 
 func runCharterPreflight(ctx *cli.Context) error {
 	w := ctx.Stdout
-	root := repoRoot()
+	root := findRepoRoot()
+	if root == "" {
+		cprint(ctx.Stderr, "%s", "[red]Error:[/red] "+repoRootMissing)
+		return cli.Exit(2)
+	}
 	res := runPreflight(root, ctx.Bool("auto-refresh"))
 	if ctx.Bool("json") {
 		jsonOut(w, res.object(), jsonx.Options{Indent: -1, SortKeys: true})
@@ -582,19 +589,23 @@ func runCharterPreflight(ctx *cli.Context) error {
 		}
 		cprint(w, "%s", "[bold "+colour+"]Charter preflight: "+head+"[/bold "+colour+"]")
 		for _, c := range res.checks {
-			cprintRaw(w, fmt.Sprintf("  %14s  %s: %s", strings.ToUpper(c.state), c.name, c.detail))
+			col := map[string]string{"fresh": "green", "skipped": "dim", "built_in_only": "cyan", "stale": "yellow", "missing": "blue", "invalid": "red"}[c.state]
+			if col == "" {
+				col = "white"
+			}
+			cprintRaw(w, fmt.Sprintf("  [%s]%14s[/%s]  %s: %s", col, strings.ToUpper(c.state), col, c.name, c.detail))
 			if c.remediation != "" {
-				cprintRaw(w, "                  Run: "+c.remediation)
+				cprintRaw(w, "                  [dim]Run: "+c.remediation+"[/dim]")
 			}
 		}
 		if res.applied {
 			cprint(w, "\n[bold]Auto-refresh:[/bold]")
 			for _, a := range res.actions {
-				cprintRaw(w, "  ran: "+a)
+				cprintRaw(w, "  [green]ran:[/green] "+a)
 			}
 		}
 		if res.blocked != "" {
-			cprintRaw(w, "\nBlocked: "+res.blocked)
+			cprintRaw(w, "\n[red]Blocked:[/red] "+res.blocked)
 		}
 	}
 	if res.passed || !ctx.Bool("strict") {

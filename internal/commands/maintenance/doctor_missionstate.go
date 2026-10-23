@@ -219,7 +219,14 @@ func runMissionStateAudit(ctx *cli.Context, root, fixtureDir string, jsonOut boo
 				cs = append(cs, c)
 			}
 			sort.Strings(cs)
-			rows = append(rows, []string{m.Slug, fmt.Sprint(e), fmt.Sprint(w), fmt.Sprint(i), strings.Join(cs, ", ")})
+			es, ws := fmt.Sprint(e), fmt.Sprint(w)
+			if e > 0 {
+				es = "[red]" + es + "[/red]"
+			}
+			if w > 0 {
+				ws = "[yellow]" + ws + "[/yellow]"
+			}
+			rows = append(rows, []string{m.Slug, es, ws, fmt.Sprint(i), strings.Join(cs, ", ")})
 		}
 		if len(rows) == 0 {
 			cprint(out, "[green]No findings — all missions are clean.[/green]")

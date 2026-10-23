@@ -22,9 +22,12 @@ import (
 // glossaryWidth is CliConsole(width=120).
 const glossaryWidth = 120
 
-func gprint(w io.Writer, s string) { fmt.Fprintln(w, rich.Wrap(rich.Strip(s), glossaryWidth)) }
+// gprint is the glossary module's console.print (CliConsole(width=120)).
+func gprint(w io.Writer, s string) { rich.CliConsoleFor(w, glossaryWidth).Print(w, s) }
+
+// gprintRaw is console.print(s, markup=False).
 func gprintRaw(w io.Writer, s string) {
-	fmt.Fprintln(w, rich.Wrap(s, glossaryWidth))
+	rich.CliConsoleFor(w, glossaryWidth).PrintWith(w, rich.PrintOptions{Markup: rich.BoolP(false)}, s)
 }
 
 func init() {
@@ -121,15 +124,25 @@ func runGlossaryList(ctx *cli.Context) error {
 		jsonOut(ctx.Stdout, out, jsonx.Pretty)
 		return nil
 	}
-	tbl := &rtable{Title: "Glossary Terms", Headers: []string{"Scope", "Term", "Definition", "Status", "Confidence"}, Right: []bool{false, false, false, false, true}}
+	tbl := rich.NewTable()
+	tbl.Title = "Glossary Terms"
+	tbl.AddColumn("Scope", rich.Column{Style: "cyan"})
+	tbl.AddColumn("Term", rich.Column{Style: "bold"})
+	tbl.AddColumn("Definition", rich.Column{})
+	tbl.AddColumn("Status", rich.Column{Style: "yellow"})
+	tbl.AddColumn("Confidence", rich.Column{Justify: "right"})
 	for _, t := range terms {
 		def := t.Definition
 		if r := []rune(def); len(r) > 60 {
 			def = string(r[:60]) + "..."
 		}
-		tbl.Rows = append(tbl.Rows, []string{t.Scope, t.Surface, def, t.Status, strconv.FormatFloat(t.ConfidenceFloat(), 'f', 2, 64)})
+		st := map[string]string{"active": "green", "deprecated": "red", "draft": "yellow"}[t.Status]
+		if st == "" {
+			st = "white"
+		}
+		tbl.AddRow(t.Scope, t.Surface, def, fmt.Sprintf("[%s]%s[/%s]", st, t.Status, st), strconv.FormatFloat(t.ConfidenceFloat(), 'f', 2, 64))
 	}
-	tbl.render(ctx.Stdout, glossaryWidth)
+	rich.CliConsoleFor(ctx.Stdout, glossaryWidth).Print(ctx.Stdout, tbl)
 	gprint(ctx.Stdout, fmt.Sprintf("\n[dim]Total: %d term(s)[/dim]", len(terms)))
 	return nil
 }
@@ -295,7 +308,16 @@ func runGlossaryConflicts(ctx *cli.Context) error {
 		jsonOut(w, l, jsonx.Pretty)
 		return nil
 	}
-	tbl := &rtable{Title: "Conflict History", Headers: []string{"Conflict ID", "Term", "Type", "Severity", "Status", "Strictness", "Mission", "Timestamp"}}
+	tbl := rich.NewTable()
+	tbl.Title = "Conflict History"
+	tbl.AddColumn("Conflict ID", rich.Column{Style: "dim"})
+	tbl.AddColumn("Term", rich.Column{Style: "bold"})
+	tbl.AddColumn("Type", rich.Column{})
+	tbl.AddColumn("Severity", rich.Column{})
+	tbl.AddColumn("Status", rich.Column{})
+	tbl.AddColumn("Strictness", rich.Column{Style: "magenta"})
+	tbl.AddColumn("Mission", rich.Column{Style: "cyan"})
+	tbl.AddColumn("Timestamp", rich.Column{})
 	unres := 0
 	for _, c := range cs {
 		id := c.id
@@ -306,12 +328,21 @@ func runGlossaryConflicts(ctx *cli.Context) error {
 		if r := []rune(ts); len(r) > 19 {
 			ts = string(r[:19])
 		}
-		tbl.Rows = append(tbl.Rows, []string{id, c.term, c.typ, c.severity, c.status, c.strictness, c.mission, ts})
+		sev := map[string]string{"high": "red", "medium": "yellow", "low": "green"}[c.severity]
+		if sev == "" {
+			sev = "white"
+		}
+		sst := map[string]string{"resolved": "green", "unresolved": "red"}[c.status]
+		if sst == "" {
+			sst = "white"
+		}
+		tbl.AddRow(id, c.term, c.typ, fmt.Sprintf("[%s]%s[/%s]", sev, c.severity, sev),
+			fmt.Sprintf("[%s]%s[/%s]", sst, c.status, sst), c.strictness, c.mission, ts)
 		if c.status == "unresolved" {
 			unres++
 		}
 	}
-	tbl.render(w, glossaryWidth)
+	rich.CliConsoleFor(w, glossaryWidth).Print(w, tbl)
 	gprint(w, fmt.Sprintf("\n[dim]Total: %d conflict(s)[/dim]", len(cs)))
 	if unres > 0 {
 		gprint(w, fmt.Sprintf("[red]Unresolved: %d[/red]", unres))
@@ -533,11 +564,11 @@ func runGlossaryResolve(ctx *cli.Context) error {
 	gprint(w, "\n[bold]Conflict: "+noEsc(cid)+"[/bold]")
 	gprint(w, "Term: [cyan]"+noEsc(term)+"[/cyan]")
 	if finding != nil {
-		gprintRaw(w, "Type: "+evStr(finding, "conflict_type", "unknown"))
-		gprintRaw(w, "Severity: "+evStr(finding, "severity", "unknown"))
-		gprintRaw(w, "Context: "+evStr(finding, "context", "N/A"))
+		gprint(w, "Type: "+evStr(finding, "conflict_type", "unknown"))
+		gprint(w, "Severity: "+evStr(finding, "severity", "unknown"))
+		gprint(w, "Context: "+evStr(finding, "context", "N/A"))
 	} else {
-		gprintRaw(w, "Urgency: "+evStr(req, "urgency", "unknown"))
+		gprint(w, "Urgency: "+evStr(req, "urgency", "unknown"))
 	}
 	var cands []*jsonx.Object
 	if finding != nil {
@@ -564,7 +595,7 @@ func runGlossaryResolve(ctx *cli.Context) error {
 		opts = fmt.Sprintf("Enter 1-%d to select a candidate, ", len(cands))
 	}
 	opts += "'C' for custom definition, 'D' to defer"
-	gprintRaw(w, opts)
+	gprint(w, "[dim]"+opts+"[/dim]")
 	choice, ok := prompt("Resolution")
 	if !ok {
 		return cli.Exit(1)

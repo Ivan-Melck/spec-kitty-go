@@ -1,7 +1,6 @@
 package rich
 
 import (
-	"fmt"
 	"io"
 	"strings"
 
@@ -207,6 +206,11 @@ func WithIndentGuides(s string) string {
 // indent guides off): the pretty repr at the console width, soft-wrapped.
 // WithIndentGuides is available for pprint-style callers.
 func PrintPretty(w io.Writer, v any) {
-	width := Width()
-	fmt.Fprintln(w, Wrap(PrettyRepr(v, width), width))
+	c := CliConsoleFor(w, 0)
+	if c.Width <= 0 {
+		return
+	}
+	t := NewStyledText(PrettyRepr(v, c.Width), "pretty")
+	ReprHighlighter{}.Highlight(t)
+	c.Print(w, t)
 }

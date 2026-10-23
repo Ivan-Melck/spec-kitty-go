@@ -188,3 +188,18 @@ holds an operator edit leaves the merge in progress and says so.
 ## Remaining work
 
 None.
+
+## Wave 5 (area COLOR)
+
+Output on the shared engine with upstream markup (see help.md "Colour").
+Fixes from the colour-mode suites: `accept`, `review` and `consolidate`
+report "Unable to locate repository root (missing .git or .kittify)." outside
+a project; consolidation's Resume / would-assign / Assigned lines carry their
+markup and rollback reports print through the console (markup off,
+highlighting on for the failure path and off for `--abort`); `archive ...
+--json` prints through `console.print` (highlighted, wrapped);
+`retrospect backfill` runs its loop under the transient spinner
+(`rich.SpinnerProgress`: drawn on a terminal, a blank line otherwise);
+`agent retrospect synthesize` refusals are `[red]Error:[/red]` soft-wrapped.
+Bare `agent mission`, `agent release` and `agent retrospect` print their help
+and exit 2 (typer `no_args_is_help`).

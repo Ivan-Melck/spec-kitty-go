@@ -27,7 +27,7 @@ func charterPackGroup() *cli.Command {
 	g := &cli.Command{Name: "pack", Short: "Charter pack management commands."}
 	g.InvokeWithoutCommand = true
 	g.Run = func(ctx *cli.Context) error {
-		cli.WriteHelp(ctx.Stdout, ctx.Cmd)
+		cli.WriteNoArgsIsHelp(ctx.Stdout, ctx.Cmd)
 		return cli.Exit(2)
 	}
 	byName := map[string]*cli.Command{}
@@ -207,7 +207,7 @@ func packAssetGroup() *cli.Command {
 	g := &cli.Command{Name: "asset", Short: "Resolve shipped and overlay charter pack assets (no install — C-002)."}
 	g.InvokeWithoutCommand = true
 	g.Run = func(ctx *cli.Context) error {
-		cli.WriteHelp(ctx.Stdout, ctx.Cmd)
+		cli.WriteNoArgsIsHelp(ctx.Stdout, ctx.Cmd)
 		return cli.Exit(2)
 	}
 	g.Add(&cli.Command{
@@ -228,7 +228,7 @@ func packAssetGroup() *cli.Command {
 				cprint(ctx.Stdout, "[yellow]No charter pack assets found.[/yellow]")
 				return nil
 			}
-			t := &rtable{Headers: []string{"ID", "TIER", "PATH"}}
+			t := &rtable{Headers: []string{"ID", "TIER", "PATH"}, Styles: []string{"cyan", "green"}}
 			for _, r := range rows {
 				t.Rows = append(t.Rows, []string{r.id, r.tier, r.path})
 			}
@@ -257,7 +257,7 @@ func packAssetGroup() *cli.Command {
 			if ctx.Bool("json") {
 				fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("id", id, "error", msg), jsonx.Pretty))
 			} else {
-				cprintRaw(ctx.Stdout, msg)
+				cprintRaw(ctx.Stdout, "[red]"+msg+"[/red]")
 			}
 			return cli.Exit(1)
 		},

@@ -166,7 +166,7 @@ func statusOutputError(ctx *cli.Context, jsonMode bool, msg string, diag *jsonx.
 		printJSON(ctx.Stdout, diag)
 		return
 	}
-	consolePrint(ctx.Stdout, "Error: "+msg)
+	consolePrint(ctx.Stdout, "[red]Error:[/red] "+msg)
 }
 
 func runStatusEmit(ctx *cli.Context) error {
@@ -256,6 +256,6 @@ func runStatusEmit(ctx *cli.Context) error {
 	if len(short) > 12 {
 		short = short[:12]
 	}
-	consolePrint(ctx.Stdout, fmt.Sprintf("OK %s: %s -> %s (event: %s...)", ev.WPID, ev.From, ev.To, short))
+	consolePrint(ctx.Stdout, fmt.Sprintf("[green]OK[/green] %s: %s -> %s (event: %s...)", ev.WPID, ev.From, ev.To, short))
 	return nil
 }

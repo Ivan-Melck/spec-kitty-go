@@ -10,7 +10,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
-	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
 
@@ -19,7 +18,7 @@ func tasksOutputError(ctx *cli.Context, jsonMode bool, msg string) {
 	if jsonMode {
 		printCompact(ctx.Stdout, jsonx.NewObject("error", msg))
 	} else {
-		say(ctx.Stdout, "Error: "+rich.Strip(msg))
+		say(ctx.Stdout, "[red]Error:[/red] "+msg)
 	}
 }
 
@@ -46,21 +45,21 @@ func renderResolveError(ctx *cli.Context, err error, jsonMode bool) error {
 			printCompact(ctx.Stdout, jsonx.NewObject("success", false, "error_code", e.Code(), "error", e.Error(), "handle", e.Handle, "candidates", strList(e.Candidates)))
 			return cli.Exit(1)
 		}
-		sayPlain(ctx.Stdout, "Error: "+e.Error())
+		say(ctx.Stdout, "[red]Error:[/red] "+e.Error())
 		return cli.Exit(2)
 	case *mission.AmbiguousError:
 		if jsonMode {
 			printCompact(ctx.Stdout, jsonx.NewObject("success", false, "error_code", "MISSION_AMBIGUOUS_SELECTOR", "error", e.Error(), "handle", e.Handle, "candidates", e.CandidatesJSON()))
 			return cli.Exit(1)
 		}
-		sayPlain(ctx.Stderr, e.Error())
+		say(ctx.Stderr, e.Error())
 		return cli.Exit(2)
 	case *mission.NotFoundError:
 		if jsonMode {
 			printCompact(ctx.Stdout, jsonx.NewObject("success", false, "error_code", "MISSION_NOT_FOUND", "error", e.Error(), "handle", e.Handle))
 			return cli.Exit(1)
 		}
-		sayPlain(ctx.Stderr, "Error: "+e.HumanMessage())
+		say(ctx.Stderr, "[red]Error:[/red] "+e.HumanMessage())
 		return cli.Exit(2)
 	}
 	return err
@@ -79,9 +78,9 @@ func targetBanner(ctx *cli.Context, root, slug string, jsonMode bool) (string, e
 			target = safecommit.PrimaryBranch(root)
 		}
 		if current == target {
-			say(ctx.Stdout, fmt.Sprintf("Branch: %s (target for this mission)", current))
+			say(ctx.Stdout, fmt.Sprintf("[bold cyan]Branch:[/bold cyan] %s (target for this mission)", current))
 		} else {
-			say(ctx.Stdout, fmt.Sprintf("Branch: on '%s', mission targets '%s'", current, target))
+			say(ctx.Stdout, fmt.Sprintf("[bold yellow]Branch:[/bold yellow] on '%s', mission targets '%s'", current, target))
 		}
 	}
 	return current, nil

@@ -10,7 +10,11 @@ import (
 
 var (
 	reSitePackages = regexp.MustCompile(`\S*site-packages/`)
-	reSpaces       = regexp.MustCompile(`\s+`)
+	// reSitePackagesHL is a highlighted site-packages location (colour runs):
+	// the highlighter styles the absolute path that Go, printing the
+	// package-relative module path, does not have.
+	reSitePackagesHL = regexp.MustCompile("\x1b\\[35[m\x01]\\S*?site-packages/([^\x1b]*)\x1b\\[0[m\x01]\x1b\\[95[m\x01]([^\x1b\\s]*)\x1b\\[0[m\x01]")
+	reSpaces         = regexp.MustCompile(`\s+`)
 )
 
 // logRecords unwraps RichHandler records (level column + 9-space
@@ -27,6 +31,7 @@ func logRecords(s string) []string {
 		}
 	}
 	for i, r := range out {
+		r = reSitePackagesHL.ReplaceAllString(r, "$1$2")
 		r = reSitePackages.ReplaceAllString(r, "")
 		out[i] = strings.TrimSpace(reSpaces.ReplaceAllString(r, " "))
 	}

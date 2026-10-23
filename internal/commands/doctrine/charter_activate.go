@@ -547,7 +547,8 @@ func runCharterList(ctx *cli.Context) error {
 			headers = append(headers, "Available (not activated)")
 		}
 	}
-	tbl := &rtable{Title: "Charter Activation State", Headers: headers, NoWrap: []bool{true}, ShowLines: true}
+	tbl := &rtable{Title: "Charter Activation State", Headers: headers, NoWrap: []bool{true}, ShowLines: true,
+		Styles: []string{"bold cyan", "white", "dim"}}
 	var rows []any
 	for _, kind := range dct.CharterKindTokens {
 		vals, ok := activated[kind], present[kind]
@@ -555,9 +556,9 @@ func runCharterList(ctx *cli.Context) error {
 		var actJSON any
 		switch {
 		case !ok:
-			actStr = "(All built-ins — no explicit activation)"
+			actStr = "[dim](All built-ins — no explicit activation)[/dim]"
 		case len(vals) == 0:
-			actStr = "(Nothing activated — explicit restriction)"
+			actStr = "[yellow](Nothing activated — explicit restriction)[/yellow]"
 			actJSON = []any{}
 		default:
 			actStr = strings.Join(vals, ", ")
@@ -592,11 +593,11 @@ func runCharterList(ctx *cli.Context) error {
 				var parts []string
 				for _, p := range na {
 					av = append(av, jsonx.NewObject("artifact_id", p.id, "layer", p.layer))
-					parts = append(parts, p.id+" ("+p.layer+")")
+					parts = append(parts, p.id+" [dim]("+p.layer+")[/dim]")
 				}
 				row.Set("available", av)
 				if len(parts) == 0 {
-					cells = append(cells, "—")
+					cells = append(cells, "[dim]—[/dim]")
 				} else {
 					cells = append(cells, strings.Join(parts, ", "))
 				}
@@ -611,7 +612,7 @@ func runCharterList(ctx *cli.Context) error {
 				sort.Strings(na)
 				row.Set("available", strs(na))
 				if len(na) == 0 {
-					cells = append(cells, "—")
+					cells = append(cells, "[dim]—[/dim]")
 				} else {
 					cells = append(cells, strings.Join(na, ", "))
 				}
@@ -627,14 +628,14 @@ func runCharterList(ctx *cli.Context) error {
 		var parts []string
 		for _, r := range refs {
 			tl = append(tl, jsonx.NewObject("template_id", r.id, "mission", r.mission, "name", r.name, "tier", r.tier))
-			parts = append(parts, r.id+" ("+r.tier+")")
+			parts = append(parts, r.id+" [dim]("+r.tier+")[/dim]")
 		}
 		payload.Set("templates", tl)
-		cell := "—"
+		cell := "[dim]—[/dim]"
 		if len(parts) > 0 {
 			cell = strings.Join(parts, ", ")
 		}
-		tbl.Rows = append(tbl.Rows, []string{"template", "(mission-scoped — not separately activated)", cell})
+		tbl.Rows = append(tbl.Rows, []string{"template", "[dim](mission-scoped — not separately activated)[/dim]", cell})
 	}
 	if jsonMode {
 		jsonOut(ctx.Stdout, payload, jsonx.Pretty)

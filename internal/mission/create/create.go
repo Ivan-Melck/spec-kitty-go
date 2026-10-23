@@ -39,6 +39,9 @@ func MintsCoordination(topology string) bool { return topology == Coord || topol
 type Error struct {
 	Msg       string
 	ErrorCode string
+	// Generic marks an exception that is not a MissionCreationError (the
+	// CLI renders it through its generic "[red]Error:[/red]" handler).
+	Generic bool
 }
 
 func (e *Error) Error() string { return e.Msg }
