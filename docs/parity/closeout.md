@@ -18,19 +18,26 @@ name-status file sets; worktree list; status; branches; all refs).
 
 | Command path | Status | Tests | Deviations |
 |---|---|---|---|
-| `agent acceptance-verdict` (`--criterion/--negative-invariant`, `--result`, `--verification-method/-command`, `--scope`, `--evidence`, `--actor`, `--no-execute`, `--json`) | done | `TestDiffAcceptanceVerdict` (coord, lanes; TRACE 6.2/6.3, errors, unknown mission), `TestLocalCloseout` | `--owned-checkout` is refused ("not supported by this build") |
+| `agent acceptance-verdict` (`--criterion/--negative-invariant`, `--result`, `--verification-method/-command`, `--scope`, `--evidence`, `--actor`, `--no-execute`, `--json`) | done | `TestDiffAcceptanceVerdict` (coord, lanes; TRACE 6.2/6.3, errors, unknown mission), `TestLocalCloseout` | `--owned-checkout` is refused ("not supported by this build"); owned by area OWN (wave 5) |
 | `agent mission acceptance-verdict` | done | same | same |
 | `agent mission accept` (`--diagnose`, `--json`, lenient/dirty refusals, origin check read-only) | done | `TestDiffAccept` (for-review-dirty, coord, lanes; TRACE 5.F5, 6.1, 6.4, 6.6, 9.3), `TestDiffAcceptMergeCommit` | none known |
 | `accept` (`--mission`, `--mode`, `--lenient`, `--no-commit`, `--json`, git_dirty and `docs/` path-convention refusals) | done | `TestDiffAccept` | none known |
 | `accept --merge-commit` (`--mode pr/local`, `--target-branch`, `--attest-first-landing-commit`; PR-merge evidence verified against git and recorded) | done | `TestDiffAcceptMergeCommit` | uses area H's `internal/migrate` verifier/recorder |
 | `accept` origin freshness (`--origin-check enforce/warn/off`, `SPEC_KITTY_ORIGIN_CHECK`; `--no-commit`/`--diagnose` read-only) | done | `TestDiffAcceptMergeCommit` (local bare remote whose status log moved ahead: refusal, warn advisories, off, read-only modes) | — |
+| `consolidate` default squash (`--dry-run [--json]`, coord-residue refusal and retry, lane→mission merges, mission_number bake, squash onto the target, done transitions, retrospective capture, worktree/branch/ref teardown, coord flatten, `Next:` hints) | done | `TestDiffConsolidateTrace` (TRACE 7.1–7.4 replay), `TestDiffConsolidate` (coord, lanes; dry-run variants, unknown mission, `--json` without `--dry-run`, primary-dirty refusal, `--skip-review-artifact-check` without `--note`, TRACE 8.1), `TestDiffConsolidateNotReady` | none known |
+| `consolidate` reconciliation claim and gate (CONS-01/02: the approved-WP claim built before any mutation — lane-tip commits, first-parent authorship, final authored blobs/deletions, two-lane merge-resolution contributions, approved-content presence, excluded canceled commits; the gate after the landing — squash blob/deletion attribution with the `git merge-tree` second chance, merge/rebase per-SHA reachability + excluded + closed-world content commits, `APPROVED_CONTENT_MISSING`, lane re-check against the validated tips, `Reconciliation FAILED`/`refused (fail-closed)` texts, rollback door; PASS anchor `reconciliation_passed_target_sha` and the verified-landing `--resume`) | done | `TestDiffConsolidateReconcile` (teammate content on the mission branch under squash / merge / rebase → FAIL + rollback + `--abort`; lane moved after approval → claim refusal), `TestDiffConsolidatePushRejectedResume` (push rejected after the verified landing, `--resume` finishes the teardown), `internal/consolidate` unit tests | the squash projected-bookkeeping proof and the post-checkpoint coord projection are vacuous unless another writer commits to the coordination branch during the run (not exercised differentially) |
+| `consolidate` approved bound (CONS-08 native: `LANE_MOVED_AFTER_APPROVAL`, `APPROVAL_STAMP_MISSING`, `APPROVAL_STAMP_NOT_ON_LANE`, compound refusal text, claim-time `Reconciliation refused (fail-closed) at claim time` footer incl. the earlier-attempt sentences) | done | `TestDiffConsolidateReconcile/lane-moved*`, `TestDiffConsolidateAttestApproved`, `TestDiffConsolidateRollbackAuthority` (resume refused after an earlier attempt) | — |
+| `consolidate --attest-approved-reviewed` / `--attest-canceled-superseded` (CONS-03: validation against the status log, re-attestation check, forced operator transition recorded through the status door before the claim, `⚠️  Operator attestation recorded ...` lines, attestation stamps read by the claim) | done | `TestDiffConsolidateAttestApproved` (unstamped approval refused, then attested and consolidated; invalid requests), `TestDiffConsolidateAutoRebaseManual` (CLI-boundary validation) | — |
+| `consolidate` canceled-with-provenance WPs (excluded from the merge-ready precondition, gates and done bookkeeping; fully-canceled lanes skipped; mixed-lane canceled-content attribution with work windows, closed world and attestation lift; fully-canceled dependency lanes: unreadable-branch refusal, unstamped refusal, carried content `CANCELED_REACHABLE_VIA_DEPENDENCY`) | done | `TestDiffConsolidateCanceledLane` (canceled leaf lane; canceled dependency lane carried by lane-b), `internal/consolidate` unit tests (windows, never-started, details, attestation stamps) | mixed lanes (two WPs in one lane) are covered by unit tests only: the calc fixture has one WP per lane |
 | `accept --normalize-encoding` / `ArtifactEncodingError` (strict UTF-8 artifact reads; repair through `charter.encoding_recovery.recover` with `.bak` backups; ambiguous refusal; backup collision) | done (area ENC) | `TestDiffAcceptNormalizeEncoding` | detection via `internal/charsetnorm` (maintenance.md, "Charset detection") |
-| `consolidate` default squash (`--dry-run [--json]`, coord-residue refusal and retry, lane→mission merges, mission_number bake, squash onto the target, done transitions, retrospective capture, worktree/branch/ref teardown, coord flatten, `Next:` hints) | done | `TestDiffConsolidateTrace` (TRACE 7.1–7.4 replay), `TestDiffConsolidate` (coord, lanes; dry-run variants, unknown mission, `--json` without `--dry-run`, primary-dirty refusal, `--skip-review-artifact-check` without `--note`, TRACE 8.1), `TestDiffConsolidateNotReady` | squash content-attribution reconciliation (`content commit ... belongs to NO approved WP — un-attributable`) is not ported: Go prints the verified line; `--attest-*` and `--release-*`: the CLI-boundary validation (reason required, `--abort` only, releasable-branch check, dry-run notices; `TestDiffConsolidateAutoRebaseManual`) is ported, but recording an attestation in the status log and keeping a released branch are not; sparse-checkout detection not ported |
 | `consolidate` merge gates (evidence/risk/dependency/issue-matrix completeness + verdict terminality, `policy.merge_gates` mode block/warn/off) | done | `TestDiffConsolidateGates` (blocking risk refusal before any mutation, warn mode proceeds) | — |
-| `consolidate` transaction record (`.kittify/runtime/merge/<mission_id>/state.json` + post-fix marker), `--resume`, `--abort` (rollback report, coordination worktree teardown), rollback report on any failure inside the mutation span, ADR-A2 restore targets | done | `TestDiffConsolidateRebase`, `TestDiffConsolidateAutoRebaseManual` (stale lane → rollback report → `--abort`), `TestDiffConsolidateSkipLanes` | simplified rollback authority: no advance intents, no unsettled-branch refusal (`UNEXPLAINED_BRANCH_MOVE`), no `NOT restored` outcome (a moved run-movable branch is always restored to its restore target) |
-| `consolidate --strategy merge` (no-ff `Merge <mission> into <target>`, meta.json driver two-way) | done | `TestDiffConsolidateStrategies/lanes-merge` | the merge-strategy content-commit attribution check is not ported (approved-commit reachability is) |
-| `consolidate --strategy rebase` (rebase + fast-forward, per-SHA reconciliation, rollback) | done | `TestDiffConsolidateRebase` (`Reconciliation FAILED: approved WPnn commit ... is NOT reachable` + rollback report + record kept, then `--abort`) | same attribution gap as `merge` |
-| `consolidate` stale-lane auto-rebase with the conflict classifier (status event-log union, status.json rematerialize, coordination/target-owned take-theirs, pyproject deps / `__init__` imports / URL-list unions, uv.lock regenerate, default manual) | done | `TestDiffConsolidateAutoRebaseManual` (manual conflict aborts, lane stays stale); orchestrator `TestDiffConsolidateMissionAutoRebaseClassifier` (rule-resolved conflicts and the `auto-rebase(lane=…): N conflicts resolved by classifier rules [...]` commit); classifier and TOML validator against CPython in `internal/autorebase` | `merge --abort` after a refused attempt is not guarded (`guarded_merge_abort` refusal not ported); post-merge validation failures name the exception differently (`TOMLDecodeError('<go message>')`) |
+| `consolidate` transaction record (`.kittify/runtime/merge/<mission_id>/state.json` + post-fix marker, `completed_wps`, `mission_number_baked`), `--resume`, `--abort` (rollback report, coordination worktree teardown), rollback report on any failure inside the mutation span | done | `TestDiffConsolidateRebase`, `TestDiffConsolidateAutoRebaseManual`, `TestDiffConsolidateSkipLanes`, `TestDiffConsolidateRollbackAuthority`, `TestDiffConsolidatePushRejectedResume` (state.json compared) | — |
+| `consolidate` rollback authority (CONS-04/05: pre-mutation snapshot, per-phase post-mutation tips, advance intents, settled/unsettled branches, ADR-A2 restore targets, `UNEXPLAINED_BRANCH_MOVE` pre-check and claim-time refusal, `NOT restored` outcomes with the record kept, `--abort --release-branch/--release-reason` binding the release to the live tip and reporting `kept ... (released by operator: ...)`; dirty-checkout resync refusal with the role-aware residue context; resume anchor guard H3/H4/H5) | done | `TestDiffConsolidateRollbackAuthority` (re-anchor after a settled move, unsettled move refused on `--resume` and on a re-run, `--abort` NOT restored + record kept, release), `TestDiffConsolidateResumeLaneDiverged` (H3) | — |
+| `consolidate` sparse-checkout preflight (CONS-06: `core.sparseCheckout` on the primary or a lane worktree refuses unless `--allow-sparse-checkout`; managed lane sparse checkouts exempt) | done | `TestDiffConsolidateAttestApproved` (refusal text with affected paths; override WARNING record on stderr) | — |
+| `consolidate` protected status target (CONS-09 native: a coordination-less mission whose recorded target is protected refuses before any branch moves, `PROTECTED_BRANCH_REFUSED: ...` + `Next step:` + footer; dry-run forecast with `error_code`) | done | `TestDiffConsolidateReconcile/protected` | — |
+| `consolidate --strategy merge` (no-ff `Merge <mission> into <target>`, meta.json driver two-way) | done | `TestDiffConsolidateStrategies/lanes-merge`, `TestDiffConsolidateReconcile/teammate-merge` | — |
+| `consolidate --strategy rebase` (rebase + fast-forward, per-SHA reconciliation, rollback) | done | `TestDiffConsolidateRebase`, `TestDiffConsolidateReconcile/teammate-rebase` | — |
+| `consolidate` stale-lane auto-rebase with the conflict classifier (status event-log union, status.json rematerialize, coordination/target-owned take-theirs, pyproject deps / `__init__` imports / URL-list unions, uv.lock regenerate, default manual) and `guarded_merge_abort` (CONS-07) | done | `TestDiffConsolidateAutoRebaseManual` (manual conflict aborts, lane stays stale), `TestDiffConsolidateAutoRebaseGuardedAbort` (an operator edit in the lane worktree keeps the merge in progress); orchestrator `TestDiffConsolidateMissionAutoRebaseClassifier`; classifier and TOML validator against CPython in `internal/autorebase` | — (TOML validation uses PYF's `internal/pytoml` with tomllib's messages) |
 | `consolidate --skip-lanes` (no-lane missions: synthesized manifest, planning-artifact closeout) | done | `TestDiffConsolidateSkipLanes` | — |
 | `consolidate` origin freshness gate (status evidence + approved lane branches, enforce/warn/off) and `--push` (target sync preflight `TARGET_BRANCH_NOT_SYNCHRONIZED`/`REFRESH_FAILED`, push after the stale check) | done | `TestDiffConsolidatePush` (local bare remote) | — |
 | `consolidate` stale-assertion analyzer (`internal/staleassert`, Python AST port) | done | `TestDiffConsolidateTrace`, `TestDiffStaleCheck` (runtime) | — |
@@ -38,9 +45,9 @@ name-status file sets; worktree list; status; branches; all refs).
 | `review` (merged-mission validation: WP lane gate, dead-code scan, `mission-review-report.md`; `--mode lightweight|post-merge`) | done | `TestDiffConsolidate` (TRACE 8.3), `TestDiffConsolidateTrace`, `TestDiffConsolidateNotReady` | dead-code scan is a port of the upstream Python-symbol heuristic |
 | `retrospect create` (`--overwrite/--update`, `--json`) | done | `TestDiffConsolidate`, `TestDiffConsolidateNotReady` | none known |
 | `retrospect summary` (`--json`, `--json-out`, `--limit`, `--since`, `--filter`, `--include-malformed`) | done | `TestDiffConsolidate` | none known |
-| `retrospect backfill` (`--dry-run`, `--json`, `--since/--until/--mission`, `--emit-*`) | done | `TestDiffConsolidate` (`--dry-run --json`) | only the dry-run path has a differential test |
+| `retrospect backfill` (`--dry-run`, `--json`, `--since/--until/--mission`, `--emit-skipped`, `--emit-failures`; `.kittify/missions/` registry, pre-screened skips before `already_exists`, `missing_artifacts` / `generator_exception` failures, `RetrospectiveSkipped` / `RetrospectiveCaptureFailed` events, authored record + commit) | done | `TestDiffConsolidate` (`--dry-run --json`), `TestDiffRetrospectBackfill` (CONS-10: dry-run, writing path, emit flags, human panel, filter, bad date) | — |
 | `agent retrospect summary` | done | `TestDiffConsolidate` | none known |
-| `agent retrospect synthesize` (`--mission`, `--proposal-id`, `--apply`, `--json`) | partial | `TestDiffConsolidate`, `TestDiffConsolidateNotReady` | generator-schema records (what consolidate and `retrospect create` write) match upstream: empty dry-run/apply batch, `--proposal-id` refused with `unsupported_generator_record`. Legacy-schema records with applicable proposals are not ported (their `--apply` would mutate glossary/doctrine, owned by area C) |
+| `agent retrospect synthesize` (`--mission`, `--proposal-id`, `--apply`, `--json`) | partial | `TestDiffConsolidate`, `TestDiffConsolidateNotReady` | generator-schema records (what consolidate and `retrospect create` write) match upstream: empty dry-run/apply batch, `--proposal-id` refused with `unsupported_generator_record`. Legacy-schema records with applicable proposals: owned by DOC-19 (wave 5, `retrospect synthesize --apply`) |
 | `archive create` (`--by`, `--reason`, `--json`) | done | `TestDiffConsolidate`, `TestDiffConsolidateNotReady` | none known |
 | `archive list` (`--json`) | done | `TestDiffConsolidate`, `TestLocalCloseout` | none known |
 | `agent release prep` (`--channel`, `--repo`, `--json`) | done | `TestDiffConsolidate` (alpha/beta/stable), `TestLocalCloseout` | none known |
@@ -93,18 +100,38 @@ done transitions (as upstream), not after the retrospective event.
   `PrimaryBranch(root)`.
 - Gates: `GatePolicy`, `LoadGatePolicy(root)`, `GateResult`, `RiskScore(m)`,
   `EvaluateGates(root, primaryDir, statusDir, matrixDir, wpIDs, pol)`.
-- Transaction record: `MergeState` (`Object`, `Save`, `Rollback`,
-  `BeginAttempt`), `LoadState`, `ClearState`, `Abort(w, root, handle)`.
+- Transaction record and rollback authority: `MergeState` (`Object`, `Save`,
+  `Rollback(root) *RollbackReport`), `RollbackReport` (`Render`), `LoadState`,
+  `ClearState`, `Abort(w, root, handle, releaseBranches, releaseReason)`,
+  `UnexplainedBranchMove`.
+- Reconciliation (wave 5, `reconcile.go`, `reconcile_canceled.go`,
+  `attribution.go`, `bound.go`, `probes.go`, `projection.go`): the claim
+  builder and verifier are package-internal (`buildClaim`, `claim.verify`);
+  exported: `ApprovedBoundRefusal(root, statusDir, manifest, coordBase,
+  windowBase, excluded) (string, error)` (approved_bound_refusal),
+  `BoundRefusal`, `RenderBoundRefusals(refusals, slug)`,
+  `BoundRefusalCodes(text)`, codes `LaneMovedAfterApproval`,
+  `ApprovalStampMissing`, `ApprovalStampNotOnLane`, `AttestApprovedFlag`,
+  `ProbeError` (GitProbeError).
+- Entry checks: `SparseCheckoutRefusal(root, command) string`,
+  `ProtectedStatusTargetRefusal(root, slug, manifest, excluded)
+  *PolicyRefusal` (`excluded` nil = acceptably canceled WPs), `PolicyRefusal`.
+- `Options` gained `AllowSparse`, `AttestCanceled`, `AttestApproved`,
+  `AttestReason`.
 - Orchestrator lane merge (area I, extended): `MergePreflight`,
-  `RunLaneMerge` (now evaluates the merge gates), `LaneMergeError`,
+  `RunLaneMerge` (evaluates the merge gates, the protected status target and
+  the approved bound), `LaneMergeError`, `ApprovedBoundError{Msg, Codes}`,
   `DestructiveRefusal`, `OriginGateInputs(root, slug)`.
 
 `internal/autorebase` (new): `Attempt(Options) Report` (attempt_auto_rebase),
-`Options{Root, LaneID, Branch, MissionBranch, Worktree, Env, EnsureDrivers}`,
-`Report`, `Classify(file, hunk)`, `ValidateResolution`, `ResolveText(file,
-body)`, `Classification`/`Resolution`, rule ids `Rule*`, `ValidateTOML(src)`
-(TOML 1.0 validity, checked against `tomllib`), `IsTargetOwnedPath`,
-`EnsureDriverConfig(root)`, `MergeEnv()`.
+`Options{Root, LaneID, Branch, MissionBranch, Worktree, Env, EnsureDrivers,
+Disposable}` (`Disposable` nil = the lane residue context of the branch's
+mission), `Report`, `Classify(file, hunk)`, `ValidateResolution`,
+`ResolveText(file, body)`, `Classification`/`Resolution`, rule ids `Rule*`,
+`ValidateTOML(src)` (TOML 1.0 validity, checked against `tomllib`),
+`IsTargetOwnedPath`, `EnsureDriverConfig(root)`, `MergeEnv()`;
+`AbortRefused` (guarded_merge_abort's DESTRUCTIVE_OP_ONLY_COPY refusal),
+`LaneResidue(root, slug)`.
 
 `internal/originfresh` (new): `Env`, `Setting`, `ReadOnly`, `ResolveMode`,
 `NotCheckedWarning`, `Verdict` (`Payload`), `ConfiguredRemotes`,
@@ -126,7 +153,9 @@ over the whole upstream source tree).
   `Record`, `Finding`, `Serialize`, `LoadRecord`, `ClassifyRecord`,
   `BuildSummary(project, since, limit)`, `MissionDirs`, `MissionStates`,
   `DefaultPolicySource`, `PolicyKeys`, `Now`, `FileName`, `GeneratorVersion`,
-  `Width`.
+  `Width`; wave 5: `NotFoundError` (generate's FileNotFoundError),
+  `EmitSkipped(dir, missionID, slug, reason)`, `EmitCaptureFailed(dir,
+  missionID, slug, category, message, remediation, attemptedKind, missing)`.
 
 ## Foundation changes / extensions to other areas' packages
 
@@ -135,3 +164,27 @@ None to area A. Wave 4 (area L) uses area H's `internal/migrate`
 --merge-commit`, and wires the merge gates and origin gate into area I's
 `orchestrator-api consolidate-mission` / `accept-mission` (see
 `docs/parity/orchestrator.md`).
+
+Wave 5 (area CONS) adds no foundation change. It reads other areas'
+packages without changing them: `internal/healthcheck.ScanSparse` (sparse
+checkout scan), `internal/coord.IsProtected` / `Surface.EmitTransition`
+(protected-branch policy, attestation transitions), `internal/mergedriver.Bodies`
+(driver replay), `internal/status` event reading. `internal/autorebase` now
+applies the lane residue context by default, which also changes CORE's lane
+sync (`internal/workflow/lanesync.go`) the way upstream's
+`worktree_allocator` does: a failed sync auto-rebase whose lane worktree
+holds an operator edit leaves the merge in progress and says so.
+
+## Irreducible differences
+
+- Excluded (canceled) commits are listed in a stable sorted order; upstream
+  iterates a Python `frozenset` of SHAs, whose order is not deterministic
+  (`excluded (canceled/removed) commit ... IS reachable` clauses of a merge/rebase
+  FAIL naming several canceled commits).
+- Refusal details that quote a Python exception (`coordination surface could
+  not be materialized: <exc>`, the `StoreError` text of an unreadable status log,
+  a `GitProbeError` naming git's stderr) carry the Go error text instead.
+
+## Remaining work
+
+None.

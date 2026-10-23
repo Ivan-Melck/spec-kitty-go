@@ -176,7 +176,7 @@ func runConsolidate(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	if ctx.Bool("abort") {
-		return exitFrom(consolidate.Abort(ctx.Stdout, root, ctx.String("mission"), release))
+		return exitFrom(consolidate.Abort(ctx.Stdout, root, ctx.String("mission"), release, releaseReason))
 	}
 	var notes []string
 	if ctx.Bool("dry-run") && !ctx.Bool("json") {
@@ -190,7 +190,8 @@ func runConsolidate(ctx *cli.Context) error {
 	o := consolidate.Options{Mission: ctx.String("mission"), Target: ctx.String("target"), Strategy: ctx.String("strategy"),
 		DeleteBranch: optBool(ctx, "delete-branch"), RemoveWorktree: optBool(ctx, "remove-worktree"),
 		Push: ctx.Bool("push"), DryRun: ctx.Bool("dry-run"), JSON: ctx.Bool("json"), Yes: ctx.Bool("yes"), Resume: ctx.Bool("resume"),
-		OriginCheck: ctx.OptString("origin-check"), SkipLanes: ctx.Bool("skip-lanes"), DryRunNotes: notes}
+		OriginCheck: ctx.OptString("origin-check"), SkipLanes: ctx.Bool("skip-lanes"), DryRunNotes: notes,
+		AllowSparse: ctx.Bool("allow-sparse-checkout"), AttestCanceled: canceledWPs, AttestApproved: approvedWPs, AttestReason: attestReason, Stderr: ctx.Stderr}
 	if err := consolidate.Run(ctx.Stdout, root, o); err != nil {
 		return exitFrom(err)
 	}

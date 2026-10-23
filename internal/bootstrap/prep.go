@@ -67,7 +67,11 @@ type write struct {
 	after   FileState
 	content []byte
 	action  string
+	proof   Proof
 }
+
+// Proof is an ownership proof (operations.OwnershipProof).
+type Proof struct{ Kind, Reference string }
 
 // Disposition records a node left alone.
 type Disposition struct {
@@ -182,7 +186,7 @@ func action(before, after FileState) string {
 	return ""
 }
 
-func (p *prep) effect(path string, after FileState, content []byte) error {
+func (p *prep) effect(path string, after FileState, content []byte, proof Proof) error {
 	before, err := p.observe(path)
 	if err != nil {
 		return err
@@ -196,9 +200,11 @@ func (p *prep) effect(path string, after FileState, content []byte) error {
 		if prev.after != after {
 			return fmt.Errorf("Conflicting global asset outputs: %s", path)
 		}
+		// A later identical plan replaces the earlier one (its proof wins).
+		*prev = write{path: path, before: before, after: after, content: content, action: act, proof: proof}
 		return nil
 	}
-	p.writes[path] = &write{path: path, before: before, after: after, content: content, action: act}
+	p.writes[path] = &write{path: path, before: before, after: after, content: content, action: act, proof: proof}
 	p.order = append(p.order, path)
 	return nil
 }
@@ -223,7 +229,7 @@ func (p *prep) parents(path string) error {
 			return err
 		}
 		if st.Kind == "absent" {
-			if err := p.effect(chain[i], FileState{Kind: "directory", Mode: 0o755}, nil); err != nil {
+			if err := p.effect(chain[i], FileState{Kind: "directory", Mode: 0o755}, nil, Proof{"managed_path", p.owner + ":required-parent"}); err != nil {
 				return err
 			}
 		}
@@ -261,7 +267,14 @@ func (p *prep) asset(path string, content []byte, mode int, managedTree, predece
 	if err := p.parents(path); err != nil {
 		return err
 	}
-	if err := p.effect(path, desired, content); err != nil {
+	proof := Proof{"managed_path", p.owner + ":" + rel}
+	if owned {
+		proof = Proof{"manifest", filepath.Base(p.inventory) + ":" + rel}
+	}
+	if predecessor {
+		proof = Proof{"canonical_content", p.owner + ":" + rel + ":canonical-predecessor"}
+	}
+	if err := p.effect(path, desired, content, proof); err != nil {
 		return err
 	}
 	p.entries[rel] = desired
@@ -303,7 +316,7 @@ func (p *prep) retire(path string) (bool, error) {
 			return false, nil
 		}
 	}
-	if err := p.effect(path, FileState{Kind: "absent"}, nil); err != nil {
+	if err := p.effect(path, FileState{Kind: "absent"}, nil, Proof{"manifest", filepath.Base(p.inventory) + ":" + rel}); err != nil {
 		return false, err
 	}
 	delete(p.entries, rel)
@@ -355,7 +368,7 @@ func (p *prep) overwriteInternal(path string, content []byte) error {
 	if err := p.parents(path); err != nil {
 		return err
 	}
-	return p.effect(path, FileState{Kind: "file", Mode: 0o644, SHA256: digest(content)}, content)
+	return p.effect(path, FileState{Kind: "file", Mode: 0o644, SHA256: digest(content)}, content, Proof{"managed_path", p.owner + ":freshness-stamp"})
 }
 
 // finish plans the inventory, version stamp and owner lock.
@@ -365,7 +378,7 @@ func (p *prep) finish(versionPath, version string) error {
 		if err := p.parents(p.inventory); err != nil {
 			return err
 		}
-		if err := p.effect(p.inventory, FileState{Kind: "file", Mode: 0o644, SHA256: digest(data)}, data); err != nil {
+		if err := p.effect(p.inventory, FileState{Kind: "file", Mode: 0o644, SHA256: digest(data)}, data, Proof{"managed_path", p.owner + ":inventory"}); err != nil {
 			return err
 		}
 	}
@@ -374,7 +387,7 @@ func (p *prep) finish(versionPath, version string) error {
 			return err
 		}
 		data := []byte(version)
-		if err := p.effect(versionPath, FileState{Kind: "file", Mode: 0o644, SHA256: digest(data)}, data); err != nil {
+		if err := p.effect(versionPath, FileState{Kind: "file", Mode: 0o644, SHA256: digest(data)}, data, Proof{"managed_path", p.owner + ":version-stamp"}); err != nil {
 			return err
 		}
 	}
@@ -384,7 +397,7 @@ func (p *prep) finish(versionPath, version string) error {
 		}
 		st, err := os.Lstat(p.lockPath)
 		if os.IsNotExist(err) {
-			if err := p.effect(p.lockPath, FileState{Kind: "file", Mode: 0o644, SHA256: digest(nil)}, []byte{}); err != nil {
+			if err := p.effect(p.lockPath, FileState{Kind: "file", Mode: 0o644, SHA256: digest(nil)}, []byte{}, Proof{"managed_path", p.owner + ":persistent-lock"}); err != nil {
 				return err
 			}
 		} else if err == nil && !st.Mode().IsRegular() {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,12 +31,23 @@ const (
 
 var decisionExit = map[Decision]int{DecisionAllow: 0, DecisionAllowWithNag: 0, DecisionBlockMigration: 4, DecisionBlockCLIUpgrade: 5, DecisionBlockCorrupt: 6, DecisionBlockIncompatile: 2}
 
-// safetyRegistry is compat.safety.SAFETY_REGISTRY (keys joined by space;
-// "" value = always safe, "dry-run" = safe only with --dry-run).
+// safetyRegistry is compat.safety.SAFETY_REGISTRY after
+// safety_modes.register_mode_predicates (keys joined by space; "" value =
+// always safe, "dry-run" = safe only with --dry-run, "fix" = unsafe with
+// --fix, "orchestrator-api" = the API-verb predicate).
 var safetyRegistry = map[string]string{
-	"upgrade": "", "migrate": "", "migrate backfill-runtime-state": "dry-run", "init": "", "status": "", "doctor": "",
+	"upgrade": "", "migrate": "", "migrate backfill-runtime-state": "dry-run", "init": "", "status": "",
 	"help": "", "version": "", "agent check-prerequisites": "", "agent mission branch-context": "",
 	"agent mission check-prerequisites": "", "agent context resolve": "", "agent tasks status": "",
+	"doctor": "fix", "doctor command-files": "", "doctor skills": "fix", "doctor state-roots": "",
+	"doctor identity": "", "doctor mission-state": "fix", "doctor shim-registry": "",
+	"doctor sparse-checkout": "fix", "orchestrator-api": "orchestrator-api",
+}
+
+// orchestratorUnsafeVerbs is safety_modes._ORCHESTRATOR_API_UNSAFE_SUBCOMMANDS.
+var orchestratorUnsafeVerbs = map[string]bool{
+	"start-implementation": true, "start-review": true, "transition": true,
+	"append-history": true, "accept-mission": true, "merge-mission": true,
 }
 
 // Invocation is compat.planner.Invocation (the fields the decision reads).
@@ -74,13 +86,19 @@ func (i Invocation) Safe() bool {
 	if !ok {
 		return false
 	}
-	if v == "dry-run" {
-		for _, a := range i.RawArgs {
-			if a == "--dry-run" {
-				return true
-			}
+	switch v {
+	case "dry-run":
+		return slices.Contains(i.RawArgs, "--dry-run")
+	case "fix":
+		return !slices.Contains(i.RawArgs, "--fix")
+	case "orchestrator-api":
+		// _orchestrator_api_predicate looks the verb up after an
+		// "orchestrator-api" token in raw_args.
+		idx := slices.Index(i.RawArgs, "orchestrator-api")
+		if idx < 0 || idx+1 >= len(i.RawArgs) {
+			return true
 		}
-		return false
+		return !orchestratorUnsafeVerbs[i.RawArgs[idx+1]]
 	}
 	return true
 }

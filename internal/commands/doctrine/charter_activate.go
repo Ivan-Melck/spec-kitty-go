@@ -13,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
+	"github.com/spec-kitty/go-kitty3/internal/toolsurface"
 )
 
 const resynthesizeHelp = "Eagerly refresh the FULL derived bundle/DRG (bundle content hash + project DRG layer, not just the compiled catalog) after this activation via the EXISTING synthesize pipeline (the same one `charter generate` + `charter synthesize` use). Default activation already recompiles `catalog.references` on its own via `charter generate`'s own compile seam (see --no-compile to opt out of that lightweight recompile); --resynthesize goes further and reconciles the freshness signal to fresh immediately (NFR-001)."
@@ -217,7 +218,35 @@ func runCharterActivate(ctx *cli.Context) error {
 			return err
 		}
 	}
-	return recompileOrNotify(ctx, root)
+	if err := recompileOrNotify(ctx, root); err != nil {
+		return err
+	}
+	return reprojectPackSkills(ctx, root, kind)
+}
+
+// reprojectPackSkills is activate.reproject_pack_skills: after a skill
+// (de)activation the managed installer re-projects the pack skills in force.
+func reprojectPackSkills(ctx *cli.Context, root, kind string) error {
+	if kind != string(dct.Skill) {
+		return nil
+	}
+	w := ctx.Stdout
+	if toolsurface.LogWriter == nil {
+		toolsurface.LogWriter = ctx.Stderr
+		defer func() { toolsurface.LogWriter = nil }()
+	}
+	p, err := toolsurface.ReprojectPackSkills(root)
+	if err != nil {
+		cprint(w, "[red]Error:[/red] pack skills were not projected: %s. The activation change is recorded; fix the cause and re-run this command.", err.Error())
+		return cli.Exit(1)
+	}
+	for _, path := range p.Changed {
+		cprint(w, "[green]Skill file synced[/green]: %s", path)
+	}
+	for _, pr := range p.Preserved {
+		cprint(w, "[yellow]Skill file preserved[/yellow]: %s (%s)", pr[0], pr[1])
+	}
+	return nil
 }
 
 func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeScope) error {
@@ -385,7 +414,10 @@ func runCharterDeactivate(ctx *cli.Context) error {
 			}
 		}
 	}
-	return recompileOrNotify(ctx, root)
+	if err := recompileOrNotify(ctx, root); err != nil {
+		return err
+	}
+	return reprojectPackSkills(ctx, root, kind)
 }
 
 func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cascadeScope) error {

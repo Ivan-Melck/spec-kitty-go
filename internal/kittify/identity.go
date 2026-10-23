@@ -13,6 +13,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/rtyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -214,8 +215,11 @@ func EnsureIdentity(root string) (Identity, error) {
 			return id, fmt.Errorf("%v; refusing to overwrite it", err)
 		}
 	}
+	// YAML() round trip (preserve_quotes): only the project section is
+	// replaced; comments and styles elsewhere survive.
+	snap := rtyaml.Snap(cfg)
 	cfg.Set("project", id.Object())
-	return id, writeAtomic(ConfigPath(root), []byte(RenderConfig(cfg)), 0o600)
+	return id, writeAtomic(ConfigPath(root), []byte(renderOver(ConfigPath(root), cfg, snap)), 0o600)
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {

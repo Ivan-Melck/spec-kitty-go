@@ -57,6 +57,28 @@ func TestDiffConsolidateAutoRebaseManual(t *testing.T) {
 	compareGit(t, p)
 }
 
+// TestDiffConsolidateAutoRebaseGuardedAbort covers guarded_merge_abort: a
+// failed auto-rebase whose lane worktree holds an operator edit outside the
+// merge leaves the merge in progress instead of discarding the edit.
+func TestDiffConsolidateAutoRebaseGuardedAbort(t *testing.T) {
+	p := missionfxCalc(t)
+	teammateCommit(t, p, map[string]string{"src/calc.py": "def add(a, b):\n    return b + a\n"}, "teammate: calc")
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile(filepath.Join(".worktrees", slugOf(t, s)+"-lane-a", "tests", "test_subtract.py"), "# operator edit\n")
+	})
+	comparePair(t, p, "consolidate", "--mission", "$M", "--yes", "--keep-worktree")
+	compareGit(t, p)
+	laneState := func(s *testkit.Sandbox) string {
+		wt := filepath.Join(".worktrees", slugOf(t, s)+"-lane-a")
+		st := s.Exec(wt, "git", "status", "--porcelain=v1", "--untracked-files=all")
+		mh := s.Exec(wt, "git", "rev-parse", "-q", "--verify", "MERGE_HEAD")
+		return s.Normalize(st.Stdout) + "\nMERGE_HEAD present: " + map[bool]string{true: "yes", false: "no"}[mh.Code == 0]
+	}
+	if g, o := laneState(p.Go), laneState(p.Oracle); g != o {
+		t.Errorf("lane worktree state differs:\n%s", testkit.Diff(o, g))
+	}
+}
+
 // missionfxCalc is acceptedPair whose lane-a also adds a pyproject
 // dependency and a package __init__.
 func missionfxCalc(t *testing.T) *testkit.Pair {

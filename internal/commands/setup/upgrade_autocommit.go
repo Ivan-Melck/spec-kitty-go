@@ -415,6 +415,11 @@ func commitUpgradeChurn(root string, b *gitBaseline, from, to string) (bool, []s
 	if strings.TrimSpace(r.Stdout) == "" {
 		return false, paths, detachedHeadWarning
 	}
+	if h, err := gitx.Exec(root, nil, nil, "rev-parse", "--verify", "-q", "HEAD"); err != nil || h.Code != 0 {
+		// safe_commit needs a born branch (its stash/restore of the staging
+		// area reads HEAD); an unborn branch is skipped with the warning.
+		return false, paths, upgradeCommitSkipWarning
+	}
 	msg := fmt.Sprintf("chore: apply spec-kitty upgrade changes (%s -> %s)", from, to)
 	if len(dels) > 0 {
 		if !commitWithIndexDeletions(root, msg, files, dels) {
