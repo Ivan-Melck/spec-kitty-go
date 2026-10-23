@@ -137,13 +137,14 @@ func (s *Surface) EmitTransition(req *status.TransitionRequest) (*EmitResult, er
 	if p.Annotation != nil {
 		items = append(items, p.Annotation)
 	}
+	rb := txnPoint(transactional, dir)
 	if err := status.AppendEvents(dir, items...); err != nil {
 		return nil, err
 	}
 	status.Materialize(dir)
 	res.Event, res.Annotation, res.Appended = p.Event, p.Annotation, true
 	if transactional {
-		if err := s.commitStatusFiles(checkout, dir, "chore(spec-kitty): status transition "+req.WPID); err != nil {
+		if err := s.commitStatusTxn(checkout, dir, "chore(spec-kitty): status transition "+req.WPID, rb, itemEventIDs(items)); err != nil {
 			return res, err
 		}
 	}
@@ -163,13 +164,14 @@ func (s *Surface) EmitAnnotation(wpID string, delta status.Delta, actor status.A
 	if autoCommit && s.annotationTransactional() {
 		dir, checkout, err := s.statusCommitTarget()
 		if err == nil {
+			rb := txnPoint(true, dir)
 			if err := status.AppendEvents(dir, a); err != nil {
 				return nil, err
 			}
 			if _, merr := status.Materialize(dir); merr != nil {
 				a.MaterializeFailed = true
 			}
-			if err := s.commitStatusFiles(checkout, dir, "chore(spec-kitty): inner-state annotation "+wpID); err != nil {
+			if err := s.commitStatusTxn(checkout, dir, "chore(spec-kitty): inner-state annotation "+wpID, rb, []string{a.EventID}); err != nil {
 				return a, err
 			}
 			status.RefreshDerivedViews(dir, s.Root)

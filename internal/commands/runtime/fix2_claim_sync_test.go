@@ -78,6 +78,24 @@ func TestDiffClaimCommitRefusedByHook(t *testing.T) {
 	installFailingHook(t, p)
 	steps(t, p, true, []string{"agent", "action", "review", "WP01", "--agent", "claude", "--mission", "$M"})
 	compareGit(t, p)
+	compareCoordStatus(t, p)
 	compareTree(t, p, "kitty-specs", "analysis-report.md")
 	compareTree(t, p, ".worktrees", "analysis-report.md")
+	// the same transactional door under move-task
+	steps(t, p, true, []string{"agent", "tasks", "move-task", "WP01", "--to", "in_review", "--mission", "$M", "--agent", "claude"})
+	compareCoordStatus(t, p)
+	compareTree(t, p, ".worktrees", "analysis-report.md")
+}
+
+// compareCoordStatus compares the coordination worktree's index/worktree
+// status (a refused commit restores the staging it found).
+func compareCoordStatus(t *testing.T, p *testkit.Pair) {
+	t.Helper()
+	st := func(s *testkit.Sandbox) string {
+		d := filepath.Join(".worktrees", missionfx.MissionSlug(t, s)+"-coord")
+		return norm(s, s.Exec(d, "git", "status", "--porcelain", "--untracked-files=all").Stdout)
+	}
+	if g, o := st(p.Go), st(p.Oracle); g != o {
+		t.Errorf("coord worktree status differs:\n%s", testkit.Diff(o, g))
+	}
 }
