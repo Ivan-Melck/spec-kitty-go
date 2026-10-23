@@ -54,9 +54,9 @@ func (m *missionCtx) banner(ctx *cli.Context, jsonMode bool) (string, error) {
 	if !jsonMode {
 		target := m.targetBranch()
 		if current == target {
-			consolePrint(ctx.Stdout, fmt.Sprintf("Branch: %s (target for this mission)", current))
+			consolePrint(ctx.Stdout, fmt.Sprintf("[bold cyan]Branch:[/bold cyan] %s (target for this mission)", current))
 		} else {
-			consolePrint(ctx.Stdout, fmt.Sprintf("Branch: on '%s', mission targets '%s'", current, target))
+			consolePrint(ctx.Stdout, fmt.Sprintf("[bold yellow]Branch:[/bold yellow] on '%s', mission targets '%s'", current, target))
 		}
 	}
 	return current, nil

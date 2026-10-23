@@ -481,7 +481,11 @@ func renderCreateError(ctx *cli.Context, err error, jsonMode bool, slug string) 
 			}
 			emitJSON(ctx.Stdout, p)
 		} else {
-			consolePrint(ctx.Stdout, "[bold red]Error:[/bold red] "+e.Msg)
+			if e.Generic {
+				consolePrint(ctx.Stdout, "[red]Error:[/red] "+e.Msg)
+			} else {
+				consolePrint(ctx.Stdout, "[bold red]Error:[/bold red] "+e.Msg)
+			}
 			if strings.Contains(strings.ToLower(e.Msg), "worktree") {
 				if main := project.Locate(""); main != "" {
 					consolePrint(ctx.Stdout, "\n[cyan]Run from the main repository instead:[/cyan]")

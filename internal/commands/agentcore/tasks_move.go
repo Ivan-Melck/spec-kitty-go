@@ -960,8 +960,8 @@ func (st *moveState) guardOwnership() *refusal {
 	if st.roleAllowance() {
 		return nil
 	}
-	warning := []string{"", "⚠️  AGENT OWNERSHIP WARNING", fmt.Sprintf("   %s is currently assigned to: %s", st.taskID, st.currentAgent),
-		fmt.Sprintf("   You are trying to move it as: %s", st.agent), "", "   If you are the correct agent, use --force to override.",
+	warning := []string{"", "[bold red]⚠️  AGENT OWNERSHIP WARNING[/bold red]", fmt.Sprintf("   %s is currently assigned to: [cyan]%s[/cyan]", st.taskID, st.currentAgent),
+		fmt.Sprintf("   You are trying to move it as: [yellow]%s[/yellow]", st.agent), "", "   If you are the correct agent, use --force to override.",
 		"   If not, you may be modifying the wrong WP!",
 		"   After a review rejection, the implementer resumes with its own --agent and a reviewer distinct from the implementer can review; neither needs --force.", ""}
 	msg := fmt.Sprintf("Agent mismatch: %s is assigned to '%s', not '%s'. Use --force to override.", st.taskID, st.currentAgent, st.agent)
@@ -2012,7 +2012,7 @@ func (st *moveState) output() {
 			res.Set("verdict_durability_skip_reason", *o.Reason)
 		}
 	}
-	msg := fmt.Sprintf("✓ Moved %s from %s to %s", st.taskID, st.oldLane, st.target)
+	msg := fmt.Sprintf("[green]✓[/green] Moved %s from %s to %s", st.taskID, st.oldLane, st.target)
 	if s := st.rollback; s != nil {
 		res.Set("subtasks_reset_count", len(s.resetIDs))
 		res.Set("subtasks_reset_ids", s.resetIDs)
