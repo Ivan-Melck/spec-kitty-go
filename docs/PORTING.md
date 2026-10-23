@@ -1,8 +1,11 @@
 # Porting guide: functional parity with upstream spec-kitty
 
 This repository is a Go implementation of the upstream Python `spec-kitty`
-CLI (`spec-kitty-cli`, aligned with **4.0.0rc8**, upstream main
-`dccf199f7a`). The goal is **functional adherence, not code parity**: the
+CLI (`spec-kitty-cli`, target **4.0.0rc8**, upstream main
+`ae979820332ee259eba467d03a00e8bb50196237`). Updating from the previously
+verified `dccf199f7a` reference is in progress; see the
+[current RC8 parity inventory](parity/LATEST_MAIN.md). The goal is
+**functional adherence, not code parity**: the
 same commands, flags, exit codes, JSON outputs, on-disk files and git effects
 an agent or user observes, implemented idiomatically in Go. Python internals,
 module layout and incidental implementation details are *not* reproduced.
@@ -36,7 +39,7 @@ checkout and oracle with `scripts/setup-reference.sh ../spec-kitty`.
 | Upstream source (read-only) | `$REF/upstream` (`src/specify_cli`, `src/charter`, `src/runtime`, `src/kernel`, `packs/built-in`) |
 | **Oracle** (real wheel install) | `$REF/oracle-bin/spec-kitty`. Never use an editable install: it runs init in local template mode and writes extra files |
 | External status reducer package | `$REF/oracle-venv/lib/python3.13/site-packages/spec_kitty_events` |
-| Full command tree (276 paths) | `$REF/inventory/cli-tree.md`, `cli-tree.json`, raw help in `inventory/help/*.txt` |
+| Full command tree (279 paths at the current target) | `$REF/inventory/cli-tree.md`, `cli-tree.json`, raw help in `inventory/help/*.txt` |
 | Template invocations / priority | `$REF/inventory/template-invocations.md`, `priority.md` |
 | On-disk formats (very detailed) | `$REF/inventory/formats.md` |
 | End-to-end workflow | Summary in `$REF/reports/a6a7fcad1f30f0414.md`; the exact command sequence is in `$REF/trace/old-trace-commands.sh` (the recorded TRACE.md was lost; re-run steps against the oracle when you need exact output) |

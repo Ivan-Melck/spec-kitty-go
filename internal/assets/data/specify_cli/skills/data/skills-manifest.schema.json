@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://spec-kitty.dev/schemas/skills-manifest/v1.json",
+  "$id": "https://spec-kitty.ai/schemas/skills-manifest/v1.json",
   "title": "Spec Kitty Skills Manifest",
   "description": "Authoritative record of Agent Skills packages written by Spec Kitty into .agents/skills/ on a project. Used for additive install, selective remove, and drift detection.",
   "type": "object",
@@ -26,8 +26,11 @@
       "properties": {
         "path": {
           "type": "string",
-          "pattern": "^\\.agents/skills/spec-kitty\\.[a-z0-9][a-z0-9-]*/SKILL\\.md$",
-          "description": "Path relative to repo root, POSIX-style. Must live under .agents/skills/spec-kitty.<command>/SKILL.md."
+          "anyOf": [
+            { "pattern": "^\\.agents/skills/spec-kitty-[a-z0-9]+(-[a-z0-9]+)*/SKILL\\.md$" },
+            { "pattern": "^\\.agents/skills/spec-kitty\\.[a-z0-9][a-z0-9-]*/SKILL\\.md$" }
+          ],
+          "description": "Path relative to repo root, POSIX-style. New entries live under .agents/skills/spec-kitty-<command>/SKILL.md; the legacy dotted .agents/skills/spec-kitty.<command>/SKILL.md form (before #6475) is still accepted so an older manifest loads and its entries can be retired."
         },
         "content_hash": {
           "type": "string",
@@ -40,7 +43,7 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["codex", "vibe", "pi", "letta"]
+            "enum": ["codex", "vibe", "pi", "letta", "antigravity"]
           },
           "description": "Sorted list of agent keys that installed this entry. The file is physically deleted when the list becomes empty. New shared-root agents added in later missions may extend this enum."
         },

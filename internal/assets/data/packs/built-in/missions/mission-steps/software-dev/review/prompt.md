@@ -74,9 +74,9 @@ via the paired fetch command and apply.
 
 - `docs/context/` — canonical terminology. Consult when the diff
   introduces or renames a domain term.
-- `docs/adr/3.x/` — architectural intent. Consult when the diff
-  changes a structural boundary (package layout, public API surface,
-  dependency edges).
+- `docs/adr/` — architectural intent, filed by era (for example
+  `docs/adr/4.x/`). Consult when the diff changes a structural boundary
+  (package layout, public API surface, dependency edges).
 - Any additional paths declared in the charter's `authority_paths:` block are
   emitted alongside these defaults.
 
