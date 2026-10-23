@@ -85,6 +85,7 @@ type canceledPath struct {
 	wpID, laneID, path string
 	canceled, pre      pstate
 	preStateBySurvivor bool
+	renamedFrom        string
 }
 
 func isMigration(e *status.Event) bool {
@@ -280,59 +281,6 @@ func contentSteps(root string, spine []string, isBK func(string) bool, mc mergeC
 	return out, nil
 }
 
-// addedLinesOf is _added_lines_of.
-func addedLinesOf(root, sha, path string) ([]string, error) {
-	res := git(root, "show", "--format=", "--no-color", "--no-renames", sha, "--", path)
-	if res.Code != 0 {
-		return nil, probeErr("git show --format= %s -- %s failed (exit %d): %s", sha, path, res.Code, strings.TrimSpace(res.Stderr))
-	}
-	var out []string
-	for _, l := range strings.Split(res.Stdout, "\n") {
-		if strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++") {
-			out = append(out, l[1:])
-		}
-	}
-	return out, nil
-}
-
-// canceledContentSurvives is canceled_content_survives.
-func canceledContentSurvives(root, sha, path, finalRef string) (bool, error) {
-	final, err := stateAt(root, finalRef, path)
-	if err != nil {
-		return false, err
-	}
-	if !final.present {
-		return false, nil
-	}
-	added, err := addedLinesOf(root, sha, path)
-	if err != nil {
-		return false, err
-	}
-	if len(added) == 0 {
-		return false, nil
-	}
-	res := git(root, "cat-file", "blob", final.blob)
-	if res.Code != 0 {
-		return false, probeErr("git cat-file blob %s failed (exit %d): %s", final.blob, res.Code, strings.TrimSpace(res.Stderr))
-	}
-	have := map[string]bool{}
-	for _, l := range strings.Split(strings.TrimSuffix(res.Stdout, "\n"), "\n") {
-		have[l] = true
-	}
-	// str.splitlines also splits on \r and friends; normalise \r\n endings.
-	for l := range have {
-		if strings.HasSuffix(l, "\r") {
-			have[strings.TrimSuffix(l, "\r")] = true
-		}
-	}
-	for _, a := range added {
-		if !have[strings.TrimSuffix(a, "\r")] {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 type spineWalk struct {
 	canceled []canceledPath
 	outside  [][2]string // (sha, first content path)
@@ -369,29 +317,25 @@ func canceledContentWalk(root string, spine []string, canceled, covered map[stri
 			}
 		}
 	}
+	attribution := newLineAttribution(root)
 	for _, p := range order {
 		toucher := newest[p]
 		oc, ok := oldestCSha[p]
 		if !ok {
 			continue
 		}
+		finalPath, finalRef := p, toucher
 		if !canceled[toucher] {
-			survives := false
-			for _, c := range cShas[p] {
-				s, err := canceledContentSurvives(root, c, p, toucher)
-				if err != nil {
-					return nil, err
-				}
-				if s {
-					survives = true
-					break
-				}
+			survival, err := attribution.survival(cShas[p], p, toucher, oc, spine[0], nil)
+			if err != nil {
+				return nil, err
 			}
-			if !survives {
+			if !survival.survives() {
 				continue
 			}
+			finalPath, finalRef = survival.path, survival.ref
 		}
-		cs, err := stateAt(root, toucher, p)
+		cs, err := stateAt(root, finalRef, finalPath)
 		if err != nil {
 			return nil, err
 		}
@@ -399,14 +343,18 @@ func canceledContentWalk(root string, spine []string, canceled, covered map[stri
 		if err != nil {
 			return nil, err
 		}
-		if cs.key() == pre.key() {
+		if cs.key() == pre.key() && finalPath == p {
 			continue
 		}
 		bySurvivor := false
 		if s, ok := oldestS[p]; ok && s > oldestCIdx[p] {
 			bySurvivor = true
 		}
-		w.canceled = append(w.canceled, canceledPath{wpID, laneID, p, cs, pre, bySurvivor})
+		renamed := ""
+		if finalPath != p {
+			renamed = p
+		}
+		w.canceled = append(w.canceled, canceledPath{wpID, laneID, finalPath, cs, pre, bySurvivor, renamed})
 	}
 	return w, nil
 }
@@ -557,7 +505,7 @@ func resolveCanceledWP(root string, events []*status.Event, laneID string, laneW
 
 // canceledSpineContent is canceled_spine_content: (superseded canceled
 // commits, live path -> (newest canceled toucher, final state)).
-func canceledSpineContent(root string, spine []string, canceled map[string]bool, isBK func(string) bool) (map[string]bool, map[string][2]any, []string, error) {
+func canceledSpineContent(root string, spine []string, canceled map[string]bool, isBK func(string) bool) (map[string]bool, map[string][3]any, []string, error) {
 	oldest := -1
 	for i, s := range spine {
 		if canceled[s] {
@@ -565,7 +513,7 @@ func canceledSpineContent(root string, spine []string, canceled map[string]bool,
 		}
 	}
 	if oldest < 0 {
-		return map[string]bool{}, map[string][2]any{}, nil, nil
+		return map[string]bool{}, map[string][3]any{}, nil, nil
 	}
 	final := spine[0]
 	steps, err := contentSteps(root, spine[:oldest+1], isBK, mergeCache{})
@@ -575,6 +523,14 @@ func canceledSpineContent(root string, spine []string, canceled map[string]bool,
 	survivor := map[string]bool{}
 	superseded := map[string]bool{}
 	newest := map[string]string{}
+	renamed := map[string]string{}
+	attribution := newLineAttribution(root)
+	onSpine := map[string]bool{}
+	for _, sha := range spine {
+		if canceled[sha] {
+			onSpine[sha] = true
+		}
+	}
 	var order []string
 	for _, st := range steps {
 		if !canceled[st.sha] {
@@ -589,12 +545,15 @@ func canceledSpineContent(root string, spine []string, canceled map[string]bool,
 				un = append(un, p)
 				continue
 			}
-			s, err := canceledContentSurvives(root, st.sha, p, final)
+			s, err := attribution.survival([]string{st.sha}, p, final, spine[oldest], final, onSpine)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			if s {
-				un = append(un, p)
+			if s.survives() {
+				un = append(un, s.path)
+				if s.path != p && newest[s.path] == "" {
+					renamed[s.path] = p
+				}
 			}
 		}
 		if len(st.paths) > 0 && len(un) == 0 {
@@ -607,13 +566,13 @@ func canceledSpineContent(root string, spine []string, canceled map[string]bool,
 			}
 		}
 	}
-	live := map[string][2]any{}
+	live := map[string][3]any{}
 	for _, p := range order {
 		s, err := stateAt(root, final, p)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		live[p] = [2]any{newest[p], s}
+		live[p] = [3]any{newest[p], s, renamed[p]}
 	}
 	return superseded, live, order, nil
 }

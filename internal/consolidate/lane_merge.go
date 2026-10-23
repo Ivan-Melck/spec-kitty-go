@@ -155,6 +155,13 @@ func RunLaneMerge(root string, o LaneMergeOptions) error {
 		return &LaneMergeError{Msg: fmt.Sprintf("%s: %s Next step: %s", pr.Code, pr.Message, pr.NextStep)}
 	}
 	if planningOnly(m) {
+		refusal, err := SingleBranchEvidenceRefusal(root, sf.StatusDir(), m, lm.canceledWPs())
+		if err != nil {
+			return err
+		}
+		if refusal != "" {
+			return &ApprovedBoundError{Msg: refusal, Codes: SingleBranchRefusalCodes(refusal)}
+		}
 		var buf strings.Builder
 		ret := ResolveRetention(sf.PrimaryDir, nil, nil)
 		r := &run{w: &buf, root: root, slug: o.Slug, sf: sf, target: o.Target, strategy: o.Strategy, ret: ret, originGated: true}

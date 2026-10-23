@@ -678,6 +678,10 @@ func buildClaim(in claimInput) (*claim, error) {
 		return c, nil
 	}
 	// approved shas
+	if refusal := singleBranchEvidenceRefusal(in.root, in.featureDir, m, wps, in.excluded); refusal != "" {
+		c.refusal = refusal
+		return c, nil
+	}
 	for _, l := range m.Lanes {
 		base, branch := in.laneRange(l)
 		for _, id := range l.WPIDs {

@@ -77,10 +77,6 @@ func TestOracleGitProbeErrorText(t *testing.T) {
 			_, err := threeWayMergeBlob(repo, "nope", head, "a.txt")
 			return err
 		}},
-		{"canceled_content_survives", `canceled_content_survives(R, "` + missing + `", "a.txt", "main")`, func() error {
-			_, err := canceledContentSurvives(repo, missing, "a.txt", "main")
-			return err
-		}},
 	}
 	var script strings.Builder
 	script.WriteString("import json, sys\nfrom pathlib import Path\nfrom specify_cli.consolidation.git_probes import *\nR = Path(sys.argv[1])\nout = {}\n")
