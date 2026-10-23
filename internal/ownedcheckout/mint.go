@@ -42,7 +42,10 @@ type Options struct {
 
 // SelectionRequired is OwnedMissionSelectionRequired: a handle-less
 // discover_sole resolution found zero or several missions.
-type SelectionRequired struct{ Listings []mission.Listing }
+type SelectionRequired struct {
+	Root     string // the claimed checkout the discovery listed
+	Listings []mission.Listing
+}
 
 func (e *SelectionRequired) Error() string { return "mission selection required" }
 
@@ -263,7 +266,7 @@ func discoverSoleHandle(claimed string) (string, error) {
 	if len(l) == 1 {
 		return l[0].Slug, nil
 	}
-	return "", &SelectionRequired{Listings: l}
+	return "", &SelectionRequired{Root: claimed, Listings: l}
 }
 
 // ResolveMission is resolve_owned_mission: validate ownership before

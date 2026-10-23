@@ -8,9 +8,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
-	"github.com/spec-kitty/go-kitty3/internal/decision"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -24,13 +22,6 @@ import (
 // stop tracking the exact decision index lock of an explicitly owned
 // mission, adding the exact owner ignore rule when it is missing.
 
-const runtimeLockFile = "index.json.lock"
-
-// lockPreconditionError is the ValueError family
-// (RUNTIME_LOCK_PRECONDITION_REFUSED).
-type lockPreconditionError struct{ msg string }
-
-func (e *lockPreconditionError) Error() string { return e.msg }
 
 // lockRaceError is _RuntimeLockRaceError (RUNTIME_LOCK_RACE).
 type lockRaceError struct{ msg string }
@@ -39,7 +30,7 @@ func (e *lockRaceError) Error() string { return e.msg }
 
 func runtimeLockErrorCode(err error) string {
 	var race *lockRaceError
-	var pre *lockPreconditionError
+	var pre *ownedcheckout.PreconditionError
 	switch {
 	case errors.As(err, &race):
 		return "RUNTIME_LOCK_RACE"
@@ -49,61 +40,7 @@ func runtimeLockErrorCode(err error) string {
 	return "RUNTIME_LOCK_REPAIR_FAILED"
 }
 
-func lockRel(root, p string) string {
-	r, err := filepath.Rel(root, p)
-	if err != nil {
-		return p
-	}
-	return filepath.ToSlash(r)
-}
-
-// runtimeLockIgnoreState is _runtime_lock_ignore_state: validate the exact
-// local ignore destination and observe its effective owner rule.
-func runtimeLockIgnoreState(owned *ownedcheckout.Fact) (lock, ignore string, ignored bool, err error) {
-	lock = decision.LockPath(owned.MissionDir)
-	ignore = filepath.Join(filepath.Dir(lock), ".gitignore")
-	if _, err := owned.Files([]string{lock, ignore}, false); err != nil {
-		return "", "", false, err
-	}
-	for _, p := range []string{lock, ignore} {
-		for cur := p; cur != owned.OwnedRoot && cur != filepath.Dir(cur); cur = filepath.Dir(cur) {
-			st, lerr := os.Lstat(cur)
-			if lerr != nil {
-				continue
-			}
-			if st.Mode()&os.ModeSymlink != 0 {
-				return "", "", false, &lockPreconditionError{"Runtime lock repair refuses symlink: " + cur}
-			}
-			if cur == p && !st.Mode().IsRegular() {
-				return "", "", false, &lockPreconditionError{"Runtime lock repair requires a regular file: " + cur}
-			}
-			if cur != p && !st.IsDir() {
-				return "", "", false, &lockPreconditionError{"Runtime lock repair requires a directory: " + cur}
-			}
-		}
-	}
-	relIgnore := lockRel(owned.OwnedRoot, ignore)
-	res, gerr := gitx.Exec(owned.OwnedRoot, nil, nil, "--literal-pathspecs", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored", "--", relIgnore)
-	if gerr != nil || res.Code != 0 {
-		return "", "", false, fmt.Errorf("git status failed in %s", owned.OwnedRoot)
-	}
-	if strings.TrimSpace(res.Stdout) != "" {
-		return "", "", false, &lockPreconditionError{"Runtime lock repair refuses preexisting changes or staging on .gitignore"}
-	}
-	ci, gerr := gitx.Exec(owned.OwnedRoot, nil, nil, "check-ignore", "--no-index", "--quiet", "--", lockRel(owned.OwnedRoot, lock))
-	if gerr != nil || (ci.Code != 0 && ci.Code != 1) {
-		return "", "", false, errors.New("Runtime lock repair could not inspect effective ignore rules")
-	}
-	exact := false
-	if b, rerr := os.ReadFile(ignore); rerr == nil {
-		for _, l := range agents.SplitLines(strings.TrimPrefix(string(b), "\uFEFF")) {
-			if l == "/"+runtimeLockFile {
-				exact = true
-			}
-		}
-	}
-	return lock, ignore, ci.Code == 0 && exact, nil
-}
+func lockRel(root, p string) string { return ownedcheckout.RelTo(root, p) }
 
 func lockTracked(owned *ownedcheckout.Fact, lock string) bool {
 	out, err := gitx.Run(owned.OwnedRoot, "ls-files", "--", lockRel(owned.OwnedRoot, lock))
@@ -112,7 +49,7 @@ func lockTracked(owned *ownedcheckout.Fact, lock string) bool {
 
 // repairRuntimeLock is _repair_runtime_lock.
 func repairRuntimeLock(owned *ownedcheckout.Fact, dryRun bool) (*jsonx.Object, error) {
-	lock, ignore, ignored, err := runtimeLockIgnoreState(owned)
+	lock, ignore, ignored, err := ownedcheckout.RuntimeLockIgnoreState(owned)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +60,7 @@ func repairRuntimeLock(owned *ownedcheckout.Fact, dryRun bool) (*jsonx.Object, e
 	}
 	for _, e := range entries {
 		if !(e.Untracked() && e.Path == relLock) {
-			return nil, &lockPreconditionError{"Runtime lock repair refuses preexisting changes or staging on its lock or .gitignore"}
+			return nil, &ownedcheckout.PreconditionError{Msg: "Runtime lock repair refuses preexisting changes or staging on its lock or .gitignore"}
 		}
 	}
 	tracked := lockTracked(owned, lock)
@@ -151,7 +88,7 @@ func repairRuntimeLock(owned *ownedcheckout.Fact, dryRun bool) (*jsonx.Object, e
 		return nil, err
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	_, _, ignoredNow, err := runtimeLockIgnoreState(owned)
+	_, _, ignoredNow, err := ownedcheckout.RuntimeLockIgnoreState(owned)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +105,7 @@ func repairRuntimeLock(owned *ownedcheckout.Fact, dryRun bool) (*jsonx.Object, e
 	old, oldErr := os.ReadFile(ignore)
 	var written []byte
 	if !ignoredNow {
-		if _, err := agents.EnsureGitignoreEntries(filepath.Dir(ignore), []string{"/" + runtimeLockFile}, true); err != nil {
+		if _, err := ownedcheckout.EnsureRuntimeLockIgnore(owned); err != nil {
 			return nil, err
 		}
 	}
