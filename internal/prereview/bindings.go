@@ -3,6 +3,8 @@ package prereview
 import (
 	"fmt"
 
+	"github.com/spec-kitty/go-kitty3/internal/charter"
+
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 )
 
@@ -25,6 +27,8 @@ func owningAction(edge string) string { return "review" }
 func ResolveGateBindings(root, missionType, edge string) (*BindingResolution, error) {
 	action := owningAction(edge)
 	urn := fmt.Sprintf("mission_step_contract:%s/%s", missionType, action)
+	// _build_repository: resolve_org_dirs(repo_root, "mission_step_contracts")
+	charter.WarnDroppedOrgDirs(root, "mission_step_contracts")
 	orgRoots := dct.OrgRoots(root)
 	off := dct.NewOffering(root, orgRoots)
 	var gates []any
@@ -46,6 +50,11 @@ func ResolveGateBindings(root, missionType, edge string) (*BindingResolution, er
 	}
 	if len(handlers) == 0 {
 		return &BindingResolution{Reason: fmt.Sprintf("NO_COVERAGE: gate contract (%s, %s) declares no binding for edge %s", missionType, action, edge)}, nil
+	}
+	// _activated_msc_urns: the graph's org chain is read strictly
+	// (resolve_pack_chain(strict=True)), failing closed on an unfetched pack.
+	if _, err := charter.RequireDeclaredOrgRoots(root); err != nil {
+		return nil, err
 	}
 	g, err := dct.LoadGraph(root, orgRoots)
 	if err != nil {

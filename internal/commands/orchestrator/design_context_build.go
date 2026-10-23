@@ -50,10 +50,13 @@ func buildDesignContext(root string, m *orch.Mission, stage, missionTypeFlag str
 	selected := missionTypeFlag
 	if m != nil {
 		mt := missionart.MissionTypeFor(m.PrimaryDir)
+		charter.WarnMissionTypeContext(root, mt)
 		if missionTypeFlag != "" && missionTypeFlag != mt {
 			return nil, derr("DESIGN_CONTEXT_FAILED", "The mission type is immutable; --mission-type selects only pre-creation context")
 		}
 		selected = mt
+	} else {
+		charter.WarnMissionTypeContext(root, missionTypeFlag)
 	}
 	if selected == "" {
 		return nil, derr("DESIGN_CONTEXT_FAILED", "Choose an activated mission type before discovery")
