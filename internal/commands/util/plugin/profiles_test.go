@@ -14,13 +14,17 @@ import (
 // binary renders as "<spec-kitty>/...".
 var sitePackages = regexp.MustCompile(`/\S*/site-packages/`)
 
+// reSpecKittyTag is Go's highlighted "<spec-kitty>/" placeholder (raw or
+// normalized SGR terminators).
+var reSpecKittyTag = regexp.MustCompile("\x1b\\[1[m\x01]<\x1b\\[0[m\x01]\x1b\\[1;95[m\x01]spec-kitty\x1b\\[0[m\x01]\x1b\\[1[m\x01]>\x1b\\[0[m\x01]\x1b\\[35([m\x01])/")
+
 // normWarnings maps the oracle's site-packages prefix to "<spec-kitty>/"
 // and drops the console padding (whose length follows the path length).
 func normWarnings(s string) string {
 	s = sitePackages.ReplaceAllString(s, "<spec-kitty>/")
 	// Colour runs: the highlighter reads Go's "<spec-kitty>" placeholder as
 	// a tag; the oracle's absolute path starts the magenta path span there.
-	s = strings.ReplaceAll(s, "\x1b[1m<\x1b[0m\x1b[1;95mspec-kitty\x1b[0m\x1b[1m>\x1b[0m\x1b[35m/", "\x1b[35m<spec-kitty>/")
+	s = reSpecKittyTag.ReplaceAllString(s, "\x1b[35${1}<spec-kitty>/")
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		lines[i] = strings.TrimRight(l, " ")

@@ -450,6 +450,13 @@ SGR sequence to end in `testkit.SGREnd` (so `\b`-anchored masks still see
 word boundaries) and also masks timestamps, durations and short SHAs that
 the highlighter split into styled runs. Go-only tests that assert literal
 plain text are not meaningful in colour mode and fail there by design.
+Run-dependent values can still change the styling itself: a short SHA that
+happens to be all digits is highlighted as a number (and splits the
+surrounding styled run differently), so a colour run occasionally differs on
+one such line; and upstream iterates some sets (`analysis_report`'s
+`_COUNT_KEYS`) in hash order, which varies between Python runs in either
+mode. The setup package (`init`'s live step tree, area TSE) is not yet
+coloured like upstream in its oracle suites.
 
 Bare groups follow click/typer exactly: top-level groups print their help
 and exit 0 (spec-kitty's `HelpOnEmptyTopLevelGroup`, with click's trailing

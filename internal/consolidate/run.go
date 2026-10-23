@@ -604,7 +604,7 @@ func (r *run) execute() error {
 	}
 	say(r.w, "  Lanes: "+strings.Join(ids, ", "))
 	if r.planningOnly {
-		say(r.w, "  Planning-artifact-only mission: target branch already contains deliverables; branch merge steps will be skipped.")
+		say(r.w, "  [dim]Planning-artifact-only mission: target branch already contains deliverables; branch merge steps will be skipped.[/dim]")
 	}
 	gatesPass := true
 	for _, g := range EvaluateGates(r.root, r.sf.PrimaryDir, r.sf.StatusDir(), r.sf.StatusDir(), r.wps, LoadGatePolicy(r.root)) {
