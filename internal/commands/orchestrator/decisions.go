@@ -9,8 +9,8 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/decision"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
-	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
 
