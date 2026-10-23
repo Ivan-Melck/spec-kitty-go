@@ -48,7 +48,10 @@ func runDoctorReviewCycleReconcile(ctx *cli.Context) error {
 	} else {
 		names = migrate.MissionDirs(root)
 	}
-	reports := healthcheck.ReviewCycleReconcile(root, names)
+	reports, err := healthcheck.ReviewCycleReconcile(root, names)
+	if err != nil {
+		return uncaught(ctx, "CoordinationWorkspaceBranchMismatch", err)
+	}
 	if jsonOut {
 		rows := []any{}
 		for _, r := range reports {

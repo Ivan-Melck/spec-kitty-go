@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
+	"github.com/spec-kitty/go-kitty3/internal/writecheckout"
 )
 
 var dbUnsafe = regexp.MustCompile(`[^A-Za-z0-9_]+`)
@@ -423,6 +424,13 @@ func CreateLaneWorkspace(o *Out, root, slug, wpID, wpFile string, ws *lanes.Work
 // CreateLaneWorkspaceBase is create_lane_workspace with an explicit base.
 func CreateLaneWorkspaceBase(o *Out, root, slug, wpID, wpFile string, ws *lanes.Workspace, m *lanes.Manifest, deps []string, explicitBase string) (*LaneWorkspaceResult, error) {
 	if ws.RunsInCheckoutRoot() {
+		// guard_repo_root_claim on a repo-root lane: the refusals (single_branch
+		// only), then the claim base.
+		if ws.LaneID == lanes.PlanningLaneID {
+			if err := writecheckout.GuardRepoRootClaim(root, slug, slug, wpID, ws); err != nil {
+				return nil, err
+			}
+		}
 		return &LaneWorkspaceResult{WorkspacePath: ws.WorktreePath, BranchName: ws.BranchName, LaneID: ws.LaneID,
 			ExecutionMode: ws.ExecutionMode, ResolutionKind: ws.ResolutionKind, LaneTestEnv: &jsonx.Object{}}, nil
 	}

@@ -101,15 +101,18 @@ func recordsAt(dir string) []string {
 // resolveReviewCycleDir is _resolve_canonical_review_cycle_dir:
 // placement_seam(...).read_dir(REVIEW_CYCLE), absorbing
 // CoordinationBranchDeleted / StatusReadPathNotFound to PRIMARY.
-func resolveReviewCycleDir(root, slug, primary string) (string, string) {
+func resolveReviewCycleDir(root, slug, primary string) (string, string, error) {
 	resolved, err := placement.ReadDir(root, slug, placement.Coord)
 	if err != nil {
-		return primary, DeletedCoordBranchClass
+		if _, ok := err.(*placement.BranchMismatchError); ok {
+			return "", "", err // not absorbed upstream: propagates
+		}
+		return primary, DeletedCoordBranchClass, nil
 	}
 	if samePath(resolved, primary) {
-		return resolved, ""
+		return resolved, "", nil
 	}
-	return resolved, LiveCoordPreADRClass
+	return resolved, LiveCoordPreADRClass, nil
 }
 
 func samePath(a, b string) bool {
@@ -129,7 +132,7 @@ func hasMerged(dir string) bool {
 }
 
 // ReviewCycleReconcile is _collect_reports over dirs (mission dir names).
-func ReviewCycleReconcile(root string, names []string) []ReconcileReport {
+func ReviewCycleReconcile(root string, names []string) ([]ReconcileReport, error) {
 	var out []ReconcileReport
 	for _, n := range names {
 		if meta, err := mission.ReadMeta(project.Specs(root, n)); err != nil || meta == nil {
@@ -140,7 +143,10 @@ func ReviewCycleReconcile(root string, names []string) []ReconcileReport {
 		if err != nil {
 			dir = project.Specs(root, n)
 		}
-		resolved, class := resolveReviewCycleDir(root, n, dir)
+		resolved, class, err := resolveReviewCycleDir(root, n, dir)
+		if err != nil {
+			return out, err
+		}
 		if class == "" {
 			continue
 		}
@@ -167,7 +173,7 @@ func ReviewCycleReconcile(root string, names []string) []ReconcileReport {
 		}
 		out = append(out, rep)
 	}
-	return out
+	return out, nil
 }
 
 var _ = os.Stat

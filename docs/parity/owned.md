@@ -92,6 +92,16 @@ kind, with backfill recovery), `PlanningReadDir(root, handle)`
 (`Primary` / `Coord` partition; `*ReadPathNotFound` = StatusReadPathNotFound
 with `Deleted` for CoordinationBranchDeleted), `UnsafeSegmentError`,
 `CoordBranchExists` (moved from `internal/migrate`, which delegates).
+Wave 5 FIX2 (`coordbranch.go`): `ReadDir` refuses a materialized
+coordination worktree checked out on another branch
+(`require_coord_worktree_branch` → `*BranchMismatchError`,
+CoordinationWorkspaceBranchMismatch; the decisions and review-cycle
+doctors surface it as upstream's uncaught exception,
+`TestDiffPlacementCoordWorktreeWrongBranch`); `ProbeCoordBranch`,
+`RequireCoordWorktreeBranch`, `DetachedOrUnreadableHead`; the owned arm
+`ReadDirOwned(Owned{RepositoryRoot, MissionDir, Topology}, slug, kind,
+tolerateUnmaterialized)` with `*OwnedCoordUnavailableError`
+(OWNED_COORDINATION_WORKSPACE_UNAVAILABLE, Go-only `TestReadDirOwnedStates`).
 
 Additive hooks in other packages: `lanes.OwnedCheckoutKind` /
 `lanes.OwnedWorkspace`; `safecommit.Options.Owned`,
@@ -116,18 +126,18 @@ Additive hooks in other packages: `lanes.OwnedCheckoutKind` /
 
 ## Remaining work
 
-* `implement` / `agent action implement` (area F) do not run the
-  single_branch write-checkout refusals or take the checkout claim lock;
-  only `orchestrator-api start-implementation` does (the helpers live in
-  `internal/commands/orchestrator/writecheckout.go` and could move to a
-  shared package).
-* `placement.ReadDir` does not port `require_coord_worktree_branch` (a
-  materialized coordination worktree on the wrong branch raises upstream)
-  and has no owned variant (owned reads go through `ownedcheckout.Fact`).
-* The upstream lock-order `RuntimeError` (taking the checkout lock while
-  holding a Mission lock) has no Go equivalent; a failing `git status` in
-  the dirty scan is `LANE_ALLOCATION_FAILED` instead of a traceback.
-* Not owned-specific, found while testing (area CORE): `next` query /
-  advance on an authored but unfinalized mission answers
-  `analyze` / `ANALYSIS_REPORT_MISSING` where upstream blocks with "no
-  actionable wp".
+None.
+
+Resolved in wave 5 FIX2: a failing `git status` in the single_branch dirty
+scan raises upstream's `RuntimeError` (chained from the kernel
+`GitCommandError`) as an uncaught traceback out of
+`orchestrator-api start-implementation`
+(`TestDiffSingleBranchDirtyScanGitFailure`); under `agent action implement`
+it is the generic `Error: git status failed in ...` and under `implement`
+the earlier planning-artifact probe refuses with `Could not read git status
+for the planning artifacts in ...` (`TestDiffSingleBranchDirtyScanGitFailureImplement`).
+The lock-order `RuntimeError` of `write_checkout_claim_lock` (taking the
+checkout lock while the thread already holds a Mission lock) guards a
+programming error no command reaches: every claim verb takes the checkout
+lock first, and the Go claim paths hold no in-process Mission lock before
+it, so there is no reachable behaviour to match.

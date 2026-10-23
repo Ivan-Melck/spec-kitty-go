@@ -13,10 +13,12 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/missionwrite"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
+	"github.com/spec-kitty/go-kitty3/internal/writecheckout"
 )
 
 // NormalizeWPID is workflow_cores.normalize_wp_id.
@@ -287,6 +289,30 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 		o.Printf("Error: %v", err)
 		return ExitErr(1)
 	}
+	// #5459/#5796: a single_branch repo-root lane never reaches workspace
+	// creation, so the claim seam runs here, before any status event: the
+	// checkout claim lock (held through the claim), the write-checkout
+	// refusals, then the claim base.
+	if writecheckout.IsSingleBranchRepoRootLane(root, slug, ws) {
+		release, err := writecheckout.AcquireClaimLock(root, writecheckout.ClaimLockTimeout)
+		if err != nil {
+			if lt, ok := err.(*writecheckout.LockTimeoutError); ok {
+				o.Printf("Error: %s: %s. Another writer holds the lock; retry the claim.", lt.ErrorCode(), lt.Msg)
+			} else {
+				o.Printf("Error: %v", err)
+			}
+			return ExitErr(1)
+		}
+		defer release()
+		if err := writecheckout.GuardRepoRootClaim(root, slug, slug, wpID, ws); err != nil {
+			if re, ok := err.(*writecheckout.RefusalError); ok {
+				o.Printf("Error: %s (%s)", re.Msg, re.Code)
+			} else {
+				o.Printf("Error: %v", err)
+			}
+			return ExitErr(1)
+		}
+	}
 	if !ws.RunsInCheckoutRoot() {
 		if st, err := os.Stat(ws.WorktreePath); err == nil && st.IsDir() && !ws.Exists() {
 			o.Printf("Error: Workspace path %s exists but is not a git worktree (husk). Remove it, then re-run the claim.", ws.WorktreePath)
@@ -355,6 +381,9 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 	needsAgent := assign.Tool == "unknown"
 	fixMode := hasPriorRejection(s, w.Stem(), wpID)
 	execMode := ws.StatusExecutionMode()
+	// captured before every status mutation (the bare resume too) so a
+	// failed commit restores both status artifacts
+	rb := missionwrite.Capture(s.StatusDir())
 	if lane != "in_progress" || needsAgent || opt.Agent != "" {
 		if opt.Agent == "" && !(lane == "in_progress" && !needsAgent) {
 			o.Print("Error: --agent parameter required when starting implementation.")
@@ -395,7 +424,7 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 			}
 		}
 		if err := CommitWorkflowChange(o, rc, root, slug, target, statusPair(s.StatusDir()),
-			fmt.Sprintf("chore: Start %s implementation [%s]", wpID, opt.Agent), "planned -> claimed for "+wpID, wpID, true); err != nil {
+			fmt.Sprintf("chore: Start %s implementation [%s]", wpID, opt.Agent), "planned -> claimed for "+wpID, wpID, true, rb); err != nil {
 			return err
 		}
 		o.Printf("✓ Claimed %s (agent: %s, PID: %d, target: %s)", wpID, opt.Agent, pid, target)
@@ -407,7 +436,7 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 			return ExitErr(1)
 		}
 		if err := CommitWorkflowChange(o, rc, root, slug, target, statusPair(s.StatusDir()),
-			fmt.Sprintf("chore: Refresh %s implementation liveness", wpID), "refresh implementation liveness for "+wpID, wpID, true); err != nil {
+			fmt.Sprintf("chore: Refresh %s implementation liveness", wpID), "refresh implementation liveness for "+wpID, wpID, true, rb); err != nil {
 			return err
 		}
 	}
@@ -604,42 +633,67 @@ func researchBanner(deliv, target string) []string {
 }
 
 // PreviewClaimableWP is runtime.next.discovery.preview_claimable_wp: the
-// first planned WP (file order) whose dependencies are satisfied; reason
-// "dependencies_not_satisfied" when planned WPs exist but none is ready.
+// first WP (tasks/WP*.md in name order, by frontmatter work_package_id)
+// that is planned with its dependencies satisfied. Otherwise "" and the
+// selection reason: no_tasks_dir, no_wp_files, dependencies_not_satisfied,
+// all_wps_in_progress, not_finalized (a WP with no status yet is genesis,
+// never claimable) or no_planned_wps.
 func PreviewClaimableWP(root, slug string) (string, string) {
 	primary := project.Specs(root, slug)
-	if st, err := os.Stat(filepath.Join(primary, "tasks")); err != nil || !st.IsDir() {
-		return "", ""
+	tasks := filepath.Join(primary, "tasks")
+	if st, err := os.Stat(tasks); err != nil || !st.IsDir() {
+		return "", "no_tasks_dir"
 	}
-	snap := statusSnapshot(coord.Resolve(root, slug))
-	files := wp.Files(primary)
+	files, _ := filepath.Glob(filepath.Join(tasks, "WP*.md"))
 	sort.Strings(files)
-	anyPlanned := false
+	type cand struct {
+		id   string
+		deps []string
+	}
+	var cands []cand
 	for _, p := range files {
 		w, err := wp.Read(p)
 		if err != nil {
 			continue
 		}
-		id := w.String("work_package_id")
-		if id == "" {
-			id = wp.IDFromFilename(filepath.Base(p))
-		}
-		lane := string(status.Planned)
-		if l := snap.Lane(id); l != "" {
-			lane = string(l)
-		}
-		if lane != "planned" {
-			continue
-		}
-		anyPlanned = true
-		if len(DependencyBlockers(w.Dependencies(), snap)) == 0 {
-			return id, ""
+		if id := w.String("work_package_id"); id != "" {
+			cands = append(cands, cand{id, w.Dependencies()})
 		}
 	}
-	if anyPlanned {
+	if len(cands) == 0 {
+		return "", "no_wp_files"
+	}
+	snap := statusSnapshot(coord.Resolve(root, slug))
+	depBlocked, active, genesis := false, false, false
+	for _, c := range cands {
+		lane := string(status.Genesis)
+		if snap.WP(c.id) != nil {
+			if l := snap.Lane(c.id); l != "" {
+				lane = string(l)
+			}
+		}
+		switch lane {
+		case string(status.Genesis):
+			genesis = true
+		case string(status.Planned):
+			if len(DependencyBlockers(c.deps, snap)) > 0 {
+				depBlocked = true
+				continue
+			}
+			return c.id, ""
+		case string(status.Claimed), string(status.InProgress), string(status.ForReview), string(status.InReview):
+			active = true
+		}
+	}
+	switch {
+	case depBlocked:
 		return "", "dependencies_not_satisfied"
+	case active:
+		return "", "all_wps_in_progress"
+	case genesis:
+		return "", "not_finalized"
 	}
-	return "", "no_planned"
+	return "", "no_planned_wps"
 }
 
 var _ = strconv.Itoa

@@ -27,11 +27,10 @@ func addBareRemote(t *testing.T, p *testkit.Pair, branches ...string) {
 	})
 }
 
-// remoteLog renders the bare remote's branches and their history.
+// remoteLog renders the bare remote's branches and their history (graph
+// order: independent of same-second commit timestamps).
 func remoteLog(s *testkit.Sandbox) string {
-	bare := filepath.Join(s.Base, "origin.git")
-	r := s.Exec(bare, "git", "log", "--all", "--topo-order", "--format=%s%n[%D]")
-	return s.Normalize(r.Stdout)
+	return s.Normalize(s.GitHistory(filepath.Join(s.Base, "origin.git"), "%s%n[%D]"))
 }
 
 // TestDiffConsolidatePushRejectedResume covers the reconciliation PASS

@@ -145,8 +145,10 @@ func comparePair(t *testing.T, p *testkit.Pair, args ...string) (testkit.Result,
 // gitState renders the observable git state of a sandbox.
 func gitState(s *testkit.Sandbox) string {
 	var b strings.Builder
+	// graph-ordered history: `log --all --topo-order` interleaves
+	// independent branches by commit date (same-second flakes)
+	b.WriteString("$ history\n" + s.GitHistory("", "%s%n%b%n[%D]", "--name-status"))
 	for _, args := range [][]string{
-		{"log", "--all", "--topo-order", "--format=%s%n%b%n[%D]", "--name-status"},
 		{"worktree", "list", "--porcelain"},
 		{"status", "--short", "--untracked-files=all"},
 		{"branch", "-a"},
@@ -175,12 +177,9 @@ var reCommit = regexp.MustCompile(`Commit: [0-9a-f]{7}\b`)
 // reDigitSHA masks all-digit short SHAs that testkit.Normalize keeps.
 var reDigitSHA = regexp.MustCompile(`\b[0-9]{7}(?:[0-9]{3})?\b`)
 
-// reRollbackSHA masks the short SHAs of rollback report lines, which testkit
-// keeps when they happen to be all letters (a-f).
-var reRollbackSHA = regexp.MustCompile(`(-> |at |observed |expected )[0-9a-f]{7}\b`)
-
+// (all-letter short SHAs are masked by testkit.Normalize itself)
 func digitSHA(s string) string {
-	return reRollbackSHA.ReplaceAllString(reDigitSHA.ReplaceAllString(s, "<SHORTSHA>"), "${1}<SHORTSHA>")
+	return reDigitSHA.ReplaceAllString(s, "<SHORTSHA>")
 }
 
 // compareMissionTree compares kitty-specs (and optionally .worktrees),
