@@ -62,12 +62,13 @@ func (s *Surface) EmitTransitionBatch(reqs []*status.TransitionRequest) ([]*stat
 	if len(items) == 0 {
 		return events, nil
 	}
+	rb := txnPoint(transactional, dir)
 	if err := status.AppendEvents(dir, items...); err != nil {
 		return nil, err
 	}
 	status.Materialize(dir)
 	if transactional {
-		if err := s.commitStatusFiles(checkout, dir, "chore(spec-kitty): status transition batch "+first.WPID); err != nil {
+		if err := s.commitStatusTxn(checkout, dir, "chore(spec-kitty): status transition batch "+first.WPID, rb, itemEventIDs(items)); err != nil {
 			return events, err
 		}
 	}

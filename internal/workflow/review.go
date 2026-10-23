@@ -13,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/missionwrite"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
@@ -310,6 +311,7 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 			d.Role, d.AgentProfile, d.AgentProfileVersion, d.Model, d.Provider = bd.Role, bd.AgentProfile, bd.AgentProfileVersion, bd.Model, bd.Provider
 		}
 		actor := status.SelfAssertingActor("reviewer", agent, "", binding)
+		rb := missionwrite.Capture(s.StatusDir())
 		if _, err := StartReview(s, wpID, actor, "action-review:"+root, ws.StatusExecutionMode(), pm, &d); err != nil {
 			o.Printf("Error: %v", err)
 			return ExitErr(1)
@@ -322,7 +324,7 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 		}
 		paths := append([]string{w.Path}, statusPair(s.StatusDir())...)
 		if err := CommitWorkflowChange(o, rc, root, slug, target, paths, fmt.Sprintf("chore: Start %s review [%s]", wpID, agent),
-			"for_review -> in_review for "+wpID, wpID, true); err != nil {
+			"for_review -> in_review for "+wpID, wpID, true, rb); err != nil {
 			return err
 		}
 		o.Printf("✓ Claimed %s for review (agent: %s, PID: %d, target: %s)", wpID, agent, pid, target)

@@ -1,6 +1,6 @@
 //go:build !unix
 
-package orchestrator
+package writecheckout
 
 import "os"
 

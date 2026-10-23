@@ -26,6 +26,8 @@ var (
 	reDigitSHA = regexp.MustCompile(`  [0-9]{7}  `)
 	// mkstemp-named templateless step prompts
 	reStepPrompt = regexp.MustCompile(`(spec-kitty-step-[^\s"]*)-[a-z0-9_]{8}\.md`)
+	// backup_before_overwrite sidecar stamps (now_utc_compact_stamp)
+	reCompactStamp = regexp.MustCompile(`\.[0-9]{8}T[0-9]{6}Z\b`)
 )
 
 // norm normalizes run-specific values of one sandbox's output.
@@ -41,6 +43,7 @@ func norm(s *testkit.Sandbox, text string) string {
 	text = reElapsed.ReplaceAllString(text, `"elapsed_seconds": <S>`)
 	text = reDigitSHA.ReplaceAllString(text, "  <SHORTSHA>  ")
 	text = reStepPrompt.ReplaceAllString(text, "$1-<RND>.md")
+	text = reCompactStamp.ReplaceAllString(text, ".<STAMP>")
 	return text
 }
 

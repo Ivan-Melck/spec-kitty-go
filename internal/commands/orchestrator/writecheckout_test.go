@@ -11,6 +11,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 	"github.com/spec-kitty/go-kitty3/internal/testkit/missionfx"
+	"github.com/spec-kitty/go-kitty3/internal/writecheckout"
 )
 
 // singleBranchPair builds two finalized single_branch calc missions
@@ -84,7 +85,7 @@ var reCheckoutLock = regexp.MustCompile(`__checkout-[0-9a-f]{16}__`)
 // claimant would) with a fixed holder record.
 func holdCheckoutLock(t *testing.T, s *testkit.Sandbox) {
 	t.Helper()
-	lock, err := checkoutClaimLockPath(s.Dir)
+	lock, err := writecheckout.LockPath(s.Dir)
 	if err != nil {
 		t.Fatal(err)
 	}

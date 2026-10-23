@@ -365,10 +365,15 @@ func NormalizeValues(text string) string {
 	return text
 }
 
+// hexWords are the English words spelled only with a-f that maskShortSHAs
+// keeps.
+var hexWords = map[string]bool{"acceded": true, "defaced": true, "effaced": true}
+
 // maskShortSHAs masks abbreviated git object names: 7-12 character hex
-// words mixing digits and letters, and all-digit ones (git abbreviations
-// can be all digits) unless they are part of a decimal, version or list
-// number ("1.2345678", "1234567,"). All-letter hex words ("defaced") stay.
+// words mixing digits and letters, all-letter ones (about one abbreviation
+// in a thousand is all a-f; English hex words like "defaced" stay), and
+// all-digit ones (git abbreviations can be all digits) unless they are part
+// of a decimal, version or list number ("1.2345678", "1234567,").
 func maskShortSHAs(text string) string {
 	locs := reShort.FindAllStringIndex(text, -1)
 	if len(locs) == 0 {
@@ -380,7 +385,7 @@ func maskShortSHAs(text string) string {
 		m := text[l[0]:l[1]]
 		hasLetter := strings.ContainsAny(m, "abcdef")
 		hasDigit := strings.ContainsAny(m, "0123456789")
-		mask := hasLetter && hasDigit
+		mask := hasLetter && (hasDigit || !hexWords[m])
 		if !hasLetter {
 			before := l[0] > 0 && strings.IndexByte(".,", text[l[0]-1]) >= 0
 			after := l[1] < len(text) && strings.IndexByte(".,", text[l[1]]) >= 0 &&

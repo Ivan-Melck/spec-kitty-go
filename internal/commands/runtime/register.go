@@ -50,32 +50,48 @@ func resolveMission(stdout, stderr io.Writer, root, handle string, jsonMode bool
 	if err == nil {
 		return slug, nil
 	}
+	return "", missionResolveError(stdout, stderr, err, jsonMode)
+}
+
+// resolveMissionIdentity is selector_resolution.resolve_mission_handle: the
+// identity ladder only (no literal-dir short-circuit, no bare-modern fold),
+// as the top-level implement uses it.
+func resolveMissionIdentity(stdout, stderr io.Writer, root, handle string, jsonMode bool) (string, error) {
+	r, err := mission.ResolveIdentity(root, handle)
+	if err == nil {
+		return r.Slug, nil
+	}
+	return "", missionResolveError(stdout, stderr, err, jsonMode)
+}
+
+// missionResolveError renders a resolver failure (human: exit 2, JSON: exit 1).
+func missionResolveError(stdout, stderr io.Writer, err error, jsonMode bool) error {
 	switch e := err.(type) {
 	case *mission.SelectorAmbiguousError:
 		if jsonMode {
 			fmt.Fprintln(stdout, jsonx.Dumps(jsonx.NewObject("success", false, "error_code", e.Code(), "error", e.Error(),
 				"handle", e.Handle, "candidates", e.Candidates), compact))
-			return "", cli.Exit(1)
+			return cli.Exit(1)
 		}
 		rich.Print(stdout, "[red]Error:[/red] "+e.Error())
-		return "", cli.Exit(2)
+		return cli.Exit(2)
 	case *mission.AmbiguousError:
 		if jsonMode {
 			fmt.Fprintln(stdout, jsonx.Dumps(jsonx.NewObject("success", false, "error_code", "MISSION_AMBIGUOUS_SELECTOR", "error", e.Error(),
 				"handle", e.Handle, "candidates", e.CandidatesJSON()), compact))
-			return "", cli.Exit(1)
+			return cli.Exit(1)
 		}
 		rich.Print(stderr, e.Error())
-		return "", cli.Exit(2)
+		return cli.Exit(2)
 	case *mission.NotFoundError:
 		if jsonMode {
 			fmt.Fprintln(stdout, jsonx.Dumps(jsonx.NewObject("success", false, "error_code", "MISSION_NOT_FOUND", "error", e.Error(), "handle", e.Handle), compact))
-			return "", cli.Exit(1)
+			return cli.Exit(1)
 		}
 		rich.Print(stderr, "[red]Error:[/red] "+e.HumanMessage())
-		return "", cli.Exit(2)
+		return cli.Exit(2)
 	}
-	return "", err
+	return err
 }
 
 // compact is json.dumps(x) default separators.

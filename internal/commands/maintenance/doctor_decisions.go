@@ -7,6 +7,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/healthcheck"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/placement"
 )
 
 func newDoctorDecisionsCmd() *cli.Command {
@@ -33,7 +34,7 @@ func runDoctorDecisions(ctx *cli.Context) error {
 	}
 	rep, err := healthcheck.DiagnoseDecisions(root, slug)
 	if err != nil {
-		return uncaught(ctx, "JSONDecodeError", err)
+		return uncaught(ctx, decisionsErrType(err, "JSONDecodeError"), err)
 	}
 	repair := ctx.Bool("repair")
 	if repair && !rep.Clean() {
@@ -51,7 +52,7 @@ func runDoctorDecisions(ctx *cli.Context) error {
 			}
 			malformed, err = healthcheck.RepairDecisions(root, slug, universe)
 			if err != nil {
-				return uncaught(ctx, "OSError", err)
+				return uncaught(ctx, decisionsErrType(err, "OSError"), err)
 			}
 		}
 		copied := rep.Fork.LedgerCoordinationOnly()
@@ -142,4 +143,14 @@ func runDoctorDecisions(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	return nil
+}
+
+// decisionsErrType is the uncaught exception class of a decisions doctor
+// failure (a coordination worktree on the wrong branch raises
+// CoordinationWorkspaceBranchMismatch from the placement seam).
+func decisionsErrType(err error, fallback string) string {
+	if bm, ok := err.(*placement.BranchMismatchError); ok {
+		return bm.TypeName()
+	}
+	return fallback
 }
