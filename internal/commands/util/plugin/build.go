@@ -74,9 +74,9 @@ func WrapperBash(version string) string { return strings.Replace(bashWrapper, "{
 func WrapperCmd(version string) string { return strings.Replace(cmdWrapper, "{version}", version, 1) }
 
 // commandMembers renders every canonical command skill to
-// <prefix>/<spec-kitty.cmd>/SKILL.md (paths relative to root). The command
+// <prefix>/<spec-kitty-command>/SKILL.md (paths relative to root). The command
 // source root is "/" upstream, whose missing config is logged.
-func commandMembers(stderr io.Writer, root, prefix string) ([]StagedFile, error) {
+func commandMembers(stderr io.Writer, root, prefix string, native bool) ([]StagedFile, error) {
 	rich.LogWarning(stderr, "Config file not found: /.kittify/config.yaml")
 	var out []StagedFile
 	for _, cmd := range agents.CommandSkillCommands {
@@ -84,7 +84,14 @@ func commandMembers(stderr io.Writer, root, prefix string) ([]StagedFile, error)
 		if err != nil {
 			return nil, &BuildError{err.Error()}
 		}
-		out = append(out, staged(relTo(root, filepath.Join(prefix, "spec-kitty."+cmd, "SKILL.md")), content))
+		if native {
+			projected, err := agents.ProjectSkillForRoot(string(content), ".claude/skills", agents.CommandSkillName(cmd))
+			if err != nil {
+				return nil, &BuildError{err.Error()}
+			}
+			content = []byte(projected)
+		}
+		out = append(out, staged(relTo(root, filepath.Join(prefix, agents.CommandSkillName(cmd), "SKILL.md")), content))
 	}
 	if len(out) < MinSkillCount {
 		return nil, errorf("Expected at least %d skills, found %d. Check CANONICAL_COMMANDS in command_installer.", MinSkillCount, len(out))
@@ -132,7 +139,7 @@ func BuildClaude(stderr io.Writer, outputDir string) (string, error) {
 	directory := filepath.Join(output, "claude-code")
 	version := app.Version
 	files, err := func() ([]StagedFile, error) {
-		files, err := commandMembers(stderr, root, filepath.Join(directory, "skills"))
+		files, err := commandMembers(stderr, root, filepath.Join(directory, "skills"), true)
 		if err != nil {
 			return nil, err
 		}
@@ -270,7 +277,7 @@ func BuildCodex(stderr io.Writer, outputDir string) (string, error) {
 		return "", err
 	}
 	version := app.Version
-	files, err := commandMembers(stderr, root, filepath.Join(directory, "skills"))
+	files, err := commandMembers(stderr, root, filepath.Join(directory, "skills"), false)
 	if err != nil {
 		return "", prepFail(err)
 	}
