@@ -135,21 +135,33 @@ func emitNotFound(ctx *cli.Context, e *nextrt.MissionNotFoundError, jsonMode boo
 
 func runNext(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
-	if ctx.IsSet("owned-checkout") {
-		ctx.Eprintf("Error: --owned-checkout is not supported by this build.\n")
-		return cli.Exit(1)
-	}
 	root := locateRoot()
+	// Mint the ownership fact exactly once (explicit --owned-checkout or
+	// flagless adoption; handle-less discovery inside the claimed checkout).
+	owned, oerr := resolveNextOwned(ctx, root, jsonMode)
+	if oerr != nil {
+		return oerr
+	}
 	if root == "" {
 		ctx.Eprintf("Error: Could not locate project root\n")
 		return cli.Exit(1)
 	}
+	var slug string
+	if owned != nil {
+		// Every runtime surface (run state, kitty-ops, charter, prompt cache)
+		// resolves from the owned checkout P.
+		root, slug = owned.OwnedRoot, owned.MissionSlug
+		nextrt.AnalysisGoverningRoot = owned.RepositoryRoot
+	}
 	if err := charterPreflightForNext(ctx, root, ctx.IsSet("result"), jsonMode); err != nil {
 		return err
 	}
-	slug, err := resolveNextSlug(ctx, root, ctx.String("mission"), jsonMode)
-	if err != nil {
-		return err
+	if owned == nil {
+		var err error
+		slug, err = resolveNextSlug(ctx, root, ctx.String("mission"), jsonMode)
+		if err != nil {
+			return err
+		}
 	}
 	result := ctx.OptString("result")
 	answer := ctx.OptString("answer")
@@ -200,7 +212,7 @@ func runNext(ctx *cli.Context) error {
 			}
 			return err
 		}
-		printDecision(ctx, d, jsonMode, answeredID, answer)
+		printDecisionOwned(ctx, d, jsonMode, answeredID, answer, owned)
 		return nil
 	}
 	if agent == "" {
@@ -214,7 +226,13 @@ func runNext(ctx *cli.Context) error {
 	d := nextrt.DecideNext(root, slug, agent, *result)
 	nextrt.EmitMissionNextInvoked(root, slug, agent, *result, d)
 	nextrt.WriteIssuanceRecord(root, slug, agent, d)
-	printDecision(ctx, d, jsonMode, answeredID, answer)
+	if owned != nil {
+		if err := commitOwnedNextMutations(owned); err != nil {
+			ctx.Eprintf("Error: %s\n", err.Error())
+			return cli.Exit(1)
+		}
+	}
+	printDecisionOwned(ctx, d, jsonMode, answeredID, answer, owned)
 	if !jsonMode {
 		printStalledInterventions(ctx, root, slug)
 	}

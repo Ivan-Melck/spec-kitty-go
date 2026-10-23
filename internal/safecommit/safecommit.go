@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 )
 
 // Error codes (SafeCommitError.error_code).
@@ -63,6 +64,10 @@ type Options struct {
 	// PostConsolidation authorizes a protected destination
 	// (GuardCapability.POST_CONSOLIDATION_WRITE).
 	PostConsolidation bool
+	// Owned is the validated owned-checkout fact: the protection fold is
+	// ProtectionPolicy.resolve_for_owned (R's and P's sets, the mission's
+	// commit_to_target read from the owned checkout).
+	Owned *ownedcheckout.Fact
 }
 
 func readHead(worktree string) (string, bool) {
@@ -201,6 +206,9 @@ func Preflight(repoRoot, worktreeRoot, ref string, paths []string, opts Options)
 	}
 	slug := singleMissionSlug(norm)
 	protected := isProtectedFor(repoRoot, repoRoot, slug, ref) || isProtectedFor(worktreeRoot, repoRoot, slug, ref)
+	if opts.Owned != nil {
+		protected = opts.Owned.IsProtected(ref, slug)
+	}
 	if protected && !opts.PostConsolidation {
 		return nil, &Error{Code: CodeProtectedBranch, Message: fmt.Sprintf("safe_commit: refusing to commit to protected branch %s in %s. Retry against a non-protected topic branch, or set SPEC_KITTY_ALLOW_PROTECTED_BRANCH_COMMITS=1 if you own this branch.", Repr(ref), worktreeRoot)}
 	}

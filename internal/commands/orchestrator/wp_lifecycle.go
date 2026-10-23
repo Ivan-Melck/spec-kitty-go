@@ -73,8 +73,8 @@ func (v *verb) resolveStartWorkspace(m *orch.Mission, handle, wpID string) (*sta
 	}
 	base := lanes.LaneBaseRef(m.Root, m.Slug, manifest)
 	if l.LaneID == lanes.PlanningLaneID {
-		if _, err := lanes.ResolveWorkspace(m.Root, m.Slug, wpID); err != nil {
-			return nil, v.fail("LANE_ALLOCATION_FAILED", err.Error(), identity(m.StatusDir, "wp_id", wpID, "reason", err.Error()))
+		if err := v.ensureRepoRootCheckoutOrFail(m, handle, wpID); err != nil {
+			return nil, err
 		}
 		recordClaimBase(m.Root, handle, wpID)
 		return &startWorkspace{path: m.Root, laneID: l.LaneID,
@@ -241,6 +241,11 @@ func runStartImplementation(ctx *cli.Context) error {
 				fmt.Sprintf("dependencies_not_satisfied: %s depends on %s; all dependencies must be approved or done before implementation can start", wpID, strings.Join(un, ", ")),
 				identity(m.StatusDir, "wp_id", wpID, "unsatisfied_dependencies", strList(un)))
 		}
+	}
+	release, err := v.enterCheckoutClaimLock(m, handle, wpID)
+	defer release()
+	if err != nil {
+		return err
 	}
 	ws, err := v.resolveStartWorkspace(m, handle, wpID)
 	if err != nil {

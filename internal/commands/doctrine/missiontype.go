@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
@@ -420,8 +421,12 @@ func runMissionCurrent(ctx *cli.Context) error {
 	if slug == "" {
 		return cli.BadParameter(ctx.Cmd, "", "--mission <slug> is required")
 	}
-	dir := findMissionDir(root, slug)
-	if dir == "" {
+	dir, err := findMissionDir(root, slug)
+	if err != nil {
+		rich.PrintTraceback(ctx.Stderr, &rich.Exception{Type: "ActionContextError", Value: err.Error()})
+		return cli.Exit(1)
+	}
+	if !isDirPath(dir) {
 		cprint(ctx.Stdout, "%s", "[red]Mission not found:[/red] "+slug)
 		return cli.Exit(1)
 	}
@@ -444,23 +449,28 @@ func runMissionCurrent(ctx *cli.Context) error {
 	return nil
 }
 
-// findMissionDir resolves a mission handle (full slug, numeric prefix or
-// mid8 prefix) under kitty-specs/.
-// TODO(area A): replace with internal/mission handle resolution once merged.
-func findMissionDir(root, handle string) string {
-	specs := project.Specs(root)
-	if st, err := os.Stat(filepath.Join(specs, handle)); err == nil && st.IsDir() {
-		return filepath.Join(specs, handle)
-	}
-	ents, _ := os.ReadDir(specs)
-	var hits []string
-	for _, e := range ents {
-		if e.IsDir() && (strings.HasPrefix(e.Name(), handle+"-") || strings.HasSuffix(e.Name(), "-"+handle)) {
-			hits = append(hits, e.Name())
+// findMissionDir is resolve_feature_dir_for_mission (resolve_action_context's
+// _resolve_mission_slug over resolve_handle_to_read_path): the identity
+// ladder / bare-modern fold, ambiguity and a missing directory being the
+// ActionContextError. The mission's primary directory carries the meta.json
+// the caller reads.
+func findMissionDir(root, handle string) (string, error) {
+	name, err := mission.ResolveHandle(root, handle)
+	if err != nil {
+		var amb *mission.SelectorAmbiguousError
+		if errors.As(err, &amb) {
+			return "", amb
 		}
+		name = handle
 	}
-	if len(hits) == 1 {
-		return filepath.Join(specs, hits[0])
+	dir := project.Specs(root, name)
+	if !isDirPath(dir) {
+		return "", fmt.Errorf("Mission directory not found: %s. Check that '%s' is the correct mission slug.", dir, handle)
 	}
-	return ""
+	return dir, nil
+}
+
+func isDirPath(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }

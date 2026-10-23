@@ -129,8 +129,7 @@ func actionBinding(ctx *cli.Context, root string) *workflow.BindingRequest {
 func runActionImplement(ctx *cli.Context) error {
 	o := workflow.NewOut(ctx.Stdout, ctx.Stderr)
 	if ctx.IsSet("owned-checkout") {
-		ctx.Eprintf("Error: --owned-checkout is not supported by this build.\n")
-		return cli.Exit(1)
+		return refuseOwnedAction(ctx, "implement")
 	}
 	force := ctx.Bool("force")
 	note := ctx.OptString("note")
@@ -172,8 +171,7 @@ func runActionImplement(ctx *cli.Context) error {
 func runActionReview(ctx *cli.Context) error {
 	o := workflow.NewOut(ctx.Stdout, ctx.Stderr)
 	if ctx.IsSet("owned-checkout") {
-		ctx.Eprintf("Error: --owned-checkout is not supported by this build.\n")
-		return cli.Exit(1)
+		return refuseOwnedAction(ctx, "review")
 	}
 	root := locateRoot()
 	if root == "" {

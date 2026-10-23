@@ -11,6 +11,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission/create"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 )
 
@@ -340,13 +341,33 @@ func runCreate(ctx *cli.Context) error {
 		}
 		return cli.Exit(1)
 	}
+	// Mint the owned create root ONCE, before any git operation touches the
+	// claimed checkout (_mint_owned_create_root).
+	var ownedRoot *ownedcheckout.CreateRoot
 	if ctx.IsSet("owned-checkout") {
-		msg := "--owned-checkout is not supported by this build."
-		return errOut(jsonx.NewObject("error", msg), "[bold red]Error:[/bold red] "+msg)
+		if root == "" {
+			return renderCreateError(ctx, &create.Error{Msg: "Could not locate project root. Run from within spec-kitty repository."}, jsonMode, slug)
+		}
+		claim := ctx.String("owned-checkout")
+		if claim == "" {
+			claim = "."
+		}
+		cr, err := ownedcheckout.ResolveCreateRoot(root, claim)
+		if err != nil {
+			if e, ok := err.(*ownedcheckout.Error); ok {
+				return errOut(jsonx.NewObject("success", false, "error_code", e.Code, "error", e.Message), "Error: "+e.Message)
+			}
+			return renderCreateError(ctx, err, jsonMode, slug)
+		}
+		ownedRoot = cr
+	}
+	commandCheckout := root
+	if ownedRoot != nil {
+		commandCheckout = ownedRoot.Checkout
 	}
 	var rb *startRollback
 	if ctx.IsSet("start-branch") {
-		rb = captureStartRollback(root, ctx.String("start-branch"))
+		rb = captureStartRollback(commandCheckout, ctx.String("start-branch"))
 	}
 	failed := func(err error) error {
 		rb.restore()
@@ -359,7 +380,7 @@ func runCreate(ctx *cli.Context) error {
 			return failed(errOut(jsonx.NewObject("error_code", "START_BRANCH_TARGET_MISMATCH", "error", startTargetMismatch,
 				"start_branch", start, "target_branch", ctx.String("target-branch")), "[bold red]Error:[/bold red] "+startTargetMismatch))
 		}
-		if err := switchToStartBranch(root, start); err != nil {
+		if err := switchToStartBranch(commandCheckout, start); err != nil {
 			return failed(errOut(jsonx.NewObject("error_code", "START_BRANCH_FAILED", "error", err.Error(), "start_branch", start), "[bold red]Error:[/bold red] "+err.Error()))
 		}
 	}
@@ -373,8 +394,8 @@ func runCreate(ctx *cli.Context) error {
 		missionType = alias
 	}
 	current := ""
-	if root != "" {
-		current = gitx.CurrentBranch(root)
+	if commandCheckout != "" {
+		current = gitx.CurrentBranch(commandCheckout)
 		if current == "HEAD" {
 			current = ""
 		}
@@ -407,7 +428,12 @@ func runCreate(ctx *cli.Context) error {
 	}
 	topology := ctx.String("topology")
 	if topology == "" {
-		topology = defaultTopology(root, current, prBound)
+		if ownedRoot != nil {
+			// --owned-checkout is itself an explicit single_branch request.
+			topology = create.SingleBranch
+		} else {
+			topology = defaultTopology(root, current, prBound)
+		}
 	}
 	var fn, tldr, pctx *string
 	if ctx.IsSet("friendly-name") {
@@ -427,6 +453,7 @@ func runCreate(ctx *cli.Context) error {
 		FriendlyName: fn, PurposeTLDR: tldr, PurposeContext: pctx, PRBound: prBound, Topology: topology,
 		ForceRecreateCoord: ctx.Bool("force-recreate-coordination-branch"), RetainBranches: ctx.Bool("retain-branches"),
 		RetainWorktrees: ctx.Bool("retain-worktrees"), CommitToTarget: ctx.Bool("commit-to-target"), AllowDuplicate: ctx.Bool("allow-duplicate"),
+		Owned: ownedRoot,
 	})
 	if err != nil {
 		return failed(renderCreateError(ctx, err, jsonMode, slug))
@@ -591,6 +618,10 @@ func emitCreateResult(ctx *cli.Context, r *create.Result, missionType string, js
 		"coordination_branch_created", r.CoordinationBranchCreated,
 		"topology", str("topology"),
 	)
+	if r.OwnedCheckout != "" {
+		payload.Set("owned_checkout", r.OwnedCheckout)
+		payload.Set("canonical_repo_root", r.CanonicalRepoRoot)
+	}
 	emitJSON(ctx.Stdout, injectBranchContract(payload, r.TargetBranch, r.CurrentBranch, "", nil, ""))
 	return nil
 }

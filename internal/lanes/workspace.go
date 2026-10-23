@@ -140,8 +140,11 @@ type Workspace struct {
 	Context        *WorkspaceContext
 }
 
-// RunsInCheckoutRoot reports a repo-root resolution.
-func (w *Workspace) RunsInCheckoutRoot() bool { return w.ResolutionKind == "repo_root" }
+// RunsInCheckoutRoot reports a checkout-root resolution (repo_root, or an
+// owned_checkout workspace).
+func (w *Workspace) RunsInCheckoutRoot() bool {
+	return w.ResolutionKind == "repo_root" || w.ResolutionKind == OwnedCheckoutKind
+}
 
 // StatusExecutionMode is the status-event execution_mode stamp.
 func (w *Workspace) StatusExecutionMode() string {

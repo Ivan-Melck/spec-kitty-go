@@ -6,11 +6,9 @@ import (
 	"regexp"
 	"sort"
 
-	"github.com/spec-kitty/go-kitty3/internal/coord"
-	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
-	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/placement"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 )
 
@@ -100,23 +98,27 @@ func recordsAt(dir string) []string {
 	return append(a, b...)
 }
 
-// resolveReviewCycleDir approximates placement_seam(...).read_dir(REVIEW_CYCLE)
-// with the deleted-branch absorption.
+// resolveReviewCycleDir is _resolve_canonical_review_cycle_dir:
+// placement_seam(...).read_dir(REVIEW_CYCLE), absorbing
+// CoordinationBranchDeleted / StatusReadPathNotFound to PRIMARY.
 func resolveReviewCycleDir(root, slug, primary string) (string, string) {
-	s := coord.Resolve(root, slug)
-	if !s.Routed() {
-		return primary, ""
-	}
-	if hasMerged(primary) {
-		return primary, ""
-	}
-	if !gitx.BranchExists(root, s.CoordBranch) && !migrate.CoordBranchExists(root, s.CoordBranch) {
+	resolved, err := placement.ReadDir(root, slug, placement.Coord)
+	if err != nil {
 		return primary, DeletedCoordBranchClass
 	}
-	if !isDir(s.CoordDir) {
-		return primary, DeletedCoordBranchClass
+	if samePath(resolved, primary) {
+		return resolved, ""
 	}
-	return s.CoordDir, LiveCoordPreADRClass
+	return resolved, LiveCoordPreADRClass
+}
+
+func samePath(a, b string) bool {
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	if err1 != nil || err2 != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ra == rb
 }
 
 func hasMerged(dir string) bool {
@@ -130,9 +132,13 @@ func hasMerged(dir string) bool {
 func ReviewCycleReconcile(root string, names []string) []ReconcileReport {
 	var out []ReconcileReport
 	for _, n := range names {
-		dir := project.Specs(root, n)
-		if _, err := mission.ReadMeta(dir); err != nil {
+		if meta, err := mission.ReadMeta(project.Specs(root, n)); err != nil || meta == nil {
 			continue
+		}
+		// _primary_feature_dir: read_dir(WORK_PACKAGE_TASK)
+		dir, err := placement.PrimaryDir(root, n)
+		if err != nil {
+			dir = project.Specs(root, n)
 		}
 		resolved, class := resolveReviewCycleDir(root, n, dir)
 		if class == "" {

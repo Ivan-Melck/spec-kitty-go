@@ -16,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
@@ -237,12 +238,27 @@ func runRecordAnalysis(ctx *cli.Context) error {
 	if root == "" {
 		return fail("Could not locate project root")
 	}
-	if ctx.String("owned-checkout") != "" {
-		return fail("--owned-checkout is not supported by this build")
-	}
 	reportOnly := ctx.Bool("report-only")
 	feature := ctx.String("mission")
-	featureDir, derr := readPathFor(root, feature)
+	owned, oerr := resolveOwnedOrRefuse(ctx, project.MainRepoRoot(root), feature, jsonMode, ownedcheckout.SuccessFalseEnvelope, ownedcheckout.Options{})
+	if oerr != nil {
+		if _, ok := oerr.(*ownedcheckout.MetaReadError); ok {
+			return fail(oerr.Error())
+		}
+		return oerr
+	}
+	var featureDir string
+	var derr error
+	if owned != nil {
+		root = owned.OwnedRoot
+		if _, err := owned.Files([]string{filepath.Join(owned.MissionDir, "analysis-report.md")}, false); err != nil {
+			ownedcheckout.Emit(ctx.Stdout, ctx.Stderr, err.(*ownedcheckout.Error), jsonMode, ownedcheckout.SuccessFalseEnvelope)
+			return cli.Exit(1)
+		}
+		featureDir = owned.MissionDir
+	} else {
+		featureDir, derr = readPathFor(root, feature)
+	}
 	if derr != nil {
 		var args []string
 		if jsonMode {
@@ -258,12 +274,15 @@ func runRecordAnalysis(ctx *cli.Context) error {
 	}
 	slug := filepath.Base(featureDir)
 	if reportOnly {
-		return runReportOnly(ctx, root, slug, jsonMode, fail)
+		return runReportOnly(ctx, root, slug, jsonMode, fail, owned)
 	}
 	// write preflight: refuse a pre-existing dirty working tree.
 	cwdRoot := project.CurrentWorktreeRoot(cwd())
 	if cwdRoot == "" {
 		cwdRoot = root
+	}
+	if owned != nil {
+		cwdRoot = owned.OwnedRoot
 	}
 	entries, err := safecommit.StatusEntries(cwdRoot, "")
 	if err != nil {
@@ -352,9 +371,12 @@ func runRecordAnalysis(ctx *cli.Context) error {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return fail(err.Error())
 	}
-	r := safecommit.CommitForMission(root, slug, []string{path}, "docs(record-analysis): record analysis report for mission "+slug, mission.KindAnalysisReport, safecommit.RouterOptions{})
+	r := safecommit.CommitForMission(root, slug, []string{path}, "docs(record-analysis): record analysis report for mission "+slug, mission.KindAnalysisReport, safecommit.RouterOptions{Owned: owned})
 	payload := jsonx.NewObject("success", true, "result", "success", "path", path, "mission_slug", mslug, "mission_id", mid, "input_artifacts", inputs,
 		"verdict", verdict, "issue_counts", counts, "findings", findings, "stale", false)
+	if owned != nil {
+		payload.Set("stale_repository_root_copy", ownedcheckout.StaleCopyValue(owned, nil))
+	}
 	if len(r.Surfaces) > 0 {
 		payload.Set("surfaces", r.SurfacesPayload())
 	}

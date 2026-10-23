@@ -2,6 +2,7 @@ package planning
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/healthcheck"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
@@ -137,20 +139,45 @@ func decisionErr(ctx *cli.Context, e *decision.Error) error {
 	return cli.Exit(1)
 }
 
-// decisionContext is _resolve_decision_context.
-func decisionContext(ctx *cli.Context) (*decision.Context, error) {
+// decisionContext is _resolve_decision_context: validate ownership once
+// (explicit --owned-checkout or flagless adoption) and reuse the owned
+// mission directory as the identity authority.
+func decisionContext(ctx *cli.Context) (*decision.Context, *ownedcheckout.Fact, error) {
 	handle := ctx.String("mission")
 	if !safeSlugRe.MatchString(handle) {
-		return nil, cli.BadParameter(ctx.Cmd, "--mission", fmt.Sprintf("Invalid --mission value %s", mission.PyRepr(handle)))
-	}
-	if ctx.String("owned-checkout") != "" {
-		echoSorted(ctx, true, jsonx.NewObject("error", "--owned-checkout is not supported by this build", "code", "OWNED_OPTION_UNSUPPORTED"))
-		return nil, cli.Exit(1)
+		return nil, nil, cli.BadParameter(ctx.Cmd, "--mission", fmt.Sprintf("Invalid --mission value %s", mission.PyRepr(handle)))
 	}
 	root := project.Locate("")
 	if root == "" {
 		root = cwd()
 	}
+	cwdDir, _ := os.Getwd()
+	owned, oerr := ownedcheckout.ResolveOrAdopt(root, ownedClaim(ctx), handle, cwdDir, ownedcheckout.Options{})
+	if oerr != nil {
+		code := "MISSION_CONTEXT_UNRESOLVED"
+		if e, ok := oerr.(*ownedcheckout.Error); ok {
+			code = e.Code
+		}
+		echoSorted(ctx, true, jsonx.NewObject("error", oerr.Error(), "code", code))
+		return nil, nil, cli.Exit(1)
+	}
+	if owned != nil {
+		return &decision.Context{Root: owned.OwnedRoot, Slug: owned.MissionSlug}, owned, nil
+	}
+	dc, err := decisionContextUnowned(ctx, root, handle)
+	return dc, nil, err
+}
+
+// echoDecision is _echo_decision_payload (stale-copy channel when owned).
+func echoDecision(ctx *cli.Context, payload *jsonx.Object, owned *ownedcheckout.Fact) {
+	if owned != nil {
+		payload.Set("stale_repository_root_copy", ownedcheckout.StaleCopyValue(owned, nil))
+		ownedcheckout.EchoStaleCopyWarning(ctx.Stderr, owned)
+	}
+	echoSorted(ctx, false, payload)
+}
+
+func decisionContextUnowned(ctx *cli.Context, root, handle string) (*decision.Context, error) {
 	slug := handle
 	if name, err := mission.ResolveHandle(root, handle); err == nil {
 		slug = name
@@ -215,7 +242,7 @@ func runDecisionOpen(ctx *cli.Context) error {
 			options = append(options, pyjson.Str(item))
 		}
 	}
-	dc, err := decisionContext(ctx)
+	dc, owned, err := decisionContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -230,7 +257,7 @@ func runDecisionOpen(ctx *cli.Context) error {
 		"recovery", jsonx.NewObject("rerun_safe", resp.DecisionID != "DRY_RUN", "idempotency_key", jsonx.NewObject(
 			"mission_id", resp.MissionID, "mission_slug", dc.Slug, "origin_flow", flow, "step_id", strPtrAny(stepID), "slot_key", strPtrAny(slotKey),
 			"input_key", ctx.String("input-key"))))
-	echoSorted(ctx, false, payload)
+	echoDecision(ctx, payload, owned)
 	return nil
 }
 
@@ -265,7 +292,7 @@ func runDecisionTerminal(ctx *cli.Context, status string) error {
 		}
 		req.Rationale = &r
 	}
-	dc, err := decisionContext(ctx)
+	dc, owned, err := decisionContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -276,13 +303,13 @@ func runDecisionTerminal(ctx *cli.Context, status string) error {
 	if err != nil {
 		return handleServiceErr(ctx, err)
 	}
-	echoSorted(ctx, false, jsonx.NewObject("decision_id", resp.DecisionID, "status", resp.Status, "terminal_outcome", resp.Outcome,
-		"idempotent", resp.Idempotent, "event_lamport", lamport(resp.Lamport)))
+	echoDecision(ctx, jsonx.NewObject("decision_id", resp.DecisionID, "status", resp.Status, "terminal_outcome", resp.Outcome,
+		"idempotent", resp.Idempotent, "event_lamport", lamport(resp.Lamport)), owned)
 	return nil
 }
 
 func runDecisionVerify(ctx *cli.Context) error {
-	dc, err := decisionContext(ctx)
+	dc, owned, err := decisionContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -300,8 +327,11 @@ func runDecisionVerify(ctx *cli.Context) error {
 	}
 	// FR-010a: a decision-event stream forked between the PRIMARY and
 	// coordination surfaces is its own finding and always exits 1.
-	fork := healthcheck.DetectDecisionForks(dc.Root, dc.Slug)
-	if fork.Forked {
+	var fork *healthcheck.ForkReport
+	if owned == nil {
+		fork = healthcheck.DetectDecisionForks(dc.Root, dc.Slug)
+	}
+	if fork != nil && fork.Forked {
 		set := map[string]bool{}
 		for _, s := range fork.Streams {
 			if s.State == "forked" {
@@ -323,8 +353,8 @@ func runDecisionVerify(ctx *cli.Context) error {
 			"detail", "A decision-event stream diverges between the PRIMARY and coordination surfaces (never auto-merged, C-003): "+strings.Join(fork.ReconcileSteps, "; ")))
 		st = "drift"
 	}
-	echoSorted(ctx, false, jsonx.NewObject("status", st, "deferred_count", res.DeferredCount, "marker_count", res.MarkerCount, "findings", findings))
-	if fork.Forked {
+	echoDecision(ctx, jsonx.NewObject("status", st, "deferred_count", res.DeferredCount, "marker_count", res.MarkerCount, "findings", findings), owned)
+	if fork != nil && fork.Forked {
 		return cli.Exit(1)
 	}
 	if len(res.Findings) > 0 && ctx.Bool("fail-on-stale") {
@@ -343,7 +373,7 @@ func runDecisionList(ctx *cli.Context) error {
 				"status", filter, "valid_values", valid))
 		}
 	}
-	dc, err := decisionContext(ctx)
+	dc, owned, err := decisionContext(ctx)
 	if err != nil {
 		return err
 	}
@@ -370,7 +400,7 @@ func runDecisionList(ctx *cli.Context) error {
 	if idx.MissionID != "" {
 		mid = idx.MissionID
 	}
-	echoSorted(ctx, false, jsonx.NewObject("contract", "decision_list_v1", "mission_slug", dc.Slug, "mission_id", mid, "count", len(list), "decisions", list))
+	echoDecision(ctx, jsonx.NewObject("contract", "decision_list_v1", "mission_slug", dc.Slug, "mission_id", mid, "count", len(list), "decisions", list), owned)
 	return nil
 }
 
@@ -387,10 +417,4 @@ func sortDecisionEntries(es []*decision.Entry) {
 	}
 }
 
-func runRepairRuntimeLock(ctx *cli.Context) error {
-	if ctx.String("owned-checkout") == "" {
-		return cli.Usage(ctx.Cmd, "Invalid value: repair-runtime-lock requires explicit --owned-checkout")
-	}
-	fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("status", "error", "code", "OWNED_OPTION_UNSUPPORTED", "message", "--owned-checkout is not supported by this build"), compact))
-	return cli.Exit(1)
-}
+func runRepairRuntimeLock(ctx *cli.Context) error { return runRepairRuntimeLockOwned(ctx) }

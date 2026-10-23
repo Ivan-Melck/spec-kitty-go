@@ -20,6 +20,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/lifecycle"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -97,6 +98,10 @@ type moveState struct {
 	skipGate                                    bool
 	trackerRefs                                 []string
 	autoCommitFlag                              *bool
+	// owned is the validated owned-checkout fact (the local review
+	// lifecycle in P); reviewBaseRef its resolved review base.
+	owned         *ownedcheckout.Fact
+	reviewBaseRef string
 
 	// phase A
 	target             string
@@ -196,15 +201,27 @@ func runMoveTask(ctx *cli.Context) error {
 		v := ctx.Bool("auto-commit")
 		st.autoCommitFlag = &v
 	}
-	if ctx.IsSet("owned-checkout") {
-		outputError(ctx, st.json, "--owned-checkout is not supported by this build.")
-		return cli.Exit(1)
+	if root := project.Locate(""); root != "" {
+		owned, err := resolveOwned(ctx, root, ctx.String("mission"), st.json, ownedcheckout.FlatErrorEnvelope, ownedcheckout.Options{})
+		if err != nil {
+			if _, ok := err.(*ownedcheckout.MetaReadError); ok {
+				outputError(ctx, st.json, err.Error())
+				return cli.Exit(1)
+			}
+			return err
+		}
+		st.owned = owned
 	}
 	err := st.run()
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, errExit):
+		return cli.Exit(1)
+	}
+	var oe *ownedcheckout.Error
+	if st.owned != nil && errors.As(err, &oe) {
+		emitOwnedError(st, oe)
 		return cli.Exit(1)
 	}
 	var ce *cli.ExitError
@@ -268,9 +285,17 @@ func (st *moveState) resolveTargets() error {
 		return st.outErr(err.Error())
 	}
 	st.target = t
-	root := project.Locate("")
-	if root == "" {
-		return st.outErr("Could not locate project root")
+	var root string
+	if st.owned != nil {
+		if err := st.preflightOwned(); err != nil {
+			return err
+		}
+		root = st.owned.OwnedRoot
+	} else {
+		root = project.Locate("")
+		if root == "" {
+			return st.outErr("Could not locate project root")
+		}
 	}
 	st.root = root
 	if st.autoCommitFlag != nil {
@@ -278,16 +303,26 @@ func (st *moveState) resolveTargets() error {
 	} else {
 		st.autoCommit = mission.AutoCommit(root)
 	}
-	slug, err := resolveTasksMission(st.ctx, root, st.ctx.String("mission"), st.json)
-	if err != nil {
-		return err
+	var slug string
+	if st.owned != nil {
+		if err := st.applyOwnedTargets(); err != nil {
+			return err
+		}
+		slug = st.owned.MissionSlug
+		st.m = newMissionCtx(root, slug)
+	} else {
+		var err error
+		slug, err = resolveTasksMission(st.ctx, root, st.ctx.String("mission"), st.json)
+		if err != nil {
+			return err
+		}
+		st.m = newMissionCtx(root, slug)
+		cur, err := st.m.banner(st.ctx, st.json)
+		if err != nil {
+			return st.outErr(err.Error())
+		}
+		st.targetBranch = cur
 	}
-	st.m = newMissionCtx(root, slug)
-	cur, err := st.m.banner(st.ctx, st.json)
-	if err != nil {
-		return st.outErr(err.Error())
-	}
-	st.targetBranch = cur
 	// _resolve_dispatch_binding: APPROVED/DONE (and IN_REVIEW) are reviewer
 	// decisions, everything else resolves the implement action.
 	action := "implement"
@@ -310,9 +345,13 @@ func (st *moveState) resolveTargets() error {
 		return st.outErr(err.Error())
 	}
 	st.binding = b
+	protRoot := root
+	if st.owned != nil {
+		protRoot = st.owned.RepositoryRoot
+	}
 	if st.autoCommit {
-		st.skipPrimary = isDir(st.m.Surface.CoordWorktree) && st.m.Surface.CoordWorktree != "" && coord.IsProtected(root, slug, st.targetBranch)
-		if !st.skipPrimary && coord.IsProtected(root, slug, st.targetBranch) {
+		st.skipPrimary = st.owned == nil && isDir(st.m.Surface.CoordWorktree) && st.m.Surface.CoordWorktree != "" && coord.IsProtected(root, slug, st.targetBranch)
+		if !st.skipPrimary && coord.IsProtected(protRoot, slug, st.targetBranch) {
 			if e := selfReviewOptionError(st); e != "" {
 				return st.outErr(e)
 			}
@@ -342,10 +381,20 @@ func (st *moveState) resolveTargets() error {
 		return err
 	}
 	st.oldLane = status.DeriveFromLane(snap, st.taskID)
-	if st.oldLane == string(status.Planned) && st.target != string(status.Planned) {
+	if st.owned != nil && !ownedLifecycleLanes[st.oldLane] {
+		return ownedRefusal("OWNED_TRANSITION_UNSUPPORTED", "Owned checkout does not support transitions from this lane.")
+	}
+	if st.owned == nil && st.oldLane == string(status.Planned) && st.target != string(status.Planned) {
 		if m, _ := lanes.Read(st.m.PrimaryDir()); m == nil {
 			return st.outErr(fmt.Sprintf("Cannot move %s out of 'planned': lanes.json is absent for mission '%s'. Run `spec-kitty doctor mission-state --fix --mission %s` to rebuild execution lanes from the canonical event log, then retry.", st.taskID, slug, slug))
 		}
+	}
+	if st.owned != nil && (st.target == string(status.ForReview) || st.target == string(status.Approved)) {
+		base, err := st.resolveOwnedReviewBase()
+		if err != nil {
+			return err
+		}
+		st.reviewBaseRef = base
 	}
 	// _mt_resolve_current_agent re-reads the snapshot (wp_snapshot_state).
 	extraReadPasses(st.featureDir, 1)
@@ -374,7 +423,11 @@ func (st *moveState) warnWorktreeKittySpecs() {
 		return
 	}
 	cwd, _ = filepath.Abs(cwd)
-	if cwd == st.root || !strings.Contains(cwd, string(filepath.Separator)+project.WorktreesDir) {
+	mainRoot := st.root
+	if st.owned != nil {
+		mainRoot = st.owned.RepositoryRoot
+	}
+	if cwd == mainRoot || !strings.Contains(cwd, string(filepath.Separator)+project.WorktreesDir) {
 		return
 	}
 	for cur := cwd; cur != filepath.Dir(cur) && strings.Contains(cur, project.WorktreesDir); cur = filepath.Dir(cur) {
@@ -541,9 +594,15 @@ func (st *moveState) validateReadyForReview() (bool, []string, error) {
 	if mt != "software-dev" {
 		return true, nil, nil
 	}
-	ws, err := lanes.ResolveWorkspace(st.root, st.m.Slug, st.taskID)
-	if err != nil {
-		ws = nil
+	var ws *lanes.Workspace
+	if st.owned != nil {
+		ws = st.ownedWorkspace()
+	} else {
+		var err error
+		ws, err = lanes.ResolveWorkspace(st.root, st.m.Slug, st.taskID)
+		if err != nil {
+			ws = nil
+		}
 	}
 	if ws != nil && ws.ResolutionKind == "repo_root" {
 		return true, nil, nil
@@ -575,6 +634,9 @@ func (st *moveState) validateReadyForReview() (bool, []string, error) {
 			"  git cherry-pick --abort  # if cherry-pick", "", retry}, nil
 	}
 	check := st.reviewCurrencyBranch(ws)
+	if st.reviewBaseRef != "" {
+		check = st.reviewBaseRef
+	}
 	behind := 0
 	if out, err := gitx.Run(wt, "rev-list", "--count", "HEAD.."+check); err == nil {
 		behind, _ = strconv.Atoi(strings.TrimSpace(out))
@@ -633,8 +695,10 @@ func (st *moveState) validateReadyForReview() (bool, []string, error) {
 			"  " + safeCommitRecipe([]string{"<deliverable-path-1>", "<deliverable-path-2>", "..."}, fmt.Sprintf("feat(%s): <describe implementation>", st.taskID), gitx.CurrentBranch(wt)),
 			"", retry}, nil
 	}
-	if g := st.kittySpecsContamination(wt, check, retry); g != nil {
-		return false, g, nil
+	if st.owned == nil {
+		if g := st.kittySpecsContamination(wt, check, retry); g != nil {
+			return false, g, nil
+		}
 	}
 	return true, nil, nil
 }
@@ -1389,7 +1453,14 @@ func (st *moveState) completeDeferredReadiness() error {
 	if !(st.target == string(status.ForReview) && st.autoCommit && !st.force) {
 		return nil
 	}
-	st.commitLaneDeliverables()
+	if err := st.commitLaneDeliverables(); err != nil {
+		return err
+	}
+	if st.owned != nil {
+		if err := st.requireOwnedImplementation(); err != nil {
+			return err
+		}
+	}
 	ok, guidance, err := st.validateReadyForReview()
 	if err != nil {
 		return err
@@ -1398,21 +1469,30 @@ func (st *moveState) completeDeferredReadiness() error {
 	return st.runDecision()
 }
 
-func (st *moveState) commitLaneDeliverables() {
-	ws, err := lanes.ResolveWorkspace(st.root, st.m.Slug, st.taskID)
-	if err != nil || ws.BranchName == "" {
-		return
+func (st *moveState) commitLaneDeliverables() error {
+	var ws *lanes.Workspace
+	if st.owned != nil {
+		ws = st.ownedWorkspace()
+	} else {
+		var err error
+		ws, err = lanes.ResolveWorkspace(st.root, st.m.Slug, st.taskID)
+		if err != nil {
+			return nil
+		}
 	}
-	if ws.ResolutionKind == "repo_root" {
+	if ws.BranchName == "" {
+		return nil
+	}
+	if st.owned == nil && ws.ResolutionKind == "repo_root" {
 		st.console(fmt.Sprintf("[yellow]Note:[/yellow] %s runs in the repository root checkout; commit your WP work yourself before moving to for_review (no auto-commit).", st.taskID))
-		return
+		return nil
 	}
 	if !isDir(ws.WorktreePath) {
-		return
+		return nil
 	}
 	entries, err := statusEntries(ws.WorktreePath)
 	if err != nil {
-		return
+		return nil
 	}
 	entries = filterRuntimeState(entries)
 	var paths []string
@@ -1425,14 +1505,24 @@ func (st *moveState) commitLaneDeliverables() {
 		}
 	}
 	if len(paths) == 0 {
-		return
+		return nil
+	}
+	if st.owned != nil {
+		if err := st.ownedDeliverableScope(paths); err != nil {
+			return err
+		}
 	}
 	if err := safeCommitPaths(ws.WorktreePath, fmt.Sprintf("chore(%s): commit lane deliverables for review", st.taskID), paths, st.logWarn); err != nil {
 		st.console(fmt.Sprintf("[yellow]Warning:[/yellow] could not auto-commit lane deliverables for %s: %v", st.taskID, err))
-		return
+		return nil
 	}
-	lanes.RecordTip(st.root, ws.BranchName)
+	tipRoot := st.root
+	if st.owned != nil {
+		tipRoot = st.owned.RepositoryRoot
+	}
+	lanes.RecordTip(tipRoot, ws.BranchName)
 	st.console(fmt.Sprintf("[cyan]Committed lane deliverables for %s on %s before review.[/cyan]", st.taskID, ws.BranchName))
+	return nil
 }
 
 func isCoordResidue(rel string) bool { return mission.IsCoordResidue(rel) }

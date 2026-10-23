@@ -26,16 +26,16 @@ run without the oracle.
 | Command path | Status | Tests | Deviations |
 |---|---|---|---|
 | `safe-commit` (`-m` repeated, `--to-branch`, `--json`, mission-aware target, coord/lane worktrees, E2 published missions) | done | `TestDiffSafeCommit`, `TestDiffSafeCommitMission`, `TestDiffSafeCommitPublishedMission`, `TestLocalSafeCommit` | none known (the published-mission write resolves to the Primary Branch and asserts `POST_CONSOLIDATION_WRITE`; off-checkout refuses with `CONSOLIDATED_CONTENT_ABSENT`) |
-| `spec-commit` (`--mission`, `-m/--message`, `--json`, directory expansion, router placement) | done | `TestDiffSafeCommitMission`, `TestLocalSafeCommit` | `--owned-checkout` belongs to area OWN |
-| `agent mission check-prerequisites` (`--json`, `--paths-only`, `--include-tasks`, `--require-tasks`, `--resume-probe`) | done | `TestDiffCheckPrerequisites`, `TestLocalCheckPrerequisites` | `--owned-checkout` belongs to area OWN |
+| `spec-commit` (`--mission`, `-m/--message`, `--json`, directory expansion, router placement) | done | `TestDiffSafeCommitMission`, `TestLocalSafeCommit`, `TestDiffOwnedLifecycleWalk` | `--owned-checkout` / flagless adoption ported; see [owned.md](owned.md) |
+| `agent mission check-prerequisites` (`--json`, `--paths-only`, `--include-tasks`, `--require-tasks`, `--resume-probe`) | done | `TestDiffCheckPrerequisites`, `TestLocalCheckPrerequisites`, `TestDiffOwnedPlanningCommands` | `--owned-checkout` / flagless adoption ported (`--resume-probe` refused under an owned checkout, as upstream); see [owned.md](owned.md) |
 | `agent check-prerequisites` (hidden alias) | done | `TestDiffCheckPrerequisites` | as above |
-| `agent decision open` / `resolve` / `defer` / `cancel` (incl. `--dry-run`, idempotent re-open, terminal conflicts) | done | `TestDiffDecisions`, `TestLocalDecisions` | `--owned-checkout` belongs to area OWN |
+| `agent decision open` / `resolve` / `defer` / `cancel` (incl. `--dry-run`, idempotent re-open, terminal conflicts) | done | `TestDiffDecisions`, `TestLocalDecisions`, `TestDiffOwnedPlanningCommands` | `--owned-checkout` / flagless adoption ported (also `list` / `verify`); see [owned.md](owned.md) |
 | `agent decision verify` (`--fail-on-stale/--no-fail-on-stale`, marker scan, `DECISION_LOG_FORKED`) | done | `TestDiffDecisions`, `TestDiffDecisionVerifyFork` | none known (a forked PRIMARY/coordination decision-event stream is reported with its reconcile steps and always exits 1) |
 | `agent decision list` (`--status`) | done | `TestDiffDecisions` | none known |
-| `agent decision repair-runtime-lock` | partial | `TestDiffDecisions` | requires `--owned-checkout` (area OWN) |
-| `agent mission setup-plan` (spec gate, requirement-ID lint, scaffold mode, commit mode, lifecycle markers, documentation wiring) | done | `TestDiffSetupPlan`, `TestDiffSetupPlanDocumentationWiring` | none known (documentation missions run the Divio gap analysis for `gap_filling` / `mission_specific`, including upstream's complete-coverage failure, and JSDoc / Sphinx / rustdoc generator detection) |
-| `agent tasks map-requirements` (individual, `--batch`, `--replace`, `--tracker-ref`, stale gate, router auto-commit) | done | `TestDiffMapRequirements` | `--owned-checkout` belongs to area OWN |
-| `agent mission finalize-tasks` (`--validate-only`, gates, frontmatter normalisation, `lanes.json`, status bootstrap, acceptance matrix, issue-matrix scaffold) | done | `TestDiffFinalizeTasks`, `TestDiffFinalizeTasksHuman`, `TestDiffIssueMatrix` | none known |
+| `agent decision repair-runtime-lock` | done | `TestDiffDecisions`, `TestDiffOwnedPlanningCommands` | ported (owned-only: `.gitignore` repair committed through a temporary index; `RUNTIME_LOCK_*` refusals); see [owned.md](owned.md) |
+| `agent mission setup-plan` (spec gate, requirement-ID lint, scaffold mode, commit mode, lifecycle markers, documentation wiring) | done | `TestDiffSetupPlan`, `TestDiffSetupPlanDocumentationWiring`, `TestDiffOwnedLifecycleWalk` | `--owned-checkout` / flagless adoption ported (see [owned.md](owned.md)); otherwise none known (documentation missions run the Divio gap analysis for `gap_filling` / `mission_specific`, including upstream's complete-coverage failure, and JSDoc / Sphinx / rustdoc generator detection) |
+| `agent tasks map-requirements` (individual, `--batch`, `--replace`, `--tracker-ref`, stale gate, router auto-commit) | done | `TestDiffMapRequirements`, `TestDiffOwnedPlanningCommands` | `--owned-checkout` / flagless adoption ported; see [owned.md](owned.md) |
+| `agent mission finalize-tasks` (`--validate-only`, gates, frontmatter normalisation, `lanes.json`, status bootstrap, acceptance matrix, issue-matrix scaffold) | done | `TestDiffFinalizeTasks`, `TestDiffFinalizeTasksHuman`, `TestDiffIssueMatrix`, `TestDiffOwnedPlanningCommands`, `TestDiffOwnedLifecycleWalk` | `--owned-checkout` / flagless adoption ported; see [owned.md](owned.md) |
 | finalize-tasks `wps.yaml` tasks-outline manifest flow (pydantic-faithful load errors, manifest dependencies + WP-frontmatter fallback, outline-only validation, tasks.md regeneration / stale report, concern-coverage warnings) | done | `TestDiffFinalizeWpsOutline`, `TestDiffFinalizeWps`, `TestDiffFinalizeWpsHuman`, orchestrator `TestDiffDesignTasksFromOutline` | none known (`wps.yaml` loads with the ruamel safe loader: exact error text; PYF-02 sweep) |
 | finalize-tasks ownership inference (`infer_ownership`), code_change + `owned_files: []` contradiction, confined planning_artifact exemption, planning_artifact warning, post-integration acceptance warning, charter activation gate, nearest-match literal-path hint | done | `TestDiffFinalizeOwnershipInference` | none known |
 | finalize-tasks `--refresh-planning-commit` / `--allow-orphaned` | done | `TestDiffFinalizeRefreshPlanningCommit` | none known |
@@ -43,7 +43,7 @@ run without the oracle.
 | finalize-tasks refusal atomicity (FR-015 mission-directory restore, unpersisted `--target-branch` revert, status-surface guard #5641) | done | `TestDiffFinalizeRefusalRestoresStatusSurface`, `TestDiffDesignTasksFromOutline` | concurrent-writer "kept" reporting (another process changing files mid-run) is not reproduced |
 | finalize-tasks on an API-authored mission (`native_finalization_scope`, #5879: stage proof, authoring lock, receipt re-stamp) | done | orchestrator `TestDiffNativeFinalizeAPIAuthored`, `TestDiffDesignTasksFromOutline` | none known |
 | `agent tasks finalize-tasks` | done | `TestDiffTasksFinalizeTasks` | none known |
-| `agent mission record-analysis` (DIRTY_WORKTREE refusal, `--input-file`/stdin, findings carrier, router commit) | done | `TestDiffRecordAnalysis`, `TestLocalRecordAnalysisDirty` | `--owned-checkout` belongs to area OWN |
+| `agent mission record-analysis` (DIRTY_WORKTREE refusal, `--input-file`/stdin, findings carrier, router commit) | done | `TestDiffRecordAnalysis`, `TestLocalRecordAnalysisDirty`, `TestDiffOwnedPlanningCommands` | `--owned-checkout` / flagless adoption ported; see [owned.md](owned.md) |
 | `agent mission record-analysis --report-only` (material-input closure, `DIRTY_ANALYSIS_INPUT`, receipts under the git dir, report-only commit, unchanged re-run, `console.print(dict)` output) | done | `TestDiffRecordAnalysisReportOnly` | `template-selection:*` digests embed the template's absolute path (irreducible, below) |
 | `agent issue-verdict` | done | `TestDiffIssueMatrix` | none known |
 | `issue-matrix migrate` | done | `TestDiffIssueMatrixMigrate` | none known |
@@ -52,9 +52,9 @@ run without the oracle.
 | `agent tracer-append` | done | `TestDiffTracerAndRepair` | none known |
 | `intake` (path, `-`, handoff packet, `--show`, `--force`, `--auto`, overwrite guard) | done | `TestDiffIntake`, `TestDiffIntakeOverwriteGuard` | none known (the brief gate routes through `assetpreserve` with no prover and no backup, exactly like upstream) |
 | `specify` (create + scaffold-only guidance, `--json` enrichment, `--mission` deprecated alias, `--topology`, widen interview) | done | `TestDiffLifecycle`, `TestDiffLifecycleInteractive`, `TestLocalLifecycleAndResearch` | none known |
-| `plan` (delegates to `setup-plan`, plan interview) | done | `TestDiffLifecycle`, `TestDiffLifecycleInteractive` | none known |
+| `plan` (delegates to `setup-plan`, plan interview) | done | `TestDiffLifecycle`, `TestDiffLifecycleInteractive`, `TestDiffOwnedPlanningCommands` | `--owned-checkout` forwarded to `setup-plan` (interview skipped under an owned checkout, as upstream); see [owned.md](owned.md) |
 | `tasks` (delegates to `agent mission finalize-tasks`) | done | `TestDiffLifecycle` | none known |
-| `research` (template scaffold behind the destructive-overwrite guard, `--force`, unfilled-plan gate) | done | `TestDiffLifecycle`, `TestLocalLifecycleAndResearch` | none known (asset writes route through `assetpreserve`, no prover / no backup, like upstream) |
+| `research` (template scaffold behind the destructive-overwrite guard, `--force`, unfilled-plan gate) | done | `TestDiffLifecycle`, `TestLocalLifecycleAndResearch`, `TestDiffOwnedPlanningCommands` | `--owned-checkout` / flagless adoption ported (see [owned.md](owned.md)); otherwise none known (asset writes route through `assetpreserve`, no prover / no backup, like upstream) |
 
 `agent context resolve` was left to area C (brief item 5).
 
@@ -83,9 +83,6 @@ cancels, blank defers, anything else resolves), matching
 
 ## Remaining work
 
-* `--owned-checkout` on `spec-commit`, `check-prerequisites`, `decision *`,
-  `setup-plan`, `map-requirements`, `finalize-tasks`, `record-analysis` and
-  `research` is area OWN's (still refused here).
 * The analysis-report freshness check (`internal/workflow.CheckAnalysisReport`,
   area CORE) does not yet consult `report_transaction` receipts and the
   material manifest that `--report-only` records

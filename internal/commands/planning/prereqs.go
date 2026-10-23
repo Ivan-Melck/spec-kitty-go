@@ -14,6 +14,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/ulid"
 )
@@ -97,11 +98,31 @@ func runCheckPrerequisites(ctx *cli.Context) error {
 		consoleOrJSONError(ctx, jsonMode, projectRootNotFound)
 		return cli.Exit(1)
 	}
-	if ctx.String("owned-checkout") != "" {
-		consoleOrJSONError(ctx, jsonMode, "--owned-checkout is not supported by this build")
+	feature := ctx.String("mission")
+	// Validate --owned-checkout (or adopt the caller's checkout) exactly once;
+	// a flagless --resume-probe skips adoption.
+	envelope := func(code, msg string) *jsonx.Object {
+		return withCLIVersion(ownedcheckout.FlatErrorEnvelope(code, msg))
+	}
+	var owned *ownedcheckout.Fact
+	if !(ctx.Bool("resume-probe") && !ctx.IsSet("owned-checkout")) {
+		f, err := resolveOwnedOrRefuse(ctx, root, feature, jsonMode, envelope, ownedcheckout.Options{})
+		if err != nil {
+			if _, ok := err.(*ownedcheckout.MetaReadError); ok {
+				consoleOrJSONError(ctx, jsonMode, err.Error())
+				return cli.Exit(1)
+			}
+			return err
+		}
+		owned = f
+	}
+	if owned != nil && ctx.Bool("resume-probe") {
+		ownedcheckout.Emit(ctx.Stdout, ctx.Stderr, &ownedcheckout.Error{Code: ownedcheckout.OwnedOptionUnsupported, Message: "--resume-probe is not supported with --owned-checkout."}, jsonMode, envelope)
 		return cli.Exit(1)
 	}
-	feature := ctx.String("mission")
+	if owned != nil {
+		root = owned.OwnedRoot
+	}
 	if ctx.Bool("resume-probe") {
 		if strings.TrimSpace(feature) == "" {
 			consoleOrJSONError(ctx, jsonMode, "--resume-probe requires --mission <provisional-slug>")
@@ -129,7 +150,13 @@ func runCheckPrerequisites(ctx *cli.Context) error {
 		}
 		return nil
 	}
-	featureDir, derr := detectFeatureDir(root, feature)
+	var featureDir string
+	var derr error
+	if owned != nil {
+		featureDir = owned.MissionDir
+	} else {
+		featureDir, derr = detectFeatureDir(root, feature)
+	}
 	if derr != nil {
 		var args []string
 		if jsonMode {
@@ -158,7 +185,11 @@ func runCheckPrerequisites(ctx *cli.Context) error {
 		} else {
 			payload = st.Payload()
 		}
-		emitJSON(ctx.Stdout, branchctx.Inject(payload, target, current, "", ""))
+		expected := ""
+		if owned != nil {
+			expected = owned.WriteBranch
+		}
+		emitJSON(ctx.Stdout, branchctx.Inject(payload, target, current, "", expected))
 		return nil
 	}
 	if st.Valid {

@@ -19,6 +19,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
@@ -270,7 +271,7 @@ type reportTxn struct {
 }
 
 // recordReportTransaction is record_report_transaction.
-func recordReportTransaction(root, dir, body, agent, targetBranch string) *reportTxn {
+func recordReportTransaction(root, dir, body, agent, targetBranch string, owned *ownedcheckout.Fact) *reportTxn {
 	report := filepath.Join(dir, "analysis-report.md")
 	relative := relOrAbs(root, report)
 	message := "docs(record-analysis): record analysis report for mission " + filepath.Base(dir)
@@ -311,10 +312,14 @@ func recordReportTransaction(root, dir, body, agent, targetBranch string) *repor
 	if status.GitOperationInProgress(root) {
 		return fail(errors.New("Active Git operation in progress"))
 	}
-	if safecommit.Placement(root, filepath.Base(dir), mission.KindAnalysisReport) != targetBranch {
+	placement := safecommit.Placement(root, filepath.Base(dir), mission.KindAnalysisReport)
+	if owned != nil {
+		placement = safecommit.OwnedPlacement(owned, mission.KindAnalysisReport)
+	}
+	if placement != targetBranch {
 		return fail(errors.New("Analysis report placement changed before preflight"))
 	}
-	if _, err := safecommit.Preflight(root, root, targetBranch, []string{report}, safecommit.Options{}); err != nil {
+	if _, err := safecommit.Preflight(root, root, targetBranch, []string{report}, safecommit.Options{Owned: owned}); err != nil {
 		return fail(err)
 	}
 	inputs, err := missionart.CollectMaterialInputs(dir, root)
@@ -431,7 +436,7 @@ func recordReportTransaction(root, dir, body, agent, targetBranch string) *repor
 	if !unchangedState() {
 		return fail(errors.New("Repository changed before report commit; retained report is unqualified"))
 	}
-	outcome := safecommit.CommitForMission(root, filepath.Base(dir), []string{report}, message, mission.KindAnalysisReport, safecommit.RouterOptions{})
+	outcome := safecommit.CommitForMission(root, filepath.Base(dir), []string{report}, message, mission.KindAnalysisReport, safecommit.RouterOptions{Owned: owned})
 	if outcome.Status != safecommit.StatusCommitted || outcome.CommitHash == "" || !outcome.Success() {
 		refused = outcome
 		msg := outcome.Diagnostic
@@ -481,7 +486,7 @@ func isRegularFile(p string) bool {
 }
 
 // runReportOnly is record_analysis's --report-only leg (_run_report_only).
-func runReportOnly(ctx *cli.Context, root, slug string, jsonMode bool, fail func(string) error) error {
+func runReportOnly(ctx *cli.Context, root, slug string, jsonMode bool, fail func(string) error, owned *ownedcheckout.Fact) error {
 	var body []byte
 	var err error
 	if in := ctx.String("input-file"); in == "-" {
@@ -496,7 +501,15 @@ func runReportOnly(ctx *cli.Context, root, slug string, jsonMode bool, fail func
 		return fail("Analysis report body is empty")
 	}
 	dir := project.Specs(root, slug)
-	txn := recordReportTransaction(root, dir, string(body), ctx.String("agent"), safecommit.TargetBranch(root, slug))
+	target := safecommit.TargetBranch(root, slug)
+	if owned != nil {
+		dir = owned.MissionDir
+		target = owned.WriteBranch
+	}
+	txn := recordReportTransaction(root, dir, string(body), ctx.String("agent"), target, owned)
+	if owned != nil {
+		txn.payload.Set("stale_repository_root_copy", ownedcheckout.StaleCopyValue(owned, nil))
+	}
 	if jsonMode {
 		emitJSON(ctx.Stdout, txn.payload)
 	} else {

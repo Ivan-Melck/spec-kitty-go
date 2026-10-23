@@ -18,7 +18,7 @@ name-status file sets; worktree list; status; branches; all refs).
 
 | Command path | Status | Tests | Deviations |
 |---|---|---|---|
-| `agent acceptance-verdict` (`--criterion/--negative-invariant`, `--result`, `--verification-method/-command`, `--scope`, `--evidence`, `--actor`, `--no-execute`, `--json`) | done | `TestDiffAcceptanceVerdict` (coord, lanes; TRACE 6.2/6.3, errors, unknown mission), `TestLocalCloseout` | `--owned-checkout` is refused ("not supported by this build"); owned by area OWN (wave 5) |
+| `agent acceptance-verdict` (`--criterion/--negative-invariant`, `--result`, `--verification-method/-command`, `--scope`, `--evidence`, `--actor`, `--no-execute`, `--json`) | done | `TestDiffAcceptanceVerdict` (coord, lanes; TRACE 6.2/6.3, errors, unknown mission), `TestLocalCloseout` | `--owned-checkout` / flagless adoption ported (`TestDiffOwnedAcceptance`); see [owned.md](owned.md) |
 | `agent mission acceptance-verdict` | done | same | same |
 | `agent mission accept` (`--diagnose`, `--json`, lenient/dirty refusals, origin check read-only) | done | `TestDiffAccept` (for-review-dirty, coord, lanes; TRACE 5.F5, 6.1, 6.4, 6.6, 9.3), `TestDiffAcceptMergeCommit` | none known |
 | `accept` (`--mission`, `--mode`, `--lenient`, `--no-commit`, `--json`, git_dirty and `docs/` path-convention refusals) | done | `TestDiffAccept` | none known |

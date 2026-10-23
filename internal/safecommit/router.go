@@ -11,6 +11,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 )
 
@@ -215,6 +216,9 @@ type RouterOptions struct {
 	CreatedThisInvocation map[string]bool
 	// PrimaryRef retargets the PRIMARY group onto this branch.
 	PrimaryRef string
+	// Owned routes the whole batch as ONE group into the owned checkout
+	// (commit_for_mission(owned=...)).
+	Owned *ownedcheckout.Fact
 }
 
 func relpath(root, p string) string {
@@ -237,7 +241,7 @@ func CommitForMission(root, slug string, files []string, message, kind string, o
 		}
 	}
 	callerPrimary := IsPrimaryKind(kind)
-	if len(files) == 0 || (callerPrimary && len(coordFiles) == 0) || (!callerPrimary && len(primary) == 0) {
+	if opts.Owned != nil || len(files) == 0 || (callerPrimary && len(coordFiles) == 0) || (!callerPrimary && len(primary) == 0) {
 		return commitGroup(root, slug, files, message, kind, opts)
 	}
 	primaryKind, coordKind := kind, kind
@@ -309,20 +313,47 @@ func fates(root string, files []string, reason string) []PathFate {
 	return out
 }
 
+// OwnedPlacement is resolve_placement_only(..., owned=fact).ref: the
+// fact's write branch, or the declared coordination branch for a
+// coordination-partition kind of a coordination-routed owned mission.
+func OwnedPlacement(f *ownedcheckout.Fact, kind string) string {
+	if IsPrimaryKind(kind) || !coord.RoutesThroughCoordination(f.Topology) {
+		return f.WriteBranch
+	}
+	if cb := strings.TrimSpace(mission.ReadMetaOrEmpty(f.MissionDir).GetString("coordination_branch")); cb != "" {
+		return cb
+	}
+	return f.WriteBranch
+}
+
 func commitGroup(root, slug string, files []string, message, kind string, opts RouterOptions) *RouterResult {
-	placement := Placement(root, slug, kind)
-	s := coord.Resolve(root, slug)
-	primaryTarget := TargetBranch(root, slug)
-	useCoord := coord.RoutesThroughCoordination(s.Topology) && placement != primaryTarget
+	var placement string
+	var s *coord.Surface
+	useCoord := false
+	if opts.Owned != nil {
+		placement = OwnedPlacement(opts.Owned, kind)
+	} else {
+		placement = Placement(root, slug, kind)
+		s = coord.Resolve(root, slug)
+		primaryTarget := TargetBranch(root, slug)
+		useCoord = coord.RoutesThroughCoordination(s.Topology) && placement != primaryTarget
+	}
 	if !useCoord && opts.PrimaryRef != "" && opts.PrimaryRef != placement {
 		placement = opts.PrimaryRef
-		primaryTarget = placement
+	}
+	protected := false
+	if !useCoord {
+		if opts.Owned != nil {
+			protected = opts.Owned.IsProtected(placement, slug)
+		} else {
+			protected = coord.IsProtected(root, slug, placement)
+		}
 	}
 	surface := "primary"
 	if useCoord {
 		surface = "coordination"
 	}
-	if !useCoord && coord.IsProtected(root, slug, placement) {
+	if protected {
 		var remedy string
 		if preTasksKinds[kind] {
 			remedy = fmt.Sprintf("No tasks have been generated for this mission yet, so the finalize-tasks --target-branch override has nothing durable to attach to and would silently revert. Start a mission on a topic branch instead: 'spec-kitty agent mission create %s --start-branch <topic-branch>'.", slug)
@@ -334,6 +365,9 @@ func commitGroup(root, slug string, files []string, message, kind string, opts R
 			Surfaces: []SurfaceOutcome{{Surface: surface, Branch: placement, Status: "refused", Refused: fates(root, files, ReasonProtectedRefused), Diagnostic: diag}}}
 	}
 	worktree, commitPaths := root, files
+	if opts.Owned != nil {
+		worktree = opts.Owned.OwnedRoot
+	}
 	if useCoord {
 		if err := s.EnsureWorktree(); err != nil || s.CoordWorktree == "" {
 			diag := fmt.Sprintf("Coordination worktree resolution failed for mission %s (mid8=%s): %v. Refusing to fall back to the primary checkout, which would silently misroute a coordination-kind artifact (INV-3).", Repr(slug), Repr(s.Mid8), err)
@@ -363,7 +397,7 @@ func commitGroup(root, slug string, files []string, message, kind string, opts R
 		return &RouterResult{Status: StatusNoOpWrongSurface, PlacementRef: placement, Diagnostic: diag,
 			Surfaces: []SurfaceOutcome{{Surface: surface, Branch: placement, Status: "refused", Refused: fates(root, absent, ReasonWrongSurface), Diagnostic: diag}}}
 	}
-	res, err := Commit(root, worktree, placement, message, commitPaths, Options{})
+	res, err := Commit(root, worktree, placement, message, commitPaths, Options{Owned: opts.Owned})
 	if err != nil {
 		if IsCode(err, CodeStagedTreeUnchanged) {
 			r := &RouterResult{Status: StatusUnchanged, PlacementRef: placement, Reason: ReasonNoChanges,
