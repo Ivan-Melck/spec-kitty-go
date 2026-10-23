@@ -8,8 +8,8 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/charsetnorm"
 	"github.com/spec-kitty/go-kitty3/internal/charterenc"
-	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
 
 // Charter reads that upstream routes through the encoding chokepoint
