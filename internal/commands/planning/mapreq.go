@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/reqmap"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
@@ -478,7 +479,10 @@ func runMapRequirements(ctx *cli.Context) error {
 			}
 			if !jsonMode && surfaceNeedsWarning(r) {
 				for _, l := range r.Render() {
-					sayPlain(ctx.Stdout, "Warning: "+l)
+					t := rich.NewText("")
+					t.Append("Warning: ", "yellow")
+					t.Append(l, nil)
+					rich.PrintTo(ctx.Stdout, t)
 				}
 			}
 		}
