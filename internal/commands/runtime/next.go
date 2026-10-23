@@ -233,6 +233,9 @@ func runNext(ctx *cli.Context) error {
 		}
 	}
 	printDecisionOwned(ctx, d, jsonMode, answeredID, answer, owned)
+	if !jsonMode {
+		printStalledInterventions(ctx, root, slug)
+	}
 	if d.Kind == nextrt.KindBlocked {
 		return cli.Exit(1)
 	}

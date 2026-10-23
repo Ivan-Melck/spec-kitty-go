@@ -522,6 +522,11 @@ func decideNext(root, slug, agent, result string) *Decision {
 				return c.wpIterationDecision(current, nil)
 			}
 		} else if m.MissionType == "software-dev" {
+			// _check_cli_guards -> gather_artifact_presence: get_wp_lane
+			// (one read_events) per WP file.
+			if _, err := os.Stat(filepath.Join(c.m.StatusDir, status.EventsFile)); err == nil {
+				status.ExtraReadPasses(c.m.StatusDir, len(wpFiles(c.m.Primary)))
+			}
 			if fs := c.softwareDevGuards(current); len(fs) > 0 {
 				return c.stepDecision(current, fs, analysisErrorCode(fs))
 			}

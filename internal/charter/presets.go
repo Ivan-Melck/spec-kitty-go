@@ -347,83 +347,6 @@ func equalVals(a, b any) bool {
 	return jsonx.Dumps(a, jsonx.Line) == jsonx.Dumps(b, jsonx.Line)
 }
 
-// resolveIDs checks every listed id resolves in the offering.
-func resolveIDs(root string, p *Preset) error {
-	lr := dct.LayerRoots(root)
-	chain := dct.OrgRoots(root)
-	unresolved := map[string][]string{}
-	var order []string
-	for _, k := range governedKinds {
-		key := "activated_" + k.Plural()
-		ids, ok := p.Activations[key]
-		if !ok || len(ids) == 0 {
-			continue
-		}
-		var missing []string
-		if k == dct.AntiPattern {
-			g, _ := dct.LoadGraph(root, chain)
-			known := map[string]bool{}
-			if g != nil {
-				for _, n := range g.Nodes {
-					if n.Kind == "anti_pattern" {
-						known[n.ID()] = true
-					}
-				}
-			}
-			for _, id := range ids {
-				if !known[id] {
-					missing = append(missing, id)
-				}
-			}
-		} else {
-			stems := dct.StemsByDeclaredID(k, lr, chain)
-			byStem := map[string]bool{}
-			for _, s := range stems {
-				byStem[s] = true
-			}
-			for _, id := range ids {
-				_, isID := stems[id]
-				if !isID && !byStem[id] && !(k == dct.Directive && stems[dct.NormalizeDirectiveID(id)] != "") {
-					missing = append(missing, id)
-				}
-			}
-		}
-		if len(missing) > 0 {
-			unresolved[key] = missing
-			order = append(order, key)
-		}
-	}
-	if p.MissionTypes != nil {
-		roster := dct.MissionTypeRoster(root)
-		var missing []string
-		for _, mt := range p.MissionTypes {
-			if roster[mt] == nil {
-				missing = append(missing, mt)
-			}
-		}
-		if len(missing) > 0 {
-			unresolved["mission_type_activations"] = missing
-			order = append(order, "mission_type_activations")
-		}
-	}
-	if len(unresolved) == 0 {
-		return nil
-	}
-	var named []string
-	var lines []string
-	un := &jsonx.Object{}
-	for _, k := range order {
-		named = append(named, k+": "+strings.Join(unresolved[k], ", "))
-		for _, id := range unresolved[k] {
-			lines = append(lines, "  "+k+": "+id)
-		}
-		un.Set(k, strsAny(unresolved[k]))
-	}
-	sort.Strings(named)
-	return &CodedError{Code: "PRESET_ID_UNRESOLVED", Msg: fmt.Sprintf("%s lists ids that resolve nowhere in the offering (%s)", p.Source, strings.Join(named, "; ")),
-		Details: lines, Payload: jsonx.NewObject("preset_file", p.Source, "unresolved", un, "reasons", &jsonx.Object{})}
-}
-
 // PlanPreset is plan_preset_application.
 func PlanPreset(root, packName, presetName string) (*PresetPlan, error) {
 	pack, err := FindOfferingPack(root, packName)
@@ -437,10 +360,14 @@ func PlanPreset(root, packName, presetName string) (*PresetPlan, error) {
 	if err := resolveIDs(root, p); err != nil {
 		return nil, err
 	}
+	required, err := orgRequired(root, p)
+	if err != nil {
+		return nil, err
+	}
 	target := map[string]any{}
 	for _, key := range PresetActivationKeys() {
 		if l, ok := p.Activations[key]; ok {
-			target[key] = union(key, l, nil)
+			target[key] = union(key, l, required[strings.TrimPrefix(key, "activated_")])
 		} else {
 			target[key] = nil
 		}
@@ -448,7 +375,13 @@ func PlanPreset(root, packName, presetName string) (*PresetPlan, error) {
 	if p.ActivatedKinds == nil {
 		target["activated_kinds"] = nil
 	} else {
-		target["activated_kinds"] = union("activated_kinds", p.ActivatedKinds, nil)
+		var reqKinds []string
+		for _, k := range OrgRequirableKinds {
+			if len(required[k]) > 0 {
+				reqKinds = append(reqKinds, k)
+			}
+		}
+		target["activated_kinds"] = union("activated_kinds", p.ActivatedKinds, reqKinds)
 	}
 	hasMT := p.MissionTypes != nil
 	if hasMT {

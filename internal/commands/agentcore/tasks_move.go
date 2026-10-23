@@ -396,6 +396,8 @@ func (st *moveState) resolveTargets() error {
 		}
 		st.reviewBaseRef = base
 	}
+	// _mt_resolve_current_agent re-reads the snapshot (wp_snapshot_state).
+	extraReadPasses(st.featureDir, 1)
 	if s := snap.WP(st.taskID); s != nil {
 		if v, ok := s.Get("agent"); ok && v != nil && status.PyStr(v) != "" {
 			st.currentAgent = status.PyStr(v)
@@ -1247,11 +1249,15 @@ func parseArbiterNote(note string) (string, string) {
 // planned -> approved/done move whose latest WP event is a review rejection.
 func (st *moveState) arbiterOverride() bool {
 	t := status.ResolveLaneAlias(st.target)
-	if !st.force || st.oldLane != string(status.Planned) || (t != string(status.Approved) && t != string(status.Done)) {
+	if !st.force {
 		return false
 	}
+	// _is_arbiter_override reads the log for every forced move.
 	stream, err := status.ReadStream(st.featureDir, "")
 	if err != nil {
+		return false
+	}
+	if st.oldLane != string(status.Planned) || (t != string(status.Approved) && t != string(status.Done)) {
 		return false
 	}
 	var last *status.Event

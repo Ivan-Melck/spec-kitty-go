@@ -9,6 +9,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/charsetnorm"
 	"github.com/spec-kitty/go-kitty3/internal/charterenc"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
 
 // Charter reads that upstream routes through the encoding chokepoint
@@ -82,17 +83,29 @@ func EnsureBundleFresh(root string) {
 	}
 	stale := true
 	metaPath := filepath.Join(filepath.Dir(charterPath), "metadata.yaml")
-	if b, err := os.ReadFile(charterPath); err == nil && utf8.Valid(b) && exists(metaPath) {
-		stored := ""
-		if meta := readYAMLObject(metaPath); meta != nil {
-			if v, ok := meta.Get("charter_hash"); ok && v != nil {
-				stored = pyStrOf(v)
+	if b, err := os.ReadFile(charterPath); err == nil {
+		if !utf8.Valid(b) {
+			// is_stale -> hash_charter reads charter.md as strict UTF-8.
+			if _, derr := pyjson.DecodeUTF8(b); derr != nil {
+				warnLog("Failed to evaluate charter bundle freshness: %s", derr.Error())
 			}
+		} else if exists(metaPath) {
+			stored := ""
+			if meta := readYAMLObject(metaPath); meta != nil {
+				if v, ok := meta.Get("charter_hash"); ok && v != nil {
+					stored = pyStrOf(v)
+				}
+			}
+			stale = hashContent(string(b)) != stored
 		}
-		stale = hashContent(string(b)) != stored
 	}
 	if stale {
-		charterenc.LoadFile(charterPath, false) //nolint:errcheck // sync() swallows the exception
+		// sync() swallows the exception into SyncResult.error.
+		if _, err := charterenc.LoadFile(charterPath, false); err != nil {
+			if _, isPath := err.(*os.PathError); !isPath {
+				warnLog("Charter auto-sync failed while refreshing extracted artifacts: %s", ExceptionMessage(err))
+			}
+		}
 	}
 }
 

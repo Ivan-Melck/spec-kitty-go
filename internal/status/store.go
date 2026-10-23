@@ -140,10 +140,12 @@ func writeTemp0600(path string, data []byte) error {
 // AppendEvents appends transitions and annotations as one atomic batch.
 func AppendEvents(dir string, items ...any) error {
 	var rows []*jsonx.Object
+	transitions := false
 	for _, it := range items {
 		switch t := it.(type) {
 		case *Event:
 			rows = append(rows, t.ToObject())
+			transitions = true
 		case *Annotation:
 			rows = append(rows, t.ToObject())
 		case *jsonx.Object:
@@ -152,7 +154,16 @@ func AppendEvents(dir string, items ...any) error {
 			return fmt.Errorf("status: cannot append %T", it)
 		}
 	}
-	return AppendRows(EventsPath(dir), rows...)
+	// append_event_stream_atomic_verified reads the stream before the
+	// append; a transition batch is then read back (verify_event_readback).
+	ExtraReadPasses(dir, 1)
+	if err := AppendRows(EventsPath(dir), rows...); err != nil {
+		return err
+	}
+	if transitions {
+		ExtraReadPasses(dir, 1)
+	}
+	return nil
 }
 
 // ReadRows reads raw JSON objects from <dir>/status.events.jsonl (missing →
@@ -224,6 +235,7 @@ func ReadStream(dir string, missionID string) (*Stream, error) {
 	if err != nil {
 		return nil, err
 	}
+	logSlugWarnings(dir, rows)
 	return partition(rows, lineNos, missionID)
 }
 
