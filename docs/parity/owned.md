@@ -116,8 +116,9 @@ Additive hooks in other packages: `lanes.OwnedCheckoutKind` /
 
 * An uncaught seam exception (`MissionSelectorAmbiguous`,
   `UnsafePathSegmentError`, `ActionContextError`, `PlacementMismatchError`)
-  prints Python traceback frames upstream; Go prints the same exception
-  line without frames (the tests compare the last stderr line).
+  prints rich's framed traceback upstream with site-packages frames and
+  source excerpts; Go prints the same panel and exception lines with
+  sourceless frames (the tests compare the exception lines).
 * Values masked in the tests: next run ids (uuid4), prompt cache keys
   (sha256 of a sandbox path), correlation ids, `report_transaction`
   tokens, `issue_counts` key order (hash-randomized frozenset).

@@ -235,7 +235,7 @@ Additive exports elsewhere (CORE-owned packages):
 * `completeness_status must be one of {...}` (dossier snapshot validation) renders a Python set whose order depends on string-hash randomisation; Go prints one fixed order.
 * Built-in asset paths in prompts (`Reference Docs`) name the Go pack cache instead of site-packages (cross-cutting item 7).
 * Claim liveness on darwin is Go-only tested (no oracle on that platform).
-* `MissionSelectorAmbiguous` traceback (CORE-19): the final exception line matches; frames follow the PYF-01 policy (PYF's rich traceback helper had not landed; the plain `Traceback (most recent call last):` header is printed).
+* `MissionSelectorAmbiguous` traceback (CORE-19): rich's framed traceback with the exact final exception lines (f6127735); the frames inside the panel are sourceless (upstream shows site-packages paths and source excerpts).
 
 ## Remaining work
 
