@@ -524,17 +524,25 @@ func loadIndex(ledger string) (*jsonx.Object, []*jsonx.Object) {
 // placement_seam(...).read_dir(STATUS_STATE), degrading to a deliberately
 // nonexistent placeholder on StatusReadPathNotFound (an unmaterialized or
 // deleted coordination surface).
-func eventsDirFor(root, slug string) string {
+func eventsDirFor(root, slug string) (string, error) {
 	d, err := placement.ReadDir(root, slug, placement.Coord)
 	if err != nil {
-		return filepath.Join(root, ".spec-kitty-doctor-unmaterialized-coord~"+slug)
+		// only StatusReadPathNotFound degrades; a coordination worktree on
+		// the wrong branch (CoordinationWorkspaceBranchMismatch) propagates
+		if _, ok := err.(*placement.BranchMismatchError); ok {
+			return "", err
+		}
+		return filepath.Join(root, ".spec-kitty-doctor-unmaterialized-coord~"+slug), nil
 	}
-	return d
+	return d, nil
 }
 
 // DiagnoseDecisions is _diagnose (with the fork report).
 func DiagnoseDecisions(root, slug string) (*DecisionsReport, error) {
-	events := eventsDirFor(root, slug)
+	events, err := eventsDirFor(root, slug)
+	if err != nil {
+		return nil, err
+	}
 	ledger := project.Specs(root, slug)
 	grouped, _, err := decisionEvents(filepath.Join(events, "status.events.jsonl"))
 	if err != nil {
@@ -597,7 +605,10 @@ func DiagnoseDecisions(root, slug string) (*DecisionsReport, error) {
 // RepairDecisions rebuilds decisions/index.json from the event log (the
 // non-forked --repair arm). Returns the malformed decision ids.
 func RepairDecisions(root, slug string, universe map[string]bool) ([]string, error) {
-	events := eventsDirFor(root, slug)
+	events, err := eventsDirFor(root, slug)
+	if err != nil {
+		return nil, err
+	}
 	ledger := project.Specs(root, slug)
 	grouped, _, err := decisionEvents(filepath.Join(events, "status.events.jsonl"))
 	if err != nil {

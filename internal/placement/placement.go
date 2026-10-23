@@ -192,7 +192,14 @@ func ReadDir(root, handle string, kind Kind) (string, error) {
 		return primary, nil
 	}
 	coordDir := lanes.CoordMissionDir(primaryRoot, slug, mid8)
-	if exists(lanes.CoordWorktreePath(primaryRoot, slug, mid8)) {
+	if wt := lanes.CoordWorktreePath(primaryRoot, slug, mid8); exists(wt) {
+		// probe_coord_state: a real, materialized worktree must still be on
+		// its declared ref.
+		if branch != "" && exists(filepath.Join(wt, ".git")) {
+			if err := RequireCoordWorktreeBranch(wt, branch); err != nil {
+				return "", err
+			}
+		}
 		if exists(coordDir) {
 			return coordDir, nil
 		}

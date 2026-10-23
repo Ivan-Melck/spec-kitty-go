@@ -92,6 +92,16 @@ kind, with backfill recovery), `PlanningReadDir(root, handle)`
 (`Primary` / `Coord` partition; `*ReadPathNotFound` = StatusReadPathNotFound
 with `Deleted` for CoordinationBranchDeleted), `UnsafeSegmentError`,
 `CoordBranchExists` (moved from `internal/migrate`, which delegates).
+Wave 5 FIX2 (`coordbranch.go`): `ReadDir` refuses a materialized
+coordination worktree checked out on another branch
+(`require_coord_worktree_branch` → `*BranchMismatchError`,
+CoordinationWorkspaceBranchMismatch; the decisions and review-cycle
+doctors surface it as upstream's uncaught exception,
+`TestDiffPlacementCoordWorktreeWrongBranch`); `ProbeCoordBranch`,
+`RequireCoordWorktreeBranch`, `DetachedOrUnreadableHead`; the owned arm
+`ReadDirOwned(Owned{RepositoryRoot, MissionDir, Topology}, slug, kind,
+tolerateUnmaterialized)` with `*OwnedCoordUnavailableError`
+(OWNED_COORDINATION_WORKSPACE_UNAVAILABLE, Go-only `TestReadDirOwnedStates`).
 
 Additive hooks in other packages: `lanes.OwnedCheckoutKind` /
 `lanes.OwnedWorkspace`; `safecommit.Options.Owned`,
@@ -116,9 +126,6 @@ Additive hooks in other packages: `lanes.OwnedCheckoutKind` /
 
 ## Remaining work
 
-* `placement.ReadDir` does not port `require_coord_worktree_branch` (a
-  materialized coordination worktree on the wrong branch raises upstream)
-  and has no owned variant (owned reads go through `ownedcheckout.Fact`).
 * The upstream lock-order `RuntimeError` (taking the checkout lock while
   holding a Mission lock) has no Go equivalent; a failing `git status` in
   the dirty scan is `LANE_ALLOCATION_FAILED` instead of a traceback.
