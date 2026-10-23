@@ -212,10 +212,11 @@ func runSetupPlan(ctx *cli.Context) error {
 		if jsonMode {
 			emitJSON(ctx.Stdout, payload)
 		} else {
-			sayPlain(ctx.Stdout, "Error: "+msg)
+			lines := []string{"[red]Error:[/red] " + rich.EscapeMarkup(msg)}
 			for _, e := range lintErrs {
-				sayPlain(ctx.Stdout, fmt.Sprintf("  - line %d: %s (rule: %s)", e.Line, e.Token, e.Rule))
+				lines = append(lines, fmt.Sprintf("  - line %d: %s (rule: %s)", e.Line, rich.EscapeMarkup(e.Token), rich.EscapeMarkup(e.Rule)))
 			}
+			say(ctx.Stdout, strings.Join(lines, "\n"))
 		}
 		return cli.Exit(1)
 	}
@@ -334,7 +335,7 @@ func setupPlanTail(ctx *cli.Context, jsonMode bool, root, slug, featureDir, spec
 		return nil
 	}
 	for _, w := range lintWarns {
-		sayPlain(ctx.Stdout, fmt.Sprintf("Warning: line %d: %s — %s", w.Line, w.Token, w.Message))
+		say(ctx.Stdout, fmt.Sprintf("[yellow]Warning:[/yellow] line %d: %s — %s", w.Line, rich.EscapeMarkup(w.Token), rich.EscapeMarkup(w.Message)))
 	}
 	say(ctx.Stdout, "[green]✓[/green] Plan scaffolded: "+planFile)
 	return nil
@@ -356,7 +357,7 @@ func commitArtifact(ctx *cli.Context, jsonMode bool, root, slug, file, artifactT
 	}
 	r := safecommit.CommitForMission(routerRoot, slug, []string{file}, msg, kind, safecommit.RouterOptions{Owned: owned})
 	if !jsonMode && len(r.Surfaces) > 0 {
-		r.PrintRendered(ctx.Stdout, wrapPlain)
+		printRendered(ctx.Stdout, r)
 	}
 	title := strings.ToUpper(artifactType[:1]) + artifactType[1:]
 	switch r.Status {

@@ -35,7 +35,7 @@ func (st *moveState) runPreReviewGate() error {
 	}
 	if skip != "" {
 		st.gateMeta = prereview.Metadata(prereview.EmptyScopeVerdict("gate skipped — "+skip, nil), false, false, false)
-		st.console(fmt.Sprintf("Pre-review regression gate: SKIPPED (%s)", skip))
+		st.console(fmt.Sprintf("[yellow]Pre-review regression gate: SKIPPED (%s)[/yellow]", skip))
 		return nil
 	}
 	st.captureBaselineIfMissing()
@@ -113,9 +113,9 @@ func (st *moveState) captureBaselineIfMissing() {
 		return
 	}
 	if b != nil && b.Failed > 0 {
-		st.console(fmt.Sprintf("Baseline: %d pre-existing test failure(s) captured", b.Failed))
+		st.console(fmt.Sprintf("[dim]Baseline: %d pre-existing test failure(s) captured[/dim]", b.Failed))
 	} else if b != nil && b.Failed == -1 {
-		st.console("Warning: baseline test capture failed — no baseline context available")
+		st.console("[yellow]Warning: baseline test capture failed — no baseline context available[/yellow]")
 	}
 	if b == nil || b.Failed == -1 {
 		return
@@ -130,7 +130,7 @@ func (st *moveState) captureBaselineIfMissing() {
 	if _, err := safecommit.Commit(st.root, st.root, st.targetBranch, "chore: Capture baseline tests for "+st.taskID, []string{artifact}, safecommit.Options{}); err != nil {
 		st.logWarn("Baseline artifact commit failed: " + err.Error())
 		if !st.json {
-			richPrint(st.ctx.Stdout, fmt.Sprintf("Warning: baseline artifact was not committed (%s); a later move to for_review may block on it.", err.Error()))
+			richPrint(st.ctx.Stdout, fmt.Sprintf("[yellow]Warning: baseline artifact was not committed (%s); a later move to for_review may block on it.[/yellow]", err.Error()))
 		}
 	}
 }

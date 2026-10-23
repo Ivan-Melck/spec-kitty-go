@@ -9,23 +9,12 @@ import (
 	"unicode"
 )
 
-// span is rich.text.Span over rune offsets.
-type span struct {
-	start, end int
-	style      string
-}
-
-// richText is the subset of rich.text.Text console.print needs.
-type richText struct {
-	plain []rune
-	spans []span
-}
-
-// renderMarkup is rich.markup.render with the spans kept.
-func renderMarkup(s string) (*richText, error) {
-	t := &richText{}
+// renderMarkup is rich.markup.render(markup, style) (emoji codes are not
+// replaced).
+func renderMarkup(s string, style any) (*Text, error) {
+	t := &Text{Style: style, End: "\n"}
 	if !strings.Contains(s, "[") {
-		t.plain = []rune(s)
+		t.plain = []rune(stripControlCodes(emojiReplace(s)))
 		return t, nil
 	}
 	type open struct {
@@ -35,7 +24,7 @@ func renderMarkup(s string) (*richText, error) {
 	var stack []open
 	var b []rune
 	pos := 0
-	emit := func(x string) { b = append(b, []rune(x)...) }
+	emit := func(x string) { b = append(b, []rune(stripControlCodes(emojiReplace(x)))...) }
 	for _, m := range reTags.FindAllStringSubmatchIndex(s, -1) {
 		start, end := m[0], m[1]
 		escapes := s[m[2]:m[3]]
@@ -76,7 +65,7 @@ func renderMarkup(s string) (*richText, error) {
 			o := stack[idx]
 			stack = append(stack[:idx], stack[idx+1:]...)
 			if !strings.HasPrefix(o.tag, "@") {
-				t.spans = append(t.spans, span{o.pos, len(b), o.tag})
+				t.Spans = append(t.Spans, Span{o.pos, len(b), o.tag})
 			}
 			continue
 		}
@@ -91,15 +80,15 @@ func renderMarkup(s string) (*richText, error) {
 	}
 	for i := len(stack) - 1; i >= 0; i-- {
 		if stack[i].tag != "" && !strings.HasPrefix(stack[i].tag, "@") {
-			t.spans = append(t.spans, span{stack[i].pos, len(b), stack[i].tag})
+			t.Spans = append(t.Spans, Span{stack[i].pos, len(b), stack[i].tag})
 		}
 	}
 	t.plain = b
 	// text.spans = sorted(spans[::-1], key=attrgetter("start"))
-	for i, j := 0, len(t.spans)-1; i < j; i, j = i+1, j-1 {
-		t.spans[i], t.spans[j] = t.spans[j], t.spans[i]
+	for i, j := 0, len(t.Spans)-1; i < j; i, j = i+1, j-1 {
+		t.Spans[i], t.Spans[j] = t.Spans[j], t.Spans[i]
 	}
-	sort.SliceStable(t.spans, func(i, j int) bool { return t.spans[i].start < t.spans[j].start })
+	sort.SliceStable(t.Spans, func(i, j int) bool { return t.Spans[i].Start < t.Spans[j].Start })
 	return t, nil
 }
 
@@ -122,8 +111,12 @@ type hlAlt struct {
 
 func notWordBefore(prev rune, has bool) bool { return !has || !isWord(prev) }
 
+// boundaryAfter is Python's \b at end: the characters on either side differ
+// in wordness (text edges count as non-word).
 func boundaryAfter(text []rune, end int) bool {
-	return end >= len(text) || !isWord(text[end])
+	before := end > 0 && isWord(text[end-1])
+	after := end < len(text) && isWord(text[end])
+	return before != after
 }
 
 var reprSimple = []string{
@@ -200,9 +193,12 @@ func matchStr(text []rune, i int) (int, bool) {
 	return 0, false
 }
 
-// highlight is ReprHighlighter.highlight: each pattern's finditer, spans for
-// every named group that matched non-empty text.
-func (t *richText) highlight() {
+// ReprHighlighter is rich.highlighter.ReprHighlighter.
+type ReprHighlighter struct{}
+
+// Highlight is ReprHighlighter.highlight: each pattern's finditer, spans
+// for every named group that matched non-empty text.
+func (ReprHighlighter) Highlight(t *Text) {
 	text := t.plain
 	s := string(text)
 	// byte offset -> rune offset
@@ -231,7 +227,7 @@ func (t *richText) highlight() {
 			}
 			a, b := runeAt[base+m[2*gi]], runeAt[base+m[2*gi+1]]
 			if b > a {
-				t.spans = append(t.spans, span{a, b, "repr." + name})
+				t.Spans = append(t.Spans, Span{a, b, "repr." + name})
 			}
 		}
 	}
@@ -255,7 +251,7 @@ func (t *richText) highlight() {
 		for _, a := range reprAlts {
 			if a.str {
 				if e, ok := matchStr(text, i); ok {
-					t.spans = append(t.spans, span{i, e, "repr.str"})
+					t.Spans = append(t.Spans, Span{i, e, "repr.str"})
 					end = e
 					break
 				}
@@ -302,67 +298,6 @@ func (t *richText) highlight() {
 	}
 }
 
-// ---------------------------------------------------------------- output
-
-type segment struct {
-	text  string
-	style *Style
-}
-
-// segments is Text.render for the rune range [from, to).
-func (t *richText) segments(from, to int, keepEmpty bool) []segment {
-	type ev struct {
-		off   int
-		leave bool
-		id    int
-	}
-	var evs []ev
-	evs = append(evs, ev{from, false, 0})
-	for i, sp := range t.spans {
-		a, b := max(sp.start, from), min(sp.end, to)
-		if a > b || (a == b && !keepEmpty) {
-			continue
-		}
-		evs = append(evs, ev{a, false, i + 1}, ev{b, true, i + 1})
-	}
-	evs = append(evs, ev{to, true, 0})
-	sort.SliceStable(evs, func(i, j int) bool {
-		if evs[i].off != evs[j].off {
-			return evs[i].off < evs[j].off
-		}
-		return !evs[i].leave && evs[j].leave
-	})
-	styles := map[int]*Style{0: NullStyle()}
-	for i, sp := range t.spans {
-		styles[i+1] = themeStyle(sp.style)
-	}
-	var stack []int
-	var out []segment
-	for k := 0; k+1 < len(evs); k++ {
-		e := evs[k]
-		if e.leave {
-			for j, id := range stack {
-				if id == e.id {
-					stack = append(stack[:j], stack[j+1:]...)
-					break
-				}
-			}
-		} else {
-			stack = append(stack, e.id)
-		}
-		if next := evs[k+1].off; next > e.off {
-			ids := append([]int(nil), stack...)
-			sort.Ints(ids)
-			cur := NullStyle()
-			for _, id := range ids {
-				cur = cur.Add(styles[id])
-			}
-			out = append(out, segment{string(t.plain[e.off:next]), cur})
-		}
-	}
-	return out
-}
-
 func fdOf(w io.Writer) int {
 	switch w {
 	case os.Stdout:
@@ -371,58 +306,6 @@ func fdOf(w io.Writer) int {
 		return 2
 	}
 	return 0
-}
-
-// printColor is console.print(s) on a colour console: markup and repr
-// highlighting rendered as ANSI SGR sequences, wrapped like Print.
-func printColor(w io.Writer, s string, width int, sys ColorSystem) bool {
-	t, err := renderMarkup(s)
-	if err != nil {
-		return false
-	}
-	writeHighlighted(w, t, width, sys)
-	return true
-}
-
-// writeHighlighted writes t highlighted (render_str), wrapped at width.
-func writeHighlighted(w io.Writer, t *richText, width int, sys ColorSystem) {
-	// render_str: highlighter(str(text)) then copy_styles(markup text): the
-	// markup spans follow (and override) the highlight spans
-	markup := t.spans
-	t.spans = nil
-	t.highlight()
-	t.spans = append(t.spans, markup...)
-	plain := string(t.plain)
-	wrapped := strings.Split(Wrap(plain, width), "\n")
-	var b strings.Builder
-	cursor := 0
-	noColor := noColorEnv()
-	for li, line := range wrapped {
-		lr := []rune(line)
-		// locate the line in the plain text (wrapping drops break spaces)
-		for cursor < len(t.plain) && len(lr) > 0 && !hasPrefixAt(t.plain, cursor, lr) {
-			cursor++
-		}
-		// Text.divide (wrapping, newlines) drops empty spans; an undivided
-		// single line keeps them (they still split segments)
-		keep := len(wrapped) == 1
-		for _, seg := range t.segments(cursor, cursor+len(lr), keep) {
-			st := seg.style
-			if noColor {
-				st = st.withoutColor()
-			}
-			b.WriteString(st.Render(seg.text, sys))
-		}
-		cursor += len(lr)
-		if cursor < len(t.plain) && t.plain[cursor] == '\n' {
-			cursor++
-		}
-		if li < len(wrapped)-1 {
-			b.WriteString("\n")
-		}
-	}
-	b.WriteString("\n")
-	io.WriteString(w, b.String())
 }
 
 func hasPrefixAt(text []rune, i int, p []rune) bool {

@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/atomicfile"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/commands/util/encoding"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -102,9 +103,12 @@ func contextError(ctx *cli.Context, code, message string, jsonMode bool) {
 	if jsonMode {
 		emitJSON(ctx, jsonError(code, message))
 	} else {
-		rich.Print(ctx.Stdout, "Error: "+message)
+		rich.Print(ctx.Stdout, "[red]Error:[/red] "+message)
 	}
 }
+
+// repoRootMissing is task_utils.find_repo_root's TaskCliError text.
+const repoRootMissing = "Unable to locate repository root (missing .git or .kittify)."
 
 func notInProject() string {
 	cwd, _ := os.Getwd()
@@ -152,37 +156,24 @@ func padRight(s string, n int) string {
 	return s
 }
 
-// plainTable renders a header-less rich Table(box=None, padding=(0, 2)).
+// plainTable prints Table(show_header=False, box=None, padding=(0, 2))
+// with a dim "Field" column; values are console markup.
 func plainTable(ctx *cli.Context, rows [][2]string) {
-	w0, w1 := 0, 0
+	t := rich.NewTable()
+	t.ShowHeader, t.Box = false, nil
+	t.SetPadding(0, 2)
+	t.AddColumn("Field", rich.Column{Style: "dim"})
+	t.AddColumn("Value", rich.Column{})
 	for _, r := range rows {
-		for _, l := range strings.Split(r[0], "\n") {
-			w0 = max(w0, runeLen(l))
-		}
-		for _, l := range strings.Split(r[1], "\n") {
-			w1 = max(w1, runeLen(l))
-		}
+		t.AddRow(r[0], r[1])
 	}
-	for _, r := range rows {
-		a, b := strings.Split(r[0], "\n"), strings.Split(r[1], "\n")
-		n := max(len(a), len(b))
-		for i := 0; i < n; i++ {
-			x, y := "", ""
-			if i < len(a) {
-				x = a[i]
-			}
-			if i < len(b) {
-				y = b[i]
-			}
-			fmt.Fprintln(ctx.Stdout, "  "+padRight(x, w0)+"    "+padRight(y, w1)+"  ")
-		}
-	}
+	rich.PrintTo(ctx.Stdout, t)
 }
 
 func runContextInfo(ctx *cli.Context, workspace string, jsonMode bool) error {
-	root := locateRoot()
+	root := encoding.FindRepoRoot()
 	if root == "" {
-		contextError(ctx, "not_in_project", notInProject(), jsonMode)
+		contextError(ctx, "not_in_project", repoRootMissing, jsonMode)
 		return cli.Exit(1)
 	}
 	if workspace == "" {
@@ -191,8 +182,8 @@ func runContextInfo(ctx *cli.Context, workspace string, jsonMode bool) error {
 		if workspace == "" {
 			contextError(ctx, "no_worktree", "Not inside a worktree and no --workspace specified", jsonMode)
 			if !jsonMode {
-				fmt.Fprintln(ctx.Stdout, "\nRun from inside a worktree or use --workspace flag:")
-				fmt.Fprintln(ctx.Stdout, "  spec-kitty context info --workspace 010-mission-lane-a")
+				rich.Print(ctx.Stdout, "\nRun from inside a worktree or use --workspace flag:")
+				rich.Print(ctx.Stdout, "  spec-kitty context info --workspace 010-mission-lane-a")
 			}
 			return cli.Exit(1)
 		}
@@ -206,8 +197,8 @@ func runContextInfo(ctx *cli.Context, workspace string, jsonMode bool) error {
 	if err != nil || o == nil {
 		contextError(ctx, "workspace_not_found", "No context found for workspace: "+workspace, jsonMode)
 		if !jsonMode {
-			fmt.Fprintln(ctx.Stdout, "\nContext file not found:")
-			fmt.Fprintln(ctx.Stdout, "  "+p)
+			rich.Print(ctx.Stdout, "\nContext file not found:")
+			rich.Print(ctx.Stdout, "  "+p)
 		}
 		return cli.Exit(1)
 	}
@@ -215,8 +206,8 @@ func runContextInfo(ctx *cli.Context, workspace string, jsonMode bool) error {
 		emitJSON(ctx, o)
 		return nil
 	}
-	fmt.Fprintln(ctx.Stdout, "\n📍 Workspace Context")
-	fmt.Fprintln(ctx.Stdout, strings.Repeat("─", 50))
+	rich.Print(ctx.Stdout, "\n[bold cyan]📍 Workspace Context[/bold cyan]")
+	rich.Print(ctx.Stdout, strings.Repeat("─", 50))
 	bc := o.GetString("base_commit")
 	if bc == "" {
 		bc = "unknown"
@@ -224,12 +215,12 @@ func runContextInfo(ctx *cli.Context, workspace string, jsonMode bool) error {
 		bc = bc[:12]
 	}
 	deps := wp.StringList(o, "dependencies")
-	d := "none"
+	d := "[dim]none[/dim]"
 	if len(deps) > 0 {
 		d = strings.Join(deps, ", ")
 	}
-	plainTable(ctx, [][2]string{{"Work Package", o.GetString("wp_id")}, {"Mission", o.GetString("mission_slug")},
-		{"Base Branch", o.GetString("base_branch")}, {"Base Commit", bc}, {"Dependencies", d},
+	plainTable(ctx, [][2]string{{"Work Package", "[bold]" + o.GetString("wp_id") + "[/bold]"}, {"Mission", o.GetString("mission_slug")},
+		{"Base Branch", "[cyan]" + o.GetString("base_branch") + "[/cyan]"}, {"Base Commit", "[dim]" + bc + "[/dim]"}, {"Dependencies", d},
 		{"Created", o.GetString("created_at")}, {"Worktree", o.GetString("worktree_path")},
 		{"Branch", o.GetString("branch_name")}, {"VCS Backend", o.GetString("vcs_backend")}})
 	fmt.Fprintln(ctx.Stdout)
@@ -249,9 +240,9 @@ func orphanedContexts(root string) ([]string, map[string]*jsonx.Object) {
 
 func runContextList(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
-	root := locateRoot()
+	root := encoding.FindRepoRoot()
 	if root == "" {
-		contextError(ctx, "not_in_project", notInProject(), jsonMode)
+		contextError(ctx, "not_in_project", repoRootMissing, jsonMode)
 		return cli.Exit(1)
 	}
 	if ctx.Bool("orphaned") {
@@ -265,18 +256,17 @@ func runContextList(ctx *cli.Context) error {
 			return nil
 		}
 		if len(orphans) == 0 {
-			fmt.Fprintln(ctx.Stdout, "✓ No orphaned contexts found")
+			rich.Print(ctx.Stdout, "[green]✓[/green] No orphaned contexts found")
 			return nil
 		}
-		fmt.Fprintf(ctx.Stdout, "\n⚠️  Found %d orphaned context(s)\n\n", len(orphans))
+		rich.Print(ctx.Stdout, fmt.Sprintf("\n[yellow]⚠️  Found %d orphaned context(s)[/yellow]\n", len(orphans)))
 		for _, n := range orphans {
-			fmt.Fprintln(ctx.Stdout, "  "+n)
-			fmt.Fprintf(ctx.Stdout, "    Worktree: %s (deleted)\n", objs[n].GetString("worktree_path"))
-			fmt.Fprintf(ctx.Stdout, "    Created: %s\n", objs[n].GetString("created_at"))
+			rich.Print(ctx.Stdout, "  [bold]"+n+"[/bold]")
+			rich.Print(ctx.Stdout, fmt.Sprintf("    Worktree: [dim]%s (deleted)[/dim]", objs[n].GetString("worktree_path")))
+			rich.Print(ctx.Stdout, fmt.Sprintf("    Created: %s", objs[n].GetString("created_at")))
 			fmt.Fprintln(ctx.Stdout)
 		}
-		fmt.Fprintln(ctx.Stdout, "Clean up with: spec-kitty context cleanup")
-		fmt.Fprintln(ctx.Stdout)
+		rich.Print(ctx.Stdout, "[dim]Clean up with: spec-kitty context cleanup[/dim]\n")
 		return nil
 	}
 	names, objs := workspaceFiles(root)
@@ -289,10 +279,10 @@ func runContextList(ctx *cli.Context) error {
 		return nil
 	}
 	if len(names) == 0 {
-		fmt.Fprintln(ctx.Stdout, "No workspace contexts found")
+		rich.Print(ctx.Stdout, "[dim]No workspace contexts found[/dim]")
 		return nil
 	}
-	fmt.Fprintf(ctx.Stdout, "\nWorkspace Contexts (%d total)\n\n", len(names))
+	rich.Print(ctx.Stdout, fmt.Sprintf("\n[bold]Workspace Contexts[/bold] (%d total)\n", len(names)))
 	sorted := append([]string{}, names...)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		a, b := objs[sorted[i]], objs[sorted[j]]
@@ -301,45 +291,50 @@ func runContextList(ctx *cli.Context) error {
 		}
 		return a.GetString("wp_id") < b.GetString("wp_id")
 	})
-	var rows [][]string
+	t := rich.NewTable()
+	t.AddColumn("WP", rich.Column{Style: "bold"})
+	t.AddColumn("Mission", rich.Column{Style: "dim"})
+	t.AddColumn("Base", rich.Column{Style: "cyan"})
+	t.AddColumn("Dependencies", rich.Column{})
+	t.AddColumn("Status", rich.Column{})
 	for _, n := range sorted {
 		o := objs[n]
-		st := "Active"
+		st := "[green]Active[/green]"
 		if _, err := os.Stat(filepath.Join(root, o.GetString("worktree_path"))); err != nil {
-			st = "Orphaned"
+			st = "[yellow]Orphaned[/yellow]"
 		}
 		deps := wp.StringList(o, "dependencies")
-		d := "none"
+		d := "[dim]none[/dim]"
 		if len(deps) > 0 {
 			d = strings.Join(deps, ", ")
 		}
-		rows = append(rows, []string{o.GetString("wp_id"), o.GetString("mission_slug"), o.GetString("base_branch"), d, st})
+		t.AddRow(o.GetString("wp_id"), o.GetString("mission_slug"), o.GetString("base_branch"), d, st)
 	}
-	rich.Table(ctx.Stdout, "", []string{"WP", "Mission", "Base", "Dependencies", "Status"}, rows)
+	rich.PrintTo(ctx.Stdout, t)
 	fmt.Fprintln(ctx.Stdout)
 	return nil
 }
 
 func runContextCleanup(ctx *cli.Context) error {
-	root := locateRoot()
+	root := encoding.FindRepoRoot()
 	if root == "" {
-		rich.Print(ctx.Stdout, "Error: "+notInProject())
+		rich.Print(ctx.Stdout, "[red]Error:[/red] "+repoRootMissing)
 		return cli.Exit(1)
 	}
 	orphans, objs := orphanedContexts(root)
 	if len(orphans) == 0 {
-		fmt.Fprintln(ctx.Stdout, "✓ No orphaned contexts to clean up")
+		rich.Print(ctx.Stdout, "[green]✓[/green] No orphaned contexts to clean up")
 		return nil
 	}
-	fmt.Fprintf(ctx.Stdout, "\nFound %d orphaned context(s):\n\n", len(orphans))
+	rich.Print(ctx.Stdout, fmt.Sprintf("\n[yellow]Found %d orphaned context(s):[/yellow]\n", len(orphans)))
 	for _, n := range orphans {
-		fmt.Fprintln(ctx.Stdout, "  "+n)
-		fmt.Fprintln(ctx.Stdout, "    "+objs[n].GetString("worktree_path"))
+		rich.Print(ctx.Stdout, "  [bold]"+n+"[/bold]")
+		rich.Print(ctx.Stdout, "    "+objs[n].GetString("worktree_path"))
 	}
 	fmt.Fprintln(ctx.Stdout)
 	if ctx.Bool("dry-run") {
-		fmt.Fprintln(ctx.Stdout, "Dry run - no files deleted")
-		fmt.Fprintf(ctx.Stdout, "Would delete %d context file(s)\n", len(orphans))
+		rich.Print(ctx.Stdout, "[dim]Dry run - no files deleted[/dim]")
+		rich.Print(ctx.Stdout, fmt.Sprintf("[dim]Would delete %d context file(s)[/dim]", len(orphans)))
 		return nil
 	}
 	n := 0
@@ -348,7 +343,7 @@ func runContextCleanup(ctx *cli.Context) error {
 			n++
 		}
 	}
-	fmt.Fprintf(ctx.Stdout, "✓ Cleaned up %d orphaned context(s)\n", n)
+	rich.Print(ctx.Stdout, fmt.Sprintf("[green]✓[/green] Cleaned up %d orphaned context(s)", n))
 	return nil
 }
 
@@ -508,20 +503,20 @@ func runMissionShow(ctx *cli.Context) error {
 		emitJSON(ctx, out)
 		return nil
 	}
-	fmt.Fprintln(ctx.Stdout, "\nMissionContext")
-	fmt.Fprintln(ctx.Stdout, strings.Repeat("─", 60))
+	rich.Print(ctx.Stdout, "\n[bold cyan]MissionContext[/bold cyan]")
+	rich.Print(ctx.Stdout, strings.Repeat("─", 60))
 	ref := o.GetString("authoritative_ref")
 	if ref == "" {
-		ref = "none"
+		ref = "[dim]none[/dim]"
 	}
 	owned := wp.StringList(o, "owned_files")
-	of := "none"
+	of := "[dim]none[/dim]"
 	if len(owned) > 0 {
 		of = strings.Join(owned, "\n")
 	}
-	plainTable(ctx, [][2]string{{"Token", o.GetString("token")}, {"WP Code", o.GetString("wp_code")}, {"Mission Slug", slug},
+	plainTable(ctx, [][2]string{{"Token", "[bold]" + o.GetString("token") + "[/bold]"}, {"WP Code", "[bold]" + o.GetString("wp_code") + "[/bold]"}, {"Mission Slug", slug},
 		{"Mission ID", o.GetString("mission_id")}, {"Work Package ID", o.GetString("work_package_id")}, {"Project UUID", o.GetString("project_uuid")},
-		{"Target Branch", o.GetString("target_branch")}, {"Authoritative Repo", o.GetString("authoritative_repo")}, {"Authoritative Ref", ref},
+		{"Target Branch", "[cyan]" + o.GetString("target_branch") + "[/cyan]"}, {"Authoritative Repo", o.GetString("authoritative_repo")}, {"Authoritative Ref", ref},
 		{"Execution Mode", o.GetString("execution_mode")}, {"Dependency Mode", o.GetString("dependency_mode")},
 		{"Created At", o.GetString("created_at")}, {"Created By", o.GetString("created_by")}, {"Owned Files", of}})
 	fmt.Fprintln(ctx.Stdout)

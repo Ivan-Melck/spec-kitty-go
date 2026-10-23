@@ -185,3 +185,9 @@ Exported API (`internal/charsetnorm`): `FromBytes(seq) *Matches`,
 - `internal/dossier` (CORE), additive new files: `authored.go` (`ReadAuthoredWP(path) (*jsonx.Object, bool, error)` = `read_authored_wp_frontmatter` with strict `WPMetadata` validation; `WPProjectionHash(path) (hash string, verr error, ok bool)` = the indexer's `_hash_wp_projection`; `PyTypeError`) and `wpmeta_pydantic.go` (`WPMetadataValidationError(src, meta) string` = `str(pydantic.ValidationError)` for `WPMetadata` with ruamel round-trip input types; `WPMetadataTypeError(src, meta) string` = the uncaught `shell_pid` TypeError). One-line fix in `dossier.go`: `shell_pid` accepted yamlx's `int` values (they were rejected as invalid, so a WP with a numeric `shell_pid` hashed as non-present).
 - `internal/healthcheck` reads pyproject.toml with `internal/pytoml` (CPython `tomllib`; PYF-03 sweep).
 - `docs/parity/setup.md`: the `materialize` / `migrate` rows point here (DOCS-03).
+
+## Wave 5 (area COLOR)
+
+Doctor grids and cells carry upstream's styles; `doctor mission-state --fix`
+lines print through the console (soft wrap, highlighting); uncaught migrate
+exceptions with PEP 678 notes render them as rich `[NOTE]` lines.

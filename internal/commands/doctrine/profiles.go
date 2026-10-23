@@ -50,6 +50,7 @@ func init() {
 		agent := app.Group(root, "agent", "Commands for AI agents to execute spec-kitty mission actions programmatically")
 		ap := app.Group(agent, "profile", "Compatibility alias for listing agent profiles")
 		ap.Hidden = true
+		ap.NoArgsIsError = true
 		ap.Add(profileLeaves()...)
 	})
 }
@@ -70,7 +71,10 @@ func profileDescriptor(p *dct.Profile) *jsonx.Object {
 }
 
 func runProfileList(ctx *cli.Context) error {
-	root := repoRoot()
+	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "list_profiles", Line: 156})
+	if err != nil {
+		return err
+	}
 	cat := dct.LoadProfileCatalog(root)
 	profiles := cat.List()
 	jsonMode := ctx.Bool("json")
@@ -114,11 +118,19 @@ func runProfileList(ctx *cli.Context) error {
 	if showAvail {
 		headers = append(headers, "State")
 	}
-	t := &rtable{Title: "Agent Profiles", Headers: headers, NoWrap: []bool{true}}
+	t := &rtable{Title: "Agent Profiles", Headers: headers, NoWrap: []bool{true}, Overflow: []string{"fold"}}
 	for _, d := range descs {
 		r := []string{d.GetString("profile_id"), d.GetString("name"), d.GetString("role"), d.GetString("source")}
 		if showAvail {
-			r = append(r, d.GetString("state"))
+			state := d.GetString("state")
+			if _, ok := d.Get("state"); !ok {
+				state = "activated"
+			}
+			st := "dim"
+			if state == "activated" {
+				st = "green"
+			}
+			r = append(r, "["+st+"]"+state+"[/"+st+"]")
 		}
 		t.Rows = append(t.Rows, r)
 	}
@@ -205,7 +217,10 @@ func mustGet(o *jsonx.Object, k string) any {
 }
 
 func runProfileShow(ctx *cli.Context) error {
-	root := repoRoot()
+	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "show_profile", Line: 329})
+	if err != nil {
+		return err
+	}
 	id := ctx.Arg("profile_id")
 	jsonMode := ctx.Bool("json")
 	cat := dct.LoadProfileCatalog(root)
@@ -227,7 +242,7 @@ func runProfileShow(ctx *cli.Context) error {
 		if jsonMode {
 			jsonOut(ctx.Stdout, jsonx.NewObject("activated_candidates", strs(candidates), "error", "profile_not_activated", "profile_id", id), jsonx.SortedPretty)
 		} else {
-			cprintRaw(ctx.Stdout, fmt.Sprintf("Error: profile '%s' is not activated.", id))
+			cprintRaw(ctx.Stdout, fmt.Sprintf("[red]Error: profile '%s' is not activated.[/red]", id))
 			if len(candidates) > 0 {
 				cprintRaw(ctx.Stdout, "Activated candidates: "+strings.Join(candidates, ", "))
 			} else {
@@ -266,7 +281,7 @@ func runProfileShow(ctx *cli.Context) error {
 	}
 	renderProfileHuman(ctx, payload)
 	for _, w := range warnings {
-		cprintRaw(ctx.Stdout, "warning: "+w)
+		rich.PrintOpts(ctx.Stdout, rich.PrintOptions{Style: "yellow"}, "[yellow]warning: "+w+"[/yellow]")
 	}
 	return nil
 }
@@ -299,7 +314,8 @@ func renderProfileHuman(ctx *cli.Context, p *jsonx.Object) {
 	if s := p.GetString("source_layer"); s != "" {
 		src = s
 	}
-	t := &rtable{Title: "Agent Profile: " + p.GetString("profile_id"), Headers: []string{"Field", "Value"}, NoWrap: []bool{true}, ShowLines: true}
+	t := &rtable{Title: "Agent Profile: " + p.GetString("profile_id"), Headers: []string{"Field", "Value"}, NoWrap: []bool{true}, ShowLines: true,
+		Styles: []string{"bold cyan", "white"}}
 	t.Rows = [][]string{
 		{"Profile ID", p.GetString("profile_id")},
 		{"Name", p.GetString("name")},

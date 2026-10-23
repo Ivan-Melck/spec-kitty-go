@@ -114,14 +114,14 @@ func (r *acceptRun) report(msg, step string, extra *jsonx.Object) {
 		r.tr.fail(step, msg)
 		r.tr.render(r.ctx.Stdout)
 	}
-	sayLiteral(r.ctx.Stdout, "Error: ", msg)
+	sayLiteral(r.ctx.Stdout, "[red]Error:[/red] ", msg)
 }
 
 func runAccept(ctx *cli.Context, o acceptOpts) error {
 	r := &acceptRun{ctx: ctx, json: o.json, advisories: []any{}}
 	root := locateRoot()
 	if root == "" {
-		return r.fail("Could not locate project root", 1, "", nil)
+		return r.fail("Unable to locate repository root (missing .git or .kittify).", 1, "", nil)
 	}
 	// Validate opt-in ownership (explicit --owned-checkout or flagless
 	// adoption) once, before any acceptance read or write.
@@ -362,7 +362,7 @@ func printSummary(ctx *cli.Context, sum *acceptance.Summary) {
 		}
 		rows = append(rows, []string{l, fmt.Sprint(len(items)), disp})
 	}
-	simpleTable(ctx.Stdout, "Work Packages by Lane", []string{"Lane", "Count", "Work Packages"}, rows, map[int]bool{1: true})
+	simpleTable(ctx.Stdout, "Work Packages by Lane", []string{"Lane", "Count", "Work Packages"}, rows, map[int]bool{1: true}, "cyan")
 	out := sum.Outstanding()
 	if len(out) > 0 {
 		say(ctx.Stdout, "\n[bold red]Outstanding items[/bold red]")

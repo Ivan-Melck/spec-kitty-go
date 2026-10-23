@@ -25,9 +25,9 @@ func renderCodedError(w io.Writer, code, msg string, details []string, payload *
 		jsonOut(w, jsonx.NewObject("ok", false, "error", e), jsonx.PrettyUTF8)
 		return
 	}
-	cprintRaw(w, fmt.Sprintf("Error (%s): %s", code, msg))
+	cprintRaw(w, fmt.Sprintf("[red]Error[/red] (%s): %s", code, rich.EscapeMarkup(msg)))
 	for _, l := range details {
-		cprintRaw(w, l)
+		cprintRaw(w, rich.EscapeMarkup(l))
 	}
 }
 
@@ -97,18 +97,18 @@ func runApplyPreset(ctx *cli.Context, preset string) error {
 		return nil
 	}
 	if plan.IsNoop() {
-		cprintRaw(w, fmt.Sprintf("Preset '%s' of pack '%s' is already in force in %s; nothing changed.", plan.Preset, plan.Pack, plan.TargetFile))
+		cprintRaw(w, fmt.Sprintf("Preset '%s' of pack '%s' is already in force in %s; nothing changed.", rich.EscapeMarkup(plan.Preset), rich.EscapeMarkup(plan.Pack), plan.TargetFile))
 	} else {
-		cprintRaw(w, fmt.Sprintf("Applied preset '%s' of pack '%s' to %s", plan.Preset, plan.Pack, plan.TargetFile))
+		cprintRaw(w, fmt.Sprintf("[green]Applied preset[/green] '%s' of pack '%s' to %s", rich.EscapeMarkup(plan.Preset), rich.EscapeMarkup(plan.Pack), plan.TargetFile))
 		for _, x := range plan.Written {
-			ids := strings.Join(x[1].([]string), ", ")
+			ids := rich.EscapeMarkup(strings.Join(x[1].([]string), ", "))
 			if ids == "" {
 				ids = "(none)"
 			}
-			cprintRaw(w, fmt.Sprintf("  Wrote %s: %s", x[0], ids))
+			cprintRaw(w, fmt.Sprintf("  [green]Wrote[/green] %s: %s", x[0], ids))
 		}
 		for _, k := range plan.Removed {
-			cprintRaw(w, fmt.Sprintf("  Removed %s (unrestricted)", k))
+			cprintRaw(w, fmt.Sprintf("  [yellow]Removed[/yellow] %s (unrestricted)", k))
 		}
 	}
 	return recompileOrNotify(ctx, root)

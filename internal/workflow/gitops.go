@@ -118,7 +118,7 @@ func InstallLaneTipRecorder(o *Out, repo string) {
 		p := filepath.Join(d, n)
 		if b, err := os.ReadFile(p); err == nil {
 			if !strings.Contains(string(b), laneTipHookSignature) {
-				o.Console(fmt.Sprintf("⚠ %s is not spec-kitty-managed; skipping lane-tip recorder install for this hook (its content is left untouched). Lane work-tip recording will only happen at spec-kitty's own lane touches until this hook is spec-kitty-managed.", p))
+				o.Console(fmt.Sprintf("[yellow]⚠ %s is not spec-kitty-managed; skipping lane-tip recorder install for this hook (its content is left untouched). Lane work-tip recording will only happen at spec-kitty's own lane touches until this hook is spec-kitty-managed.[/yellow]", p))
 				continue
 			}
 		}

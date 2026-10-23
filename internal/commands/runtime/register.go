@@ -57,7 +57,7 @@ func resolveMission(stdout, stderr io.Writer, root, handle string, jsonMode bool
 				"handle", e.Handle, "candidates", e.Candidates), compact))
 			return "", cli.Exit(1)
 		}
-		rich.Print(stdout, "Error: "+e.Error())
+		rich.Print(stdout, "[red]Error:[/red] "+e.Error())
 		return "", cli.Exit(2)
 	case *mission.AmbiguousError:
 		if jsonMode {
@@ -72,7 +72,7 @@ func resolveMission(stdout, stderr io.Writer, root, handle string, jsonMode bool
 			fmt.Fprintln(stdout, jsonx.Dumps(jsonx.NewObject("success", false, "error_code", "MISSION_NOT_FOUND", "error", e.Error(), "handle", e.Handle), compact))
 			return "", cli.Exit(1)
 		}
-		rich.Print(stderr, "Error: "+e.HumanMessage())
+		rich.Print(stderr, "[red]Error:[/red] "+e.HumanMessage())
 		return "", cli.Exit(2)
 	}
 	return "", err

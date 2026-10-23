@@ -107,3 +107,11 @@ Port of `status/mission_write.py`'s verified rollback: `StatusRollbackRefused`, 
 ### internal/pyast, internal/staleassert (wave 4, new)
 
 See `docs/parity/closeout.md` (library API).
+
+## Wave 5 (area COLOR)
+
+Markup restored on mission / context / implement / tests messages and tables
+(see help.md "Colour"); `context info/list/cleanup` resolve the repository
+root like upstream; review-lane refusals print as `[red]<escaped>[/red]`.
+Bare `agent action` and `agent tests` print their help and exit 2 (typer
+`no_args_is_help`, `cli.Command.NoArgsIsHelp`), not "Missing command.".

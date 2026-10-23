@@ -99,16 +99,15 @@ func Wrap(s string, width int) string {
 	return strings.Join(out, "\n")
 }
 
-// Print writes markup-stripped, wrapped text plus a newline (console.print).
+// Print is console.print(s) on a default rich Console for the stream w
+// writes to: markup, ReprHighlighter, wrapping at the console width, ANSI
+// styles on a colour terminal.
 func Print(w io.Writer, s string) {
-	width := Width()
-	if width <= 0 {
+	c := ForWriter(w)
+	if c.Width <= 0 {
 		return // a zero-width console renders nothing
 	}
-	if sys := DetectColorSystem(fdOf(w)); sys != NoColor && printColor(w, s, width, sys) {
-		return
-	}
-	fmt.Fprintln(w, Wrap(Strip(s), width))
+	c.Print(w, s)
 }
 
 // Printf is Print with formatting.

@@ -17,6 +17,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/mergedriver"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 // coordCheckpoint is _CoordCheckpoint (ref + tip captured at claim time).
@@ -134,7 +135,7 @@ func (r *run) squashProjectionProof() error {
 	}
 	paths, err := postCheckpointMissionPaths(r.root, r.slug, r.checkpoint.sha, r.checkpoint.ref)
 	if err != nil {
-		fmt.Fprintf(r.w, "\nError: SQUASH reconciliation refused: the projected coordination bookkeeping window could not be read (%s). %s; re-run `spec-kitty consolidate --resume`.\n", err, nothingTornDown)
+		say(r.w, fmt.Sprintf("\n[red]Error:[/red] SQUASH reconciliation refused: the projected coordination bookkeeping window could not be read (%s). %s; re-run `spec-kitty consolidate --resume`.", rich.EscapeMarkup(err.Error()), nothingTornDown))
 		return exit(1)
 	}
 	if len(paths) == 0 {

@@ -3,7 +3,6 @@ package agentcore
 import (
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
@@ -17,16 +16,9 @@ import (
 // Compact is json.dumps(x) with default separators (ensure_ascii=True).
 var Compact = jsonx.Options{Indent: -1, EnsureASCII: true}
 
-// richPrint writes text the way rich's Console.print does for plain text:
-// every line is soft-wrapped at the console width (COLUMNS).
-func richPrint(w io.Writer, text string) {
-	width := cli.Width()
-	for _, line := range strings.Split(text, "\n") {
-		for _, l := range rich.WrapWords(line, width) {
-			fmt.Fprintln(w, l)
-		}
-	}
-}
+// richPrint is console.print(text) on the CLI console: markup, repr
+// highlighting and soft wrapping at the console width.
+func richPrint(w io.Writer, text string) { rich.Print(w, text) }
 
 // printJSON writes v as compact json.dumps(v) + newline.
 func printJSON(w io.Writer, v any) { fmt.Fprintln(w, jsonx.Dumps(v, Compact)) }
@@ -41,12 +33,12 @@ func emitJSON(w io.Writer, payload *jsonx.Object) {
 	printJSON(w, payload)
 }
 
-// consolePrint renders rich text with markup tags stripped and soft wrapping.
-func consolePrint(w io.Writer, text string) { richPrint(w, stripMarkup(text)) }
+// consolePrint is console.print(text): rich markup, repr highlighting and
+// soft wrapping (styled on a colour terminal).
+func consolePrint(w io.Writer, text string) { rich.Print(w, text) }
 
-var markupRe = regexp.MustCompile(`\[[a-z#/@][^\[]*?\]`)
-
-func stripMarkup(s string) string { return markupRe.ReplaceAllString(s, "") }
+// stripMarkup removes rich markup tags (rich.markup.render's plain text).
+func stripMarkup(s string) string { return rich.Strip(s) }
 
 // printJSONPretty writes json.dumps(v, indent=2) + newline.
 func printJSONPretty(w io.Writer, v any) { fmt.Fprintln(w, jsonx.Dumps(v, jsonx.Pretty)) }
@@ -68,7 +60,7 @@ func resolveTasksMission(ctx *cli.Context, root, handle string, jsonMode bool) (
 		if jsonMode {
 			printJSON(ctx.Stdout, jsonx.NewObject("error", msg))
 		} else {
-			richPrint(ctx.Stdout, "Error: "+msg)
+			richPrint(ctx.Stdout, "[red]Error:[/red] "+msg)
 		}
 		return "", cli.Exit(1)
 	}
@@ -89,7 +81,7 @@ func renderResolveError(ctx *cli.Context, err error, jsonMode bool) error {
 				"handle", e.Handle, "candidates", e.Candidates))
 			return cli.Exit(1)
 		}
-		richPrint(ctx.Stdout, "Error: "+e.Error())
+		richPrint(ctx.Stdout, "[red]Error:[/red] "+e.Error())
 		return cli.Exit(2)
 	case *mission.AmbiguousError:
 		if jsonMode {
@@ -104,7 +96,7 @@ func renderResolveError(ctx *cli.Context, err error, jsonMode bool) error {
 			printJSON(ctx.Stdout, jsonx.NewObject("success", false, "error_code", "MISSION_NOT_FOUND", "error", e.Error(), "handle", e.Handle))
 			return cli.Exit(1)
 		}
-		richPrint(ctx.Stderr, "Error: "+e.HumanMessage())
+		richPrint(ctx.Stderr, "[red]Error:[/red] "+e.HumanMessage())
 		return cli.Exit(2)
 	}
 	return err

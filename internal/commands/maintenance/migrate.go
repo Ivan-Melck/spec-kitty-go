@@ -2,19 +2,21 @@ package maintenance
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/bootstrap"
+	"github.com/spec-kitty/go-kitty3/internal/charsetnorm"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
-	"path/filepath"
 )
 
 const noProjectRoot = "Could not locate project root. No .kittify/ directory found in any parent directory."
@@ -119,7 +121,7 @@ func runMigrateLayout(ctx *cli.Context) error {
 		fmt.Fprint(out, "Migrate .kittify/ to centralized model? [y/N]: ")
 		yes, _ := readYes(ctx)
 		if !yes {
-			fmt.Fprintln(ctx.Stderr, "Aborted.")
+			rich.TyperAbort(ctx.Stderr)
 			return cli.Exit(1)
 		}
 	}
@@ -371,6 +373,12 @@ func uncaught(ctx *cli.Context, typ string, err error) error {
 		if f, ok := uncaughtFrames[ctx.Cmd.Name]; ok {
 			frames = append(frames, f)
 		}
+	}
+	// PEP 678 notes render as rich's "[NOTE]" lines, not as message text.
+	var noted *charsetnorm.NotedError
+	if errors.As(err, &noted) {
+		rich.PrintTraceback(ctx.Stderr, &rich.Exception{Type: typ, Value: noted.Err.Error(), Frames: frames, Notes: noted.Notes})
+		return cli.Exit(1)
 	}
 	rich.Traceback(ctx.Stderr, typ, err.Error(), frames...)
 	return cli.Exit(1)

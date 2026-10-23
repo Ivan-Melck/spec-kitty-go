@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 const (
@@ -89,7 +91,7 @@ func (r *run) captureClaim(st *MergeState) error {
 	r.windowBase = window
 	c, err := buildClaim(claimInput{root: r.root, featureDir: r.sf.StatusDir(), m: r.m, coordBase: coordBase, windowBase: window, excluded: r.excluded})
 	if err != nil {
-		fmt.Fprintf(r.w, "\nError: Reconciliation refused (fail-closed): a git probe failed while building the approved-WP claim: %s. %s and no refs/worktrees were mutated. Resolve the underlying git issue, then re-run the merge.\n", err.Error(), nothingTornDown)
+		say(r.w, fmt.Sprintf("\n[red]Error:[/red] Reconciliation refused (fail-closed): a git probe failed while building the approved-WP claim: %s. %s and no refs/worktrees were mutated. Resolve the underlying git issue, then re-run the merge.", err.Error(), nothingTornDown))
 		return exit(1)
 	}
 	r.claim = c
@@ -191,7 +193,7 @@ func (r *run) refuseClaim(refusal string, st *MergeState) error {
 		}
 		footer = refusedWithEarlierRecord + st.earlierMovesSentences(r.root) + recorded + " Then fix the cause and re-run."
 	}
-	fmt.Fprintf(r.w, "\nError: Reconciliation refused (fail-closed) at claim time%s: %s.%s%s\n", before, strings.TrimRight(refusal, "."), sep, footer)
+	rich.PrintSoftWrap(r.w, fmt.Sprintf("\n[red]Error:[/red] Reconciliation refused (fail-closed) at claim time%s: %s.%s%s", before, rich.EscapeMarkup(strings.TrimRight(refusal, ".")), sep, rich.EscapeMarkup(footer)))
 	return exit(1)
 }
 
@@ -235,6 +237,6 @@ func (r *run) gate() error {
 		}
 		return nil
 	}
-	fmt.Fprintln(r.w, "\nError: "+res.guidance())
+	rich.PrintSoftWrap(r.w, "\n[red]Error:[/red] "+rich.EscapeMarkup(res.guidance()))
 	return exit(1)
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
 )
@@ -384,7 +385,7 @@ func (lm *laneMerge) integrate() error {
 // markDone is _mark_wp_merged_done (events stamped with the raw handle).
 func (lm *laneMerge) markDone(wpID string) {
 	if p, _ := wp.Find(lm.sf.PrimaryDir, wpID); p == "" {
-		fmt.Fprintf(lm.o.Console, "Warning: Could not locate WP file for %s; skipping merge-complete status update.\n", wpID)
+		rich.Print(lm.o.Console, fmt.Sprintf("[yellow]Warning:[/yellow] Could not locate WP file for %s; skipping merge-complete status update.", wpID))
 		return
 	}
 	sf := coord.Resolve(lm.root, lm.o.Slug)
@@ -411,7 +412,7 @@ func (lm *laneMerge) markDone(wpID string) {
 	}
 	if ev == nil {
 		if lane != string(status.Approved) {
-			fmt.Fprintf(lm.o.Console, "Warning: %s has no recorded approval metadata; skipping automatic move to done after merge.\n", wpID)
+			rich.Print(lm.o.Console, fmt.Sprintf("[yellow]Warning:[/yellow] %s has no recorded approval metadata; skipping automatic move to done after merge.", wpID))
 			return
 		}
 		reviewer := "unknown"
@@ -423,7 +424,7 @@ func (lm *laneMerge) markDone(wpID string) {
 		ev = &status.DoneEvidence{Review: status.ReviewApproval{Reviewer: reviewer, Verdict: "approved", Reference: "lane-approved:" + wpID}}
 	}
 	if lane != string(status.Approved) {
-		fmt.Fprintf(lm.o.Console, "Warning: %s is in lane '%s', not approved; skipping automatic move to done after merge.\n", wpID, lane)
+		rich.Print(lm.o.Console, fmt.Sprintf("[yellow]Warning:[/yellow] %s is in lane '%s', not approved; skipping automatic move to done after merge.", wpID, lane))
 		return
 	}
 	reason := fmt.Sprintf("Merged %s into %s", wpID, lm.m.TargetBranch)
@@ -432,7 +433,7 @@ func (lm *laneMerge) markDone(wpID string) {
 		WorkspaceContext: &wsc, RepoRoot: lm.root,
 		PolicyMetadata: jsonx.NewObject("merge_phase", "lane_integrated", "target_branch", lm.m.TargetBranch)}
 	if _, err := sf.EmitTransition(req); err != nil {
-		fmt.Fprintf(lm.o.Console, "Warning: Failed to mark %s done after merge: %v\n", wpID, err)
+		rich.Print(lm.o.Console, fmt.Sprintf("[yellow]Warning:[/yellow] Failed to mark %s done after merge: %v", wpID, err))
 	}
 }
 
@@ -465,11 +466,11 @@ func (lm *laneMerge) cleanup(ret Retention, missionDeletable bool) error {
 				continue
 			}
 			if !reachableElsewhere(lm.root, b) || worktreeFor(lm.root, b) != "" {
-				fmt.Fprintf(lm.o.Log, "WARNING  Lane branch %s was kept: it holds commits no other ref reaches, or git refused the delete\n", b)
+				rich.LogWarning(lm.o.Log, fmt.Sprintf("Lane branch %s was kept: it holds commits no other ref reaches, or git refused the delete", b))
 				continue
 			}
 			if _, err := gitx.Run(lm.root, "branch", "-D", b); err != nil {
-				fmt.Fprintf(lm.o.Log, "WARNING  Lane branch %s was kept: it holds commits no other ref reaches, or git refused the delete\n", b)
+				rich.LogWarning(lm.o.Log, fmt.Sprintf("Lane branch %s was kept: it holds commits no other ref reaches, or git refused the delete", b))
 				continue
 			}
 			gitx.Run(lm.root, "update-ref", "-d", "refs/spec-kitty/lane-tip/"+b)
@@ -485,9 +486,9 @@ func (lm *laneMerge) cleanup(ret Retention, missionDeletable bool) error {
 					pyjson.ReprString(mb), cur[:12], tip[:12], lm.m.TargetBranch, mb)}
 		default:
 			if wt := worktreeFor(lm.root, mb); wt != "" {
-				fmt.Fprintf(lm.o.Log, "WARNING  Mission branch %s was not deleted: Refusing to delete branch '%s': it is checked out in the worktree at %s.\n", mb, mb, wt)
+				rich.LogWarning(lm.o.Log, fmt.Sprintf("Mission branch %s was not deleted: Refusing to delete branch '%s': it is checked out in the worktree at %s.", mb, mb, wt))
 			} else if _, err := gitx.Run(lm.root, "branch", "-D", mb); err != nil {
-				fmt.Fprintf(lm.o.Log, "WARNING  Mission branch %s was not deleted: %v\n", mb, err)
+				rich.LogWarning(lm.o.Log, fmt.Sprintf("Mission branch %s was not deleted: %v", mb, err))
 			}
 		}
 	}

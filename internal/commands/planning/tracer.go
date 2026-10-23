@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
 
@@ -42,13 +43,13 @@ func runTracerAppend(ctx *cli.Context) error {
 			return
 		}
 		if ok {
-			sayPlain(ctx.Stdout, "✓ "+p.GetString("row_or_entry_ref"))
+			say(ctx.Stdout, "[green]✓[/green] "+rich.EscapeMarkup(p.GetString("row_or_entry_ref")))
 		} else {
 			e := p.GetString("error")
 			if e == "" {
 				e = "tracer-append failed"
 			}
-			sayPlain(ctx.Stdout, "Error: "+e)
+			say(ctx.Stdout, "[red]Error:[/red] "+rich.EscapeMarkup(e))
 		}
 	}
 	errP := func(msg string) error {
@@ -106,7 +107,7 @@ func runTracerAppend(ctx *cli.Context) error {
 	r := safecommit.CommitForMission(root, slug, []string{path}, fmt.Sprintf("chore(tracer): append %s finding for %s", category, slug), mission.KindTracerFile, safecommit.RouterOptions{})
 	printSurfaces := func() {
 		if !jsonMode {
-			r.PrintRendered(ctx.Stdout, wrapPlain)
+			printRendered(ctx.Stdout, r)
 		}
 	}
 	switch r.Status {

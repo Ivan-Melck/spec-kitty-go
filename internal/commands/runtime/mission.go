@@ -97,6 +97,18 @@ func missionError(ctx *cli.Context, message, code string, jsonMode bool) {
 	}
 }
 
+// projectRootMissing is helpers.get_project_root_or_exit's failure output.
+func projectRootMissing(ctx *cli.Context, jsonMode bool) {
+	const msg = "Unable to locate the Spec Kitty project root (.kittify directory not found)."
+	if jsonMode {
+		emitJSON(ctx, jsonError("not_in_project", msg))
+		return
+	}
+	rich.Print(ctx.Stdout, "[red]Error:[/red] "+msg)
+	rich.Print(ctx.Stdout, "[dim]Run this command from the project root or from a mission worktree under .worktrees/<mission>/.[/dim]")
+	rich.Print(ctx.Stdout, "[dim]Tip: Initialize a project with 'spec-kitty init <name>' if one does not exist.[/dim]")
+}
+
 // ---------------------------------------------------------------------------
 // mission run
 // ---------------------------------------------------------------------------
@@ -105,7 +117,7 @@ func runMissionRun(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
 	root := locateRoot()
 	if root == "" {
-		missionError(ctx, "Error: Not in a spec-kitty project", "not_in_project", jsonMode)
+		projectRootMissing(ctx, jsonMode)
 		return cli.Exit(1)
 	}
 	key := ctx.Arg("mission_key")
@@ -136,7 +148,7 @@ func runMissionRun(ctx *cli.Context) error {
 			body += fmt.Sprintf("mission_id:   %s\n", id)
 		}
 		body += fmt.Sprintf("feature_dir:  %s\nrun_dir:      %s", env.GetString("feature_dir"), env.GetString("run_dir"))
-		rich.Panel(ctx.Stdout, body+warningLines(env), "Mission Run Started")
+		rich.PrintTo(ctx.Stdout, &rich.RichPanel{R: rich.NewText(body + warningLines(env)), Title: "Mission Run Started", BorderStyle: "green"})
 		return nil
 	}
 	body := env.GetString("message")
@@ -146,7 +158,11 @@ func runMissionRun(ctx *cli.Context) error {
 			body += fmt.Sprintf("\n  %s: %s", k, pyStr(v))
 		}
 	}
-	rich.Panel(ctx.Stdout, body+warningLines(env), env.GetString("error_code"))
+	title := env.GetString("error_code")
+	if title == "" {
+		title = "ERROR"
+	}
+	rich.PrintTo(ctx.Stdout, &rich.RichPanel{R: rich.NewText(body + warningLines(env)), Title: title, BorderStyle: "red"})
 	return cli.Exit(code)
 }
 
@@ -238,7 +254,7 @@ func resolveMissionHandleDir(ctx *cli.Context, root, handle string, jsonMode boo
 			p.Set("candidates", e.CandidatesJSON())
 			emitJSON(ctx, p)
 		} else {
-			rich.Print(ctx.Stdout, "MISSION_AMBIGUOUS_SELECTOR\n"+e.Error())
+			rich.Print(ctx.Stdout, "[red]MISSION_AMBIGUOUS_SELECTOR[/red]\n"+e.Error())
 		}
 		return "", cli.Exit(1)
 	case *mission.SelectorAmbiguousError:
@@ -248,7 +264,7 @@ func resolveMissionHandleDir(ctx *cli.Context, root, handle string, jsonMode boo
 			p.Set("candidates", e.Candidates)
 			emitJSON(ctx, p)
 		} else {
-			rich.Print(ctx.Stdout, "MISSION_AMBIGUOUS_SELECTOR\n"+e.Error())
+			rich.Print(ctx.Stdout, "[red]MISSION_AMBIGUOUS_SELECTOR[/red]\n"+e.Error())
 		}
 		return "", cli.Exit(1)
 	}
@@ -276,16 +292,16 @@ func runMissionFollowUp(ctx *cli.Context) error {
 	commit := ctx.OptString("commit")
 	hasPR := ctx.IsSet("pr")
 	if (commit == nil) == !hasPR {
-		missionError(ctx, "Error: supply exactly one of --commit <40-hex> or --pr <int>.", "invalid_follow_up_reference", jsonMode)
+		missionError(ctx, "[red]Error:[/red] supply exactly one of [cyan]--commit <40-hex>[/cyan] or [cyan]--pr <int>[/cyan].", "invalid_follow_up_reference", jsonMode)
 		return cli.Exit(1)
 	}
 	if commit != nil && !hex40.MatchString(*commit) {
-		missionError(ctx, fmt.Sprintf("Error: --commit must be a 40-character hex SHA, got %s.", mission.PyRepr(*commit)), "invalid_commit_sha", jsonMode)
+		missionError(ctx, fmt.Sprintf("[red]Error:[/red] --commit must be a 40-character hex SHA, got %s.", mission.PyRepr(*commit)), "invalid_commit_sha", jsonMode)
 		return cli.Exit(1)
 	}
 	root := locateRoot()
 	if root == "" {
-		missionError(ctx, "Error: Not in a spec-kitty project", "not_in_project", jsonMode)
+		projectRootMissing(ctx, jsonMode)
 		return cli.Exit(1)
 	}
 	handle := ctx.Arg("handle")
@@ -297,11 +313,11 @@ func runMissionFollowUp(ctx *cli.Context) error {
 	meta := mission.ReadMetaOrEmpty(dir)
 	mid := meta.GetString("mission_id")
 	if mid == "" {
-		missionError(ctx, fmt.Sprintf("Error: mission has no resolvable mission_id for handle %s.\nRemediation: run `spec-kitty migrate backfill-identity`.", handle), "mission_identity_missing", jsonMode)
+		missionError(ctx, fmt.Sprintf("[red]Error:[/red] mission has no resolvable mission_id for handle [bold]%s[/bold].\n[dim]Remediation: run `spec-kitty migrate backfill-identity`.[/dim]", handle), "mission_identity_missing", jsonMode)
 		return cli.Exit(1)
 	}
 	if !isMissionCompleted(dir) {
-		missionError(ctx, fmt.Sprintf("Error: cannot record follow-up: mission %s has not completed/merged.\nRemediation: follow-ups can only be recorded after a mission has merged or all its work packages are terminal.", slug), "mission_not_completed", jsonMode)
+		missionError(ctx, fmt.Sprintf("[red]Error:[/red] cannot record follow-up: mission [bold]%s[/bold] has not completed/merged.\n[dim]Remediation: follow-ups can only be recorded after a mission has merged or all its work packages are terminal.[/dim]", slug), "mission_not_completed", jsonMode)
 		return cli.Exit(1)
 	}
 	typ := "pr"
@@ -319,7 +335,7 @@ func runMissionFollowUp(ctx *cli.Context) error {
 		"pr_number", prV, "recorded_by", detectActor(), "recorded_at", clock.NowUTCISO())
 	ev, err := lifecycle.Persist(dir, "FollowUpRecorded", payload, mid, "Mission", nil, nil, dedup)
 	if err != nil {
-		missionError(ctx, "Error: "+err.Error(), "follow_up_failed", jsonMode)
+		missionError(ctx, "[red]Error:[/red] "+err.Error(), "follow_up_failed", jsonMode)
 		return cli.Exit(1)
 	}
 	if jsonMode {
@@ -341,9 +357,9 @@ func runMissionFollowUp(ctx *cli.Context) error {
 		ref = "#" + strconv.Itoa(ctx.Int("pr"))
 	}
 	if ev == nil {
-		rich.Print(ctx.Stdout, fmt.Sprintf("Follow-up %s %s already recorded for %s (no-op).", typ, ref, slug))
+		rich.Print(ctx.Stdout, fmt.Sprintf("[dim]Follow-up %s %s already recorded for %s (no-op).[/dim]", typ, ref, slug))
 	} else {
-		rich.Print(ctx.Stdout, fmt.Sprintf("✓ Recorded follow-up %s %s for %s.", typ, ref, slug))
+		rich.Print(ctx.Stdout, fmt.Sprintf("[green]✓[/green] Recorded follow-up %s [bold]%s[/bold] for %s.", typ, ref, slug))
 	}
 	return nil
 }
@@ -374,7 +390,7 @@ func runMissionReopen(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
 	root := locateRoot()
 	if root == "" {
-		missionError(ctx, "Error: Not in a spec-kitty project", "not_in_project", jsonMode)
+		projectRootMissing(ctx, jsonMode)
 		return cli.Exit(1)
 	}
 	handle := ctx.Arg("handle")
@@ -386,16 +402,16 @@ func runMissionReopen(ctx *cli.Context) error {
 	slug := filepath.Base(dir)
 	meta, merr := mission.ReadMeta(dir)
 	if merr != nil || meta == nil || meta.GetString("mission_id") == "" {
-		missionError(ctx, fmt.Sprintf("Error: mission is unrecoverable — meta.json is missing or corrupt for handle %s.\nRemediation: restore meta.json (or run `spec-kitty migrate backfill-identity`) before re-opening.", handle), "mission_unrecoverable", jsonMode)
+		missionError(ctx, fmt.Sprintf("[red]Error:[/red] mission is unrecoverable — meta.json is missing or corrupt for handle [bold]%s[/bold].\n[dim]Remediation: restore meta.json (or run `spec-kitty migrate backfill-identity`) before re-opening.[/dim]", handle), "mission_unrecoverable", jsonMode)
 		return cli.Exit(1)
 	}
 	mid := meta.GetString("mission_id")
 	if mb := meta.GetString("mission_branch"); mb != "" && !branchResolvable(root, mb) {
-		missionError(ctx, fmt.Sprintf("Error: mission is unrecoverable — branch %s resolves in neither the local repo nor any configured remote.\nRemediation: fetch the branch (`git fetch <remote> %s`) or restore it before re-opening.", mb, mb), "mission_branch_unavailable", jsonMode)
+		missionError(ctx, fmt.Sprintf("[red]Error:[/red] mission is unrecoverable — branch [bold]%s[/bold] resolves in neither the local repo nor any configured remote.\n[dim]Remediation: fetch the branch (`git fetch <remote> %s`) or restore it before re-opening.[/dim]", mb, mb), "mission_branch_unavailable", jsonMode)
 		return cli.Exit(1)
 	}
 	if !isMissionCompleted(dir) {
-		missionError(ctx, fmt.Sprintf("Error: cannot re-open: mission %s has not completed/merged.\nRemediation: a mission can only be re-opened after it has merged or all its work packages are terminal.", slug), "mission_not_completed", jsonMode)
+		missionError(ctx, fmt.Sprintf("[red]Error:[/red] cannot re-open: mission [bold]%s[/bold] has not completed/merged.\n[dim]Remediation: a mission can only be re-opened after it has merged or all its work packages are terminal.[/dim]", slug), "mission_not_completed", jsonMode)
 		return cli.Exit(1)
 	}
 	cleared := &jsonx.Object{}
@@ -412,7 +428,7 @@ func runMissionReopen(ctx *cli.Context) error {
 		"reopened_at", clock.NowUTCISO(), "cleared_merge", cm)
 	ev, err := lifecycle.Persist(dir, "MissionReopened", payload, mid, "Mission", nil, nil, nil)
 	if err != nil {
-		missionError(ctx, "Error: "+err.Error(), "mission_reopen_failed", jsonMode)
+		missionError(ctx, "[red]Error:[/red] "+err.Error(), "mission_reopen_failed", jsonMode)
 		return cli.Exit(1)
 	}
 	if cleared.Len() > 0 {
@@ -420,7 +436,7 @@ func runMissionReopen(ctx *cli.Context) error {
 			meta.Delete(f)
 		}
 		if err := mission.WriteMeta(dir, meta, false); err != nil {
-			missionError(ctx, fmt.Sprintf("Error: mission %s was re-opened and the audit event was recorded, but clearing the merge markers failed (%v).\nRemediation: rerun `spec-kitty mission reopen %s` to complete marker cleanup.", slug, err, slug), "mission_reopen_clear_failed", jsonMode)
+			missionError(ctx, fmt.Sprintf("[red]Error:[/red] mission [bold]%s[/bold] was re-opened and the audit event was recorded, but clearing the merge markers failed (%v).\n[dim]Remediation: rerun `spec-kitty mission reopen %s` to complete marker cleanup.[/dim]", slug, err, slug), "mission_reopen_clear_failed", jsonMode)
 			return cli.Exit(1)
 		}
 	}
@@ -433,11 +449,11 @@ func runMissionReopen(ctx *cli.Context) error {
 			"mission_slug", slug, "reason", reason, "result", "reopened"))
 		return nil
 	}
-	rich.Print(ctx.Stdout, fmt.Sprintf("✓ Mission %s re-opened and is actionable again.", slug))
+	rich.Print(ctx.Stdout, fmt.Sprintf("[green]✓[/green] Mission [bold]%s[/bold] re-opened and is actionable again.", slug))
 	if cleared.Len() > 0 {
 		keys := cleared.Keys()
 		sort.Strings(keys)
-		rich.Print(ctx.Stdout, "  Cleared merge markers: "+strings.Join(keys, ", "))
+		rich.Print(ctx.Stdout, "  [dim]Cleared merge markers: "+strings.Join(keys, ", ")+"[/dim]")
 	}
 	return nil
 }
@@ -461,7 +477,7 @@ func runMissionClose(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
 	root := locateRoot()
 	if root == "" {
-		missionError(ctx, "Error: Not in a spec-kitty project", "not_in_project", jsonMode)
+		projectRootMissing(ctx, jsonMode)
 		return cli.Exit(1)
 	}
 	handle := ctx.String("mission")
@@ -473,14 +489,14 @@ func runMissionClose(ctx *cli.Context) error {
 		}
 	}
 	if handle == "" {
-		missionError(ctx, "Error: No mission specified and no active mission detected. Use --mission <slug>.", "mission_not_specified", jsonMode)
+		missionError(ctx, "[red]Error:[/red] No mission specified and no active mission detected. Use [cyan]--mission <slug>[/cyan].", "mission_not_specified", jsonMode)
 		return cli.Exit(1)
 	}
 	slug := handle
 	if st, err := os.Stat(project.Specs(root, handle)); err != nil || !st.IsDir() {
 		s, err := mission.ResolveHandle(root, handle)
 		if err != nil {
-			missionError(ctx, "Mission not found: "+handle, "mission_not_found", jsonMode)
+			missionError(ctx, "[red]Mission not found:[/red] "+handle, "mission_not_found", jsonMode)
 			return cli.Exit(1)
 		}
 		slug = s
@@ -491,14 +507,14 @@ func runMissionClose(ctx *cli.Context) error {
 		return discardMission(ctx, root, slug, dir, s, jsonMode)
 	}
 	if !isMissionMerged(dir) {
-		missionError(ctx, fmt.Sprintf("Error: cannot close: mission %s has not been merged.\nRemediation: this mission has no recorded merge baseline. Use `--discard` to abandon it mid-flight, or consolidate it first (`spec-kitty consolidate`) before closing.", slug), "mission_not_merged", jsonMode)
+		missionError(ctx, fmt.Sprintf("[red]Error:[/red] cannot close: mission [bold]%s[/bold] has not been merged.\n[dim]Remediation: this mission has no recorded merge baseline. Use `--discard` to abandon it mid-flight, or consolidate it first (`spec-kitty consolidate`) before closing.[/dim]", slug), "mission_not_merged", jsonMode)
 		return cli.Exit(1)
 	}
 	teardownCoordination(ctx, root, slug, dir, "", jsonMode)
 	if jsonMode {
 		emitJSON(ctx, jsonx.NewObject("ok", true, "result", "closed", "mission_slug", slug))
 	} else {
-		rich.Print(ctx.Stdout, fmt.Sprintf("✓ Mission %s closed.", slug))
+		rich.Print(ctx.Stdout, fmt.Sprintf("[green]✓[/green] Mission %s closed.", slug))
 	}
 	return nil
 }

@@ -1,7 +1,6 @@
 package rich
 
 import (
-	"fmt"
 	"io"
 	"math"
 	"regexp"
@@ -24,15 +23,53 @@ import (
 
 func boxLen(s string) int { return utf8.RuneCountInString(s) }
 
-// BoxTable is a rich.Table (HEAVY_HEAD box, padding (0,1)).
+// BoxTable is a rich.Table (HEAVY_HEAD box, padding (0,1)). Header and
+// cell strings are console markup.
 type BoxTable struct {
 	Title     string
 	Headers   []string
 	NoWrap    []bool
 	ShowLines bool
-	Right     []bool // right-justified columns
-	Center    []bool // centered columns
+	Right     []bool   // right-justified columns
+	Center    []bool   // centered columns
+	Styles    []string // column styles ("" = none)
+	Overflow  []string // column overflow ("" = ellipsis)
 	Rows      [][]string
+}
+
+func atBool(xs []bool, i int) bool { return i < len(xs) && xs[i] }
+
+func atStr(xs []string, i int) string {
+	if i < len(xs) {
+		return xs[i]
+	}
+	return ""
+}
+
+// Table returns the rich renderable.
+func (t *BoxTable) Table() *RichTable {
+	rt := NewTable()
+	if t.Title != "" {
+		rt.Title = t.Title
+	}
+	rt.ShowLines = t.ShowLines
+	for i, h := range t.Headers {
+		c := Column{NoWrap: atBool(t.NoWrap, i), Style: atStr(t.Styles, i), Overflow: atStr(t.Overflow, i)}
+		if atBool(t.Right, i) {
+			c.Justify = "right"
+		} else if atBool(t.Center, i) {
+			c.Justify = "center"
+		}
+		rt.AddColumn(h, c)
+	}
+	for _, r := range t.Rows {
+		cells := make([]any, len(r))
+		for i, x := range r {
+			cells[i] = x
+		}
+		rt.AddRow(cells...)
+	}
+	return rt
 }
 
 func boxRatioReduce(total int, ratios, maximums, values []int) []int {
@@ -176,245 +213,58 @@ func BoxWrapEllipsis(line string, width int) []string {
 	return lines
 }
 
-// Render writes the table at the given console width.
+// Render prints the table on a CliConsole of the given width.
 func (t *BoxTable) Render(w io.Writer, consoleWidth int) {
-	n := len(t.Headers)
-	widths := make([]int, n)
-	for i, h := range t.Headers {
-		widths[i] = boxLen(h) + 2
-	}
-	for _, r := range t.Rows {
-		for i := 0; i < n && i < len(r); i++ {
-			for _, l := range strings.Split(r[i], "\n") {
-				if boxLen(l)+2 > widths[i] {
-					widths[i] = boxLen(l) + 2
-				}
-			}
-		}
-	}
-	maxWidth := consoleWidth - (n + 1)
-	wrapable := make([]bool, n)
-	for i := range wrapable {
-		wrapable[i] = i >= len(t.NoWrap) || !t.NoWrap[i]
-	}
-	widths = boxCollapseWidths(widths, wrapable, maxWidth)
-	total := n + 1
-	for _, wd := range widths {
-		total += wd
-	}
-	if t.Title != "" {
-		for _, l := range WrapWords(t.Title, total) {
-			l = strings.TrimRight(l, " ")
-			ex := total - boxLen(l)
-			left := ex / 2
-			fmt.Fprintln(w, strings.Repeat(" ", left)+l+strings.Repeat(" ", ex-left))
-		}
-	}
-	line := func(l, m, r, h string) {
-		var b strings.Builder
-		b.WriteString(l)
-		for i, wd := range widths {
-			if i > 0 {
-				b.WriteString(m)
-			}
-			b.WriteString(strings.Repeat(h, wd))
-		}
-		b.WriteString(r)
-		fmt.Fprintln(w, b.String())
-	}
-	row := func(sep string, vals []string) {
-		cols := make([][]string, n)
-		height := 1
-		for i := 0; i < n; i++ {
-			v := ""
-			if i < len(vals) {
-				v = vals[i]
-			}
-			cols[i] = BoxCellLines(v, widths[i]-2)
-			if len(cols[i]) > height {
-				height = len(cols[i])
-			}
-		}
-		for k := 0; k < height; k++ {
-			var b strings.Builder
-			b.WriteString(sep)
-			for i := 0; i < n; i++ {
-				c := ""
-				if k < len(cols[i]) {
-					c = cols[i][k]
-				}
-				padding := strings.Repeat(" ", max(0, widths[i]-2-boxLen(c)))
-				if i < len(t.Right) && t.Right[i] {
-					b.WriteString(" " + padding + c + " " + sep)
-				} else if i < len(t.Center) && t.Center[i] {
-					ex := len(padding)
-					b.WriteString(" " + strings.Repeat(" ", ex/2) + c + strings.Repeat(" ", ex-ex/2) + " " + sep)
-				} else {
-					b.WriteString(" " + c + padding + " " + sep)
-				}
-			}
-			fmt.Fprintln(w, b.String())
-		}
-	}
-	line("┏", "┳", "┓", "━")
-	row("┃", t.Headers)
-	line("┡", "╇", "┩", "━")
-	for i, r := range t.Rows {
-		if i > 0 && t.ShowLines {
-			line("├", "┼", "┤", "─")
-		}
-		row("│", r)
-	}
-	line("└", "┴", "┘", "─")
+	CliConsoleFor(w, consoleWidth).Print(w, t.Table())
 }
 
-// FitPanel renders rich.Panel(..., expand=False): ROUNDED box sized to the
-// content (capped at the console width), centered title.
-func FitPanel(w io.Writer, content, title string) {
-	width := Width()
-	lines := strings.Split(content, "\n")
-	inner := 0
-	for _, l := range lines {
-		if boxLen(l) > inner {
-			inner = boxLen(l)
-		}
+// FitPanel prints Panel(content, title=title, expand=False) on
+// CliConsole(): a ROUNDED box sized to the content (markup) with a centred
+// title.
+func FitPanel(w io.Writer, content, title string) { FitPanelStyled(w, content, title, "") }
+
+// FitPanelStyled is FitPanel with border_style.
+func FitPanelStyled(w io.Writer, content, title, borderStyle string) {
+	p := &RichPanel{R: content, Title: title, Fit: true}
+	if borderStyle != "" {
+		p.BorderStyle = borderStyle
 	}
-	if title != "" && boxLen(title)+2 > inner {
-		inner = boxLen(title) + 2
-	}
-	if inner > width-4 {
-		inner = width - 4
-	}
-	var body []string
-	for _, l := range lines {
-		body = append(body, WrapWords(l, inner)...)
-	}
-	top := strings.Repeat("─", inner+2)
-	if title != "" {
-		t := " " + title + " "
-		ex := inner + 2 - boxLen(t)
-		left := ex / 2
-		top = strings.Repeat("─", left) + t + strings.Repeat("─", ex-left)
-	}
-	fmt.Fprintln(w, "╭"+top+"╮")
-	for _, l := range body {
-		fmt.Fprintln(w, "│ "+l+strings.Repeat(" ", max(0, inner-boxLen(l)))+" │")
-	}
-	fmt.Fprintln(w, "╰"+strings.Repeat("─", inner+2)+"╯")
+	PrintTo(w, p)
 }
 
-// GridTable renders rich Table(box=None, padding=(0, 2), show_edge=False):
-// a header row and data rows, each cell padded two spaces on both sides,
-// columns at least minWidths wide, right-justified where right[i]. Cells may
-// carry markup (stripped). Over-wide columns collapse (down to their longest
-// word) until the table fits the console, widest first.
+// GridTable prints rich Table(box=None, padding=(0, 2), show_edge=False)
+// on CliConsole(): a header row and data rows (markup), columns at least
+// minWidths wide, right-justified where right[i].
 func GridTable(w io.Writer, headers []string, minWidths []int, right []bool, rows [][]string) {
-	n := len(headers)
-	width := make([]int, n)
+	GridTableStyled(w, headers, minWidths, right, nil, rows)
+}
+
+// GridTableStyled is GridTable with per-column styles.
+func GridTableStyled(w io.Writer, headers []string, minWidths []int, right []bool, styles []string, rows [][]string) {
+	PrintTo(w, NewPaddedGrid(headers, minWidths, right, styles, rows))
+}
+
+// NewPaddedGrid builds Table(box=None, padding=(0, 2), show_edge=False).
+func NewPaddedGrid(headers []string, minWidths []int, right []bool, styles []string, rows [][]string) *RichTable {
+	t := NewTable()
+	t.Box, t.ShowEdge = nil, false
+	t.SetPadding(0, 2)
 	for i, h := range headers {
-		width[i] = boxLen(h)
-		if i < len(minWidths) && minWidths[i] > width[i] {
-			width[i] = minWidths[i]
+		c := Column{Style: atStr(styles, i)}
+		if i < len(minWidths) && minWidths[i] > 0 {
+			c.MinWidth = IntP(minWidths[i])
 		}
+		if atBool(right, i) {
+			c.Justify = "right"
+		}
+		t.AddColumn(h, c)
 	}
-	plain := make([][]string, len(rows))
-	for r, row := range rows {
-		plain[r] = make([]string, n)
-		for i := range headers {
-			c := ""
-			if i < len(row) {
-				c = Strip(row[i])
-			}
-			plain[r][i] = c
-			if l := boxLen(c); l > width[i] {
-				width[i] = l
-			}
+	for _, r := range rows {
+		cells := make([]any, len(r))
+		for i, x := range r {
+			cells[i] = x
 		}
+		t.AddRow(cells...)
 	}
-	gridMaxWord := func(s string) int {
-		m := 0
-		for _, f := range strings.Fields(s) {
-			if l := boxLen(f); l > m {
-				m = l
-			}
-		}
-		return m
-	}
-	minw := make([]int, n)
-	for i := range headers {
-		minw[i] = gridMaxWord(headers[i])
-		for _, r := range plain {
-			if m := gridMaxWord(r[i]); m > minw[i] {
-				minw[i] = m
-			}
-		}
-	}
-	total := func() int {
-		t := 4 + 4*(n-1)
-		for _, x := range width {
-			t += x
-		}
-		return t
-	}
-	for excess := total() - Width(); excess > 0; excess = total() - Width() {
-		best := -1
-		for i := range width {
-			if width[i] > minw[i] && (best < 0 || width[i] > width[best]) {
-				best = i
-			}
-		}
-		if best < 0 {
-			break
-		}
-		second := 0
-		for i := range width {
-			if i != best && width[i] > second && width[i] > minw[i] {
-				second = width[i]
-			}
-		}
-		target := width[best] - excess
-		if second > target && second < width[best] {
-			target = second
-		}
-		if target < minw[best] {
-			target = minw[best]
-		}
-		width[best] = target
-	}
-	emit := func(cells []string) {
-		wrapped := make([][]string, n)
-		height := 1
-		for i, c := range cells {
-			wrapped[i] = WrapWords(c, width[i])
-			if len(wrapped[i]) == 0 {
-				wrapped[i] = []string{""}
-			}
-			if len(wrapped[i]) > height {
-				height = len(wrapped[i])
-			}
-		}
-		for l := 0; l < height; l++ {
-			var b strings.Builder
-			for i := range cells {
-				c := ""
-				if l < len(wrapped[i]) {
-					c = strings.TrimRight(wrapped[i][l], " ")
-				}
-				if i > 0 {
-					b.WriteString("    ")
-				}
-				fill := strings.Repeat(" ", max(0, width[i]-boxLen(c)))
-				if i < len(right) && right[i] {
-					b.WriteString(fill + c)
-				} else {
-					b.WriteString(c + fill)
-				}
-			}
-			fmt.Fprintln(w, "  "+b.String()+"  ")
-		}
-	}
-	emit(headers)
-	for _, r := range plain {
-		emit(r)
-	}
+	return t
 }

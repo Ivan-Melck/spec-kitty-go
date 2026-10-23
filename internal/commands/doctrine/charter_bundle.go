@@ -21,7 +21,7 @@ func charterBundleCmd() *cli.Command {
 	g := &cli.Command{Name: "bundle", Short: "Charter bundle validation commands."}
 	g.InvokeWithoutCommand = true
 	g.Run = func(ctx *cli.Context) error {
-		cli.WriteHelp(ctx.Stdout, ctx.Cmd)
+		cli.WriteNoArgsIsHelp(ctx.Stdout, ctx.Cmd)
 		return cli.Exit(2)
 	}
 	g.Add(&cli.Command{
@@ -152,7 +152,7 @@ func runBundleValidate(ctx *cli.Context) error {
 		if len(outScope) > 0 {
 			cprintRaw(w, "  Out-of-scope files present (informational):")
 			for _, rel := range outScope {
-				cprintRaw(w, "    "+rel)
+				cprintRaw(w, "    [yellow]"+rel+"[/yellow]")
 			}
 			cprintRaw(w, "")
 		}

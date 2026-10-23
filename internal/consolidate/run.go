@@ -72,9 +72,7 @@ var compact = jsonx.Options{Indent: -1, EnsureASCII: true}
 
 func say(w io.Writer, s string) { rich.Print(w, s) }
 
-func sayErr(w io.Writer, msg string) {
-	fmt.Fprintln(w, rich.Wrap("Error: "+msg, rich.Width()))
-}
+func sayErr(w io.Writer, msg string) { rich.Print(w, "[red]Error:[/red] "+msg) }
 
 // Retention is RetentionDecision.
 type Retention struct {
@@ -214,7 +212,7 @@ func Run(w io.Writer, root string, o Options) error {
 			sayErr(w, "No interrupted merge to resume.")
 			return exit(1)
 		}
-		say(w, fmt.Sprintf("Resume requested for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
+		say(w, fmt.Sprintf("[bold cyan]Resume requested[/bold cyan] for %s (%d/%d done)", slug, len(st.CompletedWPs), len(st.WPOrder)))
 	}
 	r := &run{w: w, root: root, slug: slug, sf: sf, target: target, strategy: strategy, ret: ret, push: o.Push, originCheck: o.OriginCheck, skipLanes: o.SkipLanes, allowSparse: o.AllowSparse, opts: o}
 	return r.execute()
@@ -330,7 +328,7 @@ func dryRun(w io.Writer, root, slug, target, strategy string, ret Retention, o O
 		"mission_branch", m.MissionBranch, "lanes", lanesJSON(m), "would_assign_mission_number", would,
 		"retention", jsonx.NewObject("branch_source", ret.BranchSource, "worktree_source", ret.WorktreeSource, "warnings", warn))
 	if would != nil && !o.JSON {
-		say(w, fmt.Sprintf("would assign mission_number=%d to mission %s", would, slug))
+		say(w, fmt.Sprintf("[cyan]would assign[/cyan] mission_number=%d to mission %s", would, slug))
 	}
 	fmt.Fprintln(w, jsonx.Dumps(payload, compact))
 	return nil
@@ -477,11 +475,11 @@ func (r *run) execute() error {
 		warnings, refused := originfresh.Run(r.root, r.slug, originfresh.ResolveMode(r.originCheck), laneBranches,
 			LoadState(r.root, missionIDOf(r.root, r.slug)) != nil)
 		if refused != nil {
-			fmt.Fprintln(r.w, refused.Message)
+			rich.PrintPlain(r.w, refused.Message)
 			return exit(1)
 		}
 		for _, w := range warnings {
-			fmt.Fprintln(r.w, w)
+			rich.PrintPlain(r.w, w)
 		}
 	}
 	if !r.allowSparse {
@@ -538,12 +536,12 @@ func (r *run) execute() error {
 	}
 	if pr := ProtectedStatusTargetRefusal(r.root, r.slug, m, nil); pr != nil {
 		sayErr(r.w, pr.Code+": "+pr.Message)
-		fmt.Fprintln(r.w, rich.Wrap("  Next step: "+pr.NextStep, rich.Width()))
+		say(r.w, "  Next step: "+pr.NextStep)
 		footer := "Consolidation refused before any branch moved."
 		if LoadState(r.root, missionIDOf(r.root, r.slug)) != nil {
 			footer = refusedWithEarlierRecord
 		}
-		fmt.Fprintln(r.w, rich.Wrap(footer, rich.Width()))
+		rich.PrintPlain(r.w, footer)
 		return exit(1)
 	}
 	if err := r.preflight(); err != nil {
@@ -606,7 +604,7 @@ func (r *run) execute() error {
 	}
 	say(r.w, "  Lanes: "+strings.Join(ids, ", "))
 	if r.planningOnly {
-		say(r.w, "  Planning-artifact-only mission: target branch already contains deliverables; branch merge steps will be skipped.")
+		say(r.w, "  [dim]Planning-artifact-only mission: target branch already contains deliverables; branch merge steps will be skipped.[/dim]")
 	}
 	gatesPass := true
 	for _, g := range EvaluateGates(r.root, r.sf.PrimaryDir, r.sf.StatusDir(), r.sf.StatusDir(), r.wps, LoadGatePolicy(r.root)) {
@@ -672,7 +670,7 @@ func (r *run) execute() error {
 		// attempt; finish the teardown without re-running the phases.
 	} else if err := r.mutationSpan(r.coordDone); err != nil {
 		if e, ok := err.(*Exit); ok && e.Code != 0 && r.state != nil {
-			fmt.Fprintln(r.w, r.state.Rollback(r.root).Render())
+			rich.PrintPlain(r.w, r.state.Rollback(r.root).Render())
 		}
 		return err
 	}
@@ -721,7 +719,7 @@ func (r *run) mutationSpan(coordDone bool) error {
 				r.state.MissionNumberBaked = true
 				r.state.Save(r.root)
 			}
-			say(r.w, fmt.Sprintf("Assigned mission_number=%d to mission %s", r.number, r.slug))
+			say(r.w, fmt.Sprintf("[green]Assigned[/green] mission_number=%d to mission %s", r.number, r.slug))
 		}
 		return nil
 	}); err != nil {
@@ -785,7 +783,7 @@ func (r *run) afterReconcile() error {
 		say(r.w, "  No likely-stale assertions detected.")
 	default:
 		line := func(grade string, f staleassert.Finding) {
-			fmt.Fprintln(r.w, rich.Wrap(fmt.Sprintf("  [%s] %s:%d — %s", grade, filepath.Base(f.TestFile), f.TestLine, f.Hint), rich.Width()))
+			say(r.w, "  "+rich.EscapeMarkup(fmt.Sprintf("[%s] %s:%d — %s", grade, filepath.Base(f.TestFile), f.TestLine, f.Hint)))
 		}
 		var info []staleassert.Finding
 		for _, f := range stale.Findings {

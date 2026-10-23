@@ -48,7 +48,10 @@ func runCharterGenerate(ctx *cli.Context) error {
 	if ctx.IsSet("mission-handle") && !ctx.IsSet("owned-checkout") {
 		return fail("--mission-handle requires --owned-checkout")
 	}
-	root := repoRoot()
+	root := findRepoRoot()
+	if root == "" {
+		return fail(repoRootMissing)
+	}
 	if ctx.IsSet("owned-checkout") {
 		// Opt in to validated ownership (explicit claim only; no adoption).
 		claim := ctx.String("owned-checkout")

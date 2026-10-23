@@ -52,7 +52,10 @@ func runComplete(ctx *cli.Context) error {
 	if outcome != "done" && outcome != "failed" && outcome != "abandoned" {
 		return cli.Usage(ctx.Cmd, "Invalid value for --outcome: %s", fmt.Sprintf("invalid outcome %s: must be one of done, failed, abandoned", pyStrRepr(outcome)))
 	}
-	root := repoRoot()
+	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "complete_invocation", Line: 138}, rich.Frame{Name: "_get_repo_root", Line: 33})
+	if err != nil {
+		return err
+	}
 	artifacts := ctx.Strings("artifact")
 	opt := invocation.CompleteOptions{Evidence: ctx.OptString("evidence"), Artifacts: artifacts, Commit: ctx.OptString("commit")}
 	completed, commit, err := invocation.Complete(root, id, outcome, opt)
@@ -61,13 +64,13 @@ func runComplete(ctx *cli.Context) error {
 		var ac *invocation.AlreadyClosedError
 		switch {
 		case errors.As(err, &im):
-			cprintRaw(ctx.Stdout, "Error: "+im.Error())
+			cprintRaw(ctx.Stdout, "[red]Error:[/red] "+im.Error())
 			return cli.Exit(2)
 		case errors.As(err, &ac):
 			if jsonMode {
 				fmt.Fprintln(ctx.Stderr, jsonx.Dumps(jsonx.NewObject("error", "already_closed", "invocation_id", id), lineJSON))
 			} else {
-				cprintRaw(ctx.Stdout, fmt.Sprintf("Error: Invocation %s is already closed.", id))
+				cprintRaw(ctx.Stdout, fmt.Sprintf("[red]Error:[/red] Invocation %s is already closed.", id))
 			}
 			return cli.Exit(1)
 		}
@@ -85,7 +88,7 @@ func runComplete(ctx *cli.Context) error {
 		if ref == "" {
 			ref = "unknown refusal"
 		}
-		cprintRaw(ctx.Stdout, fmt.Sprintf("Warning: Op record auto-commit was refused (%s). The completed event is on disk but not committed — it will not survive a checkout or reset. Commit the Op record yourself, or set SPEC_KITTY_ALLOW_PROTECTED_BRANCH_COMMITS if you own this branch.", ref))
+		cprintRaw(ctx.Stdout, fmt.Sprintf("[yellow]Warning:[/yellow] Op record auto-commit was refused (%s). The completed event is on disk but not committed — it will not survive a checkout or reset. Commit the Op record yourself, or set SPEC_KITTY_ALLOW_PROTECTED_BRANCH_COMMITS if you own this branch.", ref))
 	}
 	if jsonMode {
 		links := []any{}
@@ -129,7 +132,10 @@ func pyStrRepr(s string) string {
 }
 
 func runInvocationsList(ctx *cli.Context) error {
-	root := repoRoot()
+	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "list_invocations", Line: 396}, rich.Frame{Name: "_get_repo_root", Line: 55})
+	if err != nil {
+		return err
+	}
 	var filter string
 	if p := ctx.OptString("profile"); p != nil {
 		filter = *p
@@ -154,7 +160,8 @@ func runInvocationsList(ctx *cli.Context) error {
 		cprint(ctx.Stdout, "[dim]No invocation records found.[/dim]")
 		return nil
 	}
-	t := &rtable{Title: "Recent Invocations", Headers: []string{"Invocation ID", "Profile", "Action", "Status", "Outcome", "Closed By", "Started At"}}
+	t := &rtable{Title: "Recent Invocations", Headers: []string{"Invocation ID", "Profile", "Action", "Status", "Outcome", "Closed By", "Started At"},
+		Styles: []string{"dim"}}
 	or := func(r *jsonx.Object, k, d string) string {
 		v, ok := r.Get(k)
 		if !ok || v == nil {
@@ -178,7 +185,11 @@ func runInvocationsList(ctx *cli.Context) error {
 		if len([]rune(started)) > 19 {
 			started = string([]rune(started)[:19])
 		}
-		t.Rows = append(t.Rows, []string{id, or(r, "profile_id", "?"), or(r, "action", "?"), or(r, "status", "?"),
+		st := "yellow"
+		if r.GetString("status") == "closed" {
+			st = "green"
+		}
+		t.Rows = append(t.Rows, []string{id, or(r, "profile_id", "?"), or(r, "action", "?"), "[" + st + "]" + or(r, "status", "?") + "[/" + st + "]",
 			or(r, "outcome", "-"), or(r, "closed_by", "-"), started})
 	}
 	t.render(ctx.Stdout, rich.Width())

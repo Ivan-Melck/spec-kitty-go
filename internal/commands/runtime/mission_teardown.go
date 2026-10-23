@@ -63,8 +63,8 @@ func teardownCoordination(ctx *cli.Context, root, slug, dir, provenance string, 
 		return
 	}
 	if _, err := os.Stat(wt); err == nil {
-		rich.Print(ctx.Stdout, "Warning: coordination worktree still present after teardown; manual cleanup may be required.")
+		rich.Print(ctx.Stdout, "[yellow]Warning:[/yellow] coordination worktree still present after teardown; manual cleanup may be required.")
 	} else {
-		rich.Print(ctx.Stdout, "✓ Coordination worktree torn down for "+mission.CoordMissionDirName(slug, mid8))
+		rich.Print(ctx.Stdout, "[green]✓[/green] Coordination worktree torn down for "+mission.CoordMissionDirName(slug, mid8))
 	}
 }

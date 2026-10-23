@@ -1,7 +1,6 @@
 package closeout
 
 import (
-	"fmt"
 	"io"
 	"strings"
 	"unicode/utf8"
@@ -46,144 +45,73 @@ func (t *tracker) complete(key, detail string)    { t.update(key, "done", detail
 func (t *tracker) fail(key, detail string)        { t.update(key, "error", detail) }
 func (t *tracker) startDetail(key, detail string) { t.update(key, "running", detail) }
 func (t *tracker) skip(key, detail string)        { t.update(key, "skipped", detail) }
-func (t *tracker) render(w io.Writer)             { fmt.Fprint(w, t.String()) }
-func (t *tracker) lines() []string                { return strings.Split(strings.TrimRight(t.String(), "\n"), "\n") }
-func (t *tracker) String() string                 { return t.renderText() }
-func (t *tracker) renderText() string {
-	var b strings.Builder
-	b.WriteString(t.title + "\n")
-	for i, s := range t.steps {
-		guide := "├── "
-		if i == len(t.steps)-1 {
-			guide = "└── "
-		}
-		sym := " "
-		switch s.status {
-		case "done", "error":
-			sym = "●"
-		case "pending", "running", "skipped":
-			sym = "○"
-		}
+func (t *tracker) render(w io.Writer)             { rich.PrintTo(w, t.tree()) }
+
+// tree is StepTracker.render: a rich Tree with the status symbols.
+func (t *tracker) tree() *rich.Tree {
+	tr := &rich.Tree{Label: "[cyan]" + t.title + "[/cyan]", GuideStyle: "grey50"}
+	for _, s := range t.steps {
 		detail := strings.TrimSpace(s.detail)
-		line := sym + " " + s.label
-		if detail != "" {
-			line += " (" + detail + ")"
+		var sym string
+		switch s.status {
+		case "done":
+			sym = "[green]●[/green]"
+		case "pending":
+			sym = "[green dim]○[/green dim]"
+		case "running":
+			sym = "[cyan]○[/cyan]"
+		case "error":
+			sym = "[red]●[/red]"
+		case "skipped":
+			sym = "[yellow]○[/yellow]"
+		default:
+			sym = " "
 		}
-		// rich's Tree renders the label at (console width - guide width)
-		// and continues wrapped lines under the guide.
-		cont := "│   "
-		if i == len(t.steps)-1 {
-			cont = "    "
+		var line string
+		switch {
+		case s.status == "pending" && detail != "":
+			line = sym + " [bright_black]" + s.label + " (" + detail + ")[/bright_black]"
+		case s.status == "pending":
+			line = sym + " [bright_black]" + s.label + "[/bright_black]"
+		case detail != "":
+			line = sym + " [white]" + s.label + "[/white] [bright_black](" + detail + ")[/bright_black]"
+		default:
+			line = sym + " [white]" + s.label + "[/white]"
 		}
-		for j, l := range strings.Split(rich.Wrap(line, rich.Width()-4), "\n") {
-			if j == 0 {
-				b.WriteString(guide + l + "\n")
-			} else {
-				b.WriteString(cont + l + "\n")
-			}
-		}
+		tr.Add(line)
 	}
-	return b.String()
+	return tr
 }
 
 func runeLen(s string) int { return utf8.RuneCountInString(s) }
 
-// simpleTable renders a rich HEAVY_HEAD table whose content fits the
-// console (no wrapping). right marks right-justified columns.
-func simpleTable(w io.Writer, title string, headers []string, rows [][]string, right map[int]bool) {
-	widths := make([]int, len(headers))
+// simpleTable prints rich Table(title=title, header_style=headerStyle);
+// right marks right-justified columns. Cells are console markup.
+func simpleTable(w io.Writer, title string, headers []string, rows [][]string, right map[int]bool, headerStyle string) {
+	t := rich.NewTable()
+	if title != "" {
+		t.Title = title
+	}
+	if headerStyle != "" {
+		t.HeaderStyle = headerStyle
+	}
 	for i, h := range headers {
-		widths[i] = runeLen(h)
-	}
-	for _, r := range rows {
-		for i, c := range r {
-			if n := runeLen(c); n > widths[i] {
-				widths[i] = n
-			}
-		}
-	}
-	cell := func(i int, s string) string {
-		padN := widths[i] - runeLen(s)
+		c := rich.Column{}
 		if right[i] {
-			return " " + strings.Repeat(" ", padN) + s + " "
+			c.Justify = "right"
 		}
-		return " " + s + strings.Repeat(" ", padN) + " "
+		t.AddColumn(h, c)
 	}
-	border := func(l, m, r, f string) string {
-		var parts []string
-		for _, wd := range widths {
-			parts = append(parts, strings.Repeat(f, wd+2))
-		}
-		return l + strings.Join(parts, m) + r
-	}
-	total := len(widths) + 1
-	for _, wd := range widths {
-		total += wd + 2
-	}
-	if title != "" {
-		for _, tl := range rich.WrapWords(title, total) {
-			ex := total - runeLen(tl)
-			if ex < 0 {
-				ex = 0
-			}
-			l := ex / 2
-			fmt.Fprintln(w, strings.Repeat(" ", l)+tl+strings.Repeat(" ", ex-l))
-		}
-	}
-	fmt.Fprintln(w, border("┏", "┳", "┓", "━"))
-	var hc []string
-	for i, h := range headers {
-		hc = append(hc, cell(i, h))
-	}
-	fmt.Fprintln(w, "┃"+strings.Join(hc, "┃")+"┃")
-	fmt.Fprintln(w, border("┡", "╇", "┩", "━"))
 	for _, r := range rows {
-		var rc []string
-		for i, c := range r {
-			rc = append(rc, cell(i, c))
+		cells := make([]any, len(r))
+		for i, x := range r {
+			cells[i] = x
 		}
-		fmt.Fprintln(w, "│"+strings.Join(rc, "│")+"│")
+		t.AddRow(cells...)
 	}
-	fmt.Fprintln(w, border("└", "┴", "┘", "─"))
+	rich.PrintTo(w, t)
 }
 
-// fitPanel renders rich.Panel(expand=False): ROUNDED box sized to its
-// content (or title), title centered in the top border.
-func fitPanel(w io.Writer, content, title string) { fitPanelRaw(w, rich.Strip(content), title) }
-
-// fitPanelRaw is fitPanel for markup-free content.
-func fitPanelRaw(w io.Writer, content, title string) {
-	lines := strings.Split(content, "\n")
-	inner := 0
-	for _, l := range lines {
-		if n := runeLen(l); n > inner {
-			inner = n
-		}
-	}
-	width := inner + 4
-	if title != "" && runeLen(title)+6 > width {
-		width = runeLen(title) + 6
-	}
-	if max := rich.Width(); width > max {
-		width = max
-	}
-	inner = width - 4
-	top := strings.Repeat("─", width-2)
-	if title != "" {
-		t := " " + title + " "
-		ex := width - 2 - runeLen(t)
-		l := ex / 2
-		top = strings.Repeat("─", l) + t + strings.Repeat("─", ex-l)
-	}
-	fmt.Fprintln(w, "╭"+top+"╮")
-	for _, l := range lines {
-		wrapped := []string{""}
-		if l != "" {
-			wrapped = rich.WrapWords(l, inner)
-		}
-		for _, wl := range wrapped {
-			fmt.Fprintln(w, "│ "+wl+strings.Repeat(" ", inner-runeLen(wl))+" │")
-		}
-	}
-	fmt.Fprintln(w, "╰"+strings.Repeat("─", width-2)+"╯")
-}
+// fitPanel prints rich.Panel(content, title=title, expand=False);
+// content is console markup.
+func fitPanel(w io.Writer, content, title string) { rich.FitPanel(w, content, title) }

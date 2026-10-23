@@ -36,7 +36,7 @@ func init() {
 	app.Register(func(root *cli.Command) {
 		agent := app.Group(root, "agent", agentHelp)
 		tests := app.Group(agent, "tests", "Test-related commands for AI agents")
-		tests.NoArgsIsError = true
+		tests.NoArgsIsHelp = true
 		tests.Add(&cli.Command{
 			Name: "stale-check", Short: "Detect test assertions likely invalidated by source changes between two refs.", Long: staleCheckLong,
 			Flags: []*cli.Flag{
@@ -75,7 +75,7 @@ func runStaleCheck(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	if rep.FindingsPer100LOC > staleassert.FPCeiling {
-		rich.Print(ctx.Stderr, fmt.Sprintf("WARNING: findings_per_100_loc=%.1f exceeds NFR-002 ceiling of %.1f. Consider narrowing scope to function-rename detection only (FR-022).", rep.FindingsPer100LOC, staleassert.FPCeiling))
+		rich.Print(ctx.Stderr, fmt.Sprintf("[yellow]WARNING[/yellow]: findings_per_100_loc=%.1f exceeds NFR-002 ceiling of %.1f. Consider narrowing scope to function-rename detection only (FR-022).", rep.FindingsPer100LOC, staleassert.FPCeiling))
 	}
 	if ctx.Bool("json") {
 		items := []any{}
@@ -87,14 +87,14 @@ func runStaleCheck(ctx *cli.Context) error {
 			"elapsed_seconds", jsonx.Float(rep.ElapsedSeconds), "files_scanned", rep.FilesScanned, "findings_per_100_loc", jsonx.Float(rep.FindingsPer100LOC)), compact))
 		return nil
 	}
-	rich.Print(ctx.Stdout, fmt.Sprintf("\nStale-assertion analysis: %s → %s", pyjson.ReprString(base), pyjson.ReprString(head)))
+	rich.Print(ctx.Stdout, fmt.Sprintf("\n[bold]Stale-assertion analysis:[/bold] %s → %s", pyjson.ReprString(base), pyjson.ReprString(head)))
 	rich.Print(ctx.Stdout, fmt.Sprintf("  scanned %d test file(s) in %.2fs | findings/100 LOC: %.2f", rep.FilesScanned, rep.ElapsedSeconds, rep.FindingsPer100LOC))
 	if len(rep.Findings) == 0 {
-		rich.Print(ctx.Stdout, "No stale assertions detected.\n")
+		rich.Print(ctx.Stdout, "[green]No stale assertions detected.[/green]\n")
 		return nil
 	}
 	for _, level := range []string{"high", "medium", "low", "info"} {
-		var rows [][]string
+		var rows [][]any
 		for _, f := range rep.Findings {
 			if f.Confidence != level {
 				continue
@@ -103,45 +103,29 @@ func runStaleCheck(ctx *cli.Context) error {
 			if err != nil || strings.HasPrefix(rel, "..") {
 				rel = f.TestFile
 			}
-			rows = append(rows, []string{rel, strconv.Itoa(f.TestLine), f.ChangedSymbol, fmt.Sprintf("%s:%d", filepath.Base(f.SourceFile), f.SourceLine), f.Hint})
+			rows = append(rows, []any{rel, strconv.Itoa(f.TestLine), f.ChangedSymbol, fmt.Sprintf("%s:%d", filepath.Base(f.SourceFile), f.SourceLine), f.Hint})
 		}
 		if len(rows) == 0 {
 			continue
 		}
-		title := strings.ToUpper(level) + " confidence"
+		title := "[bold]" + strings.ToUpper(level) + " confidence[/bold]"
 		if level == "info" {
-			title = "INFO — message-content assertions (skipped from CI noise; review manually if diagnostic text changed)"
+			title = "[bold]INFO — message-content assertions[/bold] (skipped from CI noise; review manually if diagnostic text changed)"
 		}
-		var buf strings.Builder
-		rich.Table(&buf, title, []string{"Test file", "Line", "Changed symbol", "Source file", "Hint"}, rows)
-		fmt.Fprint(ctx.Stdout, rightJustifyColumn(buf.String(), 1))
+		t := rich.NewTable()
+		t.Title, t.HeaderStyle = title, "bold"
+		t.AddColumn("Test file", rich.Column{Style: "cyan"})
+		t.AddColumn("Line", rich.Column{Justify: "right"})
+		t.AddColumn("Changed symbol", rich.Column{Style: "yellow"})
+		t.AddColumn("Source file", rich.Column{})
+		t.AddColumn("Hint", rich.Column{})
+		for _, r := range rows {
+			t.AddRow(r...)
+		}
+		rich.PrintTo(ctx.Stdout, t)
 	}
 	fmt.Fprintln(ctx.Stdout)
 	return nil
-}
-
-// rightJustifyColumn right-aligns column col of a rendered table's body
-// rows (rich justify="right").
-func rightJustifyColumn(table string, col int) string {
-	lines := strings.Split(table, "\n")
-	for i, l := range lines {
-		if !strings.HasPrefix(l, "│") {
-			continue
-		}
-		parts := strings.Split(l, "│")
-		if len(parts) < col+3 {
-			continue
-		}
-		cell := parts[col+1]
-		w := len([]rune(cell))
-		v := strings.TrimSpace(cell)
-		if v == "" {
-			continue
-		}
-		parts[col+1] = strings.Repeat(" ", w-len([]rune(v))-1) + v + " "
-		lines[i] = strings.Join(parts, "│")
-	}
-	return strings.Join(lines, "\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -160,17 +144,17 @@ func runReconcile(ctx *cli.Context) error {
 		} else {
 			switch st {
 			case "parity":
-				rich.Print(ctx.Stdout, fmt.Sprintf("PARITY %s — dossier matches the recorded snapshot", slug))
+				rich.Print(ctx.Stdout, fmt.Sprintf("[green]PARITY[/green] %s — dossier matches the recorded snapshot", slug))
 			case "divergence":
 				v, _ := result.Get("differing_artifacts")
 				l, _ := v.([]any)
-				rich.Print(ctx.Stdout, fmt.Sprintf("DIVERGENCE %s — %d artifact(s) differ:", slug, len(l)))
+				rich.Print(ctx.Stdout, fmt.Sprintf("[red]DIVERGENCE[/red] %s — %d artifact(s) differ:", slug, len(l)))
 				for _, x := range l {
 					o := x.(*jsonx.Object)
-					rich.Print(ctx.Stdout, fmt.Sprintf("  • %s (%s)", o.GetString("artifact_path"), o.GetString("kind")))
+					rich.Print(ctx.Stdout, fmt.Sprintf("  [red]•[/red] %s (%s)", o.GetString("artifact_path"), o.GetString("kind")))
 				}
 			default:
-				rich.Print(ctx.Stdout, fmt.Sprintf("ERROR %s — %s", slug, result.GetString("error")))
+				rich.Print(ctx.Stdout, fmt.Sprintf("[red]ERROR[/red] %s — %s", slug, result.GetString("error")))
 			}
 		}
 		switch st {

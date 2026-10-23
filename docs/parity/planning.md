@@ -189,3 +189,12 @@ The prove-ownership-or-preserve guard (`specify_cli.asset_preservation`).
 * `internal/lanes/conflict_pairs.go` (new file, CORE's package):
   `MembershipConflict.Pairs()`, `FrozenMembership.IsEmpty()`.
 * No foundation (`internal/cli`, `app`, `jsonx`, `testkit`) changes.
+
+## Wave 5 (area COLOR)
+
+Commit-outcome lines print as `console.print(line, markup=False)` (wrapped,
+highlighted); the lifecycle interview hint is escaped and dim; dict payloads
+(`record-analysis --report-only`) print through `rich.PrintPretty`, which now
+highlights like `rich.pretty.Pretty`; tasks errors are `[red]Error:[/red]`
+markup. `safecommit.RouterResult.PrintRendered` was replaced by
+`printRendered` in the planning package.

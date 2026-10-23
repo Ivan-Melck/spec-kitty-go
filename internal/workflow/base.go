@@ -57,7 +57,7 @@ func ResolveBaseRef(root, base string) (string, string, bool) {
 
 // BaseRefUnresolvedMessage is implement_phases._BASE_REF_UNRESOLVED_MSG.
 func BaseRefUnresolvedMessage(base string) string {
-	return fmt.Sprintf("Error: Base ref '%s' does not resolve. Try 'git fetch' or 'git branch -a' to see available refs.", base)
+	return fmt.Sprintf("[red]Error:[/red] Base ref '%s' does not resolve. Try 'git fetch' or 'git branch -a' to see available refs.", base)
 }
 
 // UnhonorableBaseError is worktree_allocator.UnhonorableBaseError.

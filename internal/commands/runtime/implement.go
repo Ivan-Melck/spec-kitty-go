@@ -71,7 +71,7 @@ func runTopImplement(ctx *cli.Context) error {
 		return strings.TrimSpace(strings.Join(lines, "\n"))
 	}
 	if !ctx.IsSet("mission") {
-		o.Console("Error: --mission <slug> is required")
+		o.Console("[red]Error:[/red] --mission <slug> is required")
 		if jsonMode {
 			emitJSONError(summary())
 		}
@@ -82,7 +82,7 @@ func runTopImplement(ctx *cli.Context) error {
 	}
 	root := locateRoot()
 	if root == "" {
-		rich.Print(o.W, "Error: Could not locate project root")
+		rich.Print(o.W, "[red]Error:[/red] Could not locate project root")
 		return cli.Exit(1)
 	}
 	o.Console("")
@@ -94,7 +94,7 @@ func runTopImplement(ctx *cli.Context) error {
 		tr.Add("create", "Resolve execution workspace")
 		tr.Start("detect")
 		tr.Error("detect", "1")
-		o.Console(tr.Render())
+		o.ConsoleR(tr.Render())
 		if jsonMode {
 			emitJSONError(summary())
 		}
@@ -155,7 +155,7 @@ func runRecover(ctx *cli.Context, jsonMode bool) error {
 			fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("status", "ok", "message", "No crashed implementation sessions found.",
 				"recovered_wps", []any{}, "worktrees_recreated", 0, "transitions_emitted", 0, "errors", []any{}), compact))
 		} else {
-			rich.Print(ctx.Stdout, "No crashed implementation sessions found.")
+			rich.Print(ctx.Stdout, "[green]No crashed implementation sessions found.[/green]")
 		}
 		return nil
 	}
@@ -164,13 +164,17 @@ func runRecover(ctx *cli.Context, jsonMode bool) error {
 			if b {
 				return "yes"
 			}
-			return "NO"
+			return "[red]NO[/red]"
 		}
-		var rows [][]string
+		t := rich.NewTable()
+		t.Title = "Recovery Scan Results"
+		for i, h := range []string{"WP", "Lane", "Branch", "Worktree", "Context", "Status", "Action"} {
+			t.AddColumn(h, rich.Column{Style: []string{"cyan", "blue", "dim", "green", "green", "yellow", "bold"}[i]})
+		}
 		for _, s := range needs {
-			rows = append(rows, []string{s.WPID, s.LaneID, s.BranchName, yn(s.WorktreeExists), yn(s.ContextExists), s.StatusLane, s.RecoveryAction})
+			t.AddRow(s.WPID, s.LaneID, s.BranchName, yn(s.WorktreeExists), yn(s.ContextExists), s.StatusLane, s.RecoveryAction)
 		}
-		rich.Table(ctx.Stdout, "Recovery Scan Results", []string{"WP", "Lane", "Branch", "Worktree", "Context", "Status", "Action"}, rows)
+		rich.PrintTo(ctx.Stdout, t)
 		fmt.Fprintln(ctx.Stdout)
 	}
 	rep := workflow.RunRecovery(root, slug)
@@ -190,15 +194,15 @@ func runRecover(ctx *cli.Context, jsonMode bool) error {
 	if none == "" {
 		none = "none"
 	}
-	fmt.Fprintln(ctx.Stdout, "Recovery complete")
-	fmt.Fprintf(ctx.Stdout, "  WPs recovered: %s\n", none)
-	fmt.Fprintf(ctx.Stdout, "  Worktrees recreated: %d\n", rep.WorktreesRecreated)
-	fmt.Fprintf(ctx.Stdout, "  Contexts recreated: %d\n", rep.ContextsRecreated)
-	fmt.Fprintf(ctx.Stdout, "  Status transitions emitted: %d\n", rep.TransitionsEmitted)
+	rich.Print(ctx.Stdout, "[bold green]Recovery complete[/bold green]")
+	rich.Print(ctx.Stdout, fmt.Sprintf("  WPs recovered: %s", none))
+	rich.Print(ctx.Stdout, fmt.Sprintf("  Worktrees recreated: %d", rep.WorktreesRecreated))
+	rich.Print(ctx.Stdout, fmt.Sprintf("  Contexts recreated: %d", rep.ContextsRecreated))
+	rich.Print(ctx.Stdout, fmt.Sprintf("  Status transitions emitted: %d", rep.TransitionsEmitted))
 	if len(rep.Errors) > 0 {
-		fmt.Fprintln(ctx.Stdout, "  Errors:")
+		rich.Print(ctx.Stdout, "  [red]Errors:[/red]")
 		for _, e := range rep.Errors {
-			fmt.Fprintf(ctx.Stdout, "    - %s\n", e)
+			rich.Print(ctx.Stdout, fmt.Sprintf("    - %s", e))
 		}
 	}
 	return nil

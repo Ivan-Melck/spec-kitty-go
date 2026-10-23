@@ -55,7 +55,7 @@ func runReview(ctx *cli.Context) error {
 	w := ctx.Stdout
 	root := locateRoot()
 	if root == "" {
-		say(w, "[red]Error:[/red] Could not locate project root")
+		say(w, "[red]Error:[/red] Unable to locate repository root (missing .git or .kittify).")
 		return cli.Exit(2)
 	}
 	// The reference install has no pytest: the review always notes it.

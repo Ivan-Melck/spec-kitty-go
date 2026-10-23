@@ -172,7 +172,7 @@ func runConsolidate(ctx *cli.Context) error {
 	}
 	root := locateRoot()
 	if root == "" {
-		sayLiteral(ctx.Stdout, "Error: ", "Could not locate project root")
+		sayLiteral(ctx.Stdout, "[red]Error:[/red] ", "Unable to locate repository root (missing .git or .kittify).")
 		return cli.Exit(1)
 	}
 	if ctx.Bool("abort") {

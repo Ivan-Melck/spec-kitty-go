@@ -48,10 +48,10 @@ func emitCharterError(w io.Writer, jsonMode bool, message, code string, extra *j
 		return
 	}
 	if code != "" {
-		cprintRaw(w, fmt.Sprintf("Error (%s): %s", code, message))
+		cprintRaw(w, fmt.Sprintf("[red]Error (%s):[/red] %s", rich.EscapeMarkup(code), rich.EscapeMarkup(message)))
 		return
 	}
-	cprintRaw(w, "Error: "+message)
+	cprintRaw(w, "[red]Error:[/red] "+rich.EscapeMarkup(message))
 }
 
 func charterErr(ctx *cli.Context, jsonMode bool, err error) error {
@@ -66,7 +66,11 @@ func charterErr(ctx *cli.Context, jsonMode bool, err error) error {
 
 func runCharterContext(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
-	root := repoRoot()
+	root := findRepoRoot()
+	if root == "" {
+		emitCharterError(ctx.Stdout, jsonMode, repoRootMissing, "", nil)
+		return cli.Exit(1)
+	}
 	if sel := ctx.String("include"); ctx.IsSet("include") && sel != "" {
 		text, err := charter.BuildInclude(root, sel)
 		if err != nil {
@@ -76,7 +80,7 @@ func runCharterContext(ctx *cli.Context) error {
 			jsonOut(ctx.Stdout, jsonx.NewObject("result", "success", "success", true, "include", sel, "context", text, "text", text), jsonx.Pretty)
 			return nil
 		}
-		cprintRaw(ctx.Stdout, strings.TrimSuffix(text, "\n"))
+		cprintPlain(ctx.Stdout, strings.TrimSuffix(text, "\n"))
 		return nil
 	}
 	if !ctx.IsSet("action") {
@@ -109,6 +113,6 @@ func runCharterContext(ctx *cli.Context) error {
 	if res.Mode == "bootstrap" {
 		cprintRaw(ctx.Stdout, fmt.Sprintf("Action: %s (%s)", res.Action, res.Mode))
 	}
-	cprintRaw(ctx.Stdout, res.Text)
+	cprintPlain(ctx.Stdout, res.Text)
 	return nil
 }

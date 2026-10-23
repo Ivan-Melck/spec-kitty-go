@@ -470,7 +470,7 @@ func runDocumentationWiring(out io.Writer, jsonMode bool, root, slug string, own
 				} else {
 					r := safecommit.CommitForMission(routerRoot, slug, []string{outFile, metaFile}, "Add gap analysis for mission "+slug, mission.KindPrimaryMetadataUnknown, safecommit.RouterOptions{Owned: owned})
 					if !jsonMode && surfaceNeedsWarningPlain(r) {
-						r.PrintRendered(out, wrapPlain)
+						printRendered(out, r)
 					}
 					if !jsonMode {
 						say(out, fmt.Sprintf("[cyan]→ Gap analysis generated: gap-analysis.md (coverage: %s%%)[/cyan]", pyPct1(coverage*100)))
@@ -498,7 +498,7 @@ func runDocumentationWiring(out io.Writer, jsonMode bool, root, slug string, own
 		} else {
 			r := safecommit.CommitForMission(routerRoot, slug, []string{metaFile}, "Update generator config for mission "+slug, mission.KindPrimaryMetadataUnknown, safecommit.RouterOptions{Owned: owned})
 			if !jsonMode && surfaceNeedsWarningPlain(r) {
-				r.PrintRendered(out, wrapPlain)
+				printRendered(out, r)
 			}
 		}
 	}
