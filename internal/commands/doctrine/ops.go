@@ -2,6 +2,7 @@ package doctrine
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -81,8 +82,10 @@ func gitReflog(dir string, limit int) []reflogOp {
 func runOpsLog(ctx *cli.Context) error {
 	w := ctx.Stdout
 	dir := cwd()
-	if !gitx.IsRepo(dir) {
-		cprint(w, "[red]Error:[/red] Failed to detect VCS: No VCS repository found at %s", dir)
+	// get_vcs only needs git on PATH (not a repository): outside one the
+	// reflog is simply empty.
+	if _, err := exec.LookPath("git"); err != nil {
+		cprint(w, "[red]Error:[/red] Failed to detect VCS: git is not available. Please install git: https://git-scm.com/downloads")
 		return cli.Exit(1)
 	}
 	cprint(w, "\n[cyan]Backend:[/cyan] git")

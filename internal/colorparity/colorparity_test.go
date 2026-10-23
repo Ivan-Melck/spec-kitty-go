@@ -238,6 +238,12 @@ func leafProbes(t *testing.T) []probe {
 	skip := map[string]bool{"init": true, "upgrade": true, "dashboard": true, "merge-driver": true,
 		"session-start": true, "session-stop": true, "plugin build": true, "lint": true, "events tail": true,
 		"commit-guard-hook": true}
+	// The built-in pack root is the installed package directory upstream
+	// (site-packages/packs/built-in) and the extracted cache under
+	// ~/.kittify/cache/packs in Go; these print it.
+	for _, k := range []string{"charter pack asset list", "charter pack regenerate-graph"} {
+		skip[k] = true
+	}
 	groups := map[string]bool{}
 	files, _ := filepath.Glob(filepath.Join(dir, "*.txt"))
 	var paths [][]string
@@ -279,10 +285,14 @@ func TestNoProjectColour(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					for p := range ch {
-						base := t.TempDir()
+						tmp := t.TempDir()
 						res := map[string]string{}
 						for _, side := range []string{"o", "g"} {
-							home, cwd := filepath.Join(base, "home"+side), filepath.Join(base, "cwd"+side)
+							// Same basenames on both sides: rich highlights a
+							// path's last component separately, so only the
+							// shared prefix can be masked.
+							base := filepath.Join(tmp, side)
+							home, cwd := filepath.Join(base, "home"), filepath.Join(base, "cwd")
 							os.MkdirAll(home, 0o755)
 							os.MkdirAll(cwd, 0o755)
 							exe := bin
@@ -291,7 +301,8 @@ func TestNoProjectColour(t *testing.T) {
 							}
 							out, code := runTimeout(exe, home, cwd, v.env, p.args...)
 							out = strings.ReplaceAll(strings.ReplaceAll(out, cwd, "<CWD>"), home, "<HOME>")
-							res[side] = fmt.Sprintf("exit %d\n%s", code, normalize(out))
+							out = strings.ReplaceAll(out, base+"/", "<BASE>/")
+							res[side] = fmt.Sprintf("exit %d\n%s", code, normalize(testkit.MaskTracebackFrames(out)))
 						}
 						if res["o"] != res["g"] {
 							mu.Lock()

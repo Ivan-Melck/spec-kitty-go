@@ -228,7 +228,7 @@ func packAssetGroup() *cli.Command {
 				cprint(ctx.Stdout, "[yellow]No charter pack assets found.[/yellow]")
 				return nil
 			}
-			t := &rtable{Headers: []string{"ID", "TIER", "PATH"}}
+			t := &rtable{Headers: []string{"ID", "TIER", "PATH"}, Styles: []string{"cyan", "green"}}
 			for _, r := range rows {
 				t.Rows = append(t.Rows, []string{r.id, r.tier, r.path})
 			}

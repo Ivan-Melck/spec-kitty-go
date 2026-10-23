@@ -52,7 +52,10 @@ func runComplete(ctx *cli.Context) error {
 	if outcome != "done" && outcome != "failed" && outcome != "abandoned" {
 		return cli.Usage(ctx.Cmd, "Invalid value for --outcome: %s", fmt.Sprintf("invalid outcome %s: must be one of done, failed, abandoned", pyStrRepr(outcome)))
 	}
-	root := repoRoot()
+	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "complete_invocation", Line: 138}, rich.Frame{Name: "_get_repo_root", Line: 33})
+	if err != nil {
+		return err
+	}
 	artifacts := ctx.Strings("artifact")
 	opt := invocation.CompleteOptions{Evidence: ctx.OptString("evidence"), Artifacts: artifacts, Commit: ctx.OptString("commit")}
 	completed, commit, err := invocation.Complete(root, id, outcome, opt)
@@ -129,7 +132,10 @@ func pyStrRepr(s string) string {
 }
 
 func runInvocationsList(ctx *cli.Context) error {
-	root := repoRoot()
+	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "list_invocations", Line: 396}, rich.Frame{Name: "_get_repo_root", Line: 55})
+	if err != nil {
+		return err
+	}
 	var filter string
 	if p := ctx.OptString("profile"); p != nil {
 		filter = *p

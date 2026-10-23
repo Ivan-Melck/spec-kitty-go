@@ -366,7 +366,10 @@ func missionDetailLines(m *legacyMission) []string {
 }
 
 func runMissionInfo(ctx *cli.Context) error {
-	root := repoRoot()
+	root, err := projectRootOrExit(ctx)
+	if err != nil {
+		return err
+	}
 	name := ctx.Arg("mission_name")
 	m := findLegacyMission(root, name)
 	if m == nil {
@@ -384,7 +387,10 @@ func runMissionInfo(ctx *cli.Context) error {
 }
 
 func runMissionCurrent(ctx *cli.Context) error {
-	root := repoRoot()
+	root, err := projectRootOrExit(ctx)
+	if err != nil {
+		return err
+	}
 	slug := strings.TrimSpace(ctx.String("mission"))
 	if !ctx.IsSet("mission") {
 		w := ctx.Stdout

@@ -10,7 +10,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
-	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
 
@@ -19,7 +18,7 @@ func tasksOutputError(ctx *cli.Context, jsonMode bool, msg string) {
 	if jsonMode {
 		printCompact(ctx.Stdout, jsonx.NewObject("error", msg))
 	} else {
-		say(ctx.Stdout, "Error: "+rich.Strip(msg))
+		say(ctx.Stdout, "[red]Error:[/red] "+msg)
 	}
 }
 

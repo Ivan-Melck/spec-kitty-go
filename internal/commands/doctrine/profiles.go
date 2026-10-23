@@ -70,7 +70,10 @@ func profileDescriptor(p *dct.Profile) *jsonx.Object {
 }
 
 func runProfileList(ctx *cli.Context) error {
-	root := repoRoot()
+	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "list_profiles", Line: 156})
+	if err != nil {
+		return err
+	}
 	cat := dct.LoadProfileCatalog(root)
 	profiles := cat.List()
 	jsonMode := ctx.Bool("json")
@@ -213,7 +216,10 @@ func mustGet(o *jsonx.Object, k string) any {
 }
 
 func runProfileShow(ctx *cli.Context) error {
-	root := repoRoot()
+	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "show_profile", Line: 329})
+	if err != nil {
+		return err
+	}
 	id := ctx.Arg("profile_id")
 	jsonMode := ctx.Bool("json")
 	cat := dct.LoadProfileCatalog(root)

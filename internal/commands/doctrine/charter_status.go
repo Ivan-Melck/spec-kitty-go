@@ -28,10 +28,13 @@ func charterStatusCmd() *cli.Command {
 func runCharterStatus(ctx *cli.Context) error {
 	w := ctx.Stdout
 	jsonMode := ctx.Bool("json")
-	root := repoRoot()
 	fail := func(msg string) error {
 		emitCharterError(w, jsonMode, msg, "", nil)
 		return cli.Exit(1)
+	}
+	root := findRepoRoot()
+	if root == "" {
+		return fail(repoRootMissing)
 	}
 	if fileExists(charter.Path(root, charter.CharterYAML)) {
 		if err := charter.AssertBundleCompatible(root); err != nil {

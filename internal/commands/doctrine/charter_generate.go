@@ -47,7 +47,10 @@ func runCharterGenerate(ctx *cli.Context) error {
 	if ctx.IsSet("mission-handle") && !ctx.IsSet("owned-checkout") {
 		return fail("--mission-handle requires --owned-checkout")
 	}
-	root := repoRoot()
+	root := findRepoRoot()
+	if root == "" {
+		return fail(repoRootMissing)
+	}
 	if out, err := gitx.Run(root, "rev-parse", "--is-inside-work-tree"); err != nil || strings.TrimSpace(out) != "true" {
 		return fail("charter generate requires a git repository. Initialize one with `git init` (so the produced charter.md can be auto-tracked and accepted by `charter bundle validate`).")
 	}

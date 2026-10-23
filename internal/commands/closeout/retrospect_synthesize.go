@@ -332,4 +332,3 @@ func renderSynthesis(ctx *cli.Context, res *retrospective.SynthResult, dry bool)
 	say(w, fmt.Sprintf("\n[bold]Summary:[/bold] planned=%d applied=%d conflicts=%d rejected=%d events_emitted=%d",
 		len(res.Planned), len(res.Applied), len(res.Conflicts), len(res.Rejected), len(res.EventsEmitted)))
 }
-

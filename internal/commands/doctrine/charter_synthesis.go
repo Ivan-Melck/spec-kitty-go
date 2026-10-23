@@ -106,7 +106,10 @@ func runCharterSynthesize(ctx *cli.Context) error {
 		cprint(ctx.Stderr, "%s", "[red]Error:[/red] "+err.Error())
 		return cli.Exit(1)
 	}
-	root := repoRoot()
+	root := findRepoRoot()
+	if root == "" {
+		return synthFailure(ctx, jsonMode, adapter, warnings, repoRootMissing)
+	}
 	fresh := adapter == "generated" && !charter.HasGeneratedArtifacts(root) && !ctx.Bool("dry-run-evidence") && fileExists(charter.Path(root, charter.CharterYAML))
 	if fresh {
 		res, err := charter.SynthesizeProjectLayer(root, app.Version, dryRun)
@@ -571,7 +574,11 @@ func charterPreflightCmd() *cli.Command {
 
 func runCharterPreflight(ctx *cli.Context) error {
 	w := ctx.Stdout
-	root := repoRoot()
+	root := findRepoRoot()
+	if root == "" {
+		cprint(ctx.Stderr, "%s", "[red]Error:[/red] "+repoRootMissing)
+		return cli.Exit(2)
+	}
 	res := runPreflight(root, ctx.Bool("auto-refresh"))
 	if ctx.Bool("json") {
 		jsonOut(w, res.object(), jsonx.Options{Indent: -1, SortKeys: true})

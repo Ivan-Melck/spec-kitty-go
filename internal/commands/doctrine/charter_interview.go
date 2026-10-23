@@ -51,7 +51,11 @@ func parseCSVOpt(v *string) ([]string, bool) {
 func runCharterInterview(ctx *cli.Context) error {
 	w := ctx.Stdout
 	jsonMode := ctx.Bool("json")
-	root := repoRoot()
+	root := findRepoRoot()
+	if root == "" {
+		emitCharterError(w, jsonMode, repoRootMissing, "", nil)
+		return cli.Exit(1)
+	}
 	profile := strings.ToLower(strings.TrimSpace(ctx.String("profile")))
 	if profile != "minimal" && profile != "comprehensive" {
 		emitCharterError(w, jsonMode, "--profile must be 'minimal' or 'comprehensive'", "", nil)

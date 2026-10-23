@@ -313,7 +313,10 @@ func runCharterResynthesize(ctx *cli.Context) error {
 	if err := writeRootError(); err != nil {
 		return fail(err.Error(), false)
 	}
-	root := repoRoot()
+	root := findRepoRoot()
+	if root == "" {
+		return fail(repoRootMissing, false)
+	}
 	if fileExists(charter.Path(root, charter.CharterYAML)) {
 		if err := charter.AssertBundleCompatible(root); err != nil {
 			return fail(err.Error(), false)

@@ -118,7 +118,7 @@ func runAccept(ctx *cli.Context, o acceptOpts) error {
 	r := &acceptRun{ctx: ctx, json: o.json, advisories: []any{}}
 	root := locateRoot()
 	if root == "" {
-		return r.fail("Could not locate project root", 1, "", nil)
+		return r.fail("Unable to locate repository root (missing .git or .kittify).", 1, "", nil)
 	}
 	if o.owned {
 		return r.fail("--owned-checkout is not supported by this build.", 1, "", nil)

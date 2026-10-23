@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
@@ -21,6 +22,37 @@ func repoRoot() string {
 	}
 	wd, _ := os.Getwd()
 	return wd
+}
+
+// findRepoRoot is task_utils.find_repo_root: the project root, else the
+// enclosing repository's main root; "" (TaskCliError) when neither exists.
+func findRepoRoot() string {
+	if r := project.Locate(""); r != "" {
+		return r
+	}
+	return findRepoRootStrict()
+}
+
+// repoRootOrCrash is an uncaught find_repo_root: outside any project or
+// repository the TaskCliError escapes as rich's traceback (exit 1).
+func repoRootOrCrash(ctx *cli.Context, frames ...rich.Frame) (string, error) {
+	if r := findRepoRoot(); r != "" {
+		return r, nil
+	}
+	frames = append(frames, rich.Frame{Name: "find_repo_root", Line: 94})
+	rich.PrintTraceback(ctx.Stderr, &rich.Exception{Type: "TaskCliError", Value: repoRootMissing, Frames: frames})
+	return "", cli.Exit(1)
+}
+
+// projectRootOrExit is helpers.get_project_root_or_exit (human form).
+func projectRootOrExit(ctx *cli.Context) (string, error) {
+	if r := project.Locate(""); r != "" {
+		return r, nil
+	}
+	rich.Print(ctx.Stdout, "[red]Error:[/red] Unable to locate the Spec Kitty project root (.kittify directory not found).")
+	rich.Print(ctx.Stdout, "[dim]Run this command from the project root or from a mission worktree under .worktrees/<mission>/.[/dim]")
+	rich.Print(ctx.Stdout, "[dim]Tip: Initialize a project with 'spec-kitty init <name>' if one does not exist.[/dim]")
+	return "", cli.Exit(1)
 }
 
 func cwd() string {
