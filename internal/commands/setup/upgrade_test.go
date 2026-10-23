@@ -67,7 +67,7 @@ func compareFiles(t *testing.T, p *testkit.Pair, rels ...string) {
 
 func TestUpgradeCurrentProjectMatchesOracle(t *testing.T) {
 	p := testkit.NewPair(t)
-	p.Compare(false, "init", ".", "--ai", "claude,codex", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude,codex", "--non-interactive")
 	p.Both(func(s *testkit.Sandbox) { s.Git("add", "-A"); s.Git("commit", "-qm", "init") })
 	p.Compare(false, "upgrade", "--dry-run")
 	compareMasked(t, p, "upgrade", "--dry-run", "--json")
@@ -103,7 +103,7 @@ func TestUpgradeCurrentProjectMatchesOracle(t *testing.T) {
 
 func TestUpgradeStaleAndLegacyMatchOracle(t *testing.T) {
 	p := testkit.NewPair(t)
-	p.Compare(false, "init", ".", "--ai", "claude,codex", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude,codex", "--non-interactive")
 	p.Both(func(s *testkit.Sandbox) {
 		md := strings.Replace(s.ReadFile(".kittify/metadata.yaml"), "  version: 4.0.0rc8", "  version: 4.0.0rc5", 1)
 		os.Chmod(filepath.Join(s.Dir, ".kittify/metadata.yaml"), 0o644)
@@ -148,7 +148,7 @@ func TestUpgradeFlagsMatchOracle(t *testing.T) {
 	p.Compare(false, "upgrade", "--project")
 	p.Compare(false, "upgrade", "--project", "--json")
 	compareMasked(t, p, "upgrade", "--plan-json")
-	p.Compare(false, "init", ".", "--ai", "claude", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude", "--non-interactive")
 	p.Compare(false, "upgrade", "--cli", "--project")
 	compareMasked(t, p, "upgrade", "--cli", "--project", "--json")
 	compareMasked(t, p, "upgrade", "--plan-json", "--cli")

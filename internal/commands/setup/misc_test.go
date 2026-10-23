@@ -13,7 +13,7 @@ func TestVerifySetupMatchesOracle(t *testing.T) {
 	p := testkit.NewPair(t)
 	p.Compare(false, "verify-setup", "--json")
 	p.Compare(false, "verify-setup", "--check-tools")
-	p.Compare(false, "init", ".", "--ai", "claude,codex", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude,codex", "--non-interactive")
 	p.Compare(false, "verify-setup")
 	p.Compare(false, "verify-setup", "--json")
 	p.Compare(false, "verify-setup", "--diagnostics")
@@ -40,7 +40,7 @@ func TestConfigAndSessionsMatchOracle(t *testing.T) {
 	p.Compare(false, "config")
 	p.Compare(false, "session-start")
 	p.Compare(false, "session-stop")
-	p.Compare(false, "init", ".", "--ai", "claude", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude", "--non-interactive")
 	p.Compare(false, "session-start")
 	p.Compare(false, "session-stop")
 	p.Both(func(s *testkit.Sandbox) {

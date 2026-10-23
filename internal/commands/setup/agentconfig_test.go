@@ -12,7 +12,7 @@ import (
 func TestAgentConfigMatchesOracle(t *testing.T) {
 	p := testkit.NewPair(t)
 	p.Compare(false, "agent", "config", "list")
-	p.Compare(false, "init", ".", "--ai", "claude,codex", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude,codex", "--non-interactive")
 	for _, args := range [][]string{
 		{"list"}, {"status"},
 		{"add", "gemini", "vibe", "codex"},
@@ -48,7 +48,7 @@ func TestAgentConfigMatchesOracle(t *testing.T) {
 
 func TestAgentConfigOrphansMatchOracle(t *testing.T) {
 	p := testkit.NewPair(t)
-	p.Compare(false, "init", ".", "--ai", "claude", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude", "--non-interactive")
 	p.Both(func(s *testkit.Sandbox) {
 		s.WriteFile(".gemini/commands/spec-kitty.plan.md", "user file\n")
 		s.WriteFile(".kittify/x", "")

@@ -13,7 +13,7 @@ func TestDoctorSetupLeavesMatchOracle(t *testing.T) {
 	for _, c := range [][]string{{"skills"}, {"skills", "--json"}, {"env-file", "--json"}, {"command-files"}} {
 		p.Compare(false, append([]string{"doctor"}, c...)...)
 	}
-	p.Compare(false, "init", ".", "--ai", "claude,codex,gemini", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude,codex,gemini", "--non-interactive")
 	for _, c := range [][]string{{"skills"}, {"skills", "--json"}, {"command-files"}, {"command-files", "--json"},
 		{"env-file"}, {"env-file", "--json"}, {"channel"}, {"channel", "--json"}} {
 		p.Compare(false, append([]string{"doctor"}, c...)...)

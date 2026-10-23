@@ -41,7 +41,7 @@ func TestInitMatchesOracle(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			p := testkit.NewPair(t)
-			g, o := p.Compare(false, "init", ".", "--ai", sel, "--non-interactive")
+			g, o := compareInit(p, "init", ".", "--ai", sel, "--non-interactive")
 			if g.Code != 0 || o.Code != 0 {
 				t.Fatalf("exit go=%d oracle=%d\n%s", g.Code, o.Code, g.Stderr)
 			}
@@ -58,25 +58,25 @@ func TestInitMatchesOracle(t *testing.T) {
 
 func TestInitErrorsMatchOracle(t *testing.T) {
 	p := testkit.NewPair(t)
-	p.Compare(false, "init", ".", "--ai", "bogus", "--non-interactive")
-	p.Compare(false, "init", ".", "--non-interactive")
-	p.Compare(false, "init", ".", "--ai", ",", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "bogus", "--non-interactive")
+	compareInit(p, "init", ".", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", ",", "--non-interactive")
 	// Second run on an initialized project.
-	p.Compare(false, "init", ".", "--ai", "claude", "--non-interactive")
-	p.Compare(false, "init", ".", "--ai", "claude", "--non-interactive")
-	p.Compare(false, "init", ".", "--ai", "codex", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "claude", "--non-interactive")
+	compareInit(p, "init", ".", "--ai", "codex", "--non-interactive")
 }
 
 func TestInitNamedDirAndNoGit(t *testing.T) {
 	p := testkit.NewPair(t)
-	p.Compare(false, "init", "newproj", "--ai", "codex", "--non-interactive")
+	compareInit(p, "init", "newproj", "--ai", "codex", "--non-interactive")
 	maskInitFiles(t, filepath.Join(p.Go.Dir, "newproj"))
 	maskInitFiles(t, filepath.Join(p.Oracle.Dir, "newproj"))
 	compareDirs(t, p, filepath.Join(p.Go.Dir, "newproj"), filepath.Join(p.Oracle.Dir, "newproj"))
-	p.Compare(false, "init", "newproj", "--ai", "codex", "--non-interactive")
+	compareInit(p, "init", "newproj", "--ai", "codex", "--non-interactive")
 
 	q := &testkit.Pair{T: t, Go: testkit.NewSandbox(t), Oracle: testkit.NewSandbox(t)}
-	q.Compare(false, "init", "--ai", "claude", "--yes")
+	compareInit(q, "init", "--ai", "claude", "--yes")
 	maskInitFiles(t, q.Go.Dir)
 	maskInitFiles(t, q.Oracle.Dir)
 	compareDirs(t, q, q.Go.Dir, q.Oracle.Dir)

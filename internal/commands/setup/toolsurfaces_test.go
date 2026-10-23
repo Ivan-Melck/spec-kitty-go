@@ -13,7 +13,7 @@ func TestDoctorToolSurfacesMatchOracle(t *testing.T) {
 		sel := sel
 		t.Run(sel, func(t *testing.T) {
 			p := testkit.NewPair(t)
-			p.Compare(false, "init", ".", "--ai", sel, "--non-interactive")
+			compareInit(p, "init", ".", "--ai", sel, "--non-interactive")
 			p.Compare(false, "doctor", "tool-surfaces")
 			p.Compare(false, "doctor", "tool-surfaces", "--json")
 			p.Compare(false, "doctor", "tool-surfaces", "--kind", "command-skill", "--kind", "hook", "--json")
