@@ -100,7 +100,7 @@ func runTopImplement(ctx *cli.Context) error {
 		}
 		return cli.Exit(1)
 	}
-	slug, err := resolveMission(ctx.Stdout, ctx.Stderr, root, ctx.String("mission"), jsonMode)
+	slug, err := resolveMissionIdentity(ctx.Stdout, ctx.Stderr, root, ctx.String("mission"), jsonMode)
 	if err != nil {
 		return err
 	}
