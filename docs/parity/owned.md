@@ -116,11 +116,6 @@ Additive hooks in other packages: `lanes.OwnedCheckoutKind` /
 
 ## Remaining work
 
-* `implement` / `agent action implement` (area F) do not run the
-  single_branch write-checkout refusals or take the checkout claim lock;
-  only `orchestrator-api start-implementation` does (the helpers live in
-  `internal/commands/orchestrator/writecheckout.go` and could move to a
-  shared package).
 * `placement.ReadDir` does not port `require_coord_worktree_branch` (a
   materialized coordination worktree on the wrong branch raises upstream)
   and has no owned variant (owned reads go through `ownedcheckout.Fact`).

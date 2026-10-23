@@ -16,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
+	"github.com/spec-kitty/go-kitty3/internal/writecheckout"
 )
 
 // ImplementOptions are the `spec-kitty implement` inputs.
@@ -330,7 +331,7 @@ func TopImplement(o *Out, opt ImplementOptions) (*ImplementResult, error) {
 	}
 	manifest, _ := lanes.Read(primary)
 	var lane *lanes.Lane
-	if !ws.RunsInCheckoutRoot() || ws.BranchName != "" {
+	if ws.LaneID != lanes.PlanningLaneID { // resolve_execution_lane: none for a repo-root lane
 		if manifest == nil {
 			return fail(fmt.Sprintf("lanes.json not found in %s", primary))
 		}
@@ -346,6 +347,33 @@ func TopImplement(o *Out, opt ImplementOptions) (*ImplementResult, error) {
 	}
 
 	tracker.Start("create")
+	createFailure := func(err error) (*ImplementResult, error) {
+		tracker.Error("create", "workspace allocation failed: "+err.Error())
+		o.Console(tracker.Render())
+		o.Console("\nError: Workspace allocation failed: " + err.Error())
+		return nil, ExitErr(1)
+	}
+	// #5796: the checkout claim lock (single_branch repo-root lane only) is
+	// held from before the occupancy scan through the claim commit.
+	if writecheckout.IsSingleBranchRepoRootLane(root, slug, ws) {
+		release, err := writecheckout.AcquireClaimLock(root, writecheckout.ClaimLockTimeout)
+		if err != nil {
+			if lt, ok := err.(*writecheckout.LockTimeoutError); ok {
+				tracker.Error("create", lt.ErrorCode()+": status lock held by another writer")
+				o.Console(tracker.Render())
+				o.Console("\nError: " + lt.ErrorCode() + ": " + lt.Msg + ". Another writer holds the lock; retry the claim.")
+				return nil, ExitErr(1)
+			}
+			return createFailure(err)
+		}
+		defer release()
+	}
+	// #5100 A3: the write-checkout refusals run before the VCS lock.
+	if ws.LaneID == lanes.PlanningLaneID {
+		if err := writecheckout.EnsureAvailable(root, slug, slug, wpID, ws); err != nil {
+			return createFailure(err)
+		}
+	}
 	metaPath := filepath.Join(primary, mission.MetaFile)
 	metaDirty := pathDirty(root, metaPath)
 	if metaDirty && isVCSLockOnlyMetaChange(root, relTo(root, metaPath)) {

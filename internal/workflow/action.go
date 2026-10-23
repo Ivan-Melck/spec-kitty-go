@@ -18,6 +18,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
+	"github.com/spec-kitty/go-kitty3/internal/writecheckout"
 )
 
 // NormalizeWPID is workflow_cores.normalize_wp_id.
@@ -287,6 +288,30 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 	if err != nil {
 		o.Printf("Error: %v", err)
 		return ExitErr(1)
+	}
+	// #5459/#5796: a single_branch repo-root lane never reaches workspace
+	// creation, so the claim seam runs here, before any status event: the
+	// checkout claim lock (held through the claim), the write-checkout
+	// refusals, then the claim base.
+	if writecheckout.IsSingleBranchRepoRootLane(root, slug, ws) {
+		release, err := writecheckout.AcquireClaimLock(root, writecheckout.ClaimLockTimeout)
+		if err != nil {
+			if lt, ok := err.(*writecheckout.LockTimeoutError); ok {
+				o.Printf("Error: %s: %s. Another writer holds the lock; retry the claim.", lt.ErrorCode(), lt.Msg)
+			} else {
+				o.Printf("Error: %v", err)
+			}
+			return ExitErr(1)
+		}
+		defer release()
+		if err := writecheckout.GuardRepoRootClaim(root, slug, slug, wpID, ws); err != nil {
+			if re, ok := err.(*writecheckout.RefusalError); ok {
+				o.Printf("Error: %s (%s)", re.Msg, re.Code)
+			} else {
+				o.Printf("Error: %v", err)
+			}
+			return ExitErr(1)
+		}
 	}
 	if !ws.RunsInCheckoutRoot() {
 		if st, err := os.Stat(ws.WorktreePath); err == nil && st.IsDir() && !ws.Exists() {
