@@ -91,14 +91,70 @@ library goldens (`internal/pydantic`, `internal/pydifflib`, `internal/jsonschema
 
 ## Remaining work
 
-- Mission-type activation step-removal warnings (FR-008).
-  (`reproject_pack_skills` after skill (de)activation is done by area TSE,
-  see setup.md.)
-- Preset anti-pattern DRG validation at `charter activate --preset` (rare
-  authoring error path).
-- `charter pack regenerate-graph` extractor edge cases: YAML 1.2 typing of
-  unquoted ids (`id: 024`) and non-mapping reference entries crash upstream
-  with Python TypeErrors/AttributeErrors; Go skips them.
+- None. (`reproject_pack_skills` after skill (de)activation is done by area
+  TSE, see setup.md.)
+
+## Wave 5 sweep (area SWEEP)
+
+- `charter activate mission-type` runs `_emit_step_removal_warnings`
+  (FR-008: steps of the registered type's resolved sequence, with the
+  single-level `extends` fallback, missing from the incoming own sequence;
+  one `⚠ Step '<id>' removed by mission-type override.` block per step,
+  listing every in-flight WP — lanes in_progress / for_review / in_review /
+  claimed — of every `kitty-specs/*` mission) and the FR-001 preflight
+  `validate_activatable_mission_type` (`mission type `<id>` resolved from
+  layer `<layer>` has an empty action sequence.`), both over the strict
+  layered roster (`resolve_layered_mission_types`): a malformed
+  mission-type file anywhere in the built-in / org / project layers refuses
+  with the loader's ValueError (malformed YAML, non-mapping document,
+  pydantic `MissionType` validation, id/stem mismatch). The invented
+  "declares an empty action_sequence" message is gone.
+  `TestParityMissionTypeStepRemoval`.
+- `charter activate --preset` id resolution is `_resolve_preset_ids`:
+  anti-pattern ids are checked against `load_validated_graph` (org roots and
+  fragments included); a DRG load / validation failure becomes the
+  `activated_anti_patterns: the DRG cannot be loaded to check anti-pattern
+  ids: ...` reason (headline "lists ids that cannot be checked against the
+  offering"); an org-merge refusal crashes uncaught (traceback); the strict
+  org-pack chain (`_org_roots_or_refuse`: unreadable registry, unfetched
+  declared pack) and the org charter (`_org_required`, whose required ids are
+  now unioned into the written keys and the kind gate) refuse under
+  `charter_packs.org.packs`; mission types use the layered roster (a
+  malformed file is the `the mission-type roster cannot be read: ...`
+  reason) and `validate_activatable_mission_type` refusals.
+  `TestParityPresetResolution`.
+- `charter pack regenerate-graph` applies Python value semantics to the
+  artifact YAML (ruamel safe value space: YAML 1.2 ints, dates): non-str
+  directive ids reach `re.match` (`TypeError: expected string or
+  bytes-like object, got 'int'`), non-mapping reference / step entries
+  (`AttributeError: 'str' object has no attribute 'get'`), non-iterable
+  lists (`'int' object is not iterable`), unhashable reference types, f-string
+  formatting of non-str ids, DRGNode / DRGEdge pydantic validation at
+  construction (labels, `when`/`reason`, URNs, with the kwargs input repr),
+  unvalidated `model_copy` labels failing at the `generate_graph` merge, the
+  operating-procedure collection (non-mapping collaboration, mixed-type sort
+  TypeError) and a non-str mission-type id reaching the step repository
+  (`unsupported operand type(s) for /: 'PosixPath' and 'int'`); every crash
+  carries upstream's frames. `TestParityRegenerateGraphMalformedYAML`.
+- `ensure_charter_bundle_fresh` logs `Failed to evaluate charter bundle
+  freshness: <UnicodeDecodeError>` and `Charter auto-sync failed while
+  refreshing extracted artifacts: <code>` for an undecodable charter.md
+  (human mode); `next`'s prompt build runs under upstream's
+  stderr redirect, so it stays silent there.
+  `charterenc.TestDiffPromptCommandsAmbiguousCharter`.
+- `TestParityDispatchFallback`: the `ops log` reflog minute is masked (the
+  two sandboxes' commits may straddle a minute).
+
+New / extended library API (additive):
+
+- `internal/charter/regengraph_py.go`, `regengraph_walk.go` (unexported
+  extractor walkers); `presets_resolve.go`: `RequireDeclaredOrgRoots`,
+  `PresetUnexpectedError`.
+- `internal/doctrine/missiontypes_layered.go`: `LayeredMissionTypes`,
+  `ExtendsFallbackSequence`, `MissionTypeSourceLayer`,
+  `EmptyActionSequenceMessage`, `MissionTypeLoadError`,
+  `ScanMissionTypeIDs`, `BuiltInMissionTypesDir`.
+- `internal/pyyaml/load_input_py.go`: `LoadRuamelInputPy`.
 
 ## Wave 5 follow-up (after the ENC / PYF merges)
 
