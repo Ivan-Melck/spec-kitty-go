@@ -108,10 +108,10 @@ func TestParityDispatchFallback(t *testing.T) {
 		{"dispatch", "xyzzy", "--profile", "nope", "--json"},
 		{"invocations", "list", "--json"},
 		{"invocations", "list"},
-		{"ops", "log"},
 	} {
 		compareMasked(t, p, true, args...)
 	}
+	compareMaskedWith(t, p, true, maskReflogMinute, "ops", "log")
 	gf, of := treeFiles(p.Go, "kitty-ops"), treeFiles(p.Oracle, "kitty-ops")
 	if testkit.NormalizeValues(strings.Join(gf, "\n")) != testkit.NormalizeValues(strings.Join(of, "\n")) {
 		t.Errorf("kitty-ops tree differs:\n%s", testkit.Diff(strings.Join(of, "\n"), strings.Join(gf, "\n")))

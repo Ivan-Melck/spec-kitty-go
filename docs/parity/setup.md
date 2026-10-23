@@ -184,8 +184,11 @@ test: `testkit` points its PyPI lookups at a closed local port (see
 
 ## Remaining work
 
-* Cross-area: upstream `core.agent_config.load_agent_config` logs a rich
-  `WARNING Config file not found: <root>/.kittify/config.yaml` on every
-  call when `.kittify/` exists without `config.yaml` (e.g. four lines for
-  `doctor skills`); `kittify.LoadAgentConfig` is silent. Matching it needs
-  per-command call counts across areas.
+* None from the wave-5 sweep. `kittify.LoadAgentConfig` now logs upstream's
+  `WARNING  Config file not found: <root>/.kittify/config.yaml` per call
+  (sink `kittify.WarnLog`, installed by the CLI logging bootstrap in human
+  mode); `session-start` loads the agent config like upstream and the skill
+  installer's re-load is accounted with `kittify.AgentConfigMissingWarning`.
+  Counts and text match the oracle for `agent config list/status/sync/add`,
+  `session-start`, `doctor command-files/tool-surfaces/skills`, `upgrade
+  --dry-run` (`kittify.TestDiffAgentConfigMissingWarnings`).

@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
 const materializeLong = "Regenerate all derived views from the canonical event log.\n\n" +
@@ -151,6 +152,9 @@ func runMaterialize(ctx *cli.Context) error {
 			errs = append(errs, fmt.Sprintf("%s: %v", t.slug, err))
 			continue
 		}
+		// generate_progress_json (materialize) and generate_lifecycle_json
+		// (derive_mission_lifecycle) each read the event log again.
+		status.ExtraReadPasses(t.dir, 2)
 		processed = append(processed, jsonx.NewObject("mission_slug", t.slug, "files_written", strList(files), "timestamp", clock.NowUTCISO()))
 		processedSlugs = append(processedSlugs, t.slug)
 		processedFiles = append(processedFiles, files)

@@ -33,6 +33,51 @@ func SlugResolverWarnings(featureDir string) []string {
 	if err != nil {
 		return nil
 	}
+	return slugResolverWarnings(featureDir, rows)
+}
+
+// SlugWarnLog receives the _SlugResolver logger.warning records of every
+// read_events pass (ReadStream). The CLI logging bootstrap installs a
+// stderr sink in human mode; nil (--json, tests) discards them.
+var SlugWarnLog func(msg string)
+
+// quietReads > 0 suppresses SlugWarnLog (reads with no upstream
+// read_events counterpart).
+var quietReads int
+
+// Quietly runs fn with ReadStream's slug-resolver logging suppressed.
+func Quietly(fn func()) {
+	quietReads++
+	defer func() { quietReads-- }()
+	fn()
+}
+
+// ExtraReadPasses logs the slug-resolver warnings of n read_events passes
+// upstream makes over featureDir's log where the Go command reads it fewer
+// times (a command-level read the port folds into one).
+func ExtraReadPasses(featureDir string, n int) {
+	if SlugWarnLog == nil || quietReads > 0 || n <= 0 {
+		return
+	}
+	rows, _, err := readRowsWithLines(featureDir)
+	if err != nil {
+		return
+	}
+	for i := 0; i < n; i++ {
+		logSlugWarnings(featureDir, rows)
+	}
+}
+
+func logSlugWarnings(featureDir string, rows []*jsonx.Object) {
+	if SlugWarnLog == nil || quietReads > 0 {
+		return
+	}
+	for _, w := range slugResolverWarnings(featureDir, rows) {
+		SlugWarnLog(w)
+	}
+}
+
+func slugResolverWarnings(featureDir string, rows []*jsonx.Object) []string {
 	root := specsRoot(featureDir)
 	seen := map[string]bool{}
 	var out []string
