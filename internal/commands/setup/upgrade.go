@@ -758,11 +758,15 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 	} else {
 		o.hadMigrations = true
 		if !opt.jsonOut {
-			var rows [][]string
+			t := rich.NewTable()
+			t.Title, t.HeaderStyle = "Migration Plan", "bold cyan"
+			t.AddColumn("Migration", rich.Column{Style: "bright_white"})
+			t.AddColumn("Description", rich.Column{Style: "dim"})
+			t.AddColumn("Target", rich.Column{Style: "cyan"})
 			for _, m := range migrations {
-				rows = append(rows, []string{m.ID, rich.Strip(m.Description), m.TargetVersion})
+				t.AddRow(m.ID, m.Description, m.TargetVersion)
 			}
-			rich.TableX(w, rich.TableSpec{Title: "Migration Plan", Headers: []string{"Migration", "Description", "Target"}}, rows)
+			rich.PrintTo(w, t)
 			fmt.Fprintln(w)
 			printDryRunProvisioningNotice(w, root, opt.dryRun)
 			if opt.verbose {
@@ -1118,24 +1122,38 @@ func printSection(w io.Writer, header string, items []string, prefix string) {
 	}
 	out(w, header)
 	for _, it := range items {
-		raw(w, rich.Strip(prefix+escapeMarkup(it))) // soft_wrap=True
+		softWrap(w, prefix+escapeMarkup(it))
 	}
+}
+
+// closingStyle is _CLOSING_STYLES[kind] (a completed dry run: bold yellow).
+func (o *upgradeOutcome) closingStyle() string {
+	switch o.kind() {
+	case "applied":
+		if o.dryRun {
+			return "bold yellow"
+		}
+		return "bold green"
+	case "no_op":
+		return "green"
+	}
+	return "bold red"
 }
 
 func renderUpgradeText(w io.Writer, root string, o *upgradeOutcome, leftUncommitted, dryRun bool) {
 	if o.hadMigrations {
 		fmt.Fprintln(w)
 		if o.dryRun {
-			rich.Panel(w, "[yellow]DRY RUN[/yellow] - No changes were made", "")
+			panelStyled(w, "[yellow]DRY RUN[/yellow] - No changes were made", "", "yellow", 0, 1)
 		}
 		printSection(w, "[green]Migrations applied:[/green]", o.applied, "  [green]✓[/green] ")
 		printSection(w, "[dim]Migrations skipped (already applied or not needed):[/dim]", o.skipped, "  [dim]○[/dim] ")
 	}
 	if o.mergeDriverConfig == "installed" {
-		plain(w, "Installed clone-local merge-driver settings")
+		printStyled(w, "Installed clone-local merge-driver settings", "dim")
 	}
 	for _, p := range o.regenerated {
-		plain(w, RegeneratedSurfaceLine(p))
+		printStyled(w, RegeneratedSurfaceLine(p), "")
 	}
 	commitLine := func() {
 		if o.committed {
@@ -1153,12 +1171,12 @@ func renderUpgradeText(w io.Writer, root string, o *upgradeOutcome, leftUncommit
 		printDryRunProvisioningNotice(w, root, dryRun)
 	}
 	if o.kind() == "no_op" {
-		plain(w, o.closingLine())
+		printStyled(w, o.closingLine(), o.closingStyle())
 		for _, x := range o.warnings {
-			raw(w, rich.Strip("[yellow]Warning:[/yellow] "+escapeMarkup(x)))
+			softWrap(w, "[yellow]Warning:[/yellow] "+escapeMarkup(x))
 		}
 		for _, x := range o.errorList() {
-			raw(w, rich.Strip("[red]Error:[/red] "+escapeMarkup(x)))
+			softWrap(w, "[red]Error:[/red] "+escapeMarkup(x))
 		}
 		commitLine()
 	} else {
@@ -1181,7 +1199,7 @@ func renderUpgradeText(w io.Writer, root string, o *upgradeOutcome, leftUncommit
 			commitLine()
 		}
 		fmt.Fprintln(w)
-		plain(w, o.closingLine())
+		printStyled(w, o.closingLine(), o.closingStyle())
 		if !o.dryRun && success {
 			commitLine()
 		}

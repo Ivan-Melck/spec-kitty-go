@@ -16,3 +16,13 @@ func TestNormalizeColourRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestReplaceSGRTolerantPath(t *testing.T) {
+	in := "missing: \x1b[35m/tmp/\x1b[0m\x1b[95mTestX\x1b[0m,a/\x1b[1;36m002\x1b[0m/proj/.claude/x"
+	if got := replaceSGRTolerant(in, "/tmp/TestX,a/002/proj", "<PROJ>"); got != "missing: \x1b[35m<PROJ>/.claude/x" {
+		t.Errorf("got %q", got)
+	}
+	if got := replaceSGRTolerant("plain /tmp/x", "/tmp/x", "<P>"); got != "plain /tmp/x" {
+		t.Errorf("plain text must be left to ReplaceAll: %q", got)
+	}
+}

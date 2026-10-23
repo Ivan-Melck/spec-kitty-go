@@ -240,3 +240,17 @@ func (t *tracker) lines(w io.Writer) []string {
 }
 
 func printJSON(w io.Writer, v any) { fmt.Fprintln(w, jsonx.Dumps(v, jsonx.Pretty)) }
+
+// printStyled is console.print(s, style=style, markup=False,
+// highlight=False) (style "" = none).
+func printStyled(w io.Writer, s, style string) {
+	po := rich.PrintOptions{Markup: rich.BoolP(false), Highlight: rich.BoolP(false)}
+	if style != "" {
+		po.Style = style
+	}
+	rich.PrintOpts(w, po, s)
+}
+
+// softWrap is console.print(s, soft_wrap=True): markup and highlighting,
+// no wrapping.
+func softWrap(w io.Writer, s string) { rich.PrintSoftWrap(w, s) }

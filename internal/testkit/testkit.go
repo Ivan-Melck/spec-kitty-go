@@ -329,6 +329,10 @@ func (s *Sandbox) Normalize(text string) string {
 	text = strings.ReplaceAll(text, s.Dir, "<PROJ>")
 	text = strings.ReplaceAll(text, s.Home, "<HOME>")
 	text = strings.ReplaceAll(text, s.Base, "<BASE>")
+	// Colour runs: a highlighted path is split into styled runs.
+	text = replaceSGRTolerant(text, s.Dir, "<PROJ>")
+	text = replaceSGRTolerant(text, s.Home, "<HOME>")
+	text = replaceSGRTolerant(text, s.Base, "<BASE>")
 	return NormalizeValues(text)
 }
 

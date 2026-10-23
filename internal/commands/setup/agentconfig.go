@@ -512,18 +512,28 @@ func runAgentConfigStatus(ctx *cli.Context) error {
 		var status string
 		switch {
 		case configured && ok:
-			status = "OK"
+			status = "[green]OK[/green]"
 		case configured:
-			status = "Missing"
+			status = "[yellow]Missing[/yellow]"
 		case projectSurfaceExists(root, k):
-			status = "Orphaned"
+			status = "[red]Orphaned[/red]"
 			orphaned = append(orphaned, k)
 		default:
-			status = "Not used"
+			status = "[dim]Not used[/dim]"
 		}
 		rows = append(rows, []string{k, loc, c, e, status})
 	}
-	rich.HeavyTable(w, "Agent Status", []string{"Agent Key", "Directory", "Configured", "Exists", "Status"}, []byte("llccl"), rows)
+	t := rich.NewTable()
+	t.Title = "Agent Status"
+	t.AddColumn("Agent Key", rich.Column{Style: "cyan"})
+	t.AddColumn("Directory", rich.Column{Style: "dim"})
+	t.AddColumn("Configured", rich.Column{Justify: "center"})
+	t.AddColumn("Exists", rich.Column{Justify: "center"})
+	t.AddColumn("Status", rich.Column{})
+	for _, r := range rows {
+		t.AddRow(r[0], r[1], r[2], r[3], r[4])
+	}
+	rich.PrintTo(w, t)
 	if len(orphaned) > 0 {
 		out(w, fmt.Sprintf("\n[yellow]⚠ %d orphaned directories found[/yellow] (present but not configured)", len(orphaned)))
 		out(w, "Run 'spec-kitty agent config sync --remove-orphaned' to clean up")
@@ -779,7 +789,8 @@ func runAgentConfigSync(ctx *cli.Context) error {
 		for _, p := range regenerated {
 			regen = append(regen, p)
 		}
-		raw(w, jsonx.Dumps(jsonx.NewObject("changes_made", changed, "tracked_mutations", mutations, "regenerated", regen), jsonx.Pretty))
+		// console.print(json.dumps(..., indent=2)): markup and highlighting.
+		out(w, jsonx.Dumps(jsonx.NewObject("changes_made", changed, "tracked_mutations", mutations, "regenerated", regen), jsonx.Pretty))
 		return nil
 	}
 	if !changed {

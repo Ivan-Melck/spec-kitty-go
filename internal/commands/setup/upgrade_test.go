@@ -170,7 +170,7 @@ func TestUpgradeWithoutOracle(t *testing.T) {
 	os.Chmod(filepath.Join(s.Dir, ".kittify/metadata.yaml"), 0o644)
 	s.WriteFile(".kittify/metadata.yaml", md)
 	r := s.MustRun("upgrade", "--yes")
-	if !strings.Contains(r.Stdout, "Upgrade complete! 4.0.0rc5 -> 4.0.0rc8") || !strings.Contains(r.Stdout, "4.0.0rc7_exclude_spec_kitty") {
+	if !strings.Contains(testkit.StripANSI(r.Stdout), "Upgrade complete! 4.0.0rc5 -> 4.0.0rc8") || !strings.Contains(testkit.StripANSI(r.Stdout), "4.0.0rc7_exclude_spec_kitty") {
 		t.Fatalf("upgrade:\n%s", r.Stdout)
 	}
 	if !strings.Contains(s.ReadFile(".kittify/metadata.yaml"), "result: success") || !s.Exists(".git/hooks/post-commit") {
@@ -178,7 +178,7 @@ func TestUpgradeWithoutOracle(t *testing.T) {
 	}
 	md = strings.Replace(s.ReadFile(".kittify/metadata.yaml"), "  schema_version: 3\n", "", 1)
 	s.WriteFile(".kittify/metadata.yaml", md)
-	if r := s.Run("agent", "config", "list"); r.Code != 4 || !strings.Contains(r.Stderr, "needs Spec Kitty project migrations") {
+	if r := s.Run("agent", "config", "list"); r.Code != 4 || !strings.Contains(testkit.StripANSI(r.Stderr), "needs Spec Kitty project migrations") {
 		t.Fatalf("gate: %d %s", r.Code, r.Stderr)
 	}
 	s.MustRun("upgrade", "--yes")

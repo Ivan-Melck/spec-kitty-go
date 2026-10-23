@@ -25,9 +25,15 @@ var migrationStdout io.Writer = io.Discard
 // migrationStderr receives migration notices printed to stderr.
 var migrationStderr io.Writer = io.Discard
 
-// panelStderr prints a rich Panel to the migration stderr stream.
-func panelStderr(content, title string) {
-	rich.Panel(migrationStderr, content, title)
+// panelStderr prints Console(stderr=True).print(Panel(content, title=title,
+// border_style=border)) to the migration stderr stream.
+func panelStderr(content, title, border string) {
+	for _, l := range rich.StyledPanelLines(rich.PanelSpec{
+		Content: content, Title: title, BorderStyle: border, Width: rich.StderrWidth(),
+		PadY: 0, PadX: 1, Wrap: rich.WrapWords,
+	}, rich.ColorSystemOf(migrationStderr)) {
+		fmt.Fprintln(migrationStderr, l)
+	}
 }
 
 func ok() (bool, string) { return true, "" }

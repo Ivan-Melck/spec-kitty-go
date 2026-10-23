@@ -73,14 +73,14 @@ func TestAgentConfigWithoutOracle(t *testing.T) {
 	s := testkit.NewGitSandbox(t)
 	s.MustRun("init", ".", "--ai", "claude", "--non-interactive")
 	r := s.MustRun("agent", "config", "add", "codex")
-	if !strings.Contains(r.Stdout, "Registered codex (14 command skills in .agents/skills/)") {
+	if !strings.Contains(testkit.StripANSI(r.Stdout), "Registered codex (14 command skills in .agents/skills/)") {
 		t.Fatalf("add:\n%s", r.Stdout)
 	}
 	if !strings.Contains(s.ReadFile(".kittify/config.yaml"), "  - codex\n") {
 		t.Fatal("codex not saved")
 	}
 	r = s.MustRun("agent", "config", "remove", "codex")
-	if !strings.Contains(r.Stdout, "Removed skills for codex (14 files deleted)") || s.Exists(".agents/skills/spec-kitty.plan/SKILL.md") {
+	if !strings.Contains(testkit.StripANSI(r.Stdout), "Removed skills for codex (14 files deleted)") || s.Exists(".agents/skills/spec-kitty.plan/SKILL.md") {
 		t.Fatalf("remove:\n%s", r.Stdout)
 	}
 	s.MustRun("agent", "config", "set", "lint_on_edit", "true")

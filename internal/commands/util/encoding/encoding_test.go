@@ -87,7 +87,7 @@ func TestValidateEncodingE2E(t *testing.T) {
 	s := testkit.NewGitSandbox(t)
 	fixtures(s)
 	r := s.Run("validate-encoding", "--mission", "001-demo")
-	if r.Code != 1 || !strings.Contains(r.Stdout, "Found 2 file(s) with encoding issues.") {
+	if r.Code != 1 || !strings.Contains(testkit.StripANSI(r.Stdout), "Found 2 file(s) with encoding issues.") {
 		t.Fatalf("code=%d\n%s%s", r.Code, r.Stdout, r.Stderr)
 	}
 	r = s.Run("validate-encoding", "--mission", "001-demo", "--fix")

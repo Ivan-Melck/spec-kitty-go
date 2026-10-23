@@ -98,7 +98,7 @@ func TestLintStdinPayload(t *testing.T) {
 		`{"tool_input": {"file_path": "notes.md"}}`: "is not a Python file",
 		`{"file_paths": ["", "pkg/clean.py"]}`:      "passed all checks",
 	} {
-		r := runWithStdin(t, s, payload, "lint")
+		r := testkit.StripANSI(runWithStdin(t, s, payload, "lint"))
 		if !strings.Contains(r, want) {
 			t.Errorf("payload %q: got %q, want %q", payload, r, want)
 		}

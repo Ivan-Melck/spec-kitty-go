@@ -234,11 +234,20 @@ func runConfig(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	var rows [][]string
+	t := rich.NewTable()
+	t.Title, t.ShowLines = "Asset Resolution Origins", true
+	t.AddColumn("Type", rich.Column{Style: "cyan", Width: rich.IntP(10)})
+	t.AddColumn("Name", rich.Column{Style: "bold"})
+	t.AddColumn("Tier", rich.Column{Style: "magenta"})
+	t.AddColumn("Resolved Path", rich.Column{})
 	for _, e := range CollectOrigins(root, ctx.String("mission")) {
 		title := strings.ToUpper(e.AssetType[:1]) + e.AssetType[1:]
 		if e.Path == "" {
-			rows = append(rows, []string{title, e.Name, "not found", e.Error})
+			detail := ""
+			if e.Error != "" {
+				detail = "[dim]" + e.Error + "[/dim]"
+			}
+			t.AddRow(title, e.Name, "[red]not found[/red]", detail)
 			continue
 		}
 		p := e.Path
@@ -247,11 +256,20 @@ func runConfig(ctx *cli.Context) error {
 				p = rel
 			}
 		}
-		rows = append(rows, []string{title, e.Name, e.Tier, p})
+		t.AddRow(title, e.Name, formatTier(e.Tier), p)
 	}
-	rich.TableX(w, rich.TableSpec{Title: "Asset Resolution Origins", Headers: []string{"Type", "Name", "Tier", "Resolved Path"}, Width: []int{10}, ShowLines: true}, rows)
+	rich.PrintTo(w, t)
 	checkVersionPin(ctx, root)
 	return nil
+}
+
+// formatTier is config_cmd._format_tier: the tier label in its colour.
+func formatTier(tier string) string {
+	color := map[string]string{"override": "green", "legacy": "yellow", "global": "blue", "project": "bright_cyan", "package_default": "dim"}[tier]
+	if color == "" {
+		color = "white"
+	}
+	return "[" + color + "]" + tier + "[/" + color + "]"
 }
 
 func checkVersionPin(ctx *cli.Context, root string) {

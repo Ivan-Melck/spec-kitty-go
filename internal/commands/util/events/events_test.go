@@ -121,11 +121,11 @@ func TestTailE2E(t *testing.T) {
 	s := testkit.NewGitSandbox(t)
 	fixture(s)
 	r := s.Run("events", "tail", "--mission", "001-demo", "--once")
-	if r.Code != 0 || strings.Count(r.Stdout, "\n") != 2 || !strings.Contains(r.Stdout, "\"note\": \"h\\u00e9llo\"") {
+	if r.Code != 0 || strings.Count(testkit.StripANSI(r.Stdout), "\n") != 2 || !strings.Contains(testkit.StripANSI(r.Stdout), "\"note\": \"h\\u00e9llo\"") {
 		t.Fatalf("got %d %q %q", r.Code, r.Stdout, r.Stderr)
 	}
 	r = s.Run("events", "tail", "--mission", "002-bad", "--once")
-	if r.Code != 1 || !strings.Contains(r.Stderr, "StoreError: Invalid event structure in tail stream: expected JSON object") || r.Stdout != "" {
+	if r.Code != 1 || !strings.Contains(testkit.StripANSI(r.Stderr), "StoreError: Invalid event structure in tail stream: expected JSON object") || r.Stdout != "" {
 		t.Fatalf("got %d %q %q", r.Code, r.Stdout, r.Stderr)
 	}
 }
