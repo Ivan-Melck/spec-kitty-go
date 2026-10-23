@@ -10,6 +10,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/app"
+	"github.com/spec-kitty/go-kitty3/internal/bootstrap"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -165,6 +166,43 @@ func jsonError(code, message string) *jsonx.Object {
 	return jsonx.NewObject("ok", false, "error", jsonx.NewObject("code", code, "message", message))
 }
 
+func refreshAgentIgnoreBlock(w io.Writer, root string, ac kittify.AgentConfig, quiet bool) {
+	keys := append([]string{}, ac.Available...)
+	changed, err := agents.SyncAgentBlock(root, keys, false)
+	if quiet {
+		return
+	}
+	if err != nil {
+		out(w, "[yellow]Warning:[/yellow] "+escapeMarkup(".gitignore not updated: "+err.Error()))
+	} else if changed {
+		out(w, "[dim]Updated the Spec Kitty agent-files block in .gitignore[/dim]")
+	}
+}
+
+func warnNewlyVisibleAgentFiles(w io.Writer, root string, ac kittify.AgentConfig, removed []string) {
+	current := map[string]bool{}
+	for _, entry := range agents.AgentIgnoreEntries(root, ac.Available) {
+		current[entry] = true
+	}
+	var dropped []string
+	for _, entry := range agents.AgentIgnoreEntries(root, removed) {
+		if !current[entry] {
+			dropped = append(dropped, entry)
+		}
+	}
+	visible := newlyVisibleAgentPaths(root, dropped)
+	if len(visible) == 0 {
+		return
+	}
+	listed := visible
+	more := ""
+	if len(listed) > 5 {
+		listed = listed[:5]
+		more = " ..."
+	}
+	out(w, "[yellow]Warning:[/yellow] "+escapeMarkup(fmt.Sprintf("%d file(s) of the removed agent(s) are still on disk and now show in git: %s%s. Delete them, commit them, or add your own ignore rule.", len(visible), strings.Join(listed, ", "), more)))
+}
+
 // escapeMarkup is rich.markup.escape.
 func escapeMarkup(s string) string {
 	var b strings.Builder
@@ -271,6 +309,9 @@ func registerSkillAgent(w io.Writer, root string, ac *kittify.AgentConfig, key s
 		for _, p := range rep.Regenerated {
 			plain(w, RegeneratedSurfaceLine(p))
 		}
+		for _, warning := range agents.CommandSkillWarnings(rep) {
+			out(w, "[yellow]"+escapeMarkup("Warning: "+warning)+"[/yellow]")
+		}
 	}
 	return true, ""
 }
@@ -320,6 +361,18 @@ func runAgentConfigAdd(ctx *cli.Context) error {
 			return err
 		}
 		out(w, "\n[cyan]Updated config.yaml:[/cyan] added "+strings.Join(added, ", "))
+		var global []string
+		for _, key := range added {
+			if isCommandAgent(key) {
+				global = append(global, key)
+			}
+		}
+		if len(global) > 0 {
+			if _, e := bootstrap.EnsureGlobalCommands(global); e != nil {
+				out(w, "[yellow]Warning:[/yellow] "+escapeMarkup("could not write global commands for "+strings.Join(global, ", ")+": "+e.Error()))
+			}
+		}
+		refreshAgentIgnoreBlock(w, root, ac, false)
 	}
 	if len(already) > 0 {
 		out(w, "\n[dim]Already configured:[/dim] "+strings.Join(already, ", "))
@@ -462,7 +515,10 @@ func runAgentConfigRemove(ctx *cli.Context) error {
 			if err != nil {
 				errs = append(errs, fmt.Sprintf("Failed to remove skills for %s: %v", k, err))
 			} else {
-				out(w, fmt.Sprintf("[green]✓[/green] Removed skills for %s (%d files deleted)", k, len(rep.Deleted)))
+				out(w, fmt.Sprintf("[green]✓[/green] Removed skills for %s (%d files deleted)", k, len(rep.Deleted)+len(rep.LegacyRemoved)))
+				for _, warning := range agents.CommandSkillWarnings(agents.CommandSkillReport{LegacyKept: rep.LegacyKept, LegacyUnrecorded: rep.LegacyUnrecorded}) {
+					out(w, "[yellow]"+escapeMarkup("Warning: "+warning)+"[/yellow]")
+				}
 			}
 			drop(k)
 			continue
@@ -479,6 +535,8 @@ func runAgentConfigRemove(ctx *cli.Context) error {
 			return err
 		}
 		out(w, "\n[cyan]Updated config.yaml:[/cyan] removed "+strings.Join(removedFromConfig, ", "))
+		refreshAgentIgnoreBlock(w, root, ac, false)
+		warnNewlyVisibleAgentFiles(w, root, ac, removedFromConfig)
 	}
 	if len(errs) > 0 {
 		out(w, "\n[yellow]Warnings:[/yellow]")
@@ -766,7 +824,14 @@ func runAgentConfigSync(ctx *cli.Context) error {
 	if jsonOut {
 		sink = &regenerated
 	}
-	if ctx.Bool("remove-orphaned") {
+	removeOrphaned := ctx.Bool("remove-orphaned")
+	if removeOrphaned && len(ac.Available) == 0 && !ac.ExplicitAgentList {
+		removeOrphaned = false
+		if !jsonOut {
+			out(w, "[yellow]Skipped orphan removal:[/yellow] .kittify/config.yaml has no agents.available list. Set agents.available explicitly (an empty list means no agents), then re-run sync.")
+		}
+	}
+	if removeOrphaned {
 		changed = removeOrphanedAgentDirs(w, root, ac) || changed
 	}
 	if ctx.Bool("create-missing") {
@@ -782,6 +847,9 @@ func runAgentConfigSync(ctx *cli.Context) error {
 			return err
 		}
 		changed = c || changed
+	}
+	if changed {
+		refreshAgentIgnoreBlock(w, root, ac, jsonOut)
 	}
 	after, afterErr := os.ReadFile(mp)
 	mutations := []any{}

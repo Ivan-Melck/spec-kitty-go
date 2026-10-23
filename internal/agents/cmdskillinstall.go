@@ -211,14 +211,20 @@ func InstallCommandSkills(root, agent, now string) (CommandSkillReport, error) {
 
 // CommandSkillRemoveReport is command_installer.RemoveReport.
 type CommandSkillRemoveReport struct {
-	Deref, Deleted, Kept []string
+	Deref, Deleted, Kept                        []string
+	LegacyRemoved, LegacyKept, LegacyUnrecorded []string
 }
+
+var CommandSkillRemoveHook func(root, agent string) (CommandSkillRemoveReport, error)
 
 // RemoveCommandSkills is command_installer.remove: releases agent's
 // ownership; the final owner's unchanged file (and its then-empty skill
 // directory) is deleted. An edited owned file aborts with
 // file_mutation_detected before anything changes.
 func RemoveCommandSkills(root, agent string) (CommandSkillRemoveReport, error) {
+	if CommandSkillRemoveHook != nil {
+		return CommandSkillRemoveHook(root, agent)
+	}
 	var rep CommandSkillRemoveReport
 	if !IsCommandSkillAgent(agent) {
 		return rep, &InstallerError{Code: "unsupported_agent", Context: jsonx.NewObject("agents", []any{agent})}

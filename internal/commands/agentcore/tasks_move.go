@@ -220,7 +220,7 @@ func runMoveTask(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	var oe *ownedcheckout.Error
-	if errors.As(err, &oe) {
+	if st.owned != nil && errors.As(err, &oe) {
 		emitOwnedError(st, oe)
 		return cli.Exit(1)
 	}
