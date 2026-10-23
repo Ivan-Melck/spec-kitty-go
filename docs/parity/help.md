@@ -474,7 +474,5 @@ built-in` vs the extracted `~/.kittify/cache/packs/<hash>`).
 
 ## Remaining work
 
-- None for help and usage errors.
-- `agent config` bare (setup package, area TSE) still prints click's trailing
-  echo line after the help (`cli.WriteHelp` instead of
-  `cli.WriteNoArgsIsHelp` in `internal/commands/setup/agentconfig.go`).
+- None for help and usage errors. (Bare `agent config` now uses
+  `NoArgsIsHelp` too and matches the oracle byte for byte.)

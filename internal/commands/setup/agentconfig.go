@@ -33,11 +33,7 @@ func init() {
 			Name:  "config",
 			Short: "Manage project AI agent configuration (add, remove, list agents)",
 		}
-		g.InvokeWithoutCommand = true
-		g.Run = func(ctx *cli.Context) error {
-			cli.WriteHelp(ctx.Stdout, g)
-			return cli.Exit(2)
-		}
+		g.NoArgsIsHelp = true
 		g.Add(
 			&cli.Command{Name: "list", Short: "List configured agents and their status.", Run: runAgentConfigList},
 			&cli.Command{
