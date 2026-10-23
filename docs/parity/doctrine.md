@@ -24,7 +24,7 @@ library goldens (`internal/pydantic`, `internal/pydifflib`, `internal/jsonschema
 | `charter activate` / `deactivate` | done | TestParityCharterActivation, TestCharterActivationGoOnly, TestParityCharterActivateRegistersDirectWrite, TestParityCharterActivateResynthesize, TestCharterActivateResynthesizeGoOnly | `--resynthesize` preflight + full generate/synthesize, tension warnings, linked-worktree refusal (DOC-15) |
 | `charter list` | done | TestParityCharterActivation | |
 | `charter interview` | done | TestParityCharterGenerateAndRuntime (defaults), TestParityCharterInterviewOrgPrefill, manual (interactive) | org charter prefill/promotion messages and `org_charter` JSON block |
-| `charter generate` | done | TestParityCharterGenerateAndRuntime, TestCharterGenerateGoOnly | `--owned-checkout` accepted, not resolved |
+| `charter generate` | done | TestParityCharterGenerateAndRuntime, TestCharterGenerateGoOnly, TestDiffOwnedCharterAndOrchestratorDecisions | `--owned-checkout` validated and resolved (explicit claim + `--mission-handle`, owned destinations); see [owned.md](owned.md) |
 | `charter status` | done | TestParityCharterGenerateAndRuntime, TestParityDoctorCharterPacksWarnings, TestParityCharterStatusManifestProvenanceErrors | org layer merges the full graph incl. augmentation edges (DOC-03); manifest/provenance errors are pydantic-exact (DOC-04) |
 | `charter synthesize` | done | TestParityCharterGenerateAndRuntime, TestParityCharterSynthesizePipeline, TestParityCharterSynthesizeDirectWrite, TestCharterSynthesizeGoOnly, TestParityCharterStatusManifestProvenanceErrors | full pipeline (area K). Irreducible: fixture root location (DOC-05) and the Python frames in `.failed/cause.yaml` (DOC-06) |
 | `charter resynthesize` | done | TestParityCharterSynthesizePipeline | topic resolver (kind:slug / DRG URN / interview section, Levenshtein candidates, exit 2), bounded promote, EC-4 no-op |
@@ -41,7 +41,7 @@ library goldens (`internal/pydantic`, `internal/pydifflib`, `internal/jsonschema
 | `charter org` (group), `org init`, `org validate` | done | TestParityCharterOrgInitAndValidate, TestCharterPackToolsGoOnly | area K |
 | `charter pack validate/assemble/regenerate-graph` | done | TestParityCharterOrgInitAndValidate, TestParityCharterPackAssemble, TestCharterPackToolsGoOnly, TestParityAgentProfileSchemaMessages, TestParityRegenerateGraphExtractor | agent-profile errors from a Draft 7 jsonschema port (DOC-08); regenerate-graph runs the ported DRG extractor + calibrator + hand-authored overlay + built-in manifest generator (DOC-07), `--check`, `invalid` and fail-closed ValueError tracebacks |
 | `mission list/show`, `mission-type list/show` | done | TestParityProfilesMissionCharterContext | |
-| `mission current/info/switch` (and `mission-type` aliases) | done | manual | |
+| `mission current/info/switch` (and `mission-type` aliases) | done | manual, `TestDiffPlacementSeamHandleReads` (`mission current` over every handle form) | `mission current` resolves `--mission` like `resolve_feature_dir_for_mission` (identity ladder + bare-modern fold; ambiguous / missing handle = `ActionContextError` crash, OWN-10) |
 | `mission close/follow-up/reopen/run` | done | see runtime.md | registered by the runtime area (DOCS-02) |
 | `profiles list/show/get` | done | TestParityProfilesMissionCharterContext | |
 | `agent profile list/show/get` (hidden) | done | TestParityProfilesMissionCharterContext | |
@@ -52,7 +52,7 @@ library goldens (`internal/pydantic`, `internal/pydifflib`, `internal/jsonschema
 | `doctor charter-packs` | done | TestParityDoctorCharterPacks, TestParityDoctorCharterPacksFragments, TestDoctorCharterPacksGoOnly, TestParityDoctorCharterPacksWarnings, TestParityDoctorCharterPacksExtends | logger/warnings records on stderr with the warnings-registry resets (DOC-12); org_charter `extends` chains (DOC-13) |
 | `invocations list` | done | TestParityDispatchFallback, TestParityProfileInvocationComplete | |
 | `ops log` / `ops undo` | done | TestParityDispatchFallback, TestDispatchRoutingErrors | |
-| `agent context resolve` | done | TestParityAgentContextResolve, TestAgentContextResolveGoOnly | `--owned-checkout` accepted but not resolved |
+| `agent context resolve` | done | TestParityAgentContextResolve, TestAgentContextResolveGoOnly, TestDiffOwnedLifecycleWalk | `--owned-checkout` / flagless adoption resolved (stale-copy warning in `warnings`); see [owned.md](owned.md) |
 | `glossary list/conflicts/show/validate/resolve` | done | TestParityGlossaryAndDocs, TestGlossaryGoOnly, TestParityGlossaryShowEntityPages | `show` renders compiled entity pages (DOC-14) |
 | `docs query` | done | TestParityGlossaryAndDocs | registered once, by `internal/commands/util/docs` (DOCS-02) |
 

@@ -21,7 +21,7 @@ and compare exit code, normalized stdout/stderr and the resulting file trees
 | `merge-driver-review-cycle` (hidden) | done | same | none known |
 | `merge-driver-decision-index` (hidden) | done | same | none known |
 | `merge` (hidden deprecated stub) | done | `drivers.TestMergeStubParity` (incl. COLUMNS=60/33 wrapping), `drivers.TestMergeStubColorParity` (FORCE_COLOR / TTY_COMPATIBLE; standard, 256 and truecolor systems; NO_COLOR; dumb TERM) | none |
-| `validate-encoding` (`--mission/--fix/--all/--backup/--no-backup`) | done | `encoding.TestValidateEncodingParity`, unit tests | mission handle resolution is a local approximation of `placement_seam` (literal dir, mission_id/mid8, numeric prefix, bare slug); OWN area owns the seam |
+| `validate-encoding` (`--mission/--fix/--all/--backup/--no-backup`) | done | `encoding.TestValidateEncodingParity`, unit tests | mission handle resolution is `placement.PrimaryDir` (`placement_seam(...).read_dir(PRIMARY_METADATA)`); unsafe / ambiguous handles crash with the seam exception (`TestDiffPlacementSeamHandleReads`, also `validate-tasks`) |
 | `commit-guard-hook` (hidden) | done | `commitguard.TestCommitGuardParity`, `TestCommitGuardE2E` | none known (PYF-11: the active WP's STATUS is read through the coordination resolver) |
 | `lint` (`[file_path]`, `--json`, `--fix`, stdin hook payload) | done | `lint.TestLintParity`, `TestLintStdinPayload` | ruff/mypy are external tools: output depends on their presence/version, as upstream |
 | `cutover-guard` (`--base-ref`, `--paths-from`, `--json`) | done | `cutover.TestCutoverGuardParity`, `TestCutoverGuardBaseRefParity`, `TestCutoverGuardNoProject` | traceback frames (see Irreducible differences) |
