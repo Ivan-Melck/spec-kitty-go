@@ -51,9 +51,9 @@ func runDoctorCharterPacks(ctx *cli.Context) error {
 			cprint(w, "%s", l)
 		}
 		renderCrossGrainFindings(w, rep)
-		renderActivationLedgerFindings(w, rep)
 		renderRetiredKeyFinding(w, rep)
 		renderRetiredLayoutFindings(w, rep)
+		renderActivationLedgerFindings(w, rep)
 		return exitCode(code)
 	}
 	entries, err := charter.BuildPackEntries(root)
@@ -96,9 +96,9 @@ func runDoctorCharterPacks(ctx *cli.Context) error {
 	renderOverridePolicyErrors(w, rep)
 	renderUnsanctionedOverrides(w, rep)
 	renderCrossGrainFindings(w, rep)
-	renderActivationLedgerFindings(w, rep)
 	renderRetiredKeyFinding(w, rep)
 	renderRetiredLayoutFindings(w, rep)
+	renderActivationLedgerFindings(w, rep)
 	return exitCode(code)
 }
 
@@ -219,7 +219,7 @@ func renderOrgLayerSection(w io.Writer, root string) {
 				renderConflictBullets(w, fatal, "red")
 			}
 			if len(adv) > 0 {
-				cprint(w, "  collisions: %d built-in invariant override(s)", len(adv))
+				cprint(w, "  collisions: %d override(s) resolved by precedence", len(adv))
 				renderConflictBullets(w, adv, "yellow")
 			}
 		} else {
@@ -228,7 +228,15 @@ func renderOrgLayerSection(w io.Writer, root string) {
 		cprint(w, "  [yellow]dangling endpoints: not checked[/yellow] (no merged graph — see the merge findings above)")
 		return
 	}
-	cprint(w, "  collisions: none")
+	overridden := len(charter.FindOverriddenBuiltins(merged, bi.NodeURNs()))
+	switch overridden {
+	case 0:
+		cprint(w, "  collisions: none")
+	case 1:
+		cprint(w, "  collisions: 1 permitted org override of a built-in (see the sanction report)")
+	default:
+		cprint(w, "  collisions: %d permitted org overrides of built-ins (see the sanction report)", overridden)
+	}
 	dangling := charter.ValidateDanglingReferences(merged)
 	if len(dangling) == 0 {
 		cprint(w, "  dangling endpoints: none")

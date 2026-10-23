@@ -67,39 +67,7 @@ func drgSingularToCLI(s string) (string, bool) {
 
 // loadRawActivationSource is _load_raw_activation_source.
 func loadRawActivationSource(repoRoot string) (*jsonx.Object, error) {
-	cp := filepath.Join(repoRoot, ".kittify", "config.yaml")
-	cfg := jsonx.NewObject()
-	if b, err := os.ReadFile(cp); err == nil {
-		v, err := yamlx.Parse(b)
-		if err != nil {
-			return nil, &dct.ConfigError{Body: fmt.Sprintf("Cannot read configuration %s: %v", cp, err)}
-		}
-		if o, ok := v.(*jsonx.Object); ok {
-			cfg = o
-		}
-	}
-	pv, _ := cfg.Get("charter")
-	ptr, ok := pv.(string)
-	if !ok {
-		return cfg, nil
-	}
-	p := ptr
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(repoRoot, p)
-	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return nil, &dct.ConfigError{Body: fmt.Sprintf(".kittify/config.yaml 'charter:' pointer names %s, which does not exist.", p)}
-	}
-	v, err := yamlx.Parse(b)
-	if err != nil {
-		return nil, &dct.ConfigError{Body: fmt.Sprintf("Invalid YAML in %s: %v", p, err)}
-	}
-	o, ok := v.(*jsonx.Object)
-	if !ok {
-		return nil, &dct.ConfigError{Body: fmt.Sprintf("%s root must be a mapping.", p)}
-	}
-	return o, nil
+	return dct.ActivationSource(repoRoot)
 }
 
 type rawLists struct {
@@ -108,8 +76,25 @@ type rawLists struct {
 	set   map[string]bool // key present (not None)
 }
 
+func loadConsistencyGraph(root string) (*dct.Graph, error) {
+	if len(ResolvePackChain(root)) == 0 {
+		fragments, err := LoadOrgDRGLenient(root)
+		if err != nil {
+			return nil, err
+		}
+		if len(fragments) == 0 {
+			return dct.LoadValidatedGraph(root, nil)
+		}
+	}
+	return LoadOrgValidatedGraph(root, GraphOptions{})
+}
+
 func loadRawActivationLists(repoRoot string) (*rawLists, error) {
 	data, err := loadRawActivationSource(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	activation, err := dct.LoadActivation(repoRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +113,11 @@ func loadRawActivationLists(repoRoot string) (*rawLists, error) {
 		}
 		var out []string
 		for _, x := range l {
-			out = append(out, pyStrOf(x))
+			id := pyStrOf(x)
+			kind, _ := dct.ParseKind(tok)
+			if !activation.Denied[kind][id] {
+				out = append(out, id)
+			}
 		}
 		rl.lists[tok] = out
 	}
@@ -179,8 +168,7 @@ func newGateRes(root string) *gateRes {
 	g := &gateRes{root: root}
 	orgs := dct.OrgRoots(root)
 	g.off = dct.NewOffering(root, orgs)
-	// consistency_check is org-inert: load_validated_graph(repo_root).
-	g.full, g.err = dct.LoadValidatedGraph(root, nil)
+	g.full, g.err = loadConsistencyGraph(root)
 	if g.err == nil {
 		act, err := dct.LoadActivation(root)
 		if err != nil {
@@ -400,7 +388,7 @@ func RunConsistencyCheck(repoRoot string) *ConsistencyReport {
 	}
 	allIDs := map[string]map[string]bool{}
 	for _, tok := range raw.order {
-		allIDs[tok] = dct.AvailableIDs(tok, nil, nil)
+		allIDs[tok] = dct.AvailableIDs(tok, dct.LayerRoots(repoRoot), ResolvePackChain(repoRoot))
 	}
 	// unknown references
 	for _, tok := range raw.order {
@@ -417,7 +405,7 @@ func RunConsistencyCheck(repoRoot string) *ConsistencyReport {
 	// cross-kind DRG refs
 	orgRoots := dct.OrgRoots(repoRoot)
 	off := dct.NewOffering(repoRoot, orgRoots)
-	if full, err := dct.LoadValidatedGraph(repoRoot, nil); err == nil {
+	if full, err := loadConsistencyGraph(repoRoot); err == nil {
 		if act, err := dct.LoadActivation(repoRoot); err == nil {
 			activated := dct.FilterByActivation(full, act, off)
 			reported := map[[2]string]bool{}
@@ -628,7 +616,7 @@ func loadRawActivationSourceConfigOnly(repoRoot string) (*jsonx.Object, error) {
 }
 
 func checkGraphKindParity(repoRoot string, raw *rawLists, rep *ConsistencyReport, orgRoots []string, off *dct.Offering) {
-	full, err := dct.LoadValidatedGraph(repoRoot, nil)
+	full, err := loadConsistencyGraph(repoRoot)
 	var act *dct.Activation
 	if err == nil {
 		act, err = dct.LoadActivation(repoRoot)

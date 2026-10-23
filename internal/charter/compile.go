@@ -10,6 +10,7 @@ import (
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -496,7 +497,11 @@ func WriteCompiled(root string, c *Compiled) ([]string, error) {
 	} else {
 		doc := jsonx.NewObject("schema_version", "2.0.0", "governance", defaultGovernance(), "directives", jsonx.NewObject("directives", []any{}),
 			"catalog", catalog, "overrides", &jsonx.Object{}, "metadata", jsonx.NewObject("generated_at", nowStamp(), "bundle_schema_version", 2))
-		if cfg, err := dct.LoadConfig(root); err == nil {
+		store, err := dct.ResolveActivationStore(root)
+		if err != nil {
+			return nil, err
+		}
+		if cfg, err := dct.LoadConfig(root); err == nil && !store.Ledger {
 			for _, k := range ActivationYAMLKeys() {
 				if v, ok := cfg.Get(k); ok {
 					if l, isL := v.([]any); isL {
@@ -521,7 +526,7 @@ func WriteCompiled(root string, c *Compiled) ([]string, error) {
 			}
 		}
 		cfgDoc.Set("charter", ".kittify/charter/charter.yaml")
-		if err := writeYAMLDocument(cfgPath, cfgDoc, 80); err != nil {
+		if err := kittify.SaveConfig(root, cfgDoc); err != nil {
 			return nil, err
 		}
 	}
