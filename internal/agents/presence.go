@@ -38,7 +38,7 @@ func (c Presence) Render() string {
 		"Two usage patterns:\n" +
 		"- **Full mission** (spec → plan → tasks → implement → review → merge):\n" +
 		"  trigger: \"spec out\", \"create a mission\", \"write a spec\", \"plan this\"\n" +
-		"  → run `/spec-kitty.specify`\n" +
+		"  → run `/spec-kitty.specify` (slash-command agents), `$spec-kitty-specify` (codex), `/skill:spec-kitty-specify` (pi) or `/spec-kitty-specify` (antigravity, letta, vibe)\n" +
 		"- **Lightweight dispatch** (ad-hoc fix, question, or advice — no mission created):\n" +
 		"  trigger: \"hey spec kitty\", \"use spec kitty to\", \"spec kitty <anything>\"\n" +
 		"  → **ALWAYS run `spec-kitty dispatch \"<request verbatim>\"` — do NOT answer directly.**\n" +

@@ -197,9 +197,10 @@ func pyTypeName(v any) string {
 
 // AgentConfig is the agents: section (core/agent_config.AgentConfig).
 type AgentConfig struct {
-	Available  []string
-	AutoCommit bool
-	LintOnEdit bool
+	Available         []string
+	AutoCommit        bool
+	LintOnEdit        bool
+	ExplicitAgentList bool
 }
 
 // KnownAgent reports whether an agent key is valid; set by internal/agents
@@ -257,6 +258,7 @@ func LoadAgentConfig(root string) (AgentConfig, error) {
 		return out, nil
 	}
 	av, _ := agents.Get("available")
+	out.ExplicitAgentList = agents.Has("available")
 	switch t := av.(type) {
 	case nil:
 	case string:

@@ -168,7 +168,11 @@ func expectedProjectEntries(skills []CatalogSkill, agentKeys []string, now strin
 					return nil, err
 				}
 				if rel == "SKILL.md" {
-					content = []byte(agents.EnsureSkillFrontmatter(string(content), s.Name))
+					projected, err := agents.ProjectSkillForRoot(string(content), root, s.Name)
+					if err != nil {
+						return nil, err
+					}
+					content = []byte(projected)
 				}
 				state := FileOf(Digest(content), s.SourceMode&^0o222)
 				entry := agents.SkillEntry{SkillName: s.Name, SourceFile: rel, InstalledPath: p, InstallationClass: agents.SkillClass(agent),

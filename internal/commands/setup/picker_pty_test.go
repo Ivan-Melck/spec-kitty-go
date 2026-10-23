@@ -299,7 +299,7 @@ func TestDoctorColourTablesMatchOracle(t *testing.T) {
 	if r := s.Run("init", ".", "--ai", "claude,codex", "--non-interactive"); r.Code != 0 {
 		t.Fatalf("init: %s", r.Stderr)
 	}
-	os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty.plan"))
+	os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty-plan"))
 	for _, args := range [][]string{{"doctor", "state-roots"}, {"doctor", "skills"}, {"doctor", "command-files"}} {
 		g, _, gc := runPTYIn(t, s, testkit.Binary(t), true, false, args)
 		o, _, oc := runPTYIn(t, s, oracle, true, false, args)

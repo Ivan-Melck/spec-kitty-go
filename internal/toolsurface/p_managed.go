@@ -59,7 +59,11 @@ func (p managedSkillsProvider) expand(def Definition, tool, root string) []Insta
 						continue
 					}
 					if rel == "SKILL.md" {
-						content = []byte(agents.EnsureSkillFrontmatter(string(content), s.Name))
+						projected, err := agents.ProjectSkillForRoot(string(content), skillRoot, s.Name)
+						if err != nil {
+							continue
+						}
+						content = []byte(projected)
 					}
 					installed := skillRoot + "/" + s.Name + "/" + rel
 					e := agents.SkillEntry{SkillName: s.Name, SourceFile: rel, InstalledPath: installed, AgentKey: tool}

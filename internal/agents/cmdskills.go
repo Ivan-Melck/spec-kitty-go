@@ -19,7 +19,7 @@ var cliWrapperSkills = map[string][2]string{
 const UserInputReplacement = "## User Input\n\n" +
 	"The content of the user's message that invoked this skill " +
 	"(everything after the skill invocation token, e.g. after " +
-	"`/spec-kitty.<command>` or `$spec-kitty.<command>`) is the User Input " +
+	"`/spec-kitty-<command>` or `$spec-kitty-<command>`) is the User Input " +
 	"referenced elsewhere in these instructions.\n\n" +
 	"You **MUST** consider this user input before proceeding (if not empty).\n\n"
 
@@ -105,7 +105,7 @@ func RenderCommandSkill(root, command string) ([]byte, error) {
 		if !strings.HasPrefix(body, "\n") {
 			body = "\n" + body
 		}
-		return []byte("---\nname: spec-kitty." + command + "\ndescription: " + desc + "\nuser-invocable: true\n---\n" + body), nil
+		return []byte(commandSkillFrontmatter(command, desc) + "\n" + RewriteCommandInvocations(body)), nil
 	}
 	raw, err := ReadTemplate(command)
 	if err != nil {
@@ -149,6 +149,10 @@ func RenderCommandSkill(root, command string) ([]byte, error) {
 	if !strings.HasPrefix(body, "\n") {
 		body = "\n" + body
 	}
-	fm := "---\nname: " + skillYAMLScalar("spec-kitty."+command) + "\ndescription: " + skillYAMLScalar(desc) + "\nuser-invocable: true\n---"
-	return []byte(fm + body), nil
+	fm := commandSkillFrontmatter(command, desc)
+	return []byte(fm + RewriteCommandInvocations(body)), nil
+}
+
+func commandSkillFrontmatter(command, description string) string {
+	return "---\nname: " + skillYAMLScalar(CommandSkillName(command)) + "\ndescription: " + skillYAMLScalar(description) + "\nmetadata:\n  user-invocable: \"true\"\n---"
 }

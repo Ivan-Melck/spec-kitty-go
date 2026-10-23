@@ -14,6 +14,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 )
 
@@ -256,7 +257,15 @@ func (p *prep) skillTree(s agents.Skill, rel, dst string) error {
 			return err
 		}
 		if childRel == "SKILL.md" {
-			b = []byte(agents.EnsureSkillFrontmatter(string(b), s.Name))
+			skillRoot, err := filepath.Rel(project.UserHome(), filepath.Dir(dst))
+			if err != nil {
+				return err
+			}
+			projected, err := agents.ProjectSkillForRoot(string(b), filepath.ToSlash(skillRoot), s.Name)
+			if err != nil {
+				return err
+			}
+			b = []byte(projected)
 		}
 		if err := p.asset(target, b, 0o444, false, false); err != nil {
 			return err
@@ -308,13 +317,36 @@ func TemplateSourceSignature() (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func freshnessPayload(sig string) []byte {
+func freshnessPayload(sig string, selections ...[]string) []byte {
 	keys := agents.SortedCommandAgents()
+	if len(selections) > 0 {
+		keys = selections[0]
+	}
+	covered := map[string]bool{}
+	for _, key := range keys {
+		covered[key] = true
+	}
+	if b, err := os.ReadFile(filepath.Join(KittifyHome(), "cache", commandsFreshnessFile)); err == nil {
+		if old, err := jsonx.DecodeObject(b); err == nil && old.GetString("cli_version") == app.Version && old.GetString("template_source_signature") == sig {
+			if schema, ok := old.GetInt("schema"); ok && schema == 2 {
+				for _, raw := range old.GetList("healthy_keys") {
+					if key, ok := raw.(string); ok {
+						covered[key] = true
+					}
+				}
+			}
+		}
+	}
+	keys = nil
+	for key := range covered {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
 	l := make([]any, len(keys))
 	for i, k := range keys {
 		l[i] = k
 	}
-	return []byte(jsonx.Dumps(jsonx.NewObject("cli_version", app.Version, "template_source_signature", sig, "agent_keys", l), jsonx.Line))
+	return []byte(jsonx.Dumps(jsonx.NewObject("schema", 2, "cli_version", app.Version, "template_source_signature", sig, "healthy_keys", l, "retired_surfaces_cleaned", true), jsonx.Options{Indent: -1, SortKeys: true}))
 }
 
 // GlobalCommandsHealthy reports whether every command agent directory holds
@@ -353,13 +385,17 @@ func GlobalCommandsHealthy(keys []string) bool {
 	return true
 }
 
-func freshCommands(home string) bool {
+func freshCommands(home string, selections ...[]string) bool {
 	sig, err := TemplateSourceSignature()
 	if err != nil {
 		return false
 	}
 	b, err := os.ReadFile(filepath.Join(home, "cache", commandsFreshnessFile))
-	if err != nil || string(b) != string(freshnessPayload(sig)) {
+	keys := agents.SortedCommandAgents()
+	if len(selections) > 0 {
+		keys = selections[0]
+	}
+	if err != nil || string(b) != string(freshnessPayload(sig, keys)) {
 		// tolerate key-order/format differences by decoding
 		if err != nil {
 			return false
@@ -368,18 +404,25 @@ func freshCommands(home string) bool {
 		if derr != nil || o.GetString("cli_version") != app.Version || o.GetString("template_source_signature") != sig {
 			return false
 		}
-		got := o.GetList("agent_keys")
-		want := agents.SortedCommandAgents()
-		if len(got) != len(want) {
+		schema, ok := o.GetInt("schema")
+		if !ok || schema != 2 {
 			return false
 		}
-		for i := range want {
-			if s, _ := got[i].(string); s != want[i] {
+		covered := map[string]bool{}
+		for _, raw := range o.GetList("healthy_keys") {
+			key, ok := raw.(string)
+			if !ok {
+				return false
+			}
+			covered[key] = true
+		}
+		for _, key := range keys {
+			if !covered[key] {
 				return false
 			}
 		}
 	}
-	return GlobalCommandsHealthy(agents.SortedCommandAgents())
+	return GlobalCommandsHealthy(keys)
 }
 
 // UnmigratedCommands lists canonical command files preserved by the last
@@ -387,6 +430,9 @@ func freshCommands(home string) bool {
 func (p *prep) unmigrated(canonical map[string]bool) []string {
 	var out []string
 	for _, d := range p.disp {
+		if strings.HasPrefix(d.Path, filepath.Join(project.UserHome(), ".agent", "workflows")+string(filepath.Separator)) {
+			continue
+		}
 		if (d.State == "preserve" || d.State == "consent_required") && canonical[path.Base(d.Path)] {
 			out = append(out, d.Path+" ("+d.Reason+")")
 		}
@@ -399,7 +445,22 @@ func (p *prep) unmigrated(canonical map[string]bool) []string {
 // (ensure_global_agent_commands). keys==nil means the full fleet.
 func EnsureGlobalCommands(keys []string) ([]string, error) {
 	home := KittifyHome()
-	if keys == nil && freshCommands(home) {
+	if keys == nil {
+		keys = []string{}
+		if root := project.Locate(""); root != "" && kittify.ConfigExists(root) {
+			var ac kittify.AgentConfig
+			var err error
+			kittify.QuietAgentConfig(func() { ac, err = kittify.LoadAgentConfig(root) })
+			if err == nil {
+				for _, key := range ac.Available {
+					if _, ok := agents.CommandConfigs[key]; ok {
+						keys = append(keys, key)
+					}
+				}
+			}
+		}
+	}
+	if freshCommands(home, keys) {
 		return nil, nil
 	}
 	p, canonical, err := AssessGlobalCommands(keys)
@@ -476,15 +537,20 @@ func AssessGlobalCommands(keys []string) (*prep, map[string]bool, error) {
 		}
 	}
 	var stamp string
-	if full {
+	if err := p.retireAntigravityWorkflows(); err != nil {
+		return nil, nil, err
+	}
+	{
 		sig, err := TemplateSourceSignature()
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := p.overwriteInternal(filepath.Join(home, "cache", commandsFreshnessFile), freshnessPayload(sig)); err != nil {
+		if err := p.overwriteInternal(filepath.Join(home, "cache", commandsFreshnessFile), freshnessPayload(sig, keys)); err != nil {
 			return nil, nil, err
 		}
-		stamp = filepath.Join(home, "cache", commandsVersionFile)
+		if full {
+			stamp = filepath.Join(home, "cache", commandsVersionFile)
+		}
 	}
 	if err := p.finish(stamp, app.Version); err != nil {
 		return nil, nil, err

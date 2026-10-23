@@ -83,7 +83,7 @@ func TestUpgradeCurrentProjectMatchesOracle(t *testing.T) {
 	// Damaged surfaces + missing activations: preview, repair, commit.
 	p.Both(func(s *testkit.Sandbox) {
 		os.RemoveAll(filepath.Join(s.Dir, ".claude/skills/spec-kitty-git-workflow"))
-		os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty.plan"))
+		os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty-plan"))
 		cfg := s.ReadFile(".kittify/config.yaml")
 		cfg = regexp.MustCompile(`(?s)mission_type_activations:\n(- [^\n]*\n)+`).ReplaceAllString(cfg, "")
 		os.Chmod(filepath.Join(s.Dir, ".kittify/config.yaml"), 0o644)
@@ -97,7 +97,7 @@ func TestUpgradeCurrentProjectMatchesOracle(t *testing.T) {
 	if g, o := lastCommit(p.Go), lastCommit(p.Oracle); g != o {
 		t.Errorf("repair commit go=%q oracle=%q", g, o)
 	}
-	compareFiles(t, p, ".kittify/config.yaml", ".claude/skills/spec-kitty-git-workflow/SKILL.md", ".agents/skills/spec-kitty.plan/SKILL.md",
+	compareFiles(t, p, ".kittify/config.yaml", ".claude/skills/spec-kitty-git-workflow/SKILL.md", ".agents/skills/spec-kitty-plan/SKILL.md",
 		".kittify/skills-manifest.json", ".kittify/command-skills-manifest.json")
 }
 

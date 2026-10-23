@@ -83,14 +83,17 @@ func cloneLocalEffectInPlace(root string, m migrationInfo) bool {
 	return err == nil && !needed
 }
 
-func seedMigrationLedger(root string) error {
+func seedMigrationLedger(root string) error { _, err := seedMigrationLedgerCount(root); return err }
+
+func seedMigrationLedgerCount(root string) (int, error) {
+	count := 0
 	ledger := migrationledger.Ledger{Root: root}
 	for _, cloneLocal := range []bool{false, true} {
 		if _, err := ledger.Read(cloneLocal); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return dct.LegacyActivationScope([]string{root}, func() error {
+	err := dct.LegacyActivationScope([]string{root}, func() error {
 		for _, m := range migrationCatalog {
 			if migrationSettled(root, m) || m.CloneLocal && !cloneLocalEffectInPlace(root, m) {
 				continue
@@ -98,9 +101,11 @@ func seedMigrationLedger(root string) error {
 			if err := ledger.Append(migrationRecord(m, "success", "")); err != nil {
 				return err
 			}
+			count++
 		}
 		return nil
 	})
+	return count, err
 }
 
 func migrationAdoptionPlan(root string) ([]migrationledger.Record, error) {

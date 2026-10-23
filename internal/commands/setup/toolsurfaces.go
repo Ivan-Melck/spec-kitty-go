@@ -52,7 +52,7 @@ func runDoctorToolSurfaces(ctx *cli.Context) error {
 		cwd, _ := os.Getwd()
 		if msg := missionstate.WriteRefusal(cwd, root); msg != "" {
 			if jsonOut {
-				printJSONRaw(w, jsonError("foreign_checkout_write_refused", msg))
+				printJSON(w, jsonError("foreign_checkout_write_refused", msg))
 			} else {
 				out(w, "[red]Error:[/red] "+escapeMarkup(msg))
 			}
@@ -64,7 +64,7 @@ func runDoctorToolSurfaces(ctx *cli.Context) error {
 		k, err := toolsurface.KindFromToken(tok)
 		if err != nil {
 			if jsonOut {
-				printJSONRaw(w, jsonError("unknown_kind", err.Error()))
+				printJSON(w, jsonError("unknown_kind", err.Error()))
 			} else {
 				out(w, "[red]Error:[/red] "+escapeMarkup(err.Error()))
 			}
@@ -78,7 +78,7 @@ func runDoctorToolSurfaces(ctx *cli.Context) error {
 	ac, err := kittify.LoadAgentConfig(root)
 	if err != nil {
 		if jsonOut {
-			printJSONRaw(w, jsonError("config_error", err.Error()))
+			printJSON(w, jsonError("config_error", err.Error()))
 		} else {
 			out(w, "[red]Error:[/red] "+escapeMarkup(err.Error()))
 		}
@@ -89,7 +89,7 @@ func runDoctorToolSurfaces(ctx *cli.Context) error {
 	configured = dedupe(configured)
 	outcome := toolsurface.RunToolSurfaces(root, configured, ctx.OptString("tool"), kinds, ctx.Bool("fix"))
 	if jsonOut {
-		printJSONRaw(w, outcome.JSON())
+		printJSON(w, outcome.JSON())
 		return exitOrNil(boolCode(!outcome.Report.OK))
 	}
 	printToolSurfacesHuman(w, outcome)

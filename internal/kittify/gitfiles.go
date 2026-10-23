@@ -19,6 +19,7 @@ var GitattributesEntries = []string{
 	"kitty-specs/**/issue-matrix.json merge=spec-kitty-issue-matrix",
 	"kitty-specs/**/tasks/*/review-cycle-*.md merge=spec-kitty-review-cycle",
 	"kitty-specs/**/decisions/index.json merge=spec-kitty-decision-index",
+	"kitty-specs/**/issue-matrix.md merge=spec-kitty-issue-matrix",
 	"kitty-specs/**/status.json linguist-generated=true",
 	"kitty-specs/**/status.events.jsonl linguist-generated=true",
 	"kitty-specs/**/lanes.json linguist-generated=true",

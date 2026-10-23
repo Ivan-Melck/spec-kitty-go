@@ -2,8 +2,11 @@ package kittify
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spec-kitty/go-kitty3/internal/assets"
+	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -46,7 +49,11 @@ func ProvisionDefaultMissionTypeActivations(root string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	cfg := ReadConfig(root)
+	store, err := dct.ResolveActivationStore(root)
+	if err != nil {
+		return false, err
+	}
+	cfg := store.Data
 	if cfg.Has("mission_type_activations") {
 		return false, nil
 	}
@@ -55,5 +62,8 @@ func ProvisionDefaultMissionTypeActivations(root string) (bool, error) {
 		l[i] = t
 	}
 	cfg.Set("mission_type_activations", l)
-	return true, SaveConfig(root, cfg)
+	if err := os.MkdirAll(filepath.Dir(store.Path), 0o755); err != nil {
+		return false, err
+	}
+	return true, writeInPlace(store.Path, []byte(renderOver(store.Path, cfg, nil)), 0o644)
 }

@@ -11,6 +11,8 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/app"
+	"github.com/spec-kitty/go-kitty3/internal/assets"
+	"github.com/spec-kitty/go-kitty3/internal/jsonschema"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
@@ -70,8 +72,61 @@ func LoadCommandManifest(root string) ([]CommandEntry, error) {
 		return nil, fail(manifestError("schema_validation_failed", jsonx.NewObject("detail", "Manifest root must be an object")))
 	}
 	sv, _ := o.Get("schema_version")
-	if n, isInt := sv.(int); !isInt || n != 1 {
+	versionOne := false
+	switch v := sv.(type) {
+	case int:
+		versionOne = v == 1
+	case float64:
+		versionOne = v == 1
+	case bool:
+		versionOne = v
+	}
+	if !versionOne {
 		return nil, fail(manifestError("unsupported_schema_version", jsonx.NewObject("found", sv)))
+	}
+	projected := &jsonx.Object{}
+	for _, key := range []string{"schema_version", "entries"} {
+		if v, ok := o.Get(key); ok {
+			projected.Set(key, v)
+		}
+	}
+	if data, err := assets.ReadFile("specify_cli/skills/data/skills-manifest.schema.json"); err == nil {
+		if schema, err := jsonx.DecodeObject(data); err == nil {
+			errors := jsonschema.New(schema).IterErrors(projected)
+			sort.SliceStable(errors, func(i, j int) bool {
+				left, right := errors[i].Path, errors[j].Path
+				for n := 0; n < len(left) && n < len(right); n++ {
+					if li, ok := left[n].(int); ok {
+						if ri, ok := right[n].(int); ok {
+							if li != ri {
+								return li < ri
+							}
+							continue
+						}
+					}
+					l, r := fmt.Sprint(left[n]), fmt.Sprint(right[n])
+					if l != r {
+						return l < r
+					}
+				}
+				return len(left) < len(right)
+			})
+			if len(errors) > 0 {
+				messages := []any{}
+				for _, e := range errors {
+					parts := []string{}
+					for _, p := range e.Path {
+						parts = append(parts, fmt.Sprint(p))
+					}
+					location := strings.Join(parts, "/")
+					if location == "" {
+						location = "<root>"
+					}
+					messages = append(messages, location+": "+e.Message)
+				}
+				return nil, fail(manifestError("schema_validation_failed", jsonx.NewObject("errors", messages)))
+			}
+		}
 	}
 	var out []CommandEntry
 	seen := map[string]bool{}
@@ -122,11 +177,17 @@ type PreparedCommand struct {
 
 // PreparedCommands is command_installer.PreparedCommands.
 type PreparedCommands struct {
+	Inputs        map[string]commandInput
+	Rendered      map[string]string
+	Provisioning  *Provisioning
 	Commands      []PreparedCommand
 	ManifestBytes []byte
 }
 
 type commandBatch struct {
+	inputs       map[string]commandInput
+	rendered     map[string]string
+	provisioning *Provisioning
 	root         Root
 	agents       []string
 	provParents  map[string]bool
@@ -179,7 +240,7 @@ func (b *commandBatch) observeDestination(rel string) (FileState, error) {
 		}
 	}
 	for _, parent := range parentsOf(rel) {
-		st, err := observeNode(filepath.Join(b.root.Path, filepath.FromSlash(parent)))
+		st, err := b.observeInput(filepath.Join(b.root.Path, filepath.FromSlash(parent)), false)
 		if err != nil {
 			return FileState{}, err
 		}
@@ -187,7 +248,7 @@ func (b *commandBatch) observeDestination(rel string) (FileState, error) {
 			return FileState{}, installerError("unsafe_path", jsonx.NewObject("path", rel, "detail", "Non-directory parent"))
 		}
 	}
-	return observeNode(filepath.Join(b.root.Path, filepath.FromSlash(rel)))
+	return b.observeInput(filepath.Join(b.root.Path, filepath.FromSlash(rel)), false)
 }
 
 func (b *commandBatch) disposition(rel, state, reason string) {
@@ -275,7 +336,8 @@ func (b *commandBatch) preserve(rel string, before FileState, existing *CommandE
 		return false
 	}
 	if existing == nil && before.SHA256 != digest {
-		b.disposition(rel, "preserve", "Unknown content does not equal canonical rendered bytes")
+		b.commands = append(b.commands, PreparedCommand{Path: rel, ReportKind: "collision"})
+		b.disposition(rel, "collision", "Content Spec Kitty does not own occupies this command skill path; skipped")
 		return true
 	}
 	return false
@@ -310,6 +372,15 @@ func (b *commandBatch) installCommand(command string, content []byte) error {
 		}
 	}
 	digest := Digest(content)
+	if existing == nil && before.Kind == "absent" && parentState.Kind == "directory" {
+		if entries, err := os.ReadDir(filepath.Join(b.root.Path, filepath.FromSlash(parent))); err != nil {
+			return err
+		} else if len(entries) > 0 {
+			b.commands = append(b.commands, PreparedCommand{Path: rel, ReportKind: "collision"})
+			b.disposition(rel, "collision", "Content Spec Kitty does not own occupies this command skill path; skipped")
+			return nil
+		}
+	}
 	if b.preserve(rel, before, existing, digest) {
 		return nil
 	}
@@ -398,7 +469,7 @@ func (b *commandBatch) removeEntry(e CommandEntry, remaining []string, retired b
 		}
 	}
 	parent := path.Dir(e.Path)
-	pst, err := observeNode(filepath.Join(b.root.Path, filepath.FromSlash(parent)))
+	pst, err := b.observeInput(filepath.Join(b.root.Path, filepath.FromSlash(parent)), false)
 	if err != nil {
 		return err
 	}
@@ -472,8 +543,10 @@ func (b *commandBatch) finish() (*Assessment, error) {
 	for _, rel := range b.order {
 		effects = append(effects, b.effects[rel])
 	}
-	return &Assessment{OwnerKey: "command_skills", Root: b.root, Effects: effects, Dispositions: b.dispositions, Complete: true, Artifacts: b.artifacts,
-		Prepared: &PreparedCommands{Commands: b.commands, ManifestBytes: encoded}}, nil
+	a := &Assessment{OwnerKey: "command_skills", Root: b.root, Effects: effects, Dispositions: b.dispositions, Complete: true, Artifacts: b.artifacts,
+		Prepared: &PreparedCommands{Commands: b.commands, ManifestBytes: encoded, Inputs: b.inputs, Rendered: b.rendered, Provisioning: b.provisioning}}
+	a.Recheck = func() []Diagnostic { return recheckCommandInputs(a, a.Prepared.(*PreparedCommands)) }
+	return a, nil
 }
 
 // CommandOptions narrows PrepareCommands.
@@ -509,7 +582,7 @@ func prepareCommands(root Root, agentKeys []string, opts CommandOptions) (*Asses
 			return nil, installerError("unsupported_agent", jsonx.NewObject("agents", all))
 		}
 	}
-	b := &commandBatch{root: root, agents: agentKeys, effects: map[string]Effect{}, regenerated: map[string]bool{}, provParents: map[string]bool{}, now: opts.Now}
+	b := &commandBatch{root: root, agents: agentKeys, provisioning: opts.Provisioning, rendered: map[string]string{}, effects: map[string]Effect{}, regenerated: map[string]bool{}, provParents: map[string]bool{}, now: opts.Now}
 	if opts.Provisioning != nil {
 		for _, d := range opts.Provisioning.AbsentParents {
 			b.provParents[d] = true
@@ -528,18 +601,62 @@ func prepareCommands(root Root, agentKeys []string, opts CommandOptions) (*Asses
 	}
 	b.manifest = append([]CommandEntry(nil), entries...)
 	b.original = append([]CommandEntry(nil), entries...)
+	recorded := map[string]bool{}
+	for _, e := range entries {
+		recorded[e.Path] = true
+		if agents.ParseCommandSkillPath(e.Path, true) == "" {
+			continue
+		}
+		if len(opts.RemoveAgents) > 0 && len(agentKeys) == 0 {
+			var remaining []string
+			hit := false
+			for _, owner := range e.Agents {
+				remove := false
+				for _, r := range opts.RemoveAgents {
+					remove = remove || owner == r
+				}
+				if remove {
+					hit = true
+				} else {
+					remaining = append(remaining, owner)
+				}
+			}
+			if !hit {
+				continue
+			}
+			if len(remaining) > 0 {
+				updated := e
+				updated.Agents = remaining
+				b.upsert(updated)
+				b.commands = append(b.commands, PreparedCommand{Path: e.Path, Entry: &updated, ReportKind: "kept"})
+				continue
+			}
+		}
+		if err := b.migrateLegacyEntry(e); err != nil {
+			return nil, err
+		}
+	}
 	if len(agentKeys) > 0 {
 		for _, c := range agents.CommandSkillCommands {
 			content, err := agents.RenderCommandSkill(root.Path, c)
 			if err != nil {
 				return nil, err
 			}
+			b.rendered[c] = Digest(content)
 			if err := b.installCommand(c, content); err != nil {
 				return nil, err
+			}
+			if !recorded[agents.LegacyCommandSkillPath(c)] {
+				if err := b.retireUnrecordedLegacy(c, content); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}
 	for _, e := range b.original {
+		if agents.ParseCommandSkillPath(e.Path, true) != "" {
+			continue
+		}
 		retired := opts.Prune && !isCanonicalRelPath(e.Path)
 		if len(opts.RemoveAgents) > 0 || retired {
 			sel := opts.RemoveAgents
@@ -573,17 +690,7 @@ func prepareCommands(root Root, agentKeys []string, opts CommandOptions) (*Asses
 }
 
 func isCanonicalRelPath(rel string) bool {
-	const prefix, suffix = ".agents/skills/spec-kitty.", "/SKILL.md"
-	if !strings.HasPrefix(rel, prefix) || !strings.HasSuffix(rel, suffix) {
-		return false
-	}
-	c := rel[len(prefix) : len(rel)-len(suffix)]
-	for _, x := range agents.CommandSkillCommands {
-		if x == c {
-			return true
-		}
-	}
-	return false
+	return agents.ParseCommandSkillPath(rel, false) != ""
 }
 
 // ApplyCommands is command_installer.apply_commands for a fresh assessment.
@@ -592,6 +699,9 @@ func ApplyCommands(a *Assessment) ApplyResult {
 	if !a.Complete || payload == nil {
 		return ApplyResult{Owner: "command_skills", Skipped: a.EffectIDs(), Outcome: "precondition_changed",
 			Diagnostics: []Diagnostic{Diag("incomplete_assessment", "command_skills", "error", "Command preparation is incomplete")}}
+	}
+	if diagnostics := recheckCommandInputs(a, payload); len(diagnostics) > 0 {
+		return ApplyResult{Owner: "command_skills", Skipped: a.EffectIDs(), Outcome: "precondition_changed", Diagnostics: diagnostics}
 	}
 	effects := append([]Effect(nil), a.Effects...)
 	rank := func(e Effect) int {

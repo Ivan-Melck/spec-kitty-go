@@ -92,7 +92,13 @@ func init() {
 	})
 }
 
-var commandSkillAgentSet = map[string]bool{"codex": true, "vibe": true, "pi": true, "letta": true}
+var commandSkillAgentSet = func() map[string]bool {
+	out := map[string]bool{}
+	for _, key := range agents.CommandSkillAgents {
+		out[key] = true
+	}
+	return out
+}()
 
 const pendingCommandSkills = ".kittify/init-command-skills.pending.json"
 
@@ -240,6 +246,10 @@ func installCommandSkillAgents(w io.Writer, root string, keys []string) bool {
 		for _, p := range rep.Regenerated {
 			plain(w, RegeneratedSurfaceLine(p))
 		}
+		for _, warning := range agents.CommandSkillWarnings(rep) {
+			cprint := "Warning: " + warning
+			plain(w, cprint)
+		}
 	}
 	return ok
 }
@@ -254,13 +264,7 @@ func primaryNextStepAgent(selected []string) string {
 }
 
 func agentCommandToken(agent, command string) string {
-	switch agent {
-	case "codex":
-		return "$spec-kitty." + command
-	case "pi":
-		return "/skill:spec-kitty." + command
-	}
-	return "/spec-kitty." + command
+	return agents.SkillInvocationToken(agent, command)
 }
 
 func runInit(ctx *cli.Context) error {
@@ -443,9 +447,11 @@ func runInit(ctx *cli.Context) error {
 			return fail(err)
 		}
 	}
-	res := agents.ProtectAllAgents(projectPath)
+	res := agents.ProtectAllAgents(projectPath, selected)
 	if res.Modified {
-		lv.print(func(w io.Writer) { out(w, "[cyan]Updated .gitignore to exclude AI agent directories:[/cyan]") })
+		lv.print(func(w io.Writer) {
+			out(w, "[cyan]Updated .gitignore to exclude Spec Kitty's generated agent files and runtime state:[/cyan]")
+		})
 		for _, e := range res.Added {
 			lv.print(func(w io.Writer) { out(w, "  • "+e) }) // markup + highlight
 		}
@@ -454,7 +460,7 @@ func runInit(ctx *cli.Context) error {
 		}
 	} else if len(res.Skipped) > 0 {
 		lv.print(func(w io.Writer) {
-			outf(w, "[dim]All %d agent directories already in .gitignore[/dim]", len(res.Skipped))
+			outf(w, "[dim]All %d generated-file entries already in .gitignore[/dim]", len(res.Skipped))
 		})
 	}
 	for _, m := range res.Warnings {
@@ -526,6 +532,11 @@ func runInit(ctx *cli.Context) error {
 	if _, err := kittify.StampSchema(projectPath); err != nil {
 		outf(w, "[dim]Note: Could not stamp schema metadata: %v[/dim]", err)
 	}
+	if count, err := seedMigrationLedgerCount(projectPath); err != nil {
+		outf(w, "[dim]Note: Could not seed migration ledger: %v[/dim]", err)
+	} else if count > 0 {
+		outf(w, "[dim]Seeded migration ledger (%d records)[/dim]", count)
+	}
 	if vcs {
 		if err := kittify.SaveVCSConfig(projectPath); err != nil {
 			outf(w, "[dim]Note: Could not save VCS config: %v[/dim]", err)
@@ -562,9 +573,7 @@ func runInit(ctx *cli.Context) error {
 	if len(summary.DriftedReported) > 0 && nonInteractive {
 		return cli.Exit(1)
 	}
-	if err := seedMigrationLedger(projectPath); err != nil {
-		return err
-	}
+
 	return nil
 }
 
@@ -618,15 +627,22 @@ func printNextSteps(w io.Writer, projectPath, projectName string, here bool, sel
 	}
 	if has("vibe") {
 		fmt.Fprintln(w)
-		panel(w, strings.Join([]string{"1. Install Vibe if you haven't already:", "     [cyan]curl -LsSf https://mistral.ai/vibe/install.sh | bash[/cyan]", "   or", "     [cyan]uv tool install mistral-vibe[/cyan]", "2. Launch Vibe in this project:", "     [cyan]vibe[/cyan]", "3. Inside Vibe, invoke your first workflow:", "     [cyan]/spec-kitty.specify <describe what you want to build>[/cyan]"}, "\n"), "Next Steps for Mistral Vibe")
+		panel(w, strings.Join([]string{"1. Install Vibe if you haven't already:", "     [cyan]curl -LsSf https://mistral.ai/vibe/install.sh | bash[/cyan]", "   or", "     [cyan]uv tool install mistral-vibe[/cyan]", "2. Launch Vibe in this project:", "     [cyan]vibe[/cyan]", "3. Inside Vibe, invoke your first workflow:", "     [cyan]/spec-kitty-specify <describe what you want to build>[/cyan]"}, "\n"), "Next Steps for Mistral Vibe")
 	}
 	if has("pi") {
 		fmt.Fprintln(w)
-		panel(w, strings.Join([]string{"1. Install Pi if you haven't already:", "     [cyan]curl -fsSL https://pi.dev/install.sh | sh[/cyan]", "2. Launch Pi in this project:", "     [cyan]pi[/cyan]", "3. Invoke your first Spec Kitty command skill:", "     [cyan]/skill:spec-kitty.specify <describe what you want to build>[/cyan]"}, "\n"), "Next Steps for Pi")
+		panel(w, strings.Join([]string{"1. Install Pi if you haven't already:", "     [cyan]curl -fsSL https://pi.dev/install.sh | sh[/cyan]", "2. Launch Pi in this project:", "     [cyan]pi[/cyan]", "3. Invoke your first Spec Kitty command skill:", "     [cyan]/skill:spec-kitty-specify <describe what you want to build>[/cyan]"}, "\n"), "Next Steps for Pi")
 	}
 	if has("letta") {
 		fmt.Fprintln(w)
-		panel(w, strings.Join([]string{"1. Install Letta Code if you haven't already:", "     [cyan]npm install -g @letta-ai/letta-code[/cyan]", "2. Launch Letta Code in this project:", "     [cyan]letta[/cyan]", "3. Ask Letta Code to use the Spec Kitty specify skill:", "     [cyan]/spec-kitty.specify <describe what you want to build>[/cyan]"}, "\n"), "Next Steps for Letta Code")
+		panel(w, strings.Join([]string{"1. Install Letta Code if you haven't already:", "     [cyan]npm install -g @letta-ai/letta-code[/cyan]", "2. Launch Letta Code in this project:", "     [cyan]letta[/cyan]", "3. Ask Letta Code to use the Spec Kitty specify skill:", "     [cyan]/spec-kitty-specify <describe what you want to build>[/cyan]"}, "\n"), "Next Steps for Letta Code")
+	}
+	for _, key := range selected {
+		if agents.IsCommandSkillAgent(key) {
+			fmt.Fprintln(w)
+			plain(w, "Spec Kitty command skills are now named spec-kitty-<command> (for example spec-kitty-specify).")
+			break
+		}
 	}
 	enh := "Optional quality checks.\n\n○ [cyan]" + agentCommandToken(primary, "analyze") + "[/] [bright_black](optional)[/bright_black] - Cross-artifact consistency & alignment report (after [cyan]" + agentCommandToken(primary, "tasks") + "[/])"
 	fmt.Fprintln(w)

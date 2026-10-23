@@ -2,6 +2,7 @@ package toolsurface
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/agents"
 
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 )
@@ -9,6 +10,7 @@ import (
 // DriftPolicySummary is repair.DriftPolicySummary (paths as instance paths).
 type DriftPolicySummary struct {
 	Created, Repaired, Regenerated, DriftedOverwritten, DriftedReported, Skipped []string
+	Warnings                                                                     []string
 }
 
 // Lines is repair.render_surface_summary_lines (rich markup).
@@ -28,6 +30,9 @@ func (s DriftPolicySummary) Lines() []string {
 	}
 	if len(s.Skipped) > 0 {
 		l = append(l, fmt.Sprintf("  %d surface(s) not applicable, skipped.", len(s.Skipped)))
+	}
+	for _, warning := range s.Warnings {
+		l = append(l, "[yellow]Warning: "+warning+"[/yellow]")
 	}
 	return l
 }
@@ -104,6 +109,9 @@ func RunSurfaceRepair(root string, interactive, repairDrift bool, prompt func(pa
 		for _, s := range overwrite {
 			sum.DriftedOverwritten = append(sum.DriftedOverwritten, s.Inst.Path)
 		}
+	}
+	if warning := agents.RefreshAgentBlock(root); warning != "" {
+		sum.Warnings = append(sum.Warnings, warning)
 	}
 	return sum
 }

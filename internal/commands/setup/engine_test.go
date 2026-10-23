@@ -54,7 +54,7 @@ func drift(s *testkit.Sandbox) {
 		f.WriteString(text)
 		f.Close()
 	}
-	rm(".agents/skills/spec-kitty.plan/SKILL.md")
+	rm(".agents/skills/spec-kitty-plan/SKILL.md")
 	rm(".agents/skills/spk-start-here/SKILL.md")
 	rm(".claude/skills/spk-start-here/SKILL.md")
 	edit(".agents/skills/spk-run-next/SKILL.md", "local edit\n")

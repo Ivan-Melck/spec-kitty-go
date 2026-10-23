@@ -90,7 +90,7 @@ func TestInitWithoutOracle(t *testing.T) {
 	}
 	for _, rel := range []string{".kittify/config.yaml", ".kittify/metadata.yaml", ".kittify/canonical-events.jsonl", ".kittify/skills-manifest.json",
 		".kittify/command-skills-manifest.json", ".kittify/agent_profiles_manifest.json", ".claude/CLAUDE.md", ".claude/settings.json", "AGENTS.md",
-		".agents/skills/spec-kitty.plan/SKILL.md", ".claude/skills/spec-kitty/SKILL.md", ".codex/agents/architect-alphonso.toml", ".gitignore", ".gitattributes"} {
+		".agents/skills/spec-kitty-plan/SKILL.md", ".claude/skills/spec-kitty/SKILL.md", ".codex/agents/architect-alphonso.toml", ".gitignore", ".gitattributes"} {
 		if !s.Exists(rel) {
 			t.Errorf("missing %s", rel)
 		}
@@ -99,13 +99,13 @@ func TestInitWithoutOracle(t *testing.T) {
 		t.Error("pending record left behind")
 	}
 	cfg := s.ReadFile(".kittify/config.yaml")
-	if !strings.Contains(cfg, "available:\n  - claude\n  - codex\n") || !strings.Contains(cfg, "mission_type_activations:\n- software-dev") {
+	if !strings.Contains(cfg, "available:\n  - claude\n  - codex\n") || strings.Contains(cfg, "mission_type_activations:") || !strings.Contains(s.ReadFile(".kittify/charter/activation.yaml"), "mission_type_activations:\n- software-dev") {
 		t.Errorf("config.yaml:\n%s", cfg)
 	}
 	if r := s.Run("init", ".", "--ai", "claude", "--non-interactive"); r.Code != 0 || !strings.Contains(r.Stdout, "Already initialized") {
 		t.Fatalf("rerun: %d\n%s", r.Code, r.Stdout)
 	}
-	os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty.plan"))
+	os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty-plan"))
 	if r := s.Run("init", ".", "--non-interactive"); r.Code != 1 || !strings.Contains(r.Stdout, "agent config sync --create-missing") {
 		t.Fatalf("missing command skill rerun: %d\n%s", r.Code, r.Stdout)
 	}

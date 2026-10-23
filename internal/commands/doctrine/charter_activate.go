@@ -262,6 +262,9 @@ func reprojectPackSkills(ctx *cli.Context, root, kind string) error {
 		cprint(w, "[red]Error:[/red] pack skills were not projected: %s. The activation change is recorded; fix the cause and re-run this command.", err.Error())
 		return cli.Exit(1)
 	}
+	for _, warning := range p.Warnings {
+		cprint(w, "[yellow]Warning: %s[/yellow]", warning)
+	}
 	for _, path := range p.Changed {
 		cprint(w, "[green]Skill file synced[/green]: %s", path)
 	}

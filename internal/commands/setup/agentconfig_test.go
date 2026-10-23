@@ -80,7 +80,7 @@ func TestAgentConfigWithoutOracle(t *testing.T) {
 		t.Fatal("codex not saved")
 	}
 	r = s.MustRun("agent", "config", "remove", "codex")
-	if !strings.Contains(testkit.StripANSI(r.Stdout), "Removed skills for codex (14 files deleted)") || s.Exists(".agents/skills/spec-kitty.plan/SKILL.md") {
+	if !strings.Contains(testkit.StripANSI(r.Stdout), "Removed skills for codex (14 files deleted)") || s.Exists(".agents/skills/spec-kitty-plan/SKILL.md") {
 		t.Fatalf("remove:\n%s", r.Stdout)
 	}
 	s.MustRun("agent", "config", "set", "lint_on_edit", "true")

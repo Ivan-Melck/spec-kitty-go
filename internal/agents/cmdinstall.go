@@ -13,7 +13,7 @@ const CommandSkillsManifestFile = "command-skills-manifest.json"
 
 // CommandSkillPath is the project-relative command skill path.
 func CommandSkillPath(command string) string {
-	return ".agents/skills/spec-kitty." + command + "/SKILL.md"
+	return ".agents/skills/" + CommandSkillName(command) + "/SKILL.md"
 }
 
 // CommandSkillEntry is one command-skills manifest entry.

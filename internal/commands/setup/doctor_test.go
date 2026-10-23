@@ -23,9 +23,9 @@ func TestDoctorSetupLeavesMatchOracle(t *testing.T) {
 		t.Errorf("bare doctor: go=%d %q oracle=%d %q", g.Code, g.Stderr, o.Code, o.Stderr)
 	}
 	p.Both(func(s *testkit.Sandbox) {
-		os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty.plan"))
-		os.Chmod(filepath.Join(s.Dir, ".agents/skills/spec-kitty.tasks/SKILL.md"), 0o644)
-		s.WriteFile(".agents/skills/spec-kitty.tasks/SKILL.md", "edited\n")
+		os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty-plan"))
+		os.Chmod(filepath.Join(s.Dir, ".agents/skills/spec-kitty-tasks/SKILL.md"), 0o644)
+		s.WriteFile(".agents/skills/spec-kitty-tasks/SKILL.md", "edited\n")
 		s.WriteFile(".agents/skills/spec-kitty.extra/SKILL.md", "x\n")
 		os.Remove(filepath.Join(s.Home, ".claude/commands/spec-kitty.plan.md"))
 		s.WriteFile(".kittify/.kitty.env", "SPEC_KITTY_NO_BANNER=1\nexport SPEC_KITTY_ORG_TOKEN=\"abc\"\n")
@@ -37,8 +37,8 @@ func TestDoctorSetupLeavesMatchOracle(t *testing.T) {
 	p.Both(func(s *testkit.Sandbox) { os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty.extra")) })
 	p.Compare(false, "doctor", "skills", "--fix")
 	p.Both(func(s *testkit.Sandbox) {
-		os.Chmod(filepath.Join(s.Dir, ".agents/skills/spec-kitty.tasks/SKILL.md"), 0o644)
-		os.Remove(filepath.Join(s.Dir, ".agents/skills/spec-kitty.tasks/SKILL.md"))
+		os.Chmod(filepath.Join(s.Dir, ".agents/skills/spec-kitty-tasks/SKILL.md"), 0o644)
+		os.Remove(filepath.Join(s.Dir, ".agents/skills/spec-kitty-tasks/SKILL.md"))
 	})
 	p.Compare(false, "doctor", "skills", "--fix", "--json")
 	p.Compare(false, "doctor", "skills")

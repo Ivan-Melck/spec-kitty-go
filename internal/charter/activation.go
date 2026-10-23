@@ -798,7 +798,7 @@ func (ix *configIDIndex) ConfigID(urn string) string {
 // kind has no DRG node, e.g. mission-type, or no file declares it).
 func SourceURN(root, token, stem string) string {
 	if token == dct.MissionTypeToken {
-		return ""
+		return "mission_type:" + stem
 	}
 	k, err := dct.ParseKind(token)
 	if err != nil {

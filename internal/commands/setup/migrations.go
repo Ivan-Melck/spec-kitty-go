@@ -22,13 +22,16 @@ type migrationInfo struct {
 
 // migrationResult is upgrade.migrations.base.MigrationResult.
 type migrationResult struct {
-	Success      bool
-	Changes      []string
-	Warnings     []string
-	Errors       []string
-	ManualReview bool
-	Preserved    []string
+	Success       bool
+	Changes       []string
+	Warnings      []string
+	Errors        []string
+	ManualReview  bool
+	Preserved     []string
+	PartialWrites []migrationPartialWrite
 }
+
+type migrationPartialWrite struct{ Mission, Path string }
 
 // migrationImpl ports one migration's detect/can_apply/apply. Migrations
 // without a port detect as "not needed" (they target state the Go port
