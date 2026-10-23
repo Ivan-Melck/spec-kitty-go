@@ -633,42 +633,67 @@ func researchBanner(deliv, target string) []string {
 }
 
 // PreviewClaimableWP is runtime.next.discovery.preview_claimable_wp: the
-// first planned WP (file order) whose dependencies are satisfied; reason
-// "dependencies_not_satisfied" when planned WPs exist but none is ready.
+// first WP (tasks/WP*.md in name order, by frontmatter work_package_id)
+// that is planned with its dependencies satisfied. Otherwise "" and the
+// selection reason: no_tasks_dir, no_wp_files, dependencies_not_satisfied,
+// all_wps_in_progress, not_finalized (a WP with no status yet is genesis,
+// never claimable) or no_planned_wps.
 func PreviewClaimableWP(root, slug string) (string, string) {
 	primary := project.Specs(root, slug)
-	if st, err := os.Stat(filepath.Join(primary, "tasks")); err != nil || !st.IsDir() {
-		return "", ""
+	tasks := filepath.Join(primary, "tasks")
+	if st, err := os.Stat(tasks); err != nil || !st.IsDir() {
+		return "", "no_tasks_dir"
 	}
-	snap := statusSnapshot(coord.Resolve(root, slug))
-	files := wp.Files(primary)
+	files, _ := filepath.Glob(filepath.Join(tasks, "WP*.md"))
 	sort.Strings(files)
-	anyPlanned := false
+	type cand struct {
+		id   string
+		deps []string
+	}
+	var cands []cand
 	for _, p := range files {
 		w, err := wp.Read(p)
 		if err != nil {
 			continue
 		}
-		id := w.String("work_package_id")
-		if id == "" {
-			id = wp.IDFromFilename(filepath.Base(p))
-		}
-		lane := string(status.Planned)
-		if l := snap.Lane(id); l != "" {
-			lane = string(l)
-		}
-		if lane != "planned" {
-			continue
-		}
-		anyPlanned = true
-		if len(DependencyBlockers(w.Dependencies(), snap)) == 0 {
-			return id, ""
+		if id := w.String("work_package_id"); id != "" {
+			cands = append(cands, cand{id, w.Dependencies()})
 		}
 	}
-	if anyPlanned {
+	if len(cands) == 0 {
+		return "", "no_wp_files"
+	}
+	snap := statusSnapshot(coord.Resolve(root, slug))
+	depBlocked, active, genesis := false, false, false
+	for _, c := range cands {
+		lane := string(status.Genesis)
+		if snap.WP(c.id) != nil {
+			if l := snap.Lane(c.id); l != "" {
+				lane = string(l)
+			}
+		}
+		switch lane {
+		case string(status.Genesis):
+			genesis = true
+		case string(status.Planned):
+			if len(DependencyBlockers(c.deps, snap)) > 0 {
+				depBlocked = true
+				continue
+			}
+			return c.id, ""
+		case string(status.Claimed), string(status.InProgress), string(status.ForReview), string(status.InReview):
+			active = true
+		}
+	}
+	switch {
+	case depBlocked:
 		return "", "dependencies_not_satisfied"
+	case active:
+		return "", "all_wps_in_progress"
+	case genesis:
+		return "", "not_finalized"
 	}
-	return "", "no_planned"
+	return "", "no_planned_wps"
 }
 
 var _ = strconv.Itoa

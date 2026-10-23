@@ -122,7 +122,3 @@ Additive hooks in other packages: `lanes.OwnedCheckoutKind` /
 * The upstream lock-order `RuntimeError` (taking the checkout lock while
   holding a Mission lock) has no Go equivalent; a failing `git status` in
   the dirty scan is `LANE_ALLOCATION_FAILED` instead of a traceback.
-* Not owned-specific, found while testing (area CORE): `next` query /
-  advance on an authored but unfinalized mission answers
-  `analyze` / `ANALYSIS_REPORT_MISSING` where upstream blocks with "no
-  actionable wp".
