@@ -11,7 +11,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
-	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
 )
@@ -88,7 +87,7 @@ func listContexts(repoRoot string) []workspaceContext {
 }
 
 // reduceLanes is the canonical status reducer's per-WP lane.
-func reduceLanes(missionDir string, warn io.Writer) (map[string]string, error) {
+func reduceLanes(missionDir string) (map[string]string, error) {
 	if _, err := os.Stat(status.EventsPath(missionDir)); err != nil {
 		slug := filepath.Base(missionDir)
 		return nil, fmt.Errorf("Canonical status not found for mission '%s'. Run 'spec-kitty agent mission finalize-tasks --mission %s' to bootstrap the event log.", slug, slug)
@@ -97,18 +96,8 @@ func reduceLanes(missionDir string, warn io.Writer) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// read_events resolves a missing mission_id through the slug's meta.json
-	// and logs once per slug when that file is absent.
-	warned := map[string]bool{}
-	for _, e := range st.Transitions {
-		if e.MissionID != nil && *e.MissionID != "" || e.MissionSlug == "" || warned[e.MissionSlug] || strings.ContainsAny(e.MissionSlug, `/\`) {
-			continue
-		}
-		warned[e.MissionSlug] = true
-		if _, err := os.Stat(filepath.Join(filepath.Dir(missionDir), e.MissionSlug, "meta.json")); err != nil && warn != nil {
-			rich.LogWarning(warn, fmt.Sprintf("No meta.json found for mission_slug %s (orphaned event); mission_id will be None for these events", pyjson.ReprString(e.MissionSlug)))
-		}
-	}
+	// get_all_wp_lanes makes one read_events pass: ReadStream logs its
+	// slug-resolver warnings (status.SlugWarnLog) exactly once.
 	snap := status.Reduce(st.Transitions, st.Annotations, false)
 	lanes := map[string]string{}
 	for _, kv := range snap.WorkPackages.Pairs() {
@@ -158,7 +147,7 @@ func ResolveScope(repoRoot, branch string, warn io.Writer) *Scope {
 	if st, err := os.Stat(missionDir); err != nil || !st.IsDir() {
 		return diag(c, "ACTIVE_WP_CONTEXT_MISSING", "Mission directory not found: "+missionDir, "")
 	}
-	lanes, err := reduceLanes(missionDir, warn)
+	lanes, err := reduceLanes(missionDir)
 	if err != nil {
 		return diag(c, "ACTIVE_WP_STATUS_UNAVAILABLE", fmt.Sprintf("Could not read canonical status for mission %s: %v", c.MissionSlug, err), "")
 	}
