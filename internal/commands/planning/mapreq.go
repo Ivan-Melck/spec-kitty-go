@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/reqmap"
@@ -93,6 +94,19 @@ func dedupSorted(xs []string) []string {
 func runMapRequirements(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
 	fail := func(msg string) error { tasksOutputError(ctx, jsonMode, msg); return cli.Exit(1) }
+	// Owned resolution runs at the Typer edge (tasks._resolve_task_owned),
+	// before the mode validation.
+	var owned *ownedcheckout.Fact
+	if r0 := project.Locate(""); r0 != "" {
+		f, err := resolveOwnedOrRefuse(ctx, r0, ctx.String("mission"), jsonMode, ownedcheckout.FlatErrorEnvelope, ownedcheckout.Options{})
+		if err != nil {
+			if _, ok := err.(*ownedcheckout.MetaReadError); ok {
+				return fail(err.Error())
+			}
+			return err
+		}
+		owned = f
+	}
 	wpOpt, refsOpt, batchOpt := ctx.String("wp"), ctx.String("refs"), ctx.String("batch")
 	var trackers []string
 	for _, t := range ctx.Strings("tracker-ref") {
@@ -110,27 +124,32 @@ func runMapRequirements(ctx *cli.Context) error {
 	if batchOpt == "" && !(wpOpt != "" && refsOpt != "") && !trackerOnly {
 		return fail("Provide either --wp + --refs (individual), --batch, or --wp + --tracker-ref.")
 	}
-	if ctx.String("owned-checkout") != "" {
-		return fail("--owned-checkout is not supported by this build")
-	}
 	root := project.Locate("")
 	if root == "" {
 		return fail("Could not locate project root")
 	}
-	slug, err := resolveTasksMission(ctx, root, ctx.String("mission"), jsonMode)
-	if err != nil {
-		return err
-	}
-	target, err := targetBanner(ctx, root, slug, jsonMode)
-	if err != nil {
-		return fail(err.Error())
+	var slug string
+	if owned != nil {
+		root, slug = owned.OwnedRoot, owned.MissionSlug
+	} else {
+		var err error
+		slug, err = resolveTasksMission(ctx, root, ctx.String("mission"), jsonMode)
+		if err != nil {
+			return err
+		}
+		if _, err := targetBanner(ctx, root, slug, jsonMode); err != nil {
+			return fail(err.Error())
+		}
 	}
 	autoCommit := mission.AutoCommit(root)
 	if ctx.IsSet("auto-commit") {
 		autoCommit = ctx.Bool("auto-commit")
 	}
-	_ = target
-	if autoCommit {
+	if autoCommit && owned != nil {
+		if ref := safecommit.OwnedPlacement(owned, mission.KindWorkPackageTask); owned.IsProtected(ref, "") {
+			return fail("Protected owned write branch: " + ref)
+		}
+	} else if autoCommit {
 		ref := safecommit.Placement(root, slug, mission.KindWorkPackageTask)
 		if msg := protectedStatusCommitError(ref, root, mapReqCmd, slug); msg != "" {
 			return fail(msg)
@@ -461,6 +480,13 @@ func runMapRequirements(ctx *cli.Context) error {
 				written = append(written, f)
 			}
 		}
+		if owned != nil && len(trackers) > 0 {
+			for _, n := range []string{status.EventsFile, status.SnapshotFile} {
+				if p := filepath.Join(primary, n); fileExists(p) {
+					written = append(written, p)
+				}
+			}
+		}
 		if len(written) > 0 {
 			ids := append([]string(nil), newOrder...)
 			sort.Strings(ids)
@@ -469,7 +495,7 @@ func runMapRequirements(ctx *cli.Context) error {
 				specNum = slug[:i]
 			}
 			msg := fmt.Sprintf("chore: Map requirements for %s on spec %s", strings.Join(ids, ", "), specNum)
-			r := safecommit.CommitForMission(root, slug, written, msg, mission.KindWorkPackageTask, safecommit.RouterOptions{})
+			r := safecommit.CommitForMission(root, slug, written, msg, mission.KindWorkPackageTask, safecommit.RouterOptions{Owned: owned})
 			surfaces = r.SurfacesPayload()
 			if r.Status == safecommit.StatusCommitted {
 				committed = true
@@ -524,6 +550,12 @@ func runMapRequirements(ctx *cli.Context) error {
 	payload.Set("surfaces", surfaces)
 	payload.Set("requirement_extraction_warnings", strList(nonNil(extractionWarnings)))
 	payload.Set("bare_prose_requirement_ids", strList(nonNil(bare)))
+	if owned != nil {
+		payload.Set("stale_repository_root_copy", ownedcheckout.StaleCopyValue(owned, nil))
+		if !jsonMode {
+			ownedcheckout.EchoStaleCopyWarning(ctx.Stderr, owned)
+		}
+	}
 	if ctx.Bool("replace") {
 		rm := jsonx.NewObject()
 		for _, id := range newOrder {

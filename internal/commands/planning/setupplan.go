@@ -13,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lifecycle"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/reqmap"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
@@ -91,51 +92,71 @@ func runSetupPlan(ctx *cli.Context) error {
 	if root == "" {
 		return fail(projectRootNotFound)
 	}
-	if ctx.String("owned-checkout") != "" {
-		return fail("--owned-checkout is not supported by this build")
-	}
 	feature := ctx.String("mission")
-	resolved := feature
-	if !ctx.IsSet("mission") {
-		if c := listSpecCandidates(root); len(c) == 1 {
-			resolved = c[0].slug
+	owned, oerr := resolveOwnedOrRefuse(ctx, root, feature, jsonMode, ownedcheckout.ResultErrorEnvelope, ownedcheckout.Options{})
+	if oerr != nil {
+		if _, ok := oerr.(*ownedcheckout.MetaReadError); ok {
+			return fail(oerr.Error())
+		}
+		return oerr
+	}
+	var featureDir, slug, primary, target, invoking, matchTarget, expected string
+	if owned != nil {
+		// Owned (FR-005): every field comes from the fact; no branch banner,
+		// git reads resolve from the owned checkout P.
+		featureDir, slug, primary = owned.MissionDir, owned.MissionSlug, owned.MissionDir
+		target = strings.TrimSpace(mission.ReadMetaOrEmpty(owned.MissionDir).GetString("target_branch"))
+		if target == "" {
+			target = owned.WriteBranch
+		}
+		invoking, matchTarget, expected = owned.WriteBranch, owned.WriteBranch, owned.WriteBranch
+		root = owned.OwnedRoot
+	} else {
+		resolved := feature
+		if !ctx.IsSet("mission") {
+			if c := listSpecCandidates(root); len(c) == 1 {
+				resolved = c[0].slug
+			}
+		}
+		var derr error
+		featureDir, derr = readPathFor(root, resolved)
+		if derr != nil {
+			payload := detectionError(root, derr.Error(), feature, "PLAN_CONTEXT_UNRESOLVED", "setup-plan", []string{"--json"})
+			emitDetectionError(ctx, jsonMode, payload)
+			return cli.Exit(1)
+		}
+		slug = filepath.Base(featureDir)
+		current := branchctx.CurrentBranch(root)
+		if current == "" {
+			return fail("Detached HEAD — checkout a branch before continuing")
+		}
+		primary = project.Specs(root, slug)
+		metaTarget := strings.TrimSpace(mission.ReadMetaOrEmpty(primary).GetString("target_branch"))
+		if !jsonMode {
+			if metaTarget == "" || metaTarget == current {
+				say(ctx.Stdout, fmt.Sprintf("[bold cyan]Branch:[/bold cyan] %s (target for this mission)", current))
+			} else {
+				say(ctx.Stdout, fmt.Sprintf("[bold yellow]Branch:[/bold yellow] on '%s', mission targets '%s'", current, metaTarget))
+			}
+		}
+		target = current
+		invoking = branchctx.CurrentBranch(project.CurrentWorktreeRoot(cwd()))
+		if invoking == "" {
+			invoking = target
+		}
+		matchTarget = invoking
+		if metaTarget != "" {
+			matchTarget = metaTarget
+		}
+		if mb := mission.ReadMetaOrEmpty(primary).GetString("mission_branch"); mb != "" {
+			matchTarget = mb
 		}
 	}
-	featureDir, derr := readPathFor(root, resolved)
-	if derr != nil {
-		payload := detectionError(root, derr.Error(), feature, "PLAN_CONTEXT_UNRESOLVED", "setup-plan", []string{"--json"})
-		emitDetectionError(ctx, jsonMode, payload)
-		return cli.Exit(1)
-	}
-	slug := filepath.Base(featureDir)
-	current := branchctx.CurrentBranch(root)
-	if current == "" {
-		return fail("Detached HEAD — checkout a branch before continuing")
-	}
-	primary := project.Specs(root, slug)
-	metaTarget := strings.TrimSpace(mission.ReadMetaOrEmpty(primary).GetString("target_branch"))
-	if !jsonMode {
-		if metaTarget == "" || metaTarget == current {
-			say(ctx.Stdout, fmt.Sprintf("[bold cyan]Branch:[/bold cyan] %s (target for this mission)", current))
-		} else {
-			say(ctx.Stdout, fmt.Sprintf("[bold yellow]Branch:[/bold yellow] on '%s', mission targets '%s'", current, metaTarget))
-		}
-	}
-	target := current
 	specFile := filepath.Join(primary, "spec.md")
 	planFile := filepath.Join(primary, "plan.md")
-	invoking := branchctx.CurrentBranch(project.CurrentWorktreeRoot(cwd()))
-	if invoking == "" {
-		invoking = target
+	inject := func(p *jsonx.Object) *jsonx.Object {
+		return branchctx.Inject(p, target, invoking, matchTarget, expected)
 	}
-	matchTarget := invoking
-	if metaTarget != "" {
-		matchTarget = metaTarget
-	}
-	if mb := mission.ReadMetaOrEmpty(primary).GetString("mission_branch"); mb != "" {
-		matchTarget = mb
-	}
-	inject := func(p *jsonx.Object) *jsonx.Object { return branchctx.Inject(p, target, invoking, matchTarget, "") }
 
 	// --- spec gate ---
 	if _, err := os.Stat(specFile); err != nil {
@@ -202,12 +223,23 @@ func runSetupPlan(ctx *cli.Context) error {
 	if !ok {
 		return fail("Plan template not found in repository or package")
 	}
+	return setupPlanTail(ctx, jsonMode, root, slug, featureDir, specFile, planFile, target, mtype, tmpl, lintWarns, inject, owned, fail)
+}
+
+// setupPlanTail is the shared post-gate body of setup-plan (scaffold, phase
+// events, plan commit, documentation wiring, result). For an owned run root
+// is the owned checkout P and owned carries the fact.
+func setupPlanTail(ctx *cli.Context, jsonMode bool, root, slug, featureDir, specFile, planFile, target, mtype string, tmpl []byte, lintWarns []reqmap.LintWarning,
+	inject func(*jsonx.Object) *jsonx.Object, owned *ownedcheckout.Fact, fail func(string) error) error {
 	if _, err := os.Stat(planFile); err != nil {
 		if err := os.WriteFile(planFile, tmpl, 0o644); err != nil {
 			return fail(err.Error())
 		}
 	}
-	sdir := statusWriteDir(root, slug)
+	sdir := featureDir
+	if owned == nil {
+		sdir = statusWriteDir(root, slug)
+	}
 	lifecycle.EmitArtifactPhase(sdir, lifecycle.PhaseInput{EventType: lifecycle.SpecifyCompleted, MissionSlug: slug, Actor: setupPlanCmd, ArtifactPath: branchTreeRelative(specFile, root)})
 	lifecycle.EmitArtifactPhase(sdir, lifecycle.PhaseInput{EventType: lifecycle.PlanStarted, MissionSlug: slug, Actor: setupPlanCmd})
 
@@ -216,7 +248,7 @@ func runSetupPlan(ctx *cli.Context) error {
 	blockedReason, scaffoldOnly := "", false
 	if planSub {
 		var err error
-		commitRes, err = commitArtifact(ctx, jsonMode, root, slug, planFile, "plan", target)
+		commitRes, err = commitArtifact(ctx, jsonMode, root, slug, planFile, "plan", target, owned)
 		if err != nil {
 			return fail(err.Error())
 		}
@@ -247,7 +279,11 @@ func runSetupPlan(ctx *cli.Context) error {
 			}
 		}
 	}
-	gapPath, generators := runDocumentationWiring(ctx.Stdout, jsonMode, root, slug)
+	routerRoot := root
+	if owned != nil {
+		routerRoot = owned.RepositoryRoot
+	}
+	gapPath, generators := runDocumentationWiring(ctx.Stdout, jsonMode, routerRoot, slug, owned)
 	res := "blocked"
 	if planSub || scaffoldOnly {
 		res = "success"
@@ -287,6 +323,12 @@ func runSetupPlan(ctx *cli.Context) error {
 		payload.Set("generators_detected", gl)
 	}
 	payload = inject(payload)
+	if owned != nil {
+		payload.Set("stale_repository_root_copy", ownedcheckout.StaleCopyValue(owned, nil))
+		if !jsonMode {
+			ownedcheckout.EchoStaleCopyWarning(ctx.Stderr, owned)
+		}
+	}
 	if jsonMode {
 		emitJSON(ctx.Stdout, payload)
 		return nil
@@ -300,13 +342,19 @@ func runSetupPlan(ctx *cli.Context) error {
 
 // commitArtifact is _commit_to_branch: commit one planning artifact through
 // the router and report it (human mode).
-func commitArtifact(ctx *cli.Context, jsonMode bool, root, slug, file, artifactType, target string) (*safecommit.RouterResult, error) {
+func commitArtifact(ctx *cli.Context, jsonMode bool, root, slug, file, artifactType, target string, owned *ownedcheckout.Fact) (*safecommit.RouterResult, error) {
 	msg := fmt.Sprintf("Add %s for mission %s", artifactType, slug)
 	kind := mission.ArtifactKindForPath(branchTreeRelative(file, root))
 	if kind == "" {
 		kind = mission.KindSpec
 	}
-	r := safecommit.CommitForMission(root, slug, []string{file}, msg, kind, safecommit.RouterOptions{})
+	routerRoot := root
+	if owned != nil {
+		// Protection and the router's own repo_root resolve from R; the
+		// write lands on P (commit_for_mission(owned=...)).
+		routerRoot = owned.RepositoryRoot
+	}
+	r := safecommit.CommitForMission(routerRoot, slug, []string{file}, msg, kind, safecommit.RouterOptions{Owned: owned})
 	if !jsonMode && len(r.Surfaces) > 0 {
 		r.PrintRendered(ctx.Stdout, wrapPlain)
 	}

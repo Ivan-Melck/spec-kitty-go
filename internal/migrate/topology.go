@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/placement"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
@@ -155,37 +155,9 @@ func TopologyFromMeta(meta *jsonx.Object, dir string) string {
 	return t
 }
 
-// CoordBranchExists is surface_resolver._coord_branch_exists (fails closed
-// toward "present" outside a git checkout rooted at root).
-func CoordBranchExists(root, branch string) bool {
-	top, err := gitx.Toplevel(root)
-	if err != nil {
-		return true
-	}
-	if r1, e1 := filepath.EvalSymlinks(top); e1 == nil {
-		if r2, e2 := filepath.EvalSymlinks(root); e2 == nil && r1 != r2 {
-			return true
-		}
-	}
-	if gitx.OK(root, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch) {
-		return true
-	}
-	if out, err := gitx.Run(root, "for-each-ref", "--format=%(refname)", "refs/remotes/"); err == nil {
-		for _, line := range splitNonEmpty(out) {
-			if len(line) > len(branch)+1 && line[len(line)-len(branch)-1:] == "/"+branch {
-				return true
-			}
-		}
-	}
-	remotes, _ := gitx.Run(root, "remote")
-	for _, r := range splitNonEmpty(remotes) {
-		res, err := gitx.Exec(root, nil, nil, "ls-remote", "--heads", r, branch)
-		if err != nil || res.Code != 0 || len(res.Stdout) > 0 {
-			return true
-		}
-	}
-	return false
-}
+// CoordBranchExists is surface_resolver._coord_branch_exists (see
+// placement.CoordBranchExists).
+func CoordBranchExists(root, branch string) bool { return placement.CoordBranchExists(root, branch) }
 
 // TopologyResult is TopologyBackfillResult.
 type TopologyResult struct {

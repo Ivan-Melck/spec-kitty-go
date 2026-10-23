@@ -255,6 +255,12 @@ func CommitMission(root, slug string, paths []string, message, primaryRef string
 }
 
 func routeCommit(root string, sf *coord.Surface, paths []string, message, primaryRef string) *Outcome {
+	return routeCommitIn(root, root, sf, paths, message, primaryRef)
+}
+
+// routeCommitIn is routeCommit with the fates rendered relative to display
+// (the repository root R for an owned write committed in P).
+func routeCommitIn(display, root string, sf *coord.Surface, paths []string, message, primaryRef string) *Outcome {
 	var prim, co []string
 	for _, p := range paths {
 		if sf.Routed() && strings.HasPrefix(p, sf.CoordWorktree+string(filepath.Separator)) {
@@ -274,11 +280,11 @@ func routeCommit(root string, sf *coord.Surface, paths []string, message, primar
 			branch = gitx.CurrentBranch(root)
 		}
 		protected := primaryRef == "" && coord.IsProtected(root, sf.Slug, branch)
-		res.Surfaces = append(res.Surfaces, commitGroup(root, root, "primary", branch, message, prim, protected))
+		res.Surfaces = append(res.Surfaces, commitGroup(display, root, "primary", branch, message, prim, protected))
 		res.DestinationSurface = branch
 	}
 	if len(co) > 0 {
-		res.Surfaces = append(res.Surfaces, commitGroup(root, sf.CoordWorktree, "coordination", sf.CoordBranch, message, co, false))
+		res.Surfaces = append(res.Surfaces, commitGroup(display, sf.CoordWorktree, "coordination", sf.CoordBranch, message, co, false))
 		res.DestinationSurface = sf.CoordBranch
 	}
 	res.Status, res.CommitHash, res.Diagnostic = legacyStatus(res.Surfaces)
@@ -304,4 +310,15 @@ func WriteAndCommitMatrix(root, slug, dir string, m *Matrix, message string) (*O
 		return nil, err
 	}
 	return CommitArtifact(root, slug, []string{p}, message), nil
+}
+
+// WriteAndCommitMatrixOwned is write_and_commit_acceptance_matrix(owned=...)
+// for an owned mission: written and committed in the owned checkout
+// ownedRoot, its fates rendered relative to the repository root repoRoot.
+func WriteAndCommitMatrixOwned(repoRoot, ownedRoot, slug, dir string, m *Matrix, message string) (*Outcome, error) {
+	p, err := WriteMatrix(dir, m)
+	if err != nil {
+		return nil, err
+	}
+	return routeCommitIn(repoRoot, ownedRoot, coord.Resolve(ownedRoot, slug), []string{p}, message, ""), nil
 }

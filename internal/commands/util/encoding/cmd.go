@@ -5,13 +5,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
-	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/placement"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
@@ -70,73 +70,22 @@ func FindRepoRoot() string {
 	}
 }
 
-var numPrefixed = regexp.MustCompile(`^\d+-(.+)$`)
-
-// ResolveMissionDir approximates placement_seam(root, handle).read_dir(
-// PRIMARY_METADATA): the literal kitty-specs/<handle> dir when present,
-// otherwise a unique match on mission_id / mid8 / numeric prefix / bare slug,
-// otherwise the literal (possibly missing) path.
-func ResolveMissionDir(root, handle string) string {
-	specs := project.Specs(root)
-	literal := filepath.Join(specs, handle)
-	if isDir(literal) {
-		return literal
-	}
-	entries, _ := os.ReadDir(specs)
-	var hits []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		dir := filepath.Join(specs, name)
-		match := false
-		if b, err := os.ReadFile(filepath.Join(dir, "meta.json")); err == nil {
-			if o, err := jsonx.DecodeObject(b); err == nil {
-				mid := o.GetString("mission_id")
-				if mid != "" && (strings.EqualFold(mid, handle) || (len(handle) == 8 && len(mid) >= 8 && strings.EqualFold(mid[:8], handle))) {
-					match = true
-				}
-				if o.GetString("mission_slug") == handle {
-					match = true
-				}
-			}
-		}
-		if strings.HasSuffix(name, "-"+handle) && len(handle) == 8 {
-			match = true
-		}
-		if m := numPrefixed.FindStringSubmatch(name); m != nil {
-			if m[1] == handle || strings.HasPrefix(m[1], handle+"-") {
-				match = true
-			}
-			if isDigits(handle) && strings.HasPrefix(name, handle+"-") {
-				match = true
-			}
-		}
-		if strings.HasPrefix(name, handle+"-") && !isDigits(handle) {
-			match = true
-		}
-		if match {
-			hits = append(hits, dir)
-		}
-	}
-	sort.Strings(hits)
-	if len(hits) >= 1 {
-		return hits[0]
-	}
-	return literal
+// ResolveMissionDir is placement_seam(root, handle).read_dir(<PRIMARY kind>)
+// (PRIMARY_METADATA / WORK_PACKAGE_TASK): the canonical primary mission dir,
+// possibly nonexistent. An unsafe or ambiguous handle is the seam's error.
+func ResolveMissionDir(root, handle string) (string, error) {
+	return placement.PrimaryDir(root, handle)
 }
 
-func isDigits(s string) bool {
-	if s == "" {
-		return false
+// SeamCrash prints the uncaught seam exception (an unsafe path segment or an
+// ambiguous handle) the way the upstream CLI's traceback does, exit 1.
+func SeamCrash(w io.Writer, err error) error {
+	typ := "UnsafePathSegmentError"
+	if _, ok := err.(*mission.SelectorAmbiguousError); ok {
+		typ = "MissionSelectorAmbiguous"
 	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
+	rich.PrintTraceback(w, &rich.Exception{Type: typ, Value: err.Error()})
+	return cli.Exit(1)
 }
 
 func run(ctx *cli.Context) error {
@@ -192,7 +141,10 @@ func run(ctx *cli.Context) error {
 		p("[red]Error:[/red] --mission <slug> is required (or use --all)")
 		return cli.Exit(1)
 	}
-	dir := ResolveMissionDir(repoRoot, mission)
+	dir, err := ResolveMissionDir(repoRoot, mission)
+	if err != nil {
+		return SeamCrash(ctx.Stderr, err)
+	}
 	if _, err := os.Stat(dir); err != nil {
 		p("[red]Error:[/red] Mission directory not found: " + dir)
 		return cli.Exit(1)

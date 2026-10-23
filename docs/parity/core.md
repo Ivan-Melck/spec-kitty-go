@@ -18,9 +18,9 @@ package unit tests run without the oracle.
 |---|---|---|---|
 | `agent mission create` | done | `TestDiffMissionCreate`, `TestDiffMissionCreateDuplicate`, `TestDiffMissionCreatePendingOrigin` | — (a staged `.kittify/pending-origin.yaml` fails closed after the scaffold commit and rolls the git state back, CORE-09) |
 | `agent mission branch-context` | done | `TestDiffBranchContext` | — |
-| `agent tasks status` (human + `--json`) | done | `TestDiffTasksReadAndAnnotate`, `TestDiffMoveTask*`, `TestDiffStatusEmit`, `TestDiffTasksStatusStaleness`, `TestDiffOrphanedEventWarnings` | `--owned-checkout` is area OWN's; claim liveness: Linux `/proc`, darwin `kinfo_proc` start time (CORE-08, Go-only on darwin), signal-0 elsewhere |
+| `agent tasks status` (human + `--json`) | done | `TestDiffTasksReadAndAnnotate`, `TestDiffMoveTask*`, `TestDiffStatusEmit`, `TestDiffTasksStatusStaleness`, `TestDiffOrphanedEventWarnings` | `--owned-checkout` / flagless adoption ported (`TestDiffOwnedTasksStatus`, `TestDiffOwnedLifecycleWalk`; see [owned.md](owned.md)); claim liveness: Linux `/proc`, darwin `kinfo_proc` start time (CORE-08, Go-only on darwin), signal-0 elsewhere |
 | `agent tasks list-tasks` | done | `TestDiffTasksReadAndAnnotate` | — |
-| `agent tasks mark-status` | done | `TestDiffTasksReadAndAnnotate`, move-task tests | `--owned-checkout` refused |
+| `agent tasks mark-status` | done | `TestDiffTasksReadAndAnnotate`, move-task tests, `TestDiffOwnedLifecycleWalk` | `--owned-checkout` / flagless adoption ported; see [owned.md](owned.md) |
 | `agent tasks add-history` | done | `TestDiffTasksReadAndAnnotate` | — |
 | `agent tasks move-task` | done | `TestDiffMoveTaskCoord`, `TestDiffMoveTaskLanes`, `TestDiffMoveTaskWorktree` (TRACE 5.1–5.12, F2–F4, 9.4–9.6), `TestDiffMoveTaskArbiter`, `TestDiffMoveTaskArbiterIssueMatrix`, `TestDiffMoveTaskSelfReviewFallback`, `TestDiffMoveTaskProfile`, `TestDiffMoveTaskInvocationID`, `TestDiffPreReviewGate*` (Declared, NoNewFailures, UnverifiedBaseline, JUnit, Edges), `TestDiffCoreUsageErrors` | see below |
 | `agent tasks list-dependents` | done | `TestDiffTasksExtras` | — |

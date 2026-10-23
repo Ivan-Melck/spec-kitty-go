@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
@@ -48,6 +49,22 @@ func runCharterGenerate(ctx *cli.Context) error {
 		return fail("--mission-handle requires --owned-checkout")
 	}
 	root := repoRoot()
+	if ctx.IsSet("owned-checkout") {
+		// Opt in to validated ownership (explicit claim only; no adoption).
+		claim := ctx.String("owned-checkout")
+		owned, oerr := ownedcheckout.ResolveOrAdopt(root, &claim, ctx.String("mission-handle"), cwd(), ownedcheckout.Options{})
+		if oerr != nil {
+			if e, ok := oerr.(*ownedcheckout.Error); ok {
+				ownedcheckout.Emit(w, ctx.Stderr, e, jsonMode, ownedcheckout.SuccessFalseEnvelope)
+				return cli.Exit(1)
+			}
+			return fail(oerr.Error())
+		}
+		if err := validateOwnedCharterDestinations(owned.OwnedRoot); err != nil {
+			return fail(err.Error())
+		}
+		root = owned.OwnedRoot
+	}
 	if out, err := gitx.Run(root, "rev-parse", "--is-inside-work-tree"); err != nil || strings.TrimSpace(out) != "true" {
 		return fail("charter generate requires a git repository. Initialize one with `git init` (so the produced charter.md can be auto-tracked and accepted by `charter bundle validate`).")
 	}
@@ -144,6 +161,61 @@ func runCharterGenerate(ctx *cli.Context) error {
 	cprintRaw(w, "Files written:")
 	for _, f := range files {
 		cprintRaw(w, "  ✓ "+f)
+	}
+	return nil
+}
+
+// validateOwnedCharterDestinations is _validate_owned_charter_destinations:
+// the whole generator write batch must stay inside P (no symlinked
+// ancestors, regular files / directories where they exist).
+func validateOwnedCharterDestinations(root string) error {
+	config := filepath.Join(root, ".kittify", "config.yaml")
+	charterDir := filepath.Join(root, ".kittify", "charter")
+	files := []string{config, filepath.Join(root, ".gitignore"), filepath.Join(charterDir, "charter.md"), filepath.Join(charterDir, "charter.yaml")}
+	dirs := []string{charterDir, filepath.Join(charterDir, "library")}
+	for _, p := range append(append([]string{}, files...), dirs...) {
+		if err := assertSafeCharterOutput(p, root); err != nil {
+			return err
+		}
+	}
+	for _, f := range files {
+		if st, err := os.Stat(f); err == nil && !st.Mode().IsRegular() {
+			return fmt.Errorf("Owned charter file destination is not a regular file")
+		}
+	}
+	for _, d := range dirs {
+		if st, err := os.Stat(d); err == nil && !st.IsDir() {
+			return fmt.Errorf("Owned charter directory destination is not a directory")
+		}
+	}
+	if st, err := os.Stat(charterDir); err == nil && st.IsDir() {
+		var walkErr error
+		filepath.Walk(charterDir, func(p string, _ os.FileInfo, err error) error {
+			if err == nil && walkErr == nil && p != charterDir {
+				walkErr = assertSafeCharterOutput(p, root)
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return walkErr
+		}
+	}
+	return nil
+}
+
+// assertSafeCharterOutput is _assert_safe_charter_output_dir(path,
+// repo_root=root): no component below root may be a symlink.
+func assertSafeCharterOutput(p, root string) error {
+	rel, err := filepath.Rel(root, p)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("Charter output directory %s is outside repository root %s.", p, root)
+	}
+	cur := root
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		cur = filepath.Join(cur, part)
+		if st, err := os.Lstat(cur); err == nil && st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("Charter output path %s is a symlink. Replace it with a normal .kittify/charter directory before running charter generate.", cur)
+		}
 	}
 	return nil
 }

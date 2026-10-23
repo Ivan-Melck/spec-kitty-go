@@ -11,6 +11,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/placement"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
@@ -224,31 +225,32 @@ func StoredTopologyRow(dir string) TopologyRow {
 	return r
 }
 
-// PrimaryDirForHandle approximates placement_seam(root, handle).read_dir(PRIMARY_METADATA).
-func PrimaryDirForHandle(root, handle string) string {
-	if name, err := mission.ResolveHandle(root, handle); err == nil {
-		return project.Specs(root, name)
-	}
-	return project.Specs(root, handle)
+// PrimaryDirForHandle is placement_seam(root, handle).read_dir(PRIMARY_METADATA);
+// an unsafe or ambiguous handle is the seam's (uncaught) error.
+func PrimaryDirForHandle(root, handle string) (string, error) {
+	return placement.PrimaryDir(root, handle)
 }
 
 // TopologyRows is _collect_topology_rows.
-func TopologyRows(root string, missionHandle *string) []TopologyRow {
+func TopologyRows(root string, missionHandle *string) ([]TopologyRow, error) {
 	if !migrate.SpecsExist(root) {
-		return nil
+		return nil, nil
 	}
 	if missionHandle != nil {
-		d := PrimaryDirForHandle(root, *missionHandle)
-		if st, err := os.Stat(d); err == nil && st.IsDir() {
-			return []TopologyRow{StoredTopologyRow(d)}
+		d, err := PrimaryDirForHandle(root, *missionHandle)
+		if err != nil {
+			return nil, err
 		}
-		return nil
+		if st, err := os.Stat(d); err == nil && st.IsDir() {
+			return []TopologyRow{StoredTopologyRow(d)}, nil
+		}
+		return nil, nil
 	}
 	var out []TopologyRow
 	for _, n := range migrate.MissionDirs(root) {
 		out = append(out, StoredTopologyRow(project.Specs(root, n)))
 	}
-	return out
+	return out, nil
 }
 
 func sortedKeys(m map[string]bool) []string {

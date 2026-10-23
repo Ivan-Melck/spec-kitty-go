@@ -63,6 +63,9 @@ func mergedShortCircuit(root, slug, agent, kind string) *Decision {
 // analysisFailures evaluates the analyze-step currency guard.
 func analysisFailures(m *missionCtx) []string {
 	f := workflow.CheckAnalysisReport(m.Root, m.Slug)
+	if AnalysisGoverningRoot != "" {
+		f = workflow.CheckAnalysisReportIn(m.Primary, AnalysisGoverningRoot)
+	}
 	v := f.Verdict()
 	switch v.GetString("status") {
 	case "current":

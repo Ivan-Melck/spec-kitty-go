@@ -36,7 +36,7 @@ without the oracle.
 | `orchestrator-api mission-state` | done | `TestDiffEnvelopeAndReads`, `TestDiffWPLifecycle` | none known |
 | `orchestrator-api list-ready` | done | `TestDiffEnvelopeAndReads`, `TestDiffWPLifecycle` | none known |
 | `orchestrator-api resolve-workspace` | done | `TestDiffEnvelopeAndReads`, `TestDiffWPLifecycle` | none known |
-| `orchestrator-api start-implementation` | done | `TestDiffWPLifecycle`, `TestDiffEnvelopeAndReads`, `TestDiffSingleBranchLoop` (repo-root lane) | single_branch write-checkout claim lock (`STATUS_LOCK_HELD`) and the repo-root `WRITE_CHECKOUT_*` refusals are not ported; the claim-ancestry gate checks the recorded planning commit only (approved dependency-lane tips are merged by the allocator but not re-verified) |
+| `orchestrator-api start-implementation` | done | `TestDiffWPLifecycle`, `TestDiffEnvelopeAndReads`, `TestDiffSingleBranchLoop` (repo-root lane), `TestDiffSingleBranchWriteCheckoutRefusals`, `TestDiffSingleBranchClaimLockHeld` | single_branch write-checkout claim lock (`STATUS_LOCK_HELD`, 120 s bound, holder sidecar) and the repo-root `WRITE_CHECKOUT_WRONG_BRANCH` / `_OCCUPIED` / `_DIRTY` refusals are ported (area OWN, see [owned.md](owned.md)); the claim-ancestry gate checks the recorded planning commit only (approved dependency-lane tips are merged by the allocator but not re-verified) |
 | `orchestrator-api start-review` | done | `TestDiffWPLifecycle`, `TestDiffLanesTopologyLoop` | none known |
 | `orchestrator-api transition` (incl. raw `--to claimed` allocation, `--force`/`--note`, review-result / evidence JSON) | done | `TestDiffWPLifecycle`, `TestDiffLanesTopologyLoop` | none known |
 | `orchestrator-api append-history` | done | `TestDiffWPLifecycle`, `TestDiffSingleBranchLoop` | none known |
@@ -47,7 +47,7 @@ without the oracle.
 | `orchestrator-api tasks` (incl. an API-authored wps.yaml outline + WP prompts without a hand-written tasks.md, outline-only refusal, stale-receipt refusal, receipt re-stamp, authoring lock) | done | `TestDiffDesignPhaseNative`, `TestDiffDesignTasksFromOutline`, `TestDiffNativeFinalizeAPIAuthored` | none known |
 | `orchestrator-api check-prerequisites` | done | `TestDiffEnvelopeAndReads`, `TestDiffDesignPhaseNative` | none known |
 | `orchestrator-api record-analysis` | done | `TestDiffDesignPhaseNative`, `TestRunWithTimeout` (Go-only: the 10 s watchdog cannot be exercised offline against the oracle) | the bounded write runs the host `agent mission record-analysis` in-process; a call that outlives 10 s is left running and the failure envelope carries `underlying_call_timed_out` |
-| `orchestrator-api open-decision` / `resolve-decision` / `defer-decision` / `cancel-decision` | done | `TestDiffDesignAuthoring` | `--owned-checkout` refused (`DECISION_OPERATION_FAILED`, `OWNED_OPTION_UNSUPPORTED`; a non-existent path mirrors upstream's `OWNERSHIP_BROKEN_POINTER`) |
+| `orchestrator-api open-decision` / `resolve-decision` / `defer-decision` / `cancel-decision` | done | `TestDiffDesignAuthoring`, `TestDiffOwnedCharterAndOrchestratorDecisions` | `--owned-checkout` (and flagless adoption) resolved through `ownedcheckout.ResolveOrAdopt`; unregistered refusal codes fold into `DECISION_OPERATION_FAILED` + `unregistered_error_code` as upstream; see [owned.md](owned.md) |
 | `orchestrator-api answer-decision` | done | `TestDiffDesignPhaseNative`, `TestDiffAnswerDecisionNative` (real pending `requires_inputs` decision of a custom mission) | validation (`POLICY_*`, `RESULT_REQUIRED`, `INVALID_RESULT`, `NO_PENDING_DECISION`, `AMBIGUOUS_PENDING_DECISION`, `DECISION_NOT_PENDING`) matches; the answer is delegated to native `next --answer` (payload minus `answer`/`answered`, plus `answered_decision_id`, then `warnings`) |
 | `orchestrator-api next` | done | `TestDiffDesignPhaseNative`, `TestDiffAnswerDecisionNative` | none known (delegates to native `next`, `--answer` included) |
 | `orchestrator-api design-status` | done | `TestDiffEnvelopeAndReads`, `TestDiffDesignAuthoring` | none known |
@@ -80,7 +80,9 @@ the inventory (`go test ./internal/helpparity`).
 
 ## Remaining work (design / planning verbs)
 
-* `--owned-checkout` on the decision verbs is area OWN's.
+* `--owned-checkout` on the decision verbs and the `start-implementation`
+  single_branch write-checkout refusals / claim lock are ported by area OWN
+  (see [owned.md](owned.md)).
 * Mission resolution (`internal/orchestrator/mission.go`, area CORE): an
   ambiguous handle still returns `MISSION_NOT_FOUND` where upstream crashes
   with a traceback (`MissionSelectorAmbiguous`).
