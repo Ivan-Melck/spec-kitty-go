@@ -261,21 +261,6 @@ func EventLogPath(root, missionID string) string {
 	return filepath.Join(root, ".kittify", "events", "glossary", unsafeID.ReplaceAllString(missionID, "-")+".events.jsonl")
 }
 
-// AppendEvent appends one sorted-key JSON event line.
-func AppendEvent(root, missionID string, ev *jsonx.Object) error {
-	p := EventLogPath(root, missionID)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = fmt.Fprintln(f, jsonx.Dumps(ev, jsonx.Line))
-	return err
-}
-
 // EmitTermCandidate records a TermCandidateObserved event for a profile
 // invocation.
 func EmitTermCandidate(root, term, invocationID, actor string) {

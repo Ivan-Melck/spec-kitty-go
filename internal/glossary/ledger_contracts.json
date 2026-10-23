@@ -1,0 +1,658 @@
+{
+  "TermCandidateObserved": {
+    "model": {
+      "additionalProperties": false,
+      "properties": {
+        "mission_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "run_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "term": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_step": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "actor_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "extraction_method": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mission_id",
+        "run_id",
+        "term",
+        "source_step",
+        "actor_id",
+        "confidence",
+        "extraction_method",
+        "context"
+      ],
+      "type": "object"
+    },
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "actor_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "context": {
+          "type": "string"
+        },
+        "extraction_method": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "mission_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "run_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_step": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "term": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "mission_id",
+        "run_id",
+        "term",
+        "source_step",
+        "actor_id",
+        "confidence",
+        "extraction_method",
+        "context"
+      ],
+      "type": "object"
+    }
+  },
+  "GlossaryClarificationResolved": {
+    "model": {
+      "$defs": {
+        "GlossaryActor": {
+          "additionalProperties": false,
+          "properties": {
+            "actor_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "actor_type": {
+              "$ref": "#/$defs/GlossaryActorType"
+            },
+            "display_name": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "actor_id",
+            "actor_type",
+            "display_name"
+          ],
+          "type": "object"
+        },
+        "GlossaryActorType": {
+          "enum": [
+            "human",
+            "llm",
+            "service"
+          ],
+          "type": "string"
+        },
+        "GlossaryProvenance": {
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "timestamp": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "actor_id": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "timestamp",
+            "actor_id"
+          ],
+          "type": "object"
+        },
+        "GlossaryResolutionMode": {
+          "enum": [
+            "interactive",
+            "async"
+          ],
+          "type": "string"
+        },
+        "GlossaryScope": {
+          "enum": [
+            "mission_local",
+            "team_domain",
+            "audience_domain",
+            "spec_kitty_core"
+          ],
+          "type": "string"
+        },
+        "SenseRef": {
+          "additionalProperties": false,
+          "properties": {
+            "surface": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/GlossaryScope"
+            },
+            "definition": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "confidence": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "surface",
+            "scope",
+            "definition",
+            "confidence"
+          ],
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "conflict_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "term_surface": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "selected_sense": {
+          "$ref": "#/$defs/SenseRef"
+        },
+        "actor": {
+          "$ref": "#/$defs/GlossaryActor"
+        },
+        "resolution_mode": {
+          "$ref": "#/$defs/GlossaryResolutionMode"
+        },
+        "provenance": {
+          "$ref": "#/$defs/GlossaryProvenance"
+        }
+      },
+      "required": [
+        "conflict_id",
+        "term_surface",
+        "selected_sense",
+        "actor",
+        "resolution_mode",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "schema": {
+      "$defs": {
+        "GlossaryActor": {
+          "additionalProperties": false,
+          "properties": {
+            "actor_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "actor_type": {
+              "$ref": "#/$defs/GlossaryActorType"
+            },
+            "display_name": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "actor_id",
+            "actor_type",
+            "display_name"
+          ],
+          "type": "object"
+        },
+        "GlossaryActorType": {
+          "enum": [
+            "human",
+            "llm",
+            "service"
+          ],
+          "type": "string"
+        },
+        "GlossaryProvenance": {
+          "additionalProperties": false,
+          "properties": {
+            "actor_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "timestamp": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "timestamp",
+            "actor_id"
+          ],
+          "type": "object"
+        },
+        "GlossaryResolutionMode": {
+          "enum": [
+            "interactive",
+            "async"
+          ],
+          "type": "string"
+        },
+        "GlossaryScope": {
+          "enum": [
+            "mission_local",
+            "team_domain",
+            "audience_domain",
+            "spec_kitty_core"
+          ],
+          "type": "string"
+        },
+        "SenseRef": {
+          "additionalProperties": false,
+          "properties": {
+            "confidence": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "definition": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/GlossaryScope"
+            },
+            "surface": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "surface",
+            "scope",
+            "definition",
+            "confidence"
+          ],
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/GlossaryActor"
+        },
+        "conflict_id": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/GlossaryProvenance"
+        },
+        "resolution_mode": {
+          "$ref": "#/$defs/GlossaryResolutionMode"
+        },
+        "selected_sense": {
+          "$ref": "#/$defs/SenseRef"
+        },
+        "term_surface": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "conflict_id",
+        "term_surface",
+        "selected_sense",
+        "actor",
+        "resolution_mode",
+        "provenance"
+      ],
+      "type": "object"
+    }
+  },
+  "GlossarySenseUpdated": {
+    "model": {
+      "$defs": {
+        "GlossaryActor": {
+          "additionalProperties": false,
+          "properties": {
+            "actor_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "actor_type": {
+              "$ref": "#/$defs/GlossaryActorType"
+            },
+            "display_name": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "actor_id",
+            "actor_type",
+            "display_name"
+          ],
+          "type": "object"
+        },
+        "GlossaryActorType": {
+          "enum": [
+            "human",
+            "llm",
+            "service"
+          ],
+          "type": "string"
+        },
+        "GlossaryNewSense": {
+          "additionalProperties": false,
+          "properties": {
+            "surface": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/GlossaryScope"
+            },
+            "definition": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "confidence": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "status": {
+              "$ref": "#/$defs/GlossarySenseStatus"
+            }
+          },
+          "required": [
+            "surface",
+            "scope",
+            "definition",
+            "confidence",
+            "status"
+          ],
+          "type": "object"
+        },
+        "GlossaryProvenance": {
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "timestamp": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "actor_id": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "timestamp",
+            "actor_id"
+          ],
+          "type": "object"
+        },
+        "GlossaryScope": {
+          "enum": [
+            "mission_local",
+            "team_domain",
+            "audience_domain",
+            "spec_kitty_core"
+          ],
+          "type": "string"
+        },
+        "GlossarySenseStatus": {
+          "enum": [
+            "draft",
+            "active",
+            "deprecated"
+          ],
+          "type": "string"
+        },
+        "GlossaryUpdateType": {
+          "enum": [
+            "create",
+            "update"
+          ],
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "term_surface": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/GlossaryScope"
+        },
+        "new_sense": {
+          "$ref": "#/$defs/GlossaryNewSense"
+        },
+        "actor": {
+          "$ref": "#/$defs/GlossaryActor"
+        },
+        "update_type": {
+          "$ref": "#/$defs/GlossaryUpdateType"
+        },
+        "provenance": {
+          "$ref": "#/$defs/GlossaryProvenance"
+        }
+      },
+      "required": [
+        "term_surface",
+        "scope",
+        "new_sense",
+        "actor",
+        "update_type",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "schema": {
+      "$defs": {
+        "GlossaryActor": {
+          "additionalProperties": false,
+          "properties": {
+            "actor_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "actor_type": {
+              "$ref": "#/$defs/GlossaryActorType"
+            },
+            "display_name": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "actor_id",
+            "actor_type",
+            "display_name"
+          ],
+          "type": "object"
+        },
+        "GlossaryActorType": {
+          "enum": [
+            "human",
+            "llm",
+            "service"
+          ],
+          "type": "string"
+        },
+        "GlossaryNewSense": {
+          "additionalProperties": false,
+          "properties": {
+            "confidence": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "definition": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/GlossaryScope"
+            },
+            "status": {
+              "$ref": "#/$defs/GlossarySenseStatus"
+            },
+            "surface": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "surface",
+            "scope",
+            "definition",
+            "confidence",
+            "status"
+          ],
+          "type": "object"
+        },
+        "GlossaryProvenance": {
+          "additionalProperties": false,
+          "properties": {
+            "actor_id": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "timestamp": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "timestamp",
+            "actor_id"
+          ],
+          "type": "object"
+        },
+        "GlossaryScope": {
+          "enum": [
+            "mission_local",
+            "team_domain",
+            "audience_domain",
+            "spec_kitty_core"
+          ],
+          "type": "string"
+        },
+        "GlossarySenseStatus": {
+          "enum": [
+            "draft",
+            "active",
+            "deprecated"
+          ],
+          "type": "string"
+        },
+        "GlossaryUpdateType": {
+          "enum": [
+            "create",
+            "update"
+          ],
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/GlossaryActor"
+        },
+        "new_sense": {
+          "$ref": "#/$defs/GlossaryNewSense"
+        },
+        "provenance": {
+          "$ref": "#/$defs/GlossaryProvenance"
+        },
+        "scope": {
+          "$ref": "#/$defs/GlossaryScope"
+        },
+        "term_surface": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "update_type": {
+          "$ref": "#/$defs/GlossaryUpdateType"
+        }
+      },
+      "required": [
+        "term_surface",
+        "scope",
+        "new_sense",
+        "actor",
+        "update_type",
+        "provenance"
+      ],
+      "type": "object"
+    }
+  }
+}
