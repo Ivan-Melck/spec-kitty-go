@@ -72,6 +72,9 @@ func (st *moveState) logWarn(msg string) {
 
 // laneWorkspace is _mt_resolve_pre_review_workspace ("" = none).
 func (st *moveState) laneWorkspace() string {
+	if st.owned != nil {
+		return st.owned.OwnedRoot
+	}
 	ws, err := lanes.ResolveWorkspace(st.root, st.m.Slug, st.taskID)
 	if err != nil || !ws.Exists() {
 		return ""
@@ -254,7 +257,11 @@ func (st *moveState) resolveGateVerdicts() (string, []string, []*prereview.Verdi
 	var changed []string
 	if wt != "" {
 		dirtyBefore = gateDirtyPaths(wt)
-		changed = gateChangedFiles(wt, st.targetBranch)
+		base := st.targetBranch
+		if st.reviewBaseRef != "" {
+			base = st.reviewBaseRef
+		}
+		changed = gateChangedFiles(wt, base)
 	}
 	gateRoot := wt
 	if gateRoot == "" {

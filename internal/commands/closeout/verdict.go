@@ -2,11 +2,13 @@ package closeout
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spec-kitty/go-kitty3/internal/acceptance"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 )
 
 const ownedCheckoutHelp = "Run against an owned checkout: a linked checkout that owns this mission. Refuses the repository root checkout, lane worktrees and coordination worktrees."
@@ -81,12 +83,28 @@ func runAcceptanceVerdict(ctx *cli.Context) error {
 		verdictError(ctx, jsonMode, "Could not locate project root")
 		return cli.Exit(1)
 	}
+	// Validate ownership exactly once (explicit --owned-checkout or flagless
+	// adoption); an owned verdict is recorded on the owned checkout (#6023).
+	var claim *string
 	if ctx.IsSet("owned-checkout") {
-		verdictError(ctx, jsonMode, "--owned-checkout is not supported by this build.")
+		c := ctx.String("owned-checkout")
+		claim = &c
+	}
+	cwd, _ := os.Getwd()
+	owned, oerr := ownedcheckout.ResolveOrAdopt(root, claim, ctx.String("mission"), cwd, ownedcheckout.Options{})
+	if oerr != nil {
+		if e, ok := oerr.(*ownedcheckout.Error); ok {
+			ownedcheckout.Emit(ctx.Stdout, ctx.Stderr, e, jsonMode, ownedcheckout.SuccessFalseEnvelope)
+			return cli.Exit(1)
+		}
+		verdictError(ctx, jsonMode, oerr.Error())
 		return cli.Exit(1)
 	}
-	slug, err := resolveStrict(ctx, root, ctx.String("mission"), jsonMode)
-	if err != nil {
+	var slug string
+	var err error
+	if owned != nil {
+		root, slug = owned.OwnedRoot, owned.MissionSlug
+	} else if slug, err = resolveStrict(ctx, root, ctx.String("mission"), jsonMode); err != nil {
 		return err
 	}
 	dir, err := acceptance.MatrixWriteDir(root, slug)
@@ -152,7 +170,12 @@ func runAcceptanceVerdict(ctx *cli.Context) error {
 	} else {
 		fresh.SetCriterion(row)
 	}
-	out, err := acceptance.WriteAndCommitMatrix(root, slug, dir, fresh, message)
+	var out *acceptance.Outcome
+	if owned != nil {
+		out, err = acceptance.WriteAndCommitMatrixOwned(owned.RepositoryRoot, root, slug, dir, fresh, message)
+	} else {
+		out, err = acceptance.WriteAndCommitMatrix(root, slug, dir, fresh, message)
+	}
 	if err != nil {
 		verdictError(ctx, jsonMode, err.Error())
 		return cli.Exit(1)

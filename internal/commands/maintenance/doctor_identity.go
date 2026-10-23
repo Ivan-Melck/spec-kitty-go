@@ -9,7 +9,9 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/healthcheck"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func newDoctorIdentityCmd() *cli.Command {
@@ -61,7 +63,10 @@ func runDoctorIdentity(ctx *cli.Context) error {
 			}
 		}
 		if len(f) == 0 {
-			d := healthcheck.PrimaryDirForHandle(root, m)
+			d, err := healthcheck.PrimaryDirForHandle(root, m)
+			if err != nil {
+				return seamCrash(ctx, err)
+			}
 			if st, err := os.Stat(d); err == nil && st.IsDir() {
 				f = []healthcheck.IdentityState{healthcheck.ClassifyMission(d)}
 			}
@@ -202,12 +207,19 @@ func runDoctorTopology(ctx *cli.Context) error {
 	if ctx.IsSet("mission") {
 		m := ctx.String("mission")
 		mp = &m
-		if len(healthcheck.TopologyRows(root, mp)) == 0 {
+		scoped, err := healthcheck.TopologyRows(root, mp)
+		if err != nil {
+			return seamCrash(ctx, err)
+		}
+		if len(scoped) == 0 {
 			cprintf(out, "[red]Error:[/red] Mission not found: %s", pyjson.ReprString(m))
 			return cli.Exit(1)
 		}
 	}
-	rows := healthcheck.TopologyRows(root, mp)
+	rows, err := healthcheck.TopologyRows(root, mp)
+	if err != nil {
+		return seamCrash(ctx, err)
+	}
 	if jsonOut {
 		ms := []any{}
 		for _, r := range rows {
@@ -240,4 +252,15 @@ func runDoctorTopology(ctx *cli.Context) error {
 		}
 	}
 	return nil
+}
+
+// seamCrash is an uncaught placement-seam exception (an unsafe path segment
+// or an ambiguous handle): the traceback on stderr, exit 1.
+func seamCrash(ctx *cli.Context, err error) error {
+	typ := "UnsafePathSegmentError"
+	if _, ok := err.(*mission.SelectorAmbiguousError); ok {
+		typ = "MissionSelectorAmbiguous"
+	}
+	rich.PrintTraceback(ctx.Stderr, &rich.Exception{Type: typ, Value: err.Error()})
+	return cli.Exit(1)
 }

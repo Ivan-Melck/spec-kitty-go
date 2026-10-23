@@ -11,7 +11,11 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
+	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/ulid"
@@ -383,6 +387,22 @@ func markStatusPayload(results []taskResult) *jsonx.Object {
 
 func runMarkStatus(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
+	// Owned resolution runs at the Typer edge, before input validation
+	// (tasks._resolve_task_owned).
+	var owned *ownedcheckout.Fact
+	if root := project.Locate(""); root != "" {
+		f, err := resolveOwned(ctx, root, ctx.String("mission"), jsonMode, func(code, msg string) *jsonx.Object {
+			return msFailurePayload(code, msg, nil, nil, "", "", "", nil)
+		}, ownedcheckout.Options{})
+		if err != nil {
+			if _, ok := err.(*ownedcheckout.MetaReadError); ok {
+				outputError(ctx, jsonMode, err.Error())
+				return cli.Exit(1)
+			}
+			return err
+		}
+		owned = f
+	}
 	st := ctx.String("status")
 	switch st {
 	case "done", "pending", "skipped", "not_applicable":
@@ -403,11 +423,29 @@ func runMarkStatus(ctx *cli.Context) error {
 	for _, id := range ctx.ArgList("task_ids") {
 		ids = append(ids, normalizeTaskID(id))
 	}
-	if ctx.IsSet("owned-checkout") {
-		outputError(ctx, jsonMode, "--owned-checkout is not supported by this build.")
-		return cli.Exit(1)
+	var m *missionCtx
+	var err error
+	if owned != nil {
+		// Owned arm: every root, branch and slug comes off the validated fact.
+		fail := func(code, msg, statusDir string, ev, aw []string) error {
+			reportOwnedMarkFailure(ctx, jsonMode, owned, code, msg, statusDir, ev, aw)
+			return cli.Exit(1)
+		}
+		if err := ownedcheckout.RequireUnstagedIndex(owned); err != nil {
+			e := err.(*ownedcheckout.Error)
+			return fail(e.Code, e.Message, "", nil, nil)
+		}
+		autoCommit := mission.AutoCommit(owned.OwnedRoot)
+		if ctx.IsSet("auto-commit") {
+			autoCommit = ctx.Bool("auto-commit")
+		}
+		if !autoCommit {
+			return fail(ownedcheckout.OwnedOptionUnsupported, "Owned mark-status requires auto-commit.", "", nil, nil)
+		}
+		m = newMissionCtx(owned.OwnedRoot, owned.MissionSlug)
+		return markStatusIn(ctx, jsonMode, st, wpFlag, ids, m, owned, fail)
 	}
-	m, err := resolveRequiredMission(ctx, jsonMode)
+	m, err = resolveRequiredMission(ctx, jsonMode)
 	if err != nil {
 		return err
 	}
@@ -415,6 +453,13 @@ func runMarkStatus(ctx *cli.Context) error {
 		outputError(ctx, jsonMode, err.Error())
 		return cli.Exit(1)
 	}
+	return markStatusIn(ctx, jsonMode, st, wpFlag, ids, m, nil, nil)
+}
+
+// markStatusIn is the resolve/apply/output body of mark-status for mission m
+// (the owned checkout P when owned is set; fail renders the owned failure
+// envelope for an error the upstream raises as an exception).
+func markStatusIn(ctx *cli.Context, jsonMode bool, st, wpFlag string, ids []string, m *missionCtx, owned *ownedcheckout.Fact, fail func(code, msg, statusDir string, eventIDs, appliedWPs []string) error) error {
 	statusDir, err := m.Surface.WriteDir()
 	if err != nil {
 		outputError(ctx, jsonMode, err.Error())
@@ -547,23 +592,56 @@ func runMarkStatus(ctx *cli.Context) error {
 		byWP[w] = append(byWP[w], id)
 	}
 	if len(unresolved) > 0 {
-		outputError(ctx, jsonMode, "Could not resolve owning work package for subtask event: "+strings.Join(unresolved, ", "))
+		msg := "Could not resolve owning work package for subtask event: " + strings.Join(unresolved, ", ")
+		if owned != nil {
+			return fail("MARK_STATUS_FAILED", msg, statusDir, nil, nil)
+		}
+		outputError(ctx, jsonMode, msg)
 		return cli.Exit(1)
 	}
+	var eventIDs, appliedWPs []string
 	for _, w := range order {
 		sub := &jsonx.Object{}
 		for _, id := range byWP[w] {
 			sub.Set(id, requested)
 		}
-		a, err := emitAnnotation(statusDir, w, status.Delta{Subtasks: sub}, "user")
+		var a *status.Annotation
+		var err error
+		if owned != nil {
+			a, err = m.Surface.EmitAnnotation(w, status.Delta{Subtasks: sub}, status.StrActor("user"), true)
+		} else {
+			a, err = emitAnnotation(statusDir, w, status.Delta{Subtasks: sub}, "user")
+		}
 		materializeWarning(ctx, jsonMode, a)
 		if err != nil {
+			if owned != nil {
+				return fail("MARK_STATUS_FAILED", err.Error(), statusDir, eventIDs, appliedWPs)
+			}
 			outputError(ctx, jsonMode, err.Error())
 			return cli.Exit(1)
 		}
+		if owned != nil && a != nil {
+			eventIDs = append(eventIDs, a.EventID)
+			appliedWPs = append(appliedWPs, w)
+		}
 	}
 	if jsonMode {
-		printJSON(ctx.Stdout, markStatusPayload(results))
+		p := markStatusPayload(results)
+		if owned != nil {
+			var sha any
+			if h, err := gitx.HeadSHA(owned.OwnedRoot); err == nil {
+				sha = h
+			}
+			p.Set("owned_checkout", owned.OwnedRoot)
+			p.Set("destination_ref", owned.WriteBranch)
+			p.Set("commit_sha", sha)
+			p.Set("status_events_path", filepath.Join(statusDir, status.EventsFile))
+			p.Set("status_snapshot_path", filepath.Join(statusDir, status.SnapshotFile))
+			p.Set("event_ids", strList(eventIDs))
+			p.Set("applied_wps", strList(appliedWPs))
+			p.Set("state_applied", len(eventIDs) > 0)
+		}
+		printJSON(ctx.Stdout, p)
 		return nil
 	}
 	if len(notFound) > 0 {

@@ -10,7 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
-	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/placement"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -168,26 +168,18 @@ func pyStrList(xs []string) string {
 	return "[" + strings.Join(q, ", ") + "]"
 }
 
-// planningReadDir approximates resolve_planning_read_dir(..., WORK_PACKAGE_TASK)
-// for a marker's mission slug: the primary mission directory (a bare handle
-// folds to its <slug>-<mid8> directory). ok=false is the unsafe/ambiguous
-// refusal.
+// planningReadDir is resolve_planning_read_dir(..., WORK_PACKAGE_TASK) for a
+// marker's mission slug (a bare handle folds to its <slug>-<mid8>
+// directory). ok=false is the unsafe/ambiguous refusal.
 func planningReadDir(root, slug string) (string, bool) {
-	if slug == "" || strings.ContainsAny(slug, `/\`) || slug == "." || slug == ".." {
+	if slug == "" {
 		return "", false
 	}
-	dir := project.Specs(root, slug)
-	if st, err := os.Stat(dir); err == nil && st.IsDir() {
-		return dir, true
-	}
-	r, err := mission.ResolveIdentity(root, slug)
+	dir, err := placement.PlanningReadDir(root, slug)
 	if err != nil {
-		if _, amb := err.(*mission.AmbiguousError); amb {
-			return "", false
-		}
-		return dir, true
+		return "", false
 	}
-	return project.Specs(root, r.Slug), true
+	return dir, true
 }
 
 // coordIncoherentDoneWPs is coord_incoherent_done_wps: the candidates still

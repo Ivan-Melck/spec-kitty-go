@@ -14,6 +14,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
@@ -253,11 +254,24 @@ func runResearch(ctx *cli.Context) error {
 		say(out, "[red]Error:[/red] Unable to locate repository root (missing .git or .kittify).")
 		return cli.Exit(1)
 	}
-	if ctx.String("owned-checkout") != "" {
-		say(out, "[red]Error:[/red] --owned-checkout is not supported by this build")
-		return cli.Exit(1)
+	// #5882: honour an owned checkout (explicit --owned-checkout or flagless
+	// adoption); every mission dir then resolves from the owned root.
+	owned, oerr := resolveOwnedOrRefuse(ctx, repoRoot, ctx.String("mission"), false, ownedcheckout.SuccessFalseEnvelope, ownedcheckout.Options{})
+	if oerr != nil {
+		if _, ok := oerr.(*ownedcheckout.MetaReadError); ok {
+			say(out, "[red]Error:[/red] "+oerr.Error())
+			return cli.Exit(1)
+		}
+		return oerr
 	}
-	projectRoot := project.Locate(repoRoot)
+	projectRoot := ""
+	if owned != nil {
+		repoRoot = owned.OwnedRoot
+		ownedcheckout.EchoStaleCopyWarning(ctx.Stderr, owned)
+		projectRoot = owned.OwnedRoot
+	} else {
+		projectRoot = project.Locate(repoRoot)
+	}
 	if projectRoot == "" {
 		say(out, "[red]Error:[/red] Unable to locate the Spec Kitty project root (.kittify directory not found).")
 		say(out, "[dim]Run this command from the project root or from a mission worktree under .worktrees/<mission>/.[/dim]")
@@ -284,13 +298,18 @@ func runResearch(ctx *cli.Context) error {
 		return cli.Exit(2)
 	}
 	name := handle
-	if r, err := mission.ResolveHandle(repoRoot, handle); err == nil {
+	if owned != nil {
+		name = owned.MissionSlug
+	} else if r, err := mission.ResolveHandle(repoRoot, handle); err == nil {
 		name = r
 	} else if _, ok := err.(*mission.SelectorAmbiguousError); ok {
 		say(out, "[red]Error:[/red] "+err.Error())
 		return cli.Exit(2)
 	}
 	featureDir := coord.Resolve(repoRoot, name).StatusDir()
+	if owned != nil {
+		featureDir = owned.MissionDir
+	}
 	if st, err := os.Stat(featureDir); err != nil || !st.IsDir() {
 		say(out, "[red]Error:[/red] Mission not found: "+handle)
 		return cli.Exit(1)

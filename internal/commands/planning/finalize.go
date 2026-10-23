@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/acceptance"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
@@ -20,6 +21,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/reqmap"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
@@ -130,6 +132,11 @@ type finalizeRun struct {
 	preexisting     map[string]bool
 	persisted       bool
 	previousValue   string
+	// owned is the validated owned-checkout fact (root is then P).
+	owned *ownedcheckout.Fact
+	// ownedExtras is _OWNED_ENVELOPE_EXTRAS: prepended to every JSON payload
+	// once the owned context resolved.
+	ownedExtras *jsonx.Object
 
 	// bootstrap state
 	workPackages  []*jsonx.Object
@@ -150,13 +157,31 @@ type pendingWrite struct {
 	delta *jsonx.Object
 }
 
+// emitJSON is mission_finalize_seams._emit_json: the owned envelope extras
+// (stale_repository_root_copy) lead the payload.
+func (f *finalizeRun) emitJSON(o *jsonx.Object) {
+	if f.ownedExtras != nil {
+		merged := &jsonx.Object{}
+		for _, kv := range f.ownedExtras.Pairs() {
+			if !o.Has(kv.Key) {
+				merged.Set(kv.Key, kv.Value)
+			}
+		}
+		for _, kv := range o.Pairs() {
+			merged.Set(kv.Key, kv.Value)
+		}
+		o = merged
+	}
+	emitJSON(f.ctx.Stdout, o)
+}
+
 func (f *finalizeRun) emitErr(msg string, extra ...any) error {
 	if f.json {
 		o := jsonx.NewObject("error", msg)
 		for i := 0; i+1 < len(extra); i += 2 {
 			o.Set(extra[i].(string), extra[i+1])
 		}
-		emitJSON(f.ctx.Stdout, o)
+		f.emitJSON(o)
 	} else {
 		say(f.ctx.Stdout, "[red]Error:[/red] "+msg)
 	}
@@ -178,10 +203,32 @@ func runFinalizeTasks(ctx *cli.Context) error {
 	if f.root == "" {
 		return f.emitErr("Could not locate project root")
 	}
-	if ctx.String("owned-checkout") != "" {
-		return f.emitErr("--owned-checkout is not supported by this build")
-	}
 	handle := ctx.String("mission")
+	var override *string
+	if ctx.IsSet("target-branch") {
+		v := ctx.String("target-branch")
+		override = &v
+	}
+	owned, err := resolveOwnedOrRefuse(ctx, f.root, handle, f.json, func(code, msg string) *jsonx.Object {
+		return withCLIVersion(jsonx.NewObject("error", msg, "error_code", code))
+	}, ownedcheckout.Options{TargetOverride: override})
+	if err != nil {
+		if _, ok := err.(*ownedcheckout.MetaReadError); ok {
+			return f.emitErr(err.Error())
+		}
+		return err
+	}
+	if owned != nil {
+		if !f.validateOnly {
+			if err := ownedcheckout.RequireUnstagedIndex(owned); err != nil {
+				return f.emitErr(err.Error(), "error_code", ownedcheckout.OwnedIndexRefused)
+			}
+		}
+		f.owned = owned
+		f.root = owned.OwnedRoot
+		f.ownedExtras = jsonx.NewObject("stale_repository_root_copy", ownedcheckout.StaleCopyValue(owned, nil))
+		return f.runResolved(owned.MissionDir)
+	}
 	dir, err := primaryAnchoredFeatureDir(f.root, handle)
 	code := "MISSION_CONTEXT_UNRESOLVED"
 	if de, ok := err.(*detectionErr); ok {
@@ -203,6 +250,13 @@ func runFinalizeTasks(ctx *cli.Context) error {
 			return cli.Exit(1)
 		}
 	}
+	return f.runResolved(dir)
+}
+
+// runResolved is the body of finalize-tasks once the mission dir resolved.
+func (f *finalizeRun) runResolved(dir string) error {
+	ctx := f.ctx
+	var err error
 	f.slug = filepath.Base(dir)
 	f.dir = project.Specs(f.root, f.slug)
 	f.missionType = missionart.MissionTypeFor(f.dir)
@@ -314,6 +368,29 @@ func (f *finalizeRun) run() error {
 
 // resolveBranches is _run_finalize_branch_setup.
 func (f *finalizeRun) resolveBranches() error {
+	if f.owned != nil {
+		// The validated fact already proves planning placement; an override
+		// must still name the canonical landing target.
+		meta := mission.ReadMetaOrEmpty(f.dir)
+		if f.ctx.IsSet("target-branch") && f.ctx.String("target-branch") != pyStrOrEmpty(meta, "target_branch") {
+			e := &ownedcheckout.Error{Code: ownedcheckout.OwnedBranchRefused, Message: "The target-branch override must match the mission's declared target."}
+			ownedcheckout.Emit(f.ctx.Stdout, f.ctx.Stderr, e, f.json, func(code, msg string) *jsonx.Object {
+				return withCLIVersion(jsonx.NewObject("error", msg, "error_code", code))
+			})
+			return cli.Exit(1)
+		}
+		f.target = f.owned.WriteBranch
+		f.mergeTarget = f.target
+		if mt := strings.TrimSpace(meta.GetString("merge_target_branch")); mt != "" {
+			f.mergeTarget = mt
+		} else if truthyValue(func() any { v, _ := meta.Get("pr_bound"); return v }()) {
+			if dt := strings.TrimSpace(meta.GetString("target_branch")); dt != "" && dt != f.target {
+				f.mergeTarget = dt
+			}
+		}
+		f.human(fmt.Sprintf("[bold cyan]Branch:[/bold cyan] %s (target for this mission)", f.target))
+		return nil
+	}
 	meta, merr := mission.ReadMeta(f.dir)
 	if f.override != "" {
 		f.target = f.override
@@ -368,7 +445,7 @@ func (f *finalizeRun) resolveBranches() error {
 
 func (f *finalizeRun) planningBranchErr(msg string) error {
 	if f.json {
-		emitJSON(f.ctx.Stdout, jsonx.NewObject("error", msg, "error_code", "PLANNING_BRANCH_NOT_PERSISTED"))
+		f.emitJSON(jsonx.NewObject("error", msg, "error_code", "PLANNING_BRANCH_NOT_PERSISTED"))
 	} else {
 		say(f.ctx.Stdout, "[red]Error:[/red] "+msg)
 		say(f.ctx.Stdout, "[yellow]Hint:[/yellow] re-run with [bold]--target-branch <ref>[/bold] to override.")
@@ -480,7 +557,7 @@ func (f *finalizeRun) finishOutlineValidation() (bool, error) {
 		for _, kv := range f.diagnostics.Pairs() {
 			r.Set(kv.Key, kv.Value)
 		}
-		emitJSON(f.ctx.Stdout, r)
+		f.emitJSON(r)
 	} else {
 		say(f.ctx.Stdout, "tasks-outline manifest validation passed; WP prompt validation runs after tasks-packages")
 	}
@@ -580,7 +657,7 @@ func (f *finalizeRun) resolveDeps() error {
 		msg := "tasks.md work package coverage is incomplete. finalize-tasks could not match all WP files to parsed sections, so dependency lanes would be unreliable."
 		hint := "Use supported section headers such as '## WP01', '## Work Package WP01', or '## Work Package 1 — Title'."
 		if f.json {
-			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", msg, "missing_wp_sections", strList(nonNil(missing)), "extra_wp_sections", strList(nonNil(extra)), "hint", hint))
+			f.emitJSON(jsonx.NewObject("error", msg, "missing_wp_sections", strList(nonNil(missing)), "extra_wp_sections", strList(nonNil(extra)), "hint", hint))
 		} else {
 			say(f.ctx.Stdout, "[red]Error:[/red] "+msg)
 			if len(missing) > 0 {
@@ -633,7 +710,7 @@ func (f *finalizeRun) validateGraph() error {
 		}
 		msg := "Circular dependencies detected: [" + strings.Join(parts, ", ") + "]"
 		if f.json {
-			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", msg, "cycles", cl))
+			f.emitJSON(jsonx.NewObject("error", msg, "cycles", cl))
 		} else {
 			say(f.ctx.Stdout, "[red]Error:[/red] Circular dependencies detected:")
 			for _, c := range cycles {
@@ -646,7 +723,7 @@ func (f *finalizeRun) validateGraph() error {
 		if errs := validateDependencies(id, f.deps[id], f.deps, f.depOrder); len(errs) > 0 {
 			msg := fmt.Sprintf("Invalid dependencies for %s: %s", id, pyListRepr(errs))
 			if f.json {
-				emitJSON(f.ctx.Stdout, jsonx.NewObject("error", msg, "wp_id", id, "errors", strList(errs)))
+				f.emitJSON(jsonx.NewObject("error", msg, "wp_id", id, "errors", strList(errs)))
 			} else {
 				say(f.ctx.Stdout, fmt.Sprintf("[red]Error:[/red] Invalid dependencies for %s:", id))
 				for _, e := range errs {
@@ -1002,7 +1079,7 @@ func (f *finalizeRun) bootstrapLoop() error {
 	if len(contradictions) > 0 {
 		msg := "Ownership contradiction detected for WP(s) " + strings.Join(contradictIDs, ", ") + ": " + strings.Join(contradictions, "; ")
 		if f.json {
-			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", msg, "error_code", "OWNERSHIP_CONTRADICTION_CODE_CHANGE_EMPTY_OWNED_FILES",
+			f.emitJSON(jsonx.NewObject("error", msg, "error_code", "OWNERSHIP_CONTRADICTION_CODE_CHANGE_EMPTY_OWNED_FILES",
 				"ownership_contradiction_wp_ids", strList(contradictIDs), "ownership_contradictions", strList(contradictions)))
 		} else {
 			say(f.ctx.Stdout, "[red]Error:[/red] "+msg)
@@ -1037,7 +1114,7 @@ func (f *finalizeRun) bootstrapLoop() error {
 	if len(invalid) > 0 {
 		msg := "WP owned_files cannot include paths under kitty-specs/"
 		if f.json {
-			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", msg, "error_code", "INVALID_WP_OWNED_FILES_KITTY_SPECS", "invalid_owned_files", invalid))
+			f.emitJSON(jsonx.NewObject("error", msg, "error_code", "INVALID_WP_OWNED_FILES_KITTY_SPECS", "invalid_owned_files", invalid))
 		} else {
 			say(f.ctx.Stdout, "[red]Error:[/red] "+msg)
 			for _, l := range invalidHuman {
@@ -1205,7 +1282,7 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 	}
 	if len(errs) > 0 {
 		if f.json {
-			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", "Ownership validation failed", "ownership_errors", strList(errs)))
+			f.emitJSON(jsonx.NewObject("error", "Ownership validation failed", "ownership_errors", strList(errs)))
 		} else {
 			say(f.ctx.Stdout, "[red]Error:[/red] Ownership validation failed")
 			for _, e := range errs {
@@ -1253,7 +1330,7 @@ func (f *finalizeRun) ownershipGates() (map[string]ownManifest, error) {
 		}
 		msg := "Ownership validation failed: literal-path owned_files entries match zero files. Fix the paths or add them to 'create_intent'."
 		if f.json {
-			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", msg, "ownership_literal_path_errors", strList(gerrs)))
+			f.emitJSON(jsonx.NewObject("error", msg, "ownership_literal_path_errors", strList(gerrs)))
 		} else {
 			say(f.ctx.Stdout, "[red]Error:[/red] "+msg)
 		}
@@ -1381,7 +1458,7 @@ func (f *finalizeRun) laneError(err error) error {
 			for _, c := range e.Conflicts {
 				cs = append(cs, jsonx.NewObject("reason", c.Reason, "wp_ids", strList(nonNil(c.WPIDs)), "recorded_lanes", strList(nonNil(c.RecordedLanes)), "remedy", c.Remedy))
 			}
-			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", e.Error(), "error_code", e.ErrorCode(), "reason", e.Reason, "conflicts", cs, "next_step", e.NextStep))
+			f.emitJSON(jsonx.NewObject("error", e.Error(), "error_code", e.ErrorCode(), "reason", e.Reason, "conflicts", cs, "next_step", e.NextStep))
 			return cli.Exit(1)
 		}
 		say(f.ctx.Stdout, "[red]Error:[/red] "+e.Error())
@@ -1407,7 +1484,7 @@ func (f *finalizeRun) laneError(err error) error {
 			for _, l := range e.CycleLanes {
 				cl = append(cl, jsonx.NewObject("lane_id", l.LaneID, "wp_ids", strList(l.WPIDs)))
 			}
-			emitJSON(f.ctx.Stdout, jsonx.NewObject("error", e.Error(), "error_code", e.ErrorCode(), "cycle_path", strList(e.CyclePath), "cycle_lanes", cl))
+			f.emitJSON(jsonx.NewObject("error", e.Error(), "error_code", e.ErrorCode(), "cycle_path", strList(e.CyclePath), "cycle_lanes", cl))
 			return cli.Exit(1)
 		}
 		say(f.ctx.Stdout, "[red]Error:[/red] "+e.Error())
@@ -1530,7 +1607,7 @@ func (f *finalizeRun) validateOnlyReport(man map[string]ownManifest) error {
 			r.Set("planning_refresh_preflight", jsonx.NewObject("mutating_refresh_would_refuse_for_status_preflight", len(f.refreshFindings) > 0,
 				"status_findings", strList(nonNil(f.refreshFindings))))
 		}
-		emitJSON(f.ctx.Stdout, r)
+		f.emitJSON(r)
 		return nil
 	}
 	out := f.ctx.Stdout
@@ -1802,7 +1879,11 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 				created[p] = true
 			}
 		}
-		r := safecommit.CommitForMission(f.root, f.slug, files, "Add tasks for mission "+f.slug, mission.KindTasksIndex, safecommit.RouterOptions{CreatedThisInvocation: created})
+		routerRoot := f.root
+		if f.owned != nil {
+			routerRoot = f.owned.RepositoryRoot
+		}
+		r := safecommit.CommitForMission(routerRoot, f.slug, files, "Add tasks for mission "+f.slug, mission.KindTasksIndex, safecommit.RouterOptions{CreatedThisInvocation: created, Owned: f.owned})
 		commitSurfaces = r.SurfacesPayload()
 		refusal = !r.Success() && r.Status != safecommit.StatusError && r.Status != safecommit.StatusNoOpWrongSurface
 		for _, s := range r.Surfaces {
@@ -1886,7 +1967,7 @@ func (f *finalizeRun) commitPipeline(man map[string]ownManifest) error {
 		for _, kv := range f.diagnostics.Pairs() {
 			p.Set(kv.Key, kv.Value)
 		}
-		emitJSON(f.ctx.Stdout, p)
+		f.emitJSON(p)
 	}
 	if refusal {
 		return cli.Exit(1)
@@ -2004,7 +2085,12 @@ func (f *finalizeRun) scaffoldAcceptanceMatrix() string {
 	}
 	doc := jsonx.NewObject("mission_slug", f.slug, "mission_number", "", "mission_type", "", "overall_verdict", "pending", "criteria", crit, "negative_invariants", []any{})
 	os.MkdirAll(home, 0o755)
-	if err := os.WriteFile(homePath, []byte(jsonx.Dumps(doc, jsonx.Pretty)+"\n"), 0o644); err != nil {
+	// write_acceptance_matrix: identity re-stamped from a sibling meta.json.
+	m, merr := acceptance.MatrixFromObject(doc)
+	if merr != nil {
+		return ""
+	}
+	if _, err := acceptance.WriteMatrix(home, m); err != nil {
 		return ""
 	}
 	if home == f.dir {

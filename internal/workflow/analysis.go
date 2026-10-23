@@ -3,13 +3,16 @@ package workflow
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/fm"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 )
@@ -71,7 +74,27 @@ func inputHashes(featureDir, root string) map[string]string {
 // CheckAnalysisReport is check_analysis_report_current for the mission's
 // primary directory.
 func CheckAnalysisReport(root, slug string) AnalysisFreshness {
-	dir := project.Specs(root, slug)
+	return CheckAnalysisReportIn(project.Specs(root, slug), root)
+}
+
+// pathWithin reports whether p (symlinks resolved) lies under root.
+func pathWithin(p, root string) bool {
+	rp, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		rp = p
+	}
+	rr, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		rr = root
+	}
+	rel, err := filepath.Rel(rr, rp)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// CheckAnalysisReportIn is check_analysis_report_current(dir, root) for an
+// explicit mission dir and governing root (an owned `next` checks P's
+// report against the repository root R, as upstream does).
+func CheckAnalysisReportIn(dir, root string) AnalysisFreshness {
 	p := filepath.Join(dir, "analysis-report.md")
 	if _, err := os.Stat(p); err != nil {
 		return AnalysisFreshness{Path: p, Missing: true, Reason: "missing_analysis_report"}
@@ -91,8 +114,15 @@ func CheckAnalysisReport(root, slug string) AnalysisFreshness {
 		return AnalysisFreshness{Path: p, Stale: true, Reason: "missing_input_artifacts"}
 	}
 	if tok, ok := d.Meta.Get("report_transaction"); ok {
-		if !reportIsQualified(root, p, tok) {
+		if !pathWithin(p, root) || !reportIsQualified(root, p, tok) {
 			return AnalysisFreshness{Path: p, Stale: true, Reason: "unqualified_report_transaction"}
+		}
+	}
+	// PathRelativizationError: a hash input outside its governing root.
+	for _, n := range []string{"spec.md", "plan.md", "tasks.md"} {
+		if fp := filepath.Join(dir, n); isFileAt(fp) && !pathWithin(fp, root) {
+			return AnalysisFreshness{Path: p, Stale: true, Reason: fmt.Sprintf("path_relativization_failed: Cannot record artifact %s relative to its governing root (root basename: %s): the artifact does not lie under that root.",
+				mission.PyRepr(n), mission.PyRepr(filepath.Base(root)))}
 		}
 	}
 	// current input hashes (sha256 or nil per key)
@@ -167,4 +197,9 @@ func (f AnalysisFreshness) Verdict() *jsonx.Object {
 		names = append(names, f.Reason)
 	}
 	return jsonx.NewObject("status", "stale", "stale_inputs", names)
+}
+
+func isFileAt(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }

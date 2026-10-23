@@ -16,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -275,9 +276,24 @@ func runTasksStatus(ctx *cli.Context) error {
 	if root == "" {
 		return statusError(ctx, jsonMode, "Not in a spec-kitty project")
 	}
+	// Owned resolution runs on the raw --mission value, before the
+	// sole-active-mission default (resolve_owned_or_adopt).
+	owned, err := resolveOwned(ctx, root, ctx.String("mission"), jsonMode, ownedcheckout.JSONErrorEnvelope, ownedcheckout.Options{})
+	if err != nil {
+		if _, ok := err.(*ownedcheckout.MetaReadError); ok {
+			return statusError(ctx, jsonMode, err.Error())
+		}
+		return err
+	}
+	if owned != nil {
+		return runTasksStatusFor(ctx, jsonMode, owned.OwnedRoot, owned.MissionSlug, owned)
+	}
 	handle := strings.TrimSpace(ctx.String("mission"))
 	if handle == "" {
-		handle = soleActiveMission(root)
+		cwd, _ := os.Getwd()
+		if c := soleActiveMission(root); c != "" && !ownedcheckout.WouldAdopt(root, cwd, nil) {
+			handle = c
+		}
 	}
 	if handle == "" {
 		msg := "--mission <slug> is required"
@@ -301,17 +317,29 @@ func runTasksStatus(ctx *cli.Context) error {
 		}
 		return renderResolveError(ctx, err, false)
 	}
+	return runTasksStatusFor(ctx, jsonMode, root, slug, nil)
+}
+
+// runTasksStatusFor renders the board for slug under root (the owned
+// checkout P when owned is set: no branch banner, owned_checkout
+// workspaces, the stale repository-root copy channel).
+func runTasksStatusFor(ctx *cli.Context, jsonMode bool, root, slug string, owned *ownedcheckout.Fact) error {
 	m := newMissionCtx(root, slug)
-	if _, err := m.banner(ctx, jsonMode); err != nil {
-		return statusError(ctx, jsonMode, err.Error())
-	}
 	readDir := m.ReadDir()
-	if _, err := os.Stat(readDir); err != nil {
-		return statusError(ctx, jsonMode, "Mission directory not found: "+readDir)
-	}
 	tasksDir := m.TasksDir()
-	if st, err := os.Stat(tasksDir); err != nil || !st.IsDir() {
-		return statusError(ctx, jsonMode, "Tasks directory not found: "+tasksDir)
+	if owned != nil {
+		readDir = owned.MissionDir
+		tasksDir = filepath.Join(owned.MissionDir, "tasks")
+	} else {
+		if _, err := m.banner(ctx, jsonMode); err != nil {
+			return statusError(ctx, jsonMode, err.Error())
+		}
+		if _, err := os.Stat(readDir); err != nil {
+			return statusError(ctx, jsonMode, "Mission directory not found: "+readDir)
+		}
+		if st, err := os.Stat(tasksDir); err != nil || !st.IsDir() {
+			return statusError(ctx, jsonMode, "Tasks directory not found: "+tasksDir)
+		}
 	}
 	var transitions *status.Snapshot
 	var events []*status.Event
@@ -365,6 +393,9 @@ func runTasksStatus(ctx *cli.Context) error {
 			phase = "Unknown Phase"
 		}
 		execMode, kind := workspaceFor(w, manifest, id)
+		if owned != nil && id != "" {
+			kind = lanes.OwnedCheckoutKind
+		}
 		var idVal any
 		if id != "" {
 			idVal = id
@@ -458,7 +489,17 @@ func runTasksStatus(ctx *cli.Context) error {
 	// Claim liveness reads the WORK_PACKAGE_TASK (primary) dir's snapshot,
 	// which is empty under a coordination topology (as the oracle does).
 	livenessSnap, _ := status.ReduceDir(m.PrimaryDir())
-	staleResults := checkDoingStaleness(root, slug, doing, ctx.Int("stale-threshold"), livenessSnap)
+	var staleResults map[string]*staleResult
+	if owned != nil {
+		staleResults = map[string]*staleResult{}
+		for _, r := range doing {
+			if r.id != "" {
+				staleResults[r.id] = &staleResult{status: "not_applicable", reason: planningRepoRootReason, workspaceExists: true, workspaceKind: lanes.OwnedCheckoutKind}
+			}
+		}
+	} else {
+		staleResults = checkDoingStaleness(root, slug, doing, ctx.Int("stale-threshold"), livenessSnap)
+	}
 	staleCount := 0
 	for _, r := range doing {
 		if res := staleResults[r.id]; res != nil && r.id != "" {
@@ -518,12 +559,18 @@ func runTasksStatus(ctx *cli.Context) error {
 		res.Set("stale_verdicts", staleVerdicts)
 		res.Set("stalled_wps", stalledWPs)
 		res.Set("auto_commit", autoCommit)
+		if owned != nil {
+			res.Set("stale_repository_root_copy", ownedcheckout.StaleCopyValue(owned, nil))
+		}
 		printJSONPretty(ctx.Stdout, res)
 		return nil
 	}
 	if len(rows) == 0 {
 		consolePrint(ctx.Stdout, "No work packages found in "+tasksDir)
 		return nil
+	}
+	if owned != nil {
+		ownedcheckout.EchoStaleCopyWarning(ctx.Stderr, owned)
 	}
 	pctText := "0"
 	if transitions != nil {

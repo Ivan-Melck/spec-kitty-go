@@ -8,6 +8,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
@@ -87,9 +88,6 @@ func runSpecCommit(ctx *cli.Context) error {
 	if err != nil {
 		return fail(err.Error())
 	}
-	if ctx.String("owned-checkout") != "" {
-		return fail("--owned-checkout is not supported by this build")
-	}
 	root := project.Locate("")
 	if root == "" {
 		return fail("Could not find repository root")
@@ -100,9 +98,43 @@ func runSpecCommit(ctx *cli.Context) error {
 		first = files[0]
 	}
 	slug := deriveMissionSlug(first, ctx.String("mission"))
+	// Validate --owned-checkout (or adopt the caller's checkout) exactly once.
+	var override *string
+	if ctx.IsSet("target-branch") {
+		v := ctx.String("target-branch")
+		override = &v
+	}
+	owned, err := resolveOwnedOrRefuse(ctx, root, slug, jsonMode, func(code, msg string) *jsonx.Object {
+		return specPayload(false, false).Set("error", msg).Set("error_code", code)
+	}, ownedcheckout.Options{TargetOverride: override})
+	if err != nil {
+		return err
+	}
+	ownedErr := func(e error) error {
+		oe, ok := e.(*ownedcheckout.Error)
+		if !ok {
+			return fail(e.Error())
+		}
+		if jsonMode {
+			printCompact(ctx.Stdout, specPayload(false, false).Set("error", oe.Message).Set("error_code", oe.Code))
+		} else {
+			say(ctx.Stdout, fmt.Sprintf("[red]%s:[/red] %s", oe.Code, oe.Message))
+		}
+		return cli.Exit(1)
+	}
 	var abs []string
-	for _, f := range files {
-		abs = append(abs, safecommit.ResolveCommitPath(root, f))
+	if owned != nil {
+		if abs, err = owned.Files(files, false); err != nil {
+			return ownedErr(err)
+		}
+		if err := ownedcheckout.RequireUnstagedIndex(owned); err != nil {
+			return ownedErr(err)
+		}
+		slug = owned.MissionSlug
+	} else {
+		for _, f := range files {
+			abs = append(abs, safecommit.ResolveCommitPath(root, f))
+		}
 	}
 	var dirs []string
 	for _, a := range abs {
@@ -119,6 +151,10 @@ func runSpecCommit(ctx *cli.Context) error {
 	}
 	if slug == "" {
 		return fail("Cannot resolve mission slug. Pass --mission <slug> or provide a kitty-specs/<slug>/ path as the first argument.")
+	}
+	if owned != nil {
+		res := safecommit.CommitForMission(root, owned.MissionSlug, abs, message, mission.KindSpec, safecommit.RouterOptions{Owned: owned})
+		return renderRouterResult(ctx, jsonMode, res, abs, root)
 	}
 	dir, rerr := mission.ResolveHandle(root, slug)
 	if _, notFound := rerr.(*mission.NotFoundError); notFound {

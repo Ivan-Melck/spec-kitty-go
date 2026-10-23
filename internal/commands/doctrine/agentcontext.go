@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
@@ -92,7 +93,15 @@ type execContext struct {
 	execMode, resolutionKind, workspace    *string
 	deps                                   []string
 	commands                               *jsonx.Object
+	owned                                  *ownedcheckout.Fact
+	warnings                               []string
 }
+
+// ownedRefusalError carries an owned-checkout refusal to the command edge
+// (emit_owned_refusal with success_false_envelope).
+type ownedRefusalError struct{ e *ownedcheckout.Error }
+
+func (o *ownedRefusalError) Error() string { return o.e.Message }
 
 func optS(p *string) any {
 	if p == nil {
@@ -108,12 +117,21 @@ func (c *execContext) object() *jsonx.Object {
 		"target_branch", c.targetBranch, "detection_method", "explicit", "wp_id", optS(c.wpID), "wp_file", optS(c.wpFile),
 		"lane", optS(c.lane), "lane_id", optS(c.laneID), "branch_name", optS(c.branch), "execution_mode", optS(c.execMode),
 		"resolution_kind", optS(c.resolutionKind), "dependencies", strs(c.deps), "resolved_base", nil, "auto_merge", false,
-		"workspace_path", optS(c.workspace), "commands", c.commands, "warnings", []any{}, "mission_dir", c.featureDir)
+		"workspace_path", optS(c.workspace), "commands", c.commands, "warnings", strs(c.warnings), "mission_dir", c.featureDir)
 }
 
 func runContextResolve(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
 	c, err := resolveActionContext(ctx)
+	var oe *ownedRefusalError
+	if errors.As(err, &oe) {
+		ownedcheckout.Emit(ctx.Stdout, ctx.Stderr, oe.e, jsonMode, ownedcheckout.SuccessFalseEnvelope)
+		return cli.Exit(1)
+	}
+	var stale any
+	if err == nil && c.owned != nil {
+		stale = ownedcheckout.StaleCopyValue(c.owned, &c.warnings)
+	}
 	if err != nil {
 		var ae *actionContextError
 		code, msg := "UNKNOWN", err.Error()
@@ -128,7 +146,11 @@ func runContextResolve(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	if jsonMode {
-		jsonOut(ctx.Stdout, c.object(), jsonx.Pretty)
+		o := c.object()
+		if c.owned != nil {
+			o.Set("stale_repository_root_copy", stale)
+		}
+		jsonOut(ctx.Stdout, o, jsonx.Pretty)
 		return nil
 	}
 	w := ctx.Stdout
@@ -144,6 +166,9 @@ func runContextResolve(ctx *cli.Context) error {
 	}
 	for _, kv := range c.commands.Pairs() {
 		cprintRaw(w, fmt.Sprintf("  %s: %v", kv.Key, kv.Value))
+	}
+	if c.owned != nil {
+		ownedcheckout.EchoStaleCopyWarning(ctx.Stderr, c.owned)
 	}
 	return nil
 }
@@ -173,25 +198,55 @@ func resolveActionContext(ctx *cli.Context) (*execContext, error) {
 	if handle == "" {
 		return nil, ctxErr("MISSING_MISSION", "--mission <slug> is required")
 	}
-	res, err := mission.ResolveIdentity(root, handle)
-	if err != nil {
-		var amb *mission.AmbiguousError
-		if errors.As(err, &amb) {
-			return nil, ctxErr("MISSION_AMBIGUOUS_SELECTOR", "%s", err.Error())
-		}
-		return nil, ctxErr("MISSION_NOT_FOUND", "%s", err.Error())
+	// The ONE ownership validation for this invocation: an explicit
+	// --owned-checkout or a validated flagless adoption.
+	var claim *string
+	if ctx.IsSet("owned-checkout") {
+		v := ctx.String("owned-checkout")
+		claim = &v
 	}
-	slug := res.Slug
+	cwd, _ := os.Getwd()
+	owned, oerr := ownedcheckout.ResolveOrAdopt(root, claim, handle, cwd, ownedcheckout.Options{})
+	if oerr != nil {
+		if e, ok := oerr.(*ownedcheckout.Error); ok {
+			return nil, &ownedRefusalError{e}
+		}
+		return nil, oerr
+	}
+	var slug string
+	if owned != nil {
+		root, slug = owned.OwnedRoot, owned.MissionSlug
+	} else {
+		res, err := mission.ResolveIdentity(root, handle)
+		if err != nil {
+			var amb *mission.AmbiguousError
+			if errors.As(err, &amb) {
+				return nil, ctxErr("MISSION_AMBIGUOUS_SELECTOR", "%s", err.Error())
+			}
+			return nil, ctxErr("MISSION_NOT_FOUND", "%s", err.Error())
+		}
+		slug = res.Slug
+	}
 	surf := coord.Resolve(root, slug)
 	readDir := surf.StatusDir()
 	target := surf.TargetBranch()
+	if owned != nil {
+		// The landing branch, read from the fact's own mission meta.
+		readDir = owned.MissionDir
+		if target == "" {
+			target = owned.WriteBranch
+		}
+	}
 	if target == "" {
 		target = "main"
 	}
-	c := &execContext{action: action, slug: slug, featureDir: readDir, targetBranch: target, deps: []string{}}
+	c := &execContext{action: action, slug: slug, featureDir: readDir, targetBranch: target, deps: []string{}, owned: owned}
 	if missionLevelActions[action] {
 		if planningAuthoringActions[action] {
 			c.featureDir = surf.PrimaryDir
+			if owned != nil {
+				c.featureDir = owned.MissionDir
+			}
 		}
 		c.commands = tasksCommands(slug)
 		return c, nil
@@ -238,7 +293,10 @@ func resolveActionContext(ctx *cli.Context) (*execContext, error) {
 	}
 	lane := string(wpLane(readDir, wpID))
 	c.lane = sp(lane)
-	if err := resolveWorkspace(c, root, surf, w, wpID); err != nil {
+	if owned != nil && !coord.RoutesThroughCoordination(owned.Topology) {
+		ws := lanes.OwnedWorkspace(slug, wpID, w.String("execution_mode"), owned.OwnedRoot, owned.WriteBranch)
+		c.execMode, c.resolutionKind, c.workspace, c.branch = sp(ws.ExecutionMode), sp(ws.ResolutionKind), sp(ws.WorktreePath), sp(ws.BranchName)
+	} else if err := resolveWorkspace(c, root, surf, w, wpID); err != nil {
 		return nil, ctxErr("WORK_PACKAGE_UNRESOLVED", "%s", err.Error())
 	}
 	c.commands = wpCommands(action, wpID, slug, ctx.String("agent"))

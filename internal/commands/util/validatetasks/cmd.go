@@ -328,7 +328,10 @@ func run(ctx *cli.Context) error {
 			p("[red]Error:[/red] --mission <slug> is required (or use --all)")
 			return cli.Exit(1)
 		}
-		dir := encoding.ResolveMissionDir(repoRoot, slug)
+		dir, err := encoding.ResolveMissionDir(repoRoot, slug)
+		if err != nil {
+			return encoding.SeamCrash(ctx.Stderr, err)
+		}
 		if _, err := os.Stat(dir); err != nil {
 			p("[red]Error:[/red] Mission directory not found: " + dir)
 			return cli.Exit(1)

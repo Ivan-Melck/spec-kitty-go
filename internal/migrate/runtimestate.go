@@ -12,8 +12,10 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/fm"
+	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/placement"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -879,6 +881,58 @@ type CutoverResult struct {
 	Seeded                              int
 	Verify                              *RuntimeVerify
 	Error                               *string
+	// PlacementMismatch marks Error as _flip_phase's PlacementMismatchError
+	// (raised out of cutover_mission; cutover_repo records it).
+	PlacementMismatch bool
+}
+
+// canonicalRootOf is resolve_canonical_root(dir): the main repository root
+// of the checkout holding dir ("" when dir is in no git checkout).
+func canonicalRootOf(dir string) string {
+	top, err := gitx.Toplevel(dir)
+	if err != nil {
+		return ""
+	}
+	return project.MainRepoRoot(top)
+}
+
+// flipTarget is _flip_target → canonicalize_feature_dir(dir).
+func flipTarget(dir string) string {
+	if filepath.Base(filepath.Dir(dir)) != project.SpecsDir {
+		return dir
+	}
+	for c := dir; c != filepath.Dir(c); c = filepath.Dir(c) {
+		if filepath.Base(filepath.Dir(c)) == project.WorktreesDir && strings.HasSuffix(filepath.Base(c), "-coord") {
+			return dir
+		}
+	}
+	root := canonicalRootOf(dir)
+	if root == "" {
+		return dir
+	}
+	if cand := project.Specs(root, filepath.Base(dir)); pathExists(cand) {
+		return cand
+	}
+	return dir
+}
+
+// primaryHomeOrDegrade is _resolve_primary_home_or_degrade: the placement
+// port's PRIMARY home, "" when resolution degrades.
+func primaryHomeOrDegrade(dir string) string {
+	root := canonicalRootOf(dir)
+	if root == "" {
+		return ""
+	}
+	home, err := placement.PrimaryDir(root, filepath.Base(dir))
+	if err != nil {
+		return ""
+	}
+	return home
+}
+
+func pathExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 func isSnapshotAuthority(meta *jsonx.Object) bool {
@@ -909,14 +963,21 @@ func CutoverMission(dir string, dryRun bool) CutoverResult {
 	if dryRun {
 		return CutoverResult{Slug: slug, WouldFlip: true, AlreadyMigrated: already, Seeded: seed.Seeded, Verify: v}
 	}
-	meta, merr := LoadMetaFailClosed(dir)
+	// _flip_phase: the placement port's PRIMARY home must be the write target.
+	target := flipTarget(dir)
+	if home := primaryHomeOrDegrade(dir); home != "" && home != target {
+		msg := fmt.Sprintf("_flip_phase refuses to write status_phase for %s: the placement port resolved its PRIMARY home to %s, which does not match the write target %s (fail-closed, FR-001).",
+			mission.PyRepr(slug), home, target)
+		return CutoverResult{Slug: slug, Seeded: seed.Seeded, Error: &msg, PlacementMismatch: true}
+	}
+	meta, merr := LoadMetaFailClosed(target)
 	if merr == nil {
 		if meta == nil {
 			meta = &jsonx.Object{}
 		}
 		if !isSnapshotAuthority(meta) {
 			meta.Set("status_phase", "1")
-			mission.WriteMeta(dir, meta, false)
+			mission.WriteMeta(target, meta, false)
 		}
 	} else {
 		return CutoverResult{Slug: slug, Seeded: seed.Seeded, Verify: v, Error: strPtr(merr.Error())}
