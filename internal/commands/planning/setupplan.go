@@ -2,6 +2,7 @@ package planning
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"os"
 	"path/filepath"
 	"strings"
@@ -220,6 +221,8 @@ func runSetupPlan(ctx *cli.Context) error {
 		}
 		return cli.Exit(1)
 	}
+	// _resolve_plan_template -> resolve_mission_type_context(meta type)
+	charter.WarnMissionTypeContext(root, mission.MissionType(mission.ReadMetaOrEmpty(primary)))
 	tmpl, ok := missionart.ResolveTemplate(missionart.PlanTemplateName(mtype), root, mtype)
 	if !ok {
 		return fail("Plan template not found in repository or package")

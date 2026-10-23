@@ -27,7 +27,7 @@ func noCommitReason(root string, o *upgradeOutcome, b *gitBaseline, dryRun, shou
 		return ""
 	case b == nil:
 		return baselineUnavailable
-	case len(o.activationErrors) > 0:
+	case len(o.activationErrors) > 0 || len(o.repairPreparationErrors) > 0:
 		return repairErrorsLeftUncommitted
 	case o.mainCheckoutRunFailed():
 		if churn {

@@ -7,6 +7,7 @@ package create
 import (
 	"errors"
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"os"
 	"path/filepath"
 	"sort"
@@ -199,6 +200,8 @@ func SpecTemplate(root, missionType string) ([]byte, error) {
 	if len(types) == 0 {
 		return nil, &Error{ErrorCode: "ACTIVE_CHARTER_CONFIG", Msg: "This project has no activated mission types, so a mission cannot be created. A mission requires at least one activated mission type. Provision the project's charter: run `spec-kitty init` (new project) or `spec-kitty upgrade` (existing project), or add a non-empty `mission_type_activations` list to .kittify/config.yaml (or the charter.yaml it points to)."}
 	}
+	// resolve_mission_type_context(governance_root, mission_type=...)
+	charter.WarnMissionTypeContext(root, missionType)
 	found := false
 	for _, t := range types {
 		if t == missionType {

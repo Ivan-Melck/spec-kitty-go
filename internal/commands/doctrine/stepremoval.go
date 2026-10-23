@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
@@ -46,6 +47,7 @@ func stepRemovalWarnings(root, id string, rc *missionTypeRosterCache) ([]string,
 	// current: resolve_mission_type_context(...).action_sequence; an
 	// unregistered or unresolvable type is "no previous state".
 	var current []string
+	charter.WarnMissionTypeContext(root, id)
 	registered, _ := dct.ActivatedMissionTypes(root)
 	isRegistered := false
 	for _, r := range registered {

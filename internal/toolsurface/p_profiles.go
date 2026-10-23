@@ -11,6 +11,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/assets"
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
@@ -106,6 +107,7 @@ func loadProfileModel(root string) (*profileModel, error) {
 		return nil, err
 	}
 	m := &profileModel{}
+	var admit func(agents.Profile) bool
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".agent.yaml") {
 			continue
@@ -119,7 +121,13 @@ func loadProfileModel(root string) (*profileModel, error) {
 			continue
 		}
 		p.SourceFile = e.Name()
-		if agents.ProfileAdmit != nil && !agents.ProfileAdmit(root, p) {
+		if admit == nil {
+			admit = func(agents.Profile) bool { return true }
+			if agents.ProfileAdmitter != nil {
+				admit = agents.ProfileAdmitter(root)
+			}
+		}
+		if !admit(p) {
 			continue
 		}
 		if p.Sentinel {
@@ -133,10 +141,10 @@ func loadProfileModel(root string) (*profileModel, error) {
 	return m, nil
 }
 
+// profileModel is AgentProfilesProvider._projector_for: every call site
+// builds a fresh projector (one active charter service build, so one
+// repo-language inference and its interview read), as upstream does.
 func (c *collectCtx) profileModel(root string) (*profileModel, error) {
-	if m, ok := c.profiles[root]; ok {
-		return m, nil
-	}
 	m, err := loadProfileModel(root)
 	if err != nil {
 		return nil, err
@@ -738,6 +746,17 @@ func assessProfiles(c *collectCtx, in AssessInputs, sels []Selection, only map[s
 	if len(eligible) == 0 {
 		return b.finish(nil)
 	}
+	// _profile_input_roots: the declared org pack chain is read strictly,
+	// so a declared-but-unfetched pack fails the assessment closed.
+	orgRoots, err := charter.RequireDeclaredOrgRoots(root)
+	if err != nil {
+		return fail(err)
+	}
+	for _, org := range orgRoots {
+		if st, err := os.Lstat(org); err != nil || !st.IsDir() {
+			return fail(fmt.Errorf("Required org profile root unavailable: %s", org))
+		}
+	}
 	m, err := c.profileModel(root)
 	if err != nil {
 		return fail(err)
@@ -752,7 +771,7 @@ func assessProfiles(c *collectCtx, in AssessInputs, sels []Selection, only map[s
 			return b.finish(nil)
 		}
 	}
-	inputsUnchanged := treeSnapshot(profileInputRoots(root))
+	inputsUnchanged := treeSnapshot(profileInputRoots(root, orgRoots))
 	var projected []preparedProjection
 	for _, t := range eligible {
 		projected = append(projected, m.prepare(t, root)...)
@@ -824,12 +843,14 @@ func assessProfiles(c *collectCtx, in AssessInputs, sels []Selection, only map[s
 }
 
 // profileInputRoots is agent_profiles._profile_input_roots (project side;
-// the package-side roots never change during a run).
-func profileInputRoots(root string) []string {
-	roots := []string{
+// the package-side roots never change during a run; orgRoots is the strict
+// declared org pack chain).
+func profileInputRoots(root string, orgRoots []string) []string {
+	roots := append([]string(nil), orgRoots...)
+	roots = append(roots, []string{
 		filepath.Join(root, ".kittify", "config.yaml"), filepath.Join(root, ".kittify", "charter"), filepath.Join(root, ".kittify", "agent_profiles"),
 		filepath.Join(root, "pyproject.toml"), filepath.Join(root, ".kittify", "charter-packs"), profileManifestPath(root),
-	}
+	}...)
 	if cfg, err := kittify.LoadConfig(root); err == nil {
 		if v, ok := cfg.Get("charter"); ok {
 			if s, isStr := v.(string); isStr && s != "" {

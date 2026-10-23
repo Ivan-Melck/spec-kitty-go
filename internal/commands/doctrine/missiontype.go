@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
+	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
@@ -151,6 +152,7 @@ func missionTypeList(ctx *cli.Context, jsonMode, includeInactive bool) error {
 		}
 		var seq any = "(not activated)"
 		if actSet[id] {
+			charter.WarnMissionTypeContext(root, id)
 			seq = strs(mt.ActionSequence)
 		}
 		rows = append(rows, jsonx.NewObject("id", id, "source_layer", mt.SourceLayer, "display_name", mt.DisplayName,
@@ -210,6 +212,7 @@ func runMissionShow(ctx *cli.Context) error {
 	if !found || mt == nil {
 		return mtError(ctx, jsonMode, &dct.UnknownMissionTypeError{ID: id, Registered: activated})
 	}
+	charter.WarnMissionTypeContext(root, id)
 	if jsonMode {
 		var ts, ext any
 		if mt.TemplateSet != nil {

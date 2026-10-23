@@ -197,6 +197,13 @@ func runCharterActivate(ctx *cli.Context) error {
 			return cli.Exit(1)
 		}
 	}
+	// #5779/#6006: the availability scan reads the whole org-pack chain
+	// strictly (resolve_pack_chain(strict=True), fail-closed on a
+	// declared-but-unfetched pack, #4984).
+	if _, err := charter.RequireDeclaredOrgRoots(root); err != nil {
+		cprint(w, "[red]Error:[/red] %s", err.Error())
+		return cli.Exit(1)
+	}
 	res, err := charter.Activate(root, kind, id)
 	if err != nil {
 		cprint(w, "[red]Error:[/red] %s", err.Error())

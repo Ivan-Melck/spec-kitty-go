@@ -296,9 +296,19 @@ type ProjectionResult struct {
 	Pruned []string
 }
 
-// ProfileAdmit is the activation/language gate of the active charter
-// service (set by the setup package; nil admits every profile).
-var ProfileAdmit func(root string, p Profile) bool
+// ProfileAdmitter builds the activation/language gate of the active
+// charter service for root (set by the setup package; nil admits every
+// profile). One gate is one service build: the activation lists and the
+// inferred repo languages are read once per gate.
+var ProfileAdmitter func(root string) func(p Profile) bool
+
+// profileGate returns the gate for root (admit-all when unset).
+func profileGate(root string) func(p Profile) bool {
+	if ProfileAdmitter == nil {
+		return func(Profile) bool { return true }
+	}
+	return ProfileAdmitter(root)
+}
 
 // ProjectProfiles writes native agent-profile projections for the profile
 // harnesses among agentKeys (in agentKeys order) and records them in
@@ -320,8 +330,9 @@ func ProjectProfiles(root string, agentKeys []string) (ProjectionResult, error) 
 		return res, err
 	}
 	var profiles []Profile
+	admit := profileGate(root)
 	for _, p := range all {
-		if ProfileAdmit == nil || ProfileAdmit(root, p) {
+		if admit(p) {
 			profiles = append(profiles, p)
 		}
 	}

@@ -298,7 +298,8 @@ func IsCharterEmpty(root string) bool {
 	if _, err := os.Stat(root + "/.kittify/charter/charter.yaml"); err == nil {
 		return false
 	}
-	if len(dct.OrgRoots(root)) > 0 {
+	// PackContext.org_roots: every declared pack root, fetched or not.
+	if len(dct.OrgPacks(root)) > 0 {
 		return false
 	}
 	act, err := dct.ActivatedProfiles(root)

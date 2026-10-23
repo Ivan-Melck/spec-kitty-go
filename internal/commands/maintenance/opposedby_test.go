@@ -31,3 +31,20 @@ func TestDiffMigrateRewriteOpposedBy(t *testing.T) {
 	)
 	p.CompareTree("pack", true)
 }
+
+// TestDiffMigrateRewriteOpposedByNonCanonical: the rewrite re-dumps a
+// non-canonically formatted artifact through the ruamel round trip
+// (document marker, indented sequences, key spacing, trailing spaces,
+// comments, quote styles, folded scalars).
+func TestDiffMigrateRewriteOpposedByNonCanonical(t *testing.T) {
+	p := newOraclePair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile("pack/tactics/odd.tactic.yaml", "---\n# leading comment\nid:   odd-one   # trailing\ntitle: 'Odd  one'\nopposed_by:\n    - type: tactic\n      id: big-ball-of-mud\n      reason: \"why not\"\nsteps:\n    - first   \n    - second\nnotes: >\n  folded\n  text\n")
+		s.Git("add", "-A")
+		s.Git("commit", "-q", "-m", "pack")
+	})
+	compareSteps(t, p, "", "",
+		step{"migrate", "rewrite-opposed-by", "--pack", "pack", "--json"},
+	)
+	p.CompareTree("pack", true)
+}
