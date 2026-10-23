@@ -114,7 +114,6 @@ func runStatusLifecycle(ctx *cli.Context) error {
 		return cli.Exit(1)
 	}
 	snap := status.Reduce(stream.Transitions, nil, true)
-	slugResolverWarn(ctx, jsonMode, dir, 1)
 	lc := status.LifecycleObject(dir, snap, clock.Now())
 	if jsonMode {
 		printJSON(ctx.Stdout, lc)
@@ -184,7 +183,6 @@ func runStatusValidate(ctx *cli.Context) error {
 	}
 	res, has := status.Validate(dir)
 	if has {
-		slugResolverWarn(ctx, jsonMode, dir, 2)
 	}
 	payload := func() *jsonx.Object {
 		return jsonx.NewObject("mission_slug", slug, "passed", res.Passed(), "errors", res.Errors, "warnings", res.Warnings,
@@ -232,17 +230,8 @@ func runStatusValidate(ctx *cli.Context) error {
 	return nil
 }
 
-// slugResolverWarn replays the store._SlugResolver logger warnings
-// (orphaned / unsafe legacy event slugs) once per upstream read_events()
-// pass of the command; logging is silent in --json mode.
-func slugResolverWarn(ctx *cli.Context, jsonMode bool, dir string, passes int) {
-	if jsonMode {
-		return
-	}
-	ws := status.SlugResolverWarnings(dir)
-	for i := 0; i < passes; i++ {
-		for _, w := range ws {
-			warnLog(ctx.Stderr, w)
-		}
-	}
-}
+// extraReadPasses logs the store._SlugResolver warnings (orphaned / unsafe
+// legacy event slugs) of the read_events() passes upstream makes beyond
+// the ones the Go command's own status.ReadStream calls already log (every
+// ReadStream logs one pass; the CLI logging bootstrap silences --json).
+func extraReadPasses(dir string, passes int) { status.ExtraReadPasses(dir, passes) }

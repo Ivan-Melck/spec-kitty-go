@@ -258,6 +258,8 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 		o.Printf("Error locating work package: %v", err)
 		return ExitErr(1)
 	}
+	// locate_work_package's reconstruct_wp_view reads the status stream.
+	status.ExtraReadPasses(s.StatusDir(), 1)
 	snap := statusSnapshot(s)
 	if snap.WP(wpID) == nil {
 		o.Printf("Error: %s", MissingCanonicalStatus(wpID, slug))

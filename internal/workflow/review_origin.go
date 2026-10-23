@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/originfresh"
+	"github.com/spec-kitty/go-kitty3/internal/refadvance"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -51,17 +52,24 @@ func advanceLaneRef(root, branch, oldSHA, newSHA string) error {
 			holders = append(holders, w.Path)
 		}
 	}
-	for _, wt := range holders {
-		r := git(wt, "status", "--porcelain", "--untracked-files=no")
-		var dirty []string
-		for _, l := range strings.Split(strings.TrimRight(r.Stdout, "\n"), "\n") {
-			if strings.TrimSpace(l) != "" {
-				dirty = append(dirty, "    "+l)
-			}
+	// _checkouts_ready_for: tracked changes, plus untracked / ignored paths
+	// a reset to the new tip would overwrite (no residue context).
+	var targets []string
+	if len(holders) > 0 {
+		t, err := refadvance.TargetTreePaths(root, newSHA)
+		if err != nil {
+			return &reviewLaneRefusal{err.Error()}
 		}
-		if len(dirty) > 0 {
+		targets = t
+	}
+	for _, wt := range holders {
+		vs, err := refadvance.DirtyVerdicts(wt, refadvance.Options{NewSHA: newSHA, TargetPaths: targets})
+		if err != nil {
+			return &reviewLaneRefusal{err.Error()}
+		}
+		if dirty := refadvance.Lines(vs); len(dirty) > 0 {
 			return &reviewLaneRefusal{fmt.Sprintf("Refusing to advance branch '%s' (%s -> %s): the worktree at %s has it checked out and holds uncommitted local changes that a resync (`git reset --hard`) would destroy (#1826 / NFR-002).\n  Dirty entries:\n%s\n  Commit, stash, or revert these changes in %s, then resume the consolidation (`spec-kitty consolidate --resume`).\n  Then re-run the review.",
-				branch, oldSHA[:12], newSHA[:12], wt, strings.Join(dirty, "\n"), wt)}
+				branch, oldSHA[:12], newSHA[:12], wt, refadvance.FormatEntryLines(dirty, "    "), wt)}
 		}
 	}
 	if r := git(root, "update-ref", "refs/heads/"+branch, newSHA, oldSHA); r.Code != 0 {

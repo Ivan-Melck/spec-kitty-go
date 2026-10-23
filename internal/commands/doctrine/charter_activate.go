@@ -164,8 +164,18 @@ func runCharterActivate(ctx *cli.Context) error {
 		}
 	}
 	if kind == dct.MissionTypeToken {
-		if mt := dct.MissionTypeRoster(root)[id]; mt != nil && len(mt.ActionSequence) == 0 {
-			cprint(w, "[red]Error:[/red] Mission type '%s' declares an empty action_sequence and cannot be activated.", id)
+		// FR-008 step-removal warnings, then the FR-001 preflight; both
+		// surface the strict roster's ValueErrors as "Error: ...".
+		rc := &missionTypeRosterCache{root: root}
+		lines, err := stepRemovalWarnings(root, id, rc)
+		if err == nil {
+			for _, l := range lines {
+				cprint(w, "%s", l)
+			}
+			err = validateActivatableMissionType(root, id, rc)
+		}
+		if err != nil {
+			cprint(w, "[red]Error:[/red] %s", err.Error())
 			return cli.Exit(1)
 		}
 	}

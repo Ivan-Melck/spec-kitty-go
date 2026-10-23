@@ -231,6 +231,9 @@ func runStatusEmit(ctx *cli.Context) error {
 	if ctx.IsSet("implementation-evidence-present") {
 		req.ImplementationEvidence = status.Bool(ctx.Bool("implementation-evidence-present"))
 	}
+	// transition() resolves the current lane (read_current_wp_state_transactional)
+	// before the emit door reduces the write surface.
+	extraReadPasses(m.ReadDir(), 1)
 	res, err := m.Surface.EmitTransition(req)
 	if err != nil {
 		return fail(err.Error(), nil)

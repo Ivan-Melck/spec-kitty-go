@@ -105,6 +105,8 @@ func locateWorkPackage(m *missionCtx, wpID string) (*wp.WP, error) {
 		}
 		return nil, fmt.Errorf("Multiple files matched '%s'. Refine the ID or clean duplicates:\n%s", wpID, strings.Join(rel, "\n"))
 	}
+	// reconstruct_wp_view reads the status stream for the located WP.
+	extraReadPasses(m.ReadDir(), 1)
 	return wp.Read(matches[0])
 }
 

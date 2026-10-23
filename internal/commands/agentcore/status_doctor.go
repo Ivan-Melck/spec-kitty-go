@@ -119,7 +119,6 @@ func runStatusDoctor(ctx *cli.Context) error {
 		}
 	}
 	findings, err := status.RunDoctor(m.ReadDir(), m.Slug, m.Root, ctx.Int("stale-claimed-days"), ctx.Int("stale-in-progress-days"), doctorHooks(m))
-	slugResolverWarn(ctx, jsonMode, m.ReadDir(), 2)
 	if err != nil {
 		if jsonMode {
 			printJSON(ctx.Stdout, jsonx.NewObject("error", err.Error(), "healthy", false))

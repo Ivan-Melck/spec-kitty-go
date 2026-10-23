@@ -239,4 +239,12 @@ Additive exports elsewhere (CORE-owned packages):
 
 ## Remaining work
 
-* None for CORE-01..CORE-20 / DOCS-01 / DOCS-07. Small documented approximations: the pre-review dirty-path and discard worktree-removal residue classifiers reuse the self-bookkeeping + coord-residue rules (no `ref_advance` obstruction analysis for ignored files); the orphaned-event warning is replayed on the agentcore status/tasks commands with upstream's per-command `read_events` pass counts (other human commands reading legacy rows do not replay it).
+* None for CORE-01..CORE-20 / DOCS-01 / DOCS-07.
+
+## Wave 5 sweep (area SWEEP)
+
+* Dirty verdicts (`internal/refadvance`, port of `git/ref_advance._dirty_verdicts`): the review-lane fast-forward (`agent action review` origin freshness, `advance_branch_ref`) refuses on tracked changes and on untracked or gitignored paths a `reset --hard` to the new tip would overwrite (`?? TEAM.md (would be overwritten by reset --hard to <sha12>)`), at most 20 entries listed; the `mission close --discard` lane-worktree removal lists every untracked file individually (`--untracked-files=all`), exempts a VCS-lock-only `meta.json`, and ignores gitignored entries (no reset target). `TestDiffDirtyVerdicts`.
+* The `_SlugResolver` orphaned / unsafe-slug warning is logged by every `status.ReadStream` (= one upstream `read_events` pass) through `status.SlugWarnLog` (installed by the CLI logging bootstrap in human mode), plus `status.ExtraReadPasses` where upstream reads the log more often than the port (locate_work_package's reconstruct, the current-agent read, the forced-move arbiter read, append-verify reads and the transition readback, the review-gate inferences, tasks status per-WP rows / verdicts / arbiter rows, `materialize`'s progress and lifecycle passes, `next`'s guard presence reads and stall check, `agent status emit`'s current-lane read); reads with no upstream pass run under `status.Quietly`. Counts match the oracle along a full WP lifecycle (`TestDiffOrphanedEventWarningsAcrossCommands`).
+* `next` (advancing, human mode) prints upstream's stalled in_review interventions (`_print_stalled_wp_interventions`, `review.stall_threshold_minutes`).
+
+New library API: `internal/refadvance` (`DirtyVerdicts`, `Options`, `Verdict`, `Reason`, `Lines`, `TargetTreePaths`, `StatusEntries`, `Entry`, `FormatEntryLines`); `internal/status`: `SlugWarnLog`, `ExtraReadPasses`, `Quietly`.
