@@ -48,24 +48,38 @@ func (e *ErrConfig) Error() string { return e.Msg }
 // LoadConfig parses .kittify/config.yaml. A missing or empty file yields an
 // empty object; invalid YAML or a non-mapping document is an *ErrConfig.
 func LoadConfig(root string) (*jsonx.Object, error) {
+	return loadConfig(root, false)
+}
+
+func loadConfig(root string, agent bool) (*jsonx.Object, error) {
 	p := ConfigPath(root)
+	parseError := func(err error) error {
+		if agent && ErrorLog != nil {
+			ErrorLog("Failed to load config: " + err.Error())
+		}
+		return &ErrConfig{fmt.Sprintf("Invalid YAML in %s: %v", p, err)}
+	}
 	b, err := os.ReadFile(p)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return &jsonx.Object{}, nil
 		}
-		return nil, &ErrConfig{fmt.Sprintf("Invalid YAML in %s: %v", p, err)}
+		return nil, parseError(err)
 	}
-	v, err := yamlx.Parse(b)
+	opts := yamlx.ParseOptions{}
+	if agent {
+		opts.TextFile = p
+	}
+	v, err := yamlx.ParseWith(b, opts)
 	if err != nil {
-		return nil, &ErrConfig{fmt.Sprintf("Invalid YAML in %s: %v", p, err)}
+		return nil, parseError(err)
 	}
 	if v == nil {
 		return &jsonx.Object{}, nil
 	}
 	o, ok := v.(*jsonx.Object)
 	if !ok {
-		return nil, &ErrConfig{fmt.Sprintf("Invalid config shape in %s: expected a YAML mapping at the top level, got %s", p, pyTypeName(v))}
+		return nil, &ErrConfig{fmt.Sprintf("Invalid config shape in %s: expected a YAML mapping at the top level, got %s", p, configTypeName(root, v))}
 	}
 	return o, nil
 }
@@ -191,6 +205,42 @@ func pyTypeName(v any) string {
 	return fmt.Sprintf("%T", v)
 }
 
+func configTypeName(root string, v any, keys ...string) string {
+	if _, ok := v.(string); ok {
+		if b, err := os.ReadFile(ConfigPath(root)); err == nil {
+			if doc, err := rtyaml.LoadString(string(b)); err == nil {
+				value := doc.Root
+				for _, key := range keys {
+					if m, ok := value.(*rtyaml.Map); ok {
+						value, _ = m.Get(key)
+					} else {
+						value = nil
+					}
+				}
+				if s, ok := value.(*rtyaml.Str); ok {
+					switch s.Style {
+					case '\'':
+						return "SingleQuotedScalarString"
+					case '"':
+						return "DoubleQuotedScalarString"
+					case '|':
+						return "LiteralScalarString"
+					case '>':
+						return "FoldedScalarString"
+					}
+				}
+			}
+		}
+	}
+	if _, ok := v.([]any); ok {
+		return "CommentedSeq"
+	}
+	if _, ok := v.(*jsonx.Object); ok {
+		return "CommentedMap"
+	}
+	return pyTypeName(v)
+}
+
 // ---------------------------------------------------------------------------
 // agents section
 // ---------------------------------------------------------------------------
@@ -212,15 +262,21 @@ var ValidAgentKeys = func() []string { return nil }
 
 // LoadAgentConfig reads the agents (or legacy tools) section with upstream's
 // defaults and validation (load_agent_config).
-func LoadAgentConfig(root string) (AgentConfig, error) {
-	out := AgentConfig{AutoCommit: true}
+func LoadAgentConfig(root string) (out AgentConfig, err error) {
+	out = AgentConfig{AutoCommit: true}
+	defer func() {
+		var configErr *ErrConfig
+		if errors.As(err, &configErr) {
+			configErr.Msg += ". Fix .kittify/config.yaml, then check the agent list with `spec-kitty agent config list`."
+		}
+	}()
 	if !ConfigExists(root) {
 		if WarnLog != nil && quietAgentConfig == 0 {
 			WarnLog("Config file not found: " + ConfigPath(root))
 		}
 		return out, nil
 	}
-	data, err := LoadConfig(root)
+	data, err := loadConfig(root, true)
 	if err != nil {
 		return out, err
 	}
@@ -234,7 +290,7 @@ func LoadAgentConfig(root string) (AgentConfig, error) {
 	if ok && raw != nil {
 		o, isObj := raw.(*jsonx.Object)
 		if !isObj {
-			return out, &ErrConfig{fmt.Sprintf("Invalid config shape in %s: expected a YAML mapping for %s, got %s", ConfigPath(root), section, pyTypeName(raw))}
+			return out, &ErrConfig{fmt.Sprintf("Invalid config shape in %s: expected a YAML mapping for %s, got %s", ConfigPath(root), section, configTypeName(root, raw, section))}
 		}
 		agents = o
 	} else {
@@ -261,6 +317,9 @@ func LoadAgentConfig(root string) (AgentConfig, error) {
 	out.ExplicitAgentList = agents.Has("available")
 	switch t := av.(type) {
 	case nil:
+		if out.ExplicitAgentList {
+			return out, &ErrConfig{"Invalid agents.available in config.yaml: expected a list of agent keys"}
+		}
 	case string:
 		out.Available = []string{t}
 	case []any:
@@ -308,7 +367,13 @@ func SaveAgentConfig(root string, ac AgentConfig) error {
 	for i, a := range ac.Available {
 		avail[i] = a
 	}
-	cfg.Set("agents", jsonx.NewObject("available", avail, "auto_commit", ac.AutoCommit, "lint_on_edit", ac.LintOnEdit))
+	section := &jsonx.Object{}
+	if len(ac.Available) > 0 || ac.ExplicitAgentList {
+		section.Set("available", avail)
+	}
+	section.Set("auto_commit", ac.AutoCommit)
+	section.Set("lint_on_edit", ac.LintOnEdit)
+	cfg.Set("agents", section)
 	return saveConfig(root, cfg, snap)
 }
 

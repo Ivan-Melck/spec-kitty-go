@@ -86,6 +86,7 @@ func init() {
 	charter.WarnLog = func(m string) { rich.LogWarning(os.Stderr, m) }
 	status.SlugWarnLog = func(m string) { rich.LogWarning(os.Stderr, m) }
 	kittify.WarnLog = func(m string) { rich.LogWarning(os.Stderr, m) }
+	kittify.ErrorLog = func(m string) { rich.Log(os.Stderr, "ERROR", m) }
 	charter.PyWarnLog = func(module string, line int, category, msg, source string) {
 		rich.LogWarning(os.Stderr, fmt.Sprintf("%s:%d: %s: %s\n  %s\n", module, line, category, msg, source))
 	}

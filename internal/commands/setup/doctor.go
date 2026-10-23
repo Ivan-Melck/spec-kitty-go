@@ -342,6 +342,10 @@ func agentDirsForProject(root string) [][2]string {
 	if err != nil {
 		return nil
 	}
+	return agentDirsForConfig(ac)
+}
+
+func agentDirsForConfig(ac kittify.AgentConfig) [][2]string {
 	if len(ac.Available) == 0 && !ac.ExplicitAgentList {
 		return agents.AgentDirs
 	}
@@ -371,12 +375,16 @@ func isPromptDriven(c string) bool {
 
 // CommandFileIssues is runtime.doctor.check_command_file_health.
 func CommandFileIssues(root string) []map[string]string {
+	return commandFileIssuesForDirs(root, agentDirsForProject(root))
+}
+
+func commandFileIssuesForDirs(root string, dirs [][2]string) []map[string]string {
 	marker := "<!-- spec-kitty-command-version: " + app.Version + " -->"
 	var issues []map[string]string
 	add := func(a, c, f, issue, sev string) {
 		issues = append(issues, map[string]string{"agent": a, "command": c, "file": f, "issue": issue, "severity": sev})
 	}
-	for _, d := range agentDirsForProject(root) {
+	for _, d := range dirs {
 		key := agents.AgentDirToKey[d[0]]
 		if key == "" {
 			continue
@@ -441,10 +449,11 @@ func runDoctorCommandFiles(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := kittify.LoadAgentConfig(root); err != nil {
+	ac, err := kittify.LoadAgentConfig(root)
+	if err != nil {
 		return err
 	}
-	issues := CommandFileIssues(root)
+	issues := commandFileIssuesForDirs(root, agentDirsForConfig(ac))
 	if jsonOut {
 		l := []any{}
 		for _, i := range issues {

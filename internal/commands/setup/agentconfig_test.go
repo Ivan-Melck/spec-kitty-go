@@ -92,3 +92,24 @@ func TestAgentConfigWithoutOracle(t *testing.T) {
 		t.Fatalf("bad value exit %d", r.Code)
 	}
 }
+
+// RC8's guarded agent reader reports file-stream YAML diagnostics and a
+// recovery command. An absent agent list must survive unrelated setting edits.
+func TestAgentConfigGuardedReadRC8(t *testing.T) {
+	p := testkit.NewPair(t)
+	compareInit(p, "init", ".", "--ai", "claude", "--non-interactive")
+	for _, config := range []string{
+		"agents: [\n", "[]\n", "agents: nope\n",
+		"agents: {available: null}\n", "agents: {available: bogus}\n",
+		"agents: \"quoted\"\n", "'quoted root'\n",
+	} {
+		p.Both(func(s *testkit.Sandbox) { s.WriteFile(".kittify/config.yaml", config) })
+		p.Compare(true, "agent", "config", "list")
+		p.Compare(true, "agent", "config", "sync", "--json")
+	}
+	for _, config := range []string{"agents: {auto_commit: true}\n", "agents: {available: [], auto_commit: true}\n"} {
+		p.Both(func(s *testkit.Sandbox) { s.WriteFile(".kittify/config.yaml", config) })
+		p.Compare(true, "agent", "config", "set", "auto_commit", "false")
+		compareFiles(t, p, ".kittify/config.yaml")
+	}
+}

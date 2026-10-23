@@ -51,12 +51,18 @@ func VerifyCommandSkills(root string) (*CommandVerify, error) {
 			v.Drift = append(v.Drift, rel)
 		}
 	}
-	config, configErr := kittify.LoadAgentConfig(root)
-	canRender := false
-	if configErr == nil {
-		for _, key := range config.Available {
-			canRender = canRender || agents.IsCommandSkillAgent(key)
+	loadedConfig, renderable := false, false
+	canRender := func() bool {
+		if !loadedConfig {
+			loadedConfig = true
+			config, err := kittify.LoadAgentConfig(root)
+			if err == nil {
+				for _, key := range config.Available {
+					renderable = renderable || agents.IsCommandSkillAgent(key)
+				}
+			}
 		}
+		return renderable
 	}
 	for _, command := range agents.CommandSkillCommands {
 		legacyRel := agents.LegacyCommandSkillPath(command)
@@ -64,7 +70,7 @@ func VerifyCommandSkills(root string) (*CommandVerify, error) {
 		if !containsStr(v.Legacy, legacyRel) {
 			if _, err := os.Lstat(abs); err == nil {
 				v.Legacy = append(v.Legacy, legacyRel)
-				if !recorded[legacyRel] && canRender && plainCommandPath(root, legacyRel) {
+				if !recorded[legacyRel] && canRender() && plainCommandPath(root, legacyRel) {
 					canonical, err := agents.RenderCommandSkill(root, command)
 					if err == nil {
 						legacy, err := agents.LegacyCommandSkillRendering(canonical, command)
@@ -96,7 +102,7 @@ func VerifyCommandSkills(root string) (*CommandVerify, error) {
 					collision = len(children) > 0
 				} else if e == nil && info.Mode().IsRegular() {
 					collision = true
-					if canRender {
+					if canRender() {
 						if canonical, err := agents.RenderCommandSkill(root, command); err == nil {
 							if b, err := os.ReadFile(abs); err == nil {
 								collision = Digest(b) != Digest(canonical)
