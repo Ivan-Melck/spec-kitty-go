@@ -422,7 +422,7 @@ func FixCoordination(root string, names []string, findings []CoordFinding, say f
 		}
 		blocked := func(reason string) {
 			msg := fmt.Sprintf("Refusing to fast-forward: coordination branch %s is %s target branch %s — `--fix` mutates nothing.", pyjson.ReprString(branch), reason, pyjson.ReprString(target))
-			if d, err := gitx.Run(root, "diff", branch, target); err == nil && d != "" {
+			if d, err := gitx.Run(root, "diff", "--end-of-options", branch, target, "--"); err == nil && d != "" {
 				msg += "\n" + d + "\n"
 			}
 			extra = append(extra, cf("error", msg, sp("Inspect the diff above and reconcile manually; `--fix` will not mutate a diverged, dirty, or mismatched coordination worktree."), sp(staleFixBlocked)))

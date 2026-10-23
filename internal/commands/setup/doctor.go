@@ -441,6 +441,9 @@ func runDoctorCommandFiles(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	if _, err := kittify.LoadAgentConfig(root); err != nil {
+		return err
+	}
 	issues := CommandFileIssues(root)
 	if jsonOut {
 		l := []any{}

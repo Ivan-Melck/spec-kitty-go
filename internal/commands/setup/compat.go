@@ -117,7 +117,7 @@ type CompatPlan struct {
 	CLI          cliStatus
 }
 
-const unknownInstallNote = "Your install method could not be detected automatically. Upgrade Spec Kitty using the same method you used to install it. See https://spec-kitty.dev/docs/guides/install-and-upgrade for guidance."
+const unknownInstallNote = "Your install method could not be detected automatically. Upgrade Spec Kitty using the same method you used to install it. See https://docs.spec-kitty.ai/guides/how-to/installation/install-and-upgrade for guidance."
 
 var safeValueRe = regexp.MustCompile(`^[A-Za-z0-9.\-+_ /=:]{1,256}$`)
 

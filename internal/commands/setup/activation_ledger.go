@@ -116,7 +116,7 @@ func runActivationLedger(ctx *cli.Context) error {
 		if ctx.Bool("json") {
 			fmt.Fprintln(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("ok", false, "error", jsonx.NewObject("code", code, "message", message)), jsonx.Pretty))
 		} else {
-			fmt.Fprintln(ctx.Stderr, "Error: "+message)
+			out(ctx.Stderr, "[red]Error:[/red] "+message)
 		}
 		return cli.Exit(1)
 	}
