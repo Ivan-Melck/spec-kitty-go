@@ -2,6 +2,7 @@ package agentcore
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/dossier"
 	"io"
 	"os"
 	"path/filepath"
@@ -599,6 +600,11 @@ func workspaceFor(w *wp.WP, manifest *lanes.Manifest, id string) (string, string
 	}
 	if mode == "" {
 		mode = "code_change"
+	}
+	// resolve_workspace_for_wp reads the WP through WPMetadata: a schema
+	// failure (a ValueError) leaves the row unclassified.
+	if msg, _ := dossier.AuthoredWPValidationError(w.Path); msg != "" {
+		return mode, "unknown"
 	}
 	if mode == "planning_artifact" {
 		return mode, "repo_root"

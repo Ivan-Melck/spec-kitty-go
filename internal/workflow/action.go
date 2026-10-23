@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/dossier"
 	"os"
 	"path/filepath"
 	"sort"
@@ -265,6 +266,11 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 	snap := statusSnapshot(s)
 	if snap.WP(wpID) == nil {
 		o.Printf("Error: %s", MissingCanonicalStatus(wpID, slug))
+		return ExitErr(1)
+	}
+	// read_wp_frontmatter validates the WP against WPMetadata.
+	if msg, _ := dossier.AuthoredWPValidationError(wpFile); msg != "" {
+		o.Printf("Error: %s", msg)
 		return ExitErr(1)
 	}
 	selfLane := status.ResolveLaneAlias(string(snap.Lane(wpID)))

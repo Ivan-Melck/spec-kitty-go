@@ -66,3 +66,19 @@ func ReadAuthoredWP(path string) (*jsonx.Object, bool, error) {
 	}
 	return proj, true, nil
 }
+
+// AuthoredWPValidationError is the error read_authored_wp_frontmatter raises
+// for a WP file whose frontmatter parses: str(pydantic ValidationError) for
+// a schema failure, or a *PyTypeError (the shell_pid coercion's TypeError).
+// "" and nil when WPMetadata accepts it or the frontmatter does not parse
+// (callers report that through their own frontmatter reader).
+func AuthoredWPValidationError(path string) (string, error) {
+	src, meta, ok := readFrontmatter(path)
+	if !ok {
+		return "", nil
+	}
+	if te := WPMetadataTypeError(src, meta); te != "" {
+		return "", &PyTypeError{te}
+	}
+	return WPMetadataValidationError(src, meta), nil
+}

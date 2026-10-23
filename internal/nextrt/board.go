@@ -2,6 +2,7 @@ package nextrt
 
 import (
 	"fmt"
+	"github.com/spec-kitty/go-kitty3/internal/dossier"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -222,6 +223,10 @@ func taskSurfaceError(m *missionCtx) string {
 		w, err := wp.Read(found)
 		if err != nil {
 			return fmt.Sprintf("Could not read canonical WORK_PACKAGE_TASK file %s: %v. %s", found, err, recovery)
+		}
+		// read_authored_wp_frontmatter validates against WPMetadata.
+		if msg, _ := dossier.AuthoredWPValidationError(found); msg != "" {
+			return fmt.Sprintf("Could not read canonical WORK_PACKAGE_TASK file %s: %s. %s", found, msg, recovery)
 		}
 		if decl := w.String("work_package_id"); decl != id {
 			return fmt.Sprintf("Canonical WORK_PACKAGE_TASK file %s declares work_package_id %s; expected %s, found %s. %s", found, decl, id, decl, recovery)
