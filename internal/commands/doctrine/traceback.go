@@ -7,6 +7,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -78,6 +79,7 @@ func containsRune(s string, r rune) bool {
 // as the module path relative to site-packages (the absolute install prefix
 // cannot be reproduced).
 func init() {
+	dct.ActivationWarnLog = func(message string) { fmt.Fprintln(os.Stderr, "Warning: "+message) }
 	if argsRequestJSONMode(os.Args[1:]) {
 		return
 	}

@@ -3,16 +3,12 @@ package charter
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pydantic"
-	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 )
 
 // This file ports the bootstrap "Selected activations:" stanza
@@ -218,25 +214,10 @@ func loadGovernanceActivations(root string) []*ActivationEntry {
 
 // orgCharterDocs is org_pack_discovery._iter_org_charter_docs.
 func orgCharterDocs(root string) [][2]any {
+	docs, _ := dct.OrgCharterDocs(root, false)
 	var out [][2]any
-	for _, p := range LoadPackRegistry(root).Packs {
-		r, err := p.EffectiveRoot(root)
-		if err != nil {
-			return nil
-		}
-		b, err := os.ReadFile(filepath.Join(r, "org-charter.yaml"))
-		if err != nil {
-			continue
-		}
-		v, err := pyyaml.SafeLoad(string(b))
-		if err != nil {
-			continue
-		}
-		o, ok := v.(*jsonx.Object)
-		if !ok {
-			continue
-		}
-		out = append(out, [2]any{p.Name, o})
+	for _, doc := range docs {
+		out = append(out, [2]any{doc.Member, doc.Raw})
 	}
 	return out
 }
@@ -393,18 +374,6 @@ func inferActivationKind(id string, off *dct.Offering) string {
 // every org pack's required_<plural> (stripped, non-empty, first-seen
 // order); a non-list value is skipped.
 func OrgRequiredIDs(root, plural string) []string {
-	var out []string
-	for _, d := range orgCharterDocs(root) {
-		l, ok := mustGetAny(d[1].(*jsonx.Object), "required_"+plural).([]any)
-		if !ok {
-			continue
-		}
-		for _, x := range l {
-			t := strings.TrimSpace(pyStrValue(x))
-			if t != "" && !slices.Contains(out, t) {
-				out = append(out, t)
-			}
-		}
-	}
-	return out
+	ids, _ := dct.OrgRequiredTokens(root, plural, false)
+	return ids
 }

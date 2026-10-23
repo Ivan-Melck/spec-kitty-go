@@ -11,6 +11,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/migrationledger"
 	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
@@ -167,18 +168,9 @@ func (m *Metadata) owned() *jsonx.Object {
 	if m.SchemaVersion != nil {
 		sk.Set("schema_version", *m.SchemaVersion)
 	}
-	applied := make([]any, 0, len(m.Applied))
-	for _, r := range m.Applied {
-		var notes any
-		if r.Notes != nil {
-			notes = *r.Notes
-		}
-		applied = append(applied, jsonx.NewObject("id", r.ID, "applied_at", r.AppliedAt, "result", r.Result, "notes", notes))
-	}
 	return jsonx.NewObject(
 		"spec_kitty", sk,
 		"environment", jsonx.NewObject("python_version", m.PythonVersion, "platform", m.Platform, "platform_version", m.PlatformVersion),
-		"migrations", jsonx.NewObject("applied", applied),
 	)
 }
 
@@ -223,6 +215,9 @@ func (m *Metadata) Save(root string) (bool, error) {
 			block.Set(x.Key, x.Value)
 		}
 		merged.Set(kv.Key, block)
+	}
+	if st, err := os.Stat((migrationledger.Ledger{Root: root}).Path(false)); err == nil && st.Mode().IsRegular() {
+		merged.Delete("migrations")
 	}
 	content := MetadataHeader + pyyaml.Dump(merged, pyyaml.Options{})
 	if hasExisting && maskVolatile(string(bytes.TrimPrefix(existingText, []byte("\xef\xbb\xbf")))) == maskVolatile(content) {

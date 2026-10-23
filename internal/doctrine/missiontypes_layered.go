@@ -270,7 +270,23 @@ func validateMissionTypeModel(p *jsonx.Object, layer string) (*MissionType, erro
 			add([]any{"path_conventions"}, pydantic.TypeDictType, pydantic.MsgDictType, v)
 		}
 	}
-	known := map[string]bool{"schema_version": true, "id": true, "display_name": true, "extends": true, "action_sequence": true, "path_conventions": true}
+	if v, ok := p.Get("requires_substantive_spec"); ok && v != nil {
+		if value, valid := missionTypeBool(v); valid {
+			mt.RequiresSubstantiveSpec = &value
+		} else {
+			typ, msg := pydantic.TypeBoolType, pydantic.MsgBoolType
+			switch v.(type) {
+			case string, int, int64:
+				typ, msg = pydantic.TypeBoolParsing, pydantic.MsgBoolParsing
+			case float64:
+				if value := v.(float64); !math.IsNaN(value) && !math.IsInf(value, 0) && math.Trunc(value) == value {
+					typ, msg = pydantic.TypeBoolParsing, pydantic.MsgBoolParsing
+				}
+			}
+			add([]any{"requires_substantive_spec"}, typ, msg, v)
+		}
+	}
+	known := map[string]bool{"schema_version": true, "id": true, "display_name": true, "extends": true, "action_sequence": true, "path_conventions": true, "requires_substantive_spec": true}
 	for _, kv := range p.Pairs() {
 		if !known[kv.Key] {
 			add([]any{kv.Key}, pydantic.TypeExtraForbidden, pydantic.MsgExtraForbidden, kv.Value)
@@ -320,6 +336,50 @@ func validateMissionTypeModel(p *jsonx.Object, layer string) (*MissionType, erro
 	}
 	mt.ActionSequence = seq
 	return mt, nil
+}
+
+func missionTypeBool(v any) (bool, bool) {
+	switch x := v.(type) {
+	case bool:
+		return x, true
+	case int:
+		return x == 1, x == 0 || x == 1
+	case int64:
+		return x == 1, x == 0 || x == 1
+	case float64:
+		return x == 1, x == 0 || x == 1
+	case string:
+		switch strings.ToLower(x) {
+		case "0", "off", "f", "false", "n", "no":
+			return false, true
+		case "1", "on", "t", "true", "y", "yes":
+			return true, true
+		}
+	}
+	return false, false
+}
+
+// RequiresSubstantiveSpecFor resolves the declared capability of a registered
+// mission type, falling back to the built-in policy if resolution fails.
+func RequiresSubstantiveSpecFor(root, missionType string) bool {
+	fallback := missionType == "software-dev" || missionType == "research"
+	registered, err := ActivatedMissionTypes(root)
+	if err != nil {
+		return fallback
+	}
+	for _, id := range registered {
+		if id != missionType {
+			continue
+		}
+		roster, err := LayeredMissionTypes(root)
+		if err == nil {
+			if mt := roster[missionType]; mt != nil && mt.RequiresSubstantiveSpec != nil {
+				return *mt.RequiresSubstantiveSpec
+			}
+		}
+		break
+	}
+	return fallback
 }
 
 // BuiltInMissionTypesDir names the built-in layer for ScanMissionTypeIDs.

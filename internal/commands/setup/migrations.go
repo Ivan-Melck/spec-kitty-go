@@ -7,14 +7,17 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
+	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 )
 
 // migrationInfo is one upstream BaseMigration's registry identity.
 type migrationInfo struct {
-	ID, TargetVersion, Description string
-	RunsFirst                      bool
+	ID, TargetVersion, Description                            string
+	RunsFirst                                                 bool
+	CloneLocal, RequiresGit, LedgerAdoption, MainCheckoutOnly bool
+	Identity, ContentHash                                     string
 }
 
 // migrationResult is upgrade.migrations.base.MigrationResult.
@@ -64,57 +67,48 @@ func (m migrationInfo) detectFailClosed(root string) bool {
 
 // detectErr is detect() with its fail-closed exception.
 func (m migrationInfo) detectErr(root string) (bool, error) {
-	i := m.impl()
-	if i.detectE != nil {
-		return i.detectE(root)
-	}
-	if i.detect != nil {
-		return i.detect(root), nil
-	}
-	return false, nil
+	var needed bool
+	err := dct.LegacyActivationScope([]string{root}, func() error {
+		i := m.impl()
+		if i.detectE != nil {
+			var err error
+			needed, err = i.detectE(root)
+			return err
+		}
+		if i.detect != nil {
+			needed = i.detect(root)
+		}
+		return nil
+	})
+	return needed, err
 }
 
 // reselectWhenRecorded is BaseMigration.reselect_when_recorded.
 func (m migrationInfo) reselectWhenRecorded(root string) bool {
-	i := m.impl()
-	return m.RunsFirst && i.structural != nil && i.structural(root)
-}
-
-// mainCheckoutOnly lists the migrations declaring runs_on_worktrees = False.
-var mainCheckoutOnly = map[string]bool{
-	"0_9_4_roo_deprecation":                     true,
-	"3_2_0rc39_refresh_orientation_block":       true,
-	"0_9_3_surface_repair_wiring":               true,
-	"3_3_0_session_presence_claude_code":        true,
-	"runtime_state_backfill":                    true,
-	"migrate_lifecycle_envelope":                true,
-	"3_3_0_session_presence_all_harnesses":      true,
-	"verdict_provenance_backfill":               true,
-	"normalize_activation_absence":              true,
-	"consolidate_charter_bundle_fold":           true,
-	"4_0_0rc5_install_lane_tip_recorder":        true,
-	"3.2.0rc35_unified_bundle":                  true,
-	"charter_pack_cutover":                      true,
-	"4_0_0rc5_heal_template_set_provenance":     true,
-	"4_0_0_retired_hosted_target":               true,
-	"3.2.7_heal_provenance_paths":               true,
-	"3.2.8_provision_kitty_env":                 true,
-	"4_0_0rc5_heal_run_index_paths":             true,
-	"4_0_0rc5_single_branch_code_lanes_restamp": true,
+	needed := false
+	dct.LegacyActivationScope([]string{root}, func() error {
+		i := m.impl()
+		needed = m.RunsFirst && i.structural != nil && i.structural(root)
+		return nil
+	})
+	return needed
 }
 
 func (m migrationInfo) runsOnWorktrees() bool {
-	return !m.impl().noWorktrees && !mainCheckoutOnly[m.ID]
+	return !m.impl().noWorktrees && !m.MainCheckoutOnly
 }
 
 func (m migrationInfo) canApply(root string) (bool, string) {
-	if i := m.impl(); i.canApply != nil {
-		return i.canApply(root)
-	}
-	if _, err := os.Stat(root); err != nil {
-		return false, "Project path does not exist: " + root
-	}
-	return true, ""
+	allowed, reason := true, ""
+	dct.LegacyActivationScope([]string{root}, func() error {
+		if i := m.impl(); i.canApply != nil {
+			allowed, reason = i.canApply(root)
+		} else if _, err := os.Stat(root); err != nil {
+			allowed, reason = false, "Project path does not exist: "+root
+		}
+		return nil
+	})
+	return allowed, reason
 }
 
 func (m migrationInfo) apply(root string, dryRun bool) migrationResult {
@@ -123,14 +117,20 @@ func (m migrationInfo) apply(root string, dryRun bool) migrationResult {
 }
 
 func (m migrationInfo) applyErr(root string, dryRun bool) (migrationResult, error) {
-	i := m.impl()
-	if i.applyE != nil {
-		return i.applyE(root, dryRun)
-	}
-	if i.apply != nil {
-		return i.apply(root, dryRun), nil
-	}
-	return migrationResult{Success: true}, nil
+	result := migrationResult{Success: true}
+	err := dct.LegacyActivationScope([]string{root}, func() error {
+		i := m.impl()
+		if i.applyE != nil {
+			var err error
+			result, err = i.applyE(root, dryRun)
+			return err
+		}
+		if i.apply != nil {
+			result = i.apply(root, dryRun)
+		}
+		return nil
+	})
+	return result, err
 }
 
 // targetSchema is int(Version(target_version).major) (MigrationStep).
@@ -143,43 +143,46 @@ func (m migrationInfo) targetSchema() int {
 }
 
 // applicableMigrations is MigrationRegistry.get_applicable.
-func applicableMigrations(from, to, root string) []migrationInfo {
-	var applicable []migrationInfo
+func applicableMigrations(from, to, root string) ([]migrationInfo, error) {
+	_ = from // the version window is no longer the applied authority
+	var declared, selected []migrationInfo
 	for _, m := range migrationCatalog {
-		lo, ok1 := versionCmp(from, m.TargetVersion)
-		hi, ok2 := versionCmp(m.TargetVersion, to)
-		if !ok1 || !ok2 {
-			continue
-		}
-		switch {
-		case lo < 0 && hi <= 0:
-			applicable = append(applicable, m)
-		case lo == 0 && root != "" && m.detectFailClosed(root):
-			applicable = append(applicable, m)
+		cmp, valid := versionCmp(m.TargetVersion, to)
+		if m.LedgerAdoption || !valid || cmp <= 0 {
+			declared = append(declared, m)
 		}
 	}
-	selected := map[string]bool{}
-	var first, rest []migrationInfo
-	for _, m := range applicable {
-		selected[m.ID] = true
-		if m.RunsFirst {
-			first = append(first, m)
-		} else {
-			rest = append(rest, m)
+	if root == "" {
+		return declared, nil
+	}
+	for _, cloneLocal := range []bool{false, true} {
+		if _, err := readMigrationRecords(root, cloneLocal); err != nil {
+			return nil, err
 		}
 	}
-	if root != "" {
-		md := kittify.LoadMetadata(root)
-		for _, m := range migrationCatalog {
-			if !m.RunsFirst || selected[m.ID] {
-				continue
-			}
-			if m.reselectWhenRecorded(root) || (!(md != nil && md.HasMigration(m.ID)) && m.detectFailClosed(root)) {
-				first = append(first, m)
+	err := dct.LegacyActivationScope([]string{root}, func() error {
+		adopting := map[string]bool{}
+		for _, m := range declared {
+			if m.LedgerAdoption && !migrationSettled(root, m) {
+				plan, err := migrationAdoptionPlan(root)
+				if err != nil {
+					return err
+				}
+				for _, record := range plan {
+					if record.ID != m.ID && record.Result == "success" {
+						adopting[record.ID] = true
+					}
+				}
 			}
 		}
-	}
-	return append(first, rest...)
+		for _, m := range declared {
+			if (!migrationSettled(root, m) && !adopting[m.ID]) || m.reselectWhenRecorded(root) {
+				selected = append(selected, m)
+			}
+		}
+		return nil
+	})
+	return selected, err
 }
 
 // detectProjectVersion is VersionDetector.detect_version.
@@ -194,11 +197,11 @@ func detectProjectVersion(root string) string {
 }
 
 // pendingMigrationSteps is the compat contract's pending_migrations list.
-func pendingMigrationSteps(root string) []any {
+func pendingMigrationSteps(root string) ([]any, error) {
 	return migrationSteps(root, "")
 }
 
-func migrationSteps(root, target string) []any {
+func migrationSteps(root, target string) ([]any, error) {
 	if target == "" {
 		target = appVersion()
 	}
@@ -207,10 +210,14 @@ func migrationSteps(root, target string) []any {
 		from = "0.0.0"
 	}
 	out := []any{}
-	for _, m := range applicableMigrations(from, target, root) {
+	migrations, err := applicableMigrations(from, target, root)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range migrations {
 		out = append(out, stepObject(m))
 	}
-	return out
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------

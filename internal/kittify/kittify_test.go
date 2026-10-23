@@ -38,8 +38,6 @@ environment:
   python_version: 3.13.15
   platform: linux
   platform_version: Linux-x
-migrations:
-  applied: []
 `
 	if string(b) != want {
 		t.Fatalf("metadata.yaml:\n%s\nwant:\n%s", b, want)

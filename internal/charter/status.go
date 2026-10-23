@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
@@ -833,5 +834,14 @@ func BundleContentHash(root string) string {
 	if err != nil {
 		return ""
 	}
-	return hashContent(hashContent(string(b)))
+	parts := []string{hashContent(string(b))}
+	if ledger, err := os.ReadFile(dct.ActivationLedgerPath(root)); err == nil {
+		if !utf8.Valid(ledger) {
+			return ""
+		}
+		parts = append(parts, hashContent(string(ledger)))
+	} else if !os.IsNotExist(err) {
+		return ""
+	}
+	return hashContent(strings.Join(parts, "\n"))
 }

@@ -111,5 +111,17 @@ func runApplyPreset(ctx *cli.Context, preset string) error {
 			cprintRaw(w, fmt.Sprintf("  [yellow]Removed[/yellow] %s (unrestricted)", k))
 		}
 	}
+	for _, k := range dct.AllKinds {
+		key := "activated_" + k.Plural()
+		if ids := plan.KeptDeactivated[key]; len(ids) > 0 {
+			cprint(w, "  [yellow]Kept deactivated[/yellow]: %s: %s (listed by the preset; left out; --force clears the exclusion)", key, strings.Join(ids, ", "))
+		}
+	}
+	for _, k := range dct.AllKinds {
+		key := "deactivated_" + k.Plural()
+		if ids := plan.ClearedExclusions[key]; len(ids) > 0 {
+			cprint(w, "  [green]Cleared exclusion[/green]: %s: %s", key, strings.Join(ids, ", "))
+		}
+	}
 	return recompileOrNotify(ctx, root)
 }

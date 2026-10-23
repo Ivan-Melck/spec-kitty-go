@@ -23,8 +23,8 @@ files (the pack is no longer tracked in the core repository).
 |---|---|---|
 | Reference and assets | refreshed | Separate wheel-installed oracle and 279-path help inventory; old reference retained. Asset/reference scripts updated for fetched packs and exact revision selection. |
 | Mission capability | implemented; broader verification pending | `requires_substantive_spec` schema and prerequisite resolution, including explicit false and built-in fallback. |
-| Activation ledger | in progress | Shared source precedence, strict ledger validation, legacy upgrade scope, and plain stderr diagnostics. Deny semantics, migration, write guards and health reporting still need completion. |
-| Migration ledger and upgrade | pending | Manifest order, tracked/clone-local partitions, init seeding, adoption/backfill, repository gates and new migrations. |
+| Activation ledger | implemented; broader verification ongoing | Source precedence, identity-aware exclusions, organization-required floor, guarded writes, migration CLI, presets, cascade barriers, list and health diagnostics, and bundle freshness. Basic migration, activation, preset, health, list and cascade differential scenarios pass; remaining consumers and edge cases are being audited. |
+| Migration ledger and upgrade | in progress | Manifest order, tracked/clone-local persistence, read-only report, success-only settlement, init seeding, adoption/backfill and repository gates implemented. Report oracle scenarios and foundational unit checks pass. New migration implementations and complete runner/worktree differentials remain. |
 | Agent and skill delivery | pending | Hyphenated command skills, conformant frontmatter, configured-agent global commands, Antigravity retirement and narrow gitignore rules. |
 | Charter and languages | pending | Language settlement, synthesis soundness gate, context/identity changes, pack vendor and updated freshness behavior. |
 | Runtime and owned checkout | pending | Review-lock validation, owned issue-verdict and acceptance changes, exact mission lookup and degraded startup handling. |
@@ -35,3 +35,9 @@ The isolated reference for this update is
 `$HOME/.cache/spec-kitty-parity/rc8-ae97982033`. Run the oracle with an isolated
 `HOME` and `SPEC_KITTY_NO_UPGRADE_CHECK=1`, as described in
 [the porting guide](../PORTING.md).
+
+The first broad oracle survey was stopped after collecting failures because
+some test packages built the executable while source edits were in progress.
+It is a gap inventory, not final verification. Future broad runs use a fixed
+`SPEC_KITTY_GO_BIN` snapshot. Native checks found two legacy metadata test
+expectations (updated for ledger authority) and the outstanding help changes.

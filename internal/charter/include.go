@@ -209,7 +209,7 @@ func profileActivated(root, id string) bool {
 	if err != nil {
 		return true
 	}
-	return act.Activated(dct.AgentProfile).Has(id)
+	return act.Admits(dct.AgentProfile, id)
 }
 
 // withModelDefaults adds the list defaults the upstream pydantic models

@@ -106,14 +106,15 @@ func (i Invocation) Safe() bool {
 
 // CompatPlan is compat.planner.Plan.
 type CompatPlan struct {
-	Decision Decision
-	Case     string
-	ExitCode int
-	Project  kittify.ProjectStatus
-	Safe     bool
-	Human    string
-	Pending  []any // pending_migrations entries
-	CLI      cliStatus
+	Decision     Decision
+	Case         string
+	ExitCode     int
+	Project      kittify.ProjectStatus
+	Safe         bool
+	Human        string
+	Pending      []any // pending_migrations entries
+	PendingError error
+	CLI          cliStatus
 }
 
 const unknownInstallNote = "Your install method could not be detected automatically. Upgrade Spec Kitty using the same method you used to install it. See https://spec-kitty.dev/docs/guides/install-and-upgrade for guidance."
@@ -158,7 +159,7 @@ func PlanCompatWith(inv Invocation, root string, opt CompatOptions) CompatPlan {
 	}
 	p.ExitCode = decisionExit[p.Decision]
 	if p.Decision == DecisionBlockMigration && st.Root != "" {
-		p.Pending = pendingMigrationSteps(st.Root)
+		p.Pending, p.PendingError = pendingMigrationSteps(st.Root)
 	}
 	sv := "<unavailable>"
 	if st.SchemaVersion != nil {
@@ -264,6 +265,9 @@ func SchemaGate(ctx *cli.Context, argv []string) error {
 		inv.IsVersion = true
 	}
 	p := PlanCompat(inv, root)
+	if p.PendingError != nil {
+		return p.PendingError
+	}
 	switch p.Decision {
 	case DecisionBlockMigration, DecisionBlockCLIUpgrade, DecisionBlockCorrupt:
 		fmt.Fprintln(ctx.Stderr, p.Human)

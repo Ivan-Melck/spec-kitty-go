@@ -15,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
+	"github.com/spec-kitty/go-kitty3/internal/migrationledger"
 )
 
 type worktreeRun struct {
@@ -97,14 +98,32 @@ func upgradeWorktrees(root, target string, migrations []migrationInfo, dryRun, a
 			if dryRun {
 				return false
 			}
-			if md.RecordMigration(id, result, notes) {
-				md.Save(wt)
-				return true
+			m, _ := migrationByID(id)
+			records, err := readMigrationRecords(wt, m.CloneLocal)
+			if err != nil {
+				res.errors = append(res.errors, prefix+err.Error())
+				errored = true
+				return false
 			}
-			return false
+			for _, old := range records {
+				if old.ID == id && old.Result == result {
+					return false
+				}
+			}
+			if err := (migrationledger.Ledger{Root: wt}).Append(migrationRecord(m, result, "")); err != nil {
+				res.errors = append(res.errors, prefix+err.Error())
+				errored = true
+				return false
+			}
+			md.RecordMigration(id, result, notes)
+			if _, err := md.Save(wt); err != nil {
+				res.errors = append(res.errors, prefix+err.Error())
+				errored = true
+			}
+			return true
 		}
 		for _, m := range wtMigs {
-			if md.HasMigration(m.ID) && !m.reselectWhenRecorded(wt) {
+			if migrationSettled(wt, m) && !m.reselectWhenRecorded(wt) {
 				continue
 			}
 			needed, derr := m.detectErr(wt)
@@ -158,9 +177,7 @@ func upgradeWorktrees(root, target string, migrations []migrationInfo, dryRun, a
 						n := strings.Join(r.Errors, "; ")
 						notes = &n
 					}
-					if md.RecordMigration(m.ID, "failed", notes) {
-						md.Save(wt)
-					}
+					record(m.ID, "failed", notes)
 				}
 				failed = true
 				for _, e := range r.Errors {

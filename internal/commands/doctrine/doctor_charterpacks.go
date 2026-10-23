@@ -33,6 +33,7 @@ func runDoctorCharterPacks(ctx *cli.Context) error {
 	rep.OrgDRG.Set("operating_procedures_unresolved", []any{})
 	charter.RunRetiredGovernanceKeyCheck(rep, root)
 	charter.RunRetiredLayoutCheck(rep, root)
+	charter.RunActivationLedgerCheck(rep, root)
 	sel := charter.BuildSelectionBlock(root)
 	code := 0
 	if !rep.Healthy() {
@@ -50,6 +51,7 @@ func runDoctorCharterPacks(ctx *cli.Context) error {
 			cprint(w, "%s", l)
 		}
 		renderCrossGrainFindings(w, rep)
+		renderActivationLedgerFindings(w, rep)
 		renderRetiredKeyFinding(w, rep)
 		renderRetiredLayoutFindings(w, rep)
 		return exitCode(code)
@@ -94,6 +96,7 @@ func runDoctorCharterPacks(ctx *cli.Context) error {
 	renderOverridePolicyErrors(w, rep)
 	renderUnsanctionedOverrides(w, rep)
 	renderCrossGrainFindings(w, rep)
+	renderActivationLedgerFindings(w, rep)
 	renderRetiredKeyFinding(w, rep)
 	renderRetiredLayoutFindings(w, rep)
 	return exitCode(code)
@@ -383,3 +386,25 @@ func cprintRawNoWrap(w io.Writer, s string) { rich.PrintSoftWrap(w, s) }
 
 // cprintPlainNoWrap is console.print(..., markup=False, soft_wrap=True).
 func cprintPlainNoWrap(w io.Writer, s string) { rich.PrintPlainSoftWrap(w, s) }
+
+func renderActivationLedgerFindings(w io.Writer, rep *charter.CharterPackHealthReport) {
+	block := rep.OrgDRG.GetObject("activation_ledger")
+	if block == nil {
+		return
+	}
+	for _, severity := range []string{"errors", "warnings"} {
+		findings := block.GetList(severity)
+		if len(findings) == 0 {
+			continue
+		}
+		style := "red"
+		if severity == "warnings" {
+			style = "yellow"
+		}
+		cprint(w, "\n[bold %s]Activation ledger %s[/bold %s] — %d\n", style, severity, style, len(findings))
+		for _, raw := range findings {
+			f := raw.(*jsonx.Object)
+			cprintPlainNoWrap(w, "  • "+f.GetString("code")+": "+f.GetString("message"))
+		}
+	}
+}

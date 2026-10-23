@@ -562,6 +562,9 @@ func runInit(ctx *cli.Context) error {
 	if len(summary.DriftedReported) > 0 && nonInteractive {
 		return cli.Exit(1)
 	}
+	if err := seedMigrationLedger(projectPath); err != nil {
+		return err
+	}
 	return nil
 }
 

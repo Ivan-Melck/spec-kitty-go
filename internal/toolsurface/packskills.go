@@ -364,17 +364,12 @@ type PreparedPackSkill struct {
 }
 
 func orgCharterDocs(root string) []*jsonx.Object {
+	docs, _ := dct.OrgCharterDocs(root, false)
 	var out []*jsonx.Object
-	for _, p := range dct.OrgPacks(root) {
-		b, err := os.ReadFile(filepath.Join(p.Root, "org-charter.yaml"))
-		if err != nil {
-			continue
+	for _, doc := range docs {
+		if doc.Declared == doc.Member {
+			out = append(out, doc.Raw)
 		}
-		o, err := yamlx.ParseObject(b)
-		if err != nil || o == nil {
-			continue
-		}
-		out = append(out, o)
 	}
 	return out
 }
@@ -396,20 +391,19 @@ func inForceSkills(root string, installed bool) ([]string, error) {
 		if !isList {
 			return nil, fmt.Errorf("activated_skills must be a list")
 		}
-		return uniqueSorted(l), nil
-	}
-	var out []string
-	seen := map[string]bool{}
-	for _, doc := range orgCharterDocs(root) {
-		l, _ := strList(mustGet(doc, "required_skills"))
-		for _, x := range l {
-			if !seen[x] {
-				seen[x] = true
-				out = append(out, x)
+		act, e := dct.LoadActivation(root)
+		if e != nil {
+			return nil, e
+		}
+		filtered := []string{}
+		for _, id := range l {
+			if !act.Denied[dct.Skill][id] {
+				filtered = append(filtered, id)
 			}
 		}
+		return uniqueSorted(filtered), nil
 	}
-	return out, nil
+	return dct.OrgRequiredTokens(root, "skills", false)
 }
 
 func packSkillsMatter(root string, installed bool) bool {

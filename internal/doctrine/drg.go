@@ -347,6 +347,9 @@ func FilterByActivation(g *Graph, act *Activation, off *Offering) *Graph {
 		if !act.ActivatedKinds[k.Plural()] {
 			return false
 		}
+		if act.Denied[k][n.URN] || act.Denied[k][id] {
+			return false
+		}
 		if r := resolved[kind]; r != nil && id != "" && !r[kind+":"+id] {
 			return false
 		}

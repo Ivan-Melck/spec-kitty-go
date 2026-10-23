@@ -1,6 +1,7 @@
 package charter
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -116,6 +117,19 @@ func RenderYAMLDocument(before []byte, doc *jsonx.Object, width int) string {
 	if orig != nil && valuesEqual(orig, doc) {
 		return string(before)
 	}
+	if strings.HasPrefix(strings.TrimSpace(string(before)), "{") {
+		if d, err := rtyaml.Load(pyyaml.StringInput(string(before))); err == nil {
+			d.Apply(doc, rtyaml.ContentSnapshot(orig))
+			if m, ok := d.Root.(*rtyaml.Map); ok {
+				flow := true
+				m.Flow = &flow
+			}
+			if out, err := d.DumpWidth(width); err == nil {
+				return out
+			}
+		}
+		return dumpPlain(doc, width)
+	}
 	pre, spans, tail := splitTopLevel(string(before))
 	if orig == nil || len(spans) == 0 {
 		return pre + dumpPlain(doc, width)
@@ -168,6 +182,15 @@ func writeYAMLDocument(path string, doc *jsonx.Object, width int) error {
 	before, err := os.ReadFile(path)
 	if err != nil {
 		before = nil
+	}
+	if doc.Len() > 0 && strings.HasPrefix(strings.TrimSpace(string(before)), "{") {
+		if orig, err := yamlx.ParseObject(before); err == nil && orig != nil {
+			for _, key := range orig.Keys() {
+				if !doc.Has(key) {
+					return fmt.Errorf("Cannot preserve deletion from flow-style YAML root")
+				}
+			}
+		}
 	}
 	out := RenderYAMLDocument(before, doc, width)
 	if before != nil && out == string(before) {

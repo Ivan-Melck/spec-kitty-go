@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
@@ -71,30 +72,28 @@ func CharterPointer(repoRoot string, cfg *jsonx.Object) string {
 // ActivationSource returns the mapping activation keys are read from: the
 // charter.yaml named by the config `charter:` pointer, else config.yaml.
 func ActivationSource(repoRoot string) (*jsonx.Object, error) {
-	cfg, err := LoadConfig(repoRoot)
+	store, err := ResolveActivationStore(repoRoot)
 	if err != nil {
 		return nil, err
 	}
-	p := CharterPointer(repoRoot, cfg)
-	if p == "" {
-		return cfg, nil
+	if !store.Ledger && store.Pointer != "" && !store.PointerExists {
+		return nil, configError(fmt.Sprintf(".kittify/config.yaml 'charter:' pointer names %s, which does not exist.", store.Pointer))
 	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return nil, configError(fmt.Sprintf(".kittify/config.yaml 'charter:' pointer names %s, which does not exist.", p))
+	ReportActivationWarnings(store)
+	if store.Ledger {
+		return store.Data, nil
 	}
-	v, err := yamlx.Parse(b)
-	if err != nil {
-		return nil, configError(fmt.Sprintf("Invalid YAML in %s: %v", p, err))
+	// Legacy deny keys are diagnostic only and never affect activation.
+	out := &jsonx.Object{}
+	for _, key := range ActivationLedgerKeys() {
+		if strings.HasPrefix(key, "deactivated_") {
+			continue
+		}
+		if value, ok := store.Data.Get(key); ok {
+			out.Set(key, value)
+		}
 	}
-	if v == nil {
-		return &jsonx.Object{}, nil
-	}
-	o, ok := v.(*jsonx.Object)
-	if !ok {
-		return nil, configError(fmt.Sprintf("%s root must be a mapping.", p))
-	}
-	return o, nil
+	return out, nil
 }
 
 // IDSet is a three-state activation value: nil = key absent (everything
@@ -122,6 +121,8 @@ type Activation struct {
 	MissionTypes []string
 	// ByKind holds the three-state activated_<plural> lists.
 	ByKind map[Kind]IDSet
+	// Denied holds effective exclusions in stem, declared-id and URN spelling.
+	Denied map[Kind]IDSet
 	// OrgPackNames / OrgRoots in declaration order.
 	OrgPackNames []string
 	OrgRoots     []string
@@ -133,6 +134,10 @@ func (a *Activation) Activated(k Kind) IDSet {
 		return nil
 	}
 	return a.ByKind[k]
+}
+
+func (a *Activation) Admits(k Kind, id string) bool {
+	return a == nil || (!a.Denied[k][id] && a.Activated(k).Has(id))
 }
 
 func readList(o *jsonx.Object, key string) (IDSet, []string, error) {
@@ -162,7 +167,7 @@ func LoadActivation(repoRoot string) (*Activation, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &Activation{ByKind: map[Kind]IDSet{}}
+	a := &Activation{ByKind: map[Kind]IDSet{}, Denied: map[Kind]IDSet{}}
 	kinds, _, err := readList(src, "activated_kinds")
 	if err != nil {
 		return nil, err
@@ -196,6 +201,32 @@ func LoadActivation(repoRoot string) (*Activation, error) {
 	for _, p := range OrgPacks(repoRoot) {
 		a.OrgPackNames = append(a.OrgPackNames, p.Name)
 		a.OrgRoots = append(a.OrgRoots, p.Root)
+	}
+	ix := NewIdentityIndex(repoRoot)
+	for _, k := range AllKinds {
+		if !k.Activatable() {
+			continue
+		}
+		_, stored, err := readList(src, "deactivated_"+k.Plural())
+		if err != nil {
+			return nil, err
+		}
+		if len(stored) == 0 {
+			continue
+		}
+		required, err := OrgRequiredTokens(repoRoot, k.Plural(), true)
+		if err != nil {
+			return nil, err
+		}
+		denied := EffectiveDeny(k, stored, required, ix)
+		a.Denied[k] = denied
+		if allow := a.ByKind[k]; allow != nil {
+			for token := range allow {
+				if denied[token] {
+					delete(allow, token)
+				}
+			}
+		}
 	}
 	return a, nil
 }

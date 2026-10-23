@@ -280,11 +280,14 @@ func LoadPackPreset(pack *OfferingPack, name string) (*Preset, error) {
 
 // PresetPlan is the computed preset application.
 type PresetPlan struct {
-	Pack, Preset, TargetFile string
-	Written                  [][2]any // ordered key -> []string
-	Removed                  []string
-	Changes                  [][3]any // key, before, after
-	Customised               []string
+	Pack, Preset, TargetFile           string
+	Written                            [][2]any // ordered key -> []string
+	Removed                            []string
+	Changes                            [][3]any // key, before, after
+	Customised                         []string
+	KeptDeactivated, ClearedExclusions map[string][]string
+	ForcedWritten                      [][2]any
+	ForcedDeny                         map[string][]string
 }
 
 // IsNoop reports whether nothing changes.
@@ -396,6 +399,48 @@ func PlanPreset(root, packName, presetName string) (*PresetPlan, error) {
 		defaultMT = append([]string{}, dp.MissionTypes...)
 	}
 	plan := &PresetPlan{Pack: pack.Name, Preset: p.Name, TargetFile: t.Path}
+	plan.KeptDeactivated = map[string][]string{}
+	plan.ClearedExclusions = map[string][]string{}
+	plan.ForcedDeny = map[string][]string{}
+	act, err := dct.LoadActivation(root)
+	if err != nil {
+		return nil, err
+	}
+	ix := dct.NewIdentityIndex(root)
+	for _, k := range governedKinds {
+		key := "activated_" + k.Plural()
+		listed, ok := target[key].([]string)
+		if !ok {
+			continue
+		}
+		filtered := []string{}
+		for _, id := range listed {
+			if act.Denied[k][id] {
+				plan.KeptDeactivated[key] = append(plan.KeptDeactivated[key], id)
+			} else {
+				filtered = append(filtered, id)
+			}
+		}
+		if len(plan.KeptDeactivated[key]) == 0 {
+			continue
+		}
+		plan.ForcedWritten = append(plan.ForcedWritten, [2]any{key, listed})
+		target[key] = filtered
+		denyKey := "deactivated_" + k.Plural()
+		stored, _, _ := currentList(t.Data, denyKey)
+		remaining := []string{}
+		for _, id := range stored {
+			stem := ix.Stem(k, id)
+			hit := false
+			for _, listed := range plan.KeptDeactivated[key] {
+				hit = hit || ix.Stem(k, listed) == stem
+			}
+			if !hit {
+				remaining = append(remaining, id)
+			}
+		}
+		plan.ForcedDeny[denyKey] = remaining
+	}
 	for _, key := range GovernedKeys() {
 		after, ok := target[key]
 		if !ok {
@@ -458,7 +503,7 @@ func ApplyPresetPlan(root string, plan *PresetPlan, force bool) error {
 			Msg:     fmt.Sprintf("preset %s of pack %s would change customised key(s) %s in %s; --force applies it", dct.PyRepr(plan.Preset), dct.PyRepr(plan.Pack), strings.Join(plan.Customised, ", "), plan.TargetFile),
 			Details: lines, Payload: jsonx.NewObject("pack", plan.Pack, "preset", plan.Preset, "customised", strsAny(plan.Customised), "diff", diff)}
 	}
-	if plan.IsNoop() {
+	if plan.IsNoop() && (!force || len(plan.ForcedDeny) == 0) {
 		return nil
 	}
 	t, err := LoadWriteTarget(root)
@@ -471,7 +516,46 @@ func ApplyPresetPlan(root string, plan *PresetPlan, force bool) error {
 	for _, k := range plan.Removed {
 		t.Data.Delete(k)
 	}
-	return t.Save()
+	choice := ""
+	if force && len(plan.ForcedDeny) > 0 {
+		choice = "preset-force"
+		for _, w := range plan.ForcedWritten {
+			key := w[0].(string)
+			t.Data.Set(key, strsAny(w[1].([]string)))
+			found := false
+			for i, x := range plan.Written {
+				if x[0] == key {
+					plan.Written[i] = w
+					found = true
+					break
+				}
+			}
+			if !found {
+				plan.Written = append(plan.Written, w)
+			}
+		}
+		for _, k := range dct.AllKinds {
+			key := "deactivated_" + k.Plural()
+			remaining, ok := plan.ForcedDeny[key]
+			if !ok {
+				continue
+			}
+			stored, _, _ := currentList(t.Data, key)
+			for _, id := range stored {
+				if !containsString(remaining, id) {
+					plan.ClearedExclusions[key] = append(plan.ClearedExclusions[key], id)
+				}
+			}
+			sort.Strings(plan.ClearedExclusions[key])
+			if len(remaining) == 0 {
+				t.Data.Delete(key)
+			} else {
+				t.Data.Set(key, strsAny(remaining))
+			}
+		}
+		plan.KeptDeactivated = map[string][]string{}
+	}
+	return saveActivationTarget(root, t, choice)
 }
 
 // PresetPayload is the --json shape of an applied preset.
@@ -481,5 +565,26 @@ func PresetPayload(plan *PresetPlan) *jsonx.Object {
 		w.Set(x[0].(string), strsAny(x[1].([]string)))
 	}
 	rm := strsAny(plan.Removed)
-	return jsonx.NewObject("pack", plan.Pack, "preset", plan.Preset, "written", w, "removed", rm, "target_file", plan.TargetFile)
+	payload := jsonx.NewObject("pack", plan.Pack, "preset", plan.Preset, "written", w, "removed", rm, "target_file", plan.TargetFile)
+	for _, item := range []struct {
+		key    string
+		values map[string][]string
+	}{{"kept_deactivated", plan.KeptDeactivated}, {"cleared_exclusions", plan.ClearedExclusions}} {
+		if len(item.values) == 0 {
+			continue
+		}
+		o := &jsonx.Object{}
+		for _, k := range dct.AllKinds {
+			prefix := "activated_"
+			if item.key == "cleared_exclusions" {
+				prefix = "deactivated_"
+			}
+			key := prefix + k.Plural()
+			if ids, ok := item.values[key]; ok {
+				o.Set(key, strsAny(ids))
+			}
+		}
+		payload.Set(item.key, o)
+	}
+	return payload
 }

@@ -173,7 +173,7 @@ func TestUpgradeWithoutOracle(t *testing.T) {
 	if !strings.Contains(testkit.StripANSI(r.Stdout), "Upgrade complete! 4.0.0rc5 -> 4.0.0rc8") || !strings.Contains(testkit.StripANSI(r.Stdout), "4.0.0rc7_exclude_spec_kitty") {
 		t.Fatalf("upgrade:\n%s", r.Stdout)
 	}
-	if !strings.Contains(s.ReadFile(".kittify/metadata.yaml"), "result: success") || !s.Exists(".git/hooks/post-commit") {
+	if !strings.Contains(s.ReadFile(".kittify/migration-ledger.jsonl"), `"result": "success"`) || strings.Contains(s.ReadFile(".kittify/metadata.yaml"), "migrations:") || !s.Exists(".git/hooks/post-commit") {
 		t.Fatal("migrations not recorded / applied")
 	}
 	md = strings.Replace(s.ReadFile(".kittify/metadata.yaml"), "  schema_version: 3\n", "", 1)
