@@ -6,6 +6,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
 func newBackfillRuntimeStateCmd() *cli.Command {
@@ -56,7 +57,13 @@ func runBackfillRuntimeState(ctx *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		results = []migrate.CutoverResult{migrate.CutoverMission(r.Dir, dry)}
+		res := migrate.CutoverMission(r.Dir, dry)
+		if res.PlacementMismatch {
+			// cutover_mission raises PlacementMismatchError uncaught here
+			rich.PrintTraceback(ctx.Stderr, &rich.Exception{Type: "PlacementMismatchError", Value: *res.Error})
+			return cli.Exit(1)
+		}
+		results = []migrate.CutoverResult{res}
 	} else {
 		results = migrate.CutoverRepo(root, dry)
 	}

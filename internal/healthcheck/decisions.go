@@ -13,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/placement"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
@@ -519,20 +520,16 @@ func loadIndex(ledger string) (*jsonx.Object, []*jsonx.Object) {
 	return o, entries
 }
 
-// eventsDirFor approximates the STATUS_STATE read dir for the doctor (a
-// nonexistent placeholder when the coordination surface is unmaterialized).
+// eventsDirFor is _resolve_events_dir_for_doctor:
+// placement_seam(...).read_dir(STATUS_STATE), degrading to a deliberately
+// nonexistent placeholder on StatusReadPathNotFound (an unmaterialized or
+// deleted coordination surface).
 func eventsDirFor(root, slug string) string {
-	s := coord.Resolve(root, slug)
-	if !s.Routed() {
-		return s.PrimaryDir
+	d, err := placement.ReadDir(root, slug, placement.Coord)
+	if err != nil {
+		return filepath.Join(root, ".spec-kitty-doctor-unmaterialized-coord~"+slug)
 	}
-	if isDir(s.CoordDir) {
-		return s.CoordDir
-	}
-	if hasMerged(s.PrimaryDir) {
-		return s.PrimaryDir
-	}
-	return filepath.Join(root, ".spec-kitty-doctor-unmaterialized-coord~"+slug)
+	return d
 }
 
 // DiagnoseDecisions is _diagnose (with the fork report).
