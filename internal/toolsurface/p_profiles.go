@@ -107,6 +107,7 @@ func loadProfileModel(root string) (*profileModel, error) {
 		return nil, err
 	}
 	m := &profileModel{}
+	var admit func(agents.Profile) bool
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".agent.yaml") {
 			continue
@@ -120,7 +121,13 @@ func loadProfileModel(root string) (*profileModel, error) {
 			continue
 		}
 		p.SourceFile = e.Name()
-		if agents.ProfileAdmit != nil && !agents.ProfileAdmit(root, p) {
+		if admit == nil {
+			admit = func(agents.Profile) bool { return true }
+			if agents.ProfileAdmitter != nil {
+				admit = agents.ProfileAdmitter(root)
+			}
+		}
+		if !admit(p) {
 			continue
 		}
 		if p.Sentinel {
@@ -134,10 +141,10 @@ func loadProfileModel(root string) (*profileModel, error) {
 	return m, nil
 }
 
+// profileModel is AgentProfilesProvider._projector_for: every call site
+// builds a fresh projector (one active charter service build, so one
+// repo-language inference and its interview read), as upstream does.
 func (c *collectCtx) profileModel(root string) (*profileModel, error) {
-	if m, ok := c.profiles[root]; ok {
-		return m, nil
-	}
 	m, err := loadProfileModel(root)
 	if err != nil {
 		return nil, err

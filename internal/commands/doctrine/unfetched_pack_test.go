@@ -88,6 +88,12 @@ func TestUnfetchedOrgPackMutationsMatchOracle(t *testing.T) {
 		{"agent", "config", "sync"},
 		{"dispatch", "fix the typo in README", "--json"},
 		{"regen"},
+		{"charter", "activate", "directive", "024-locality-of-change", "--resynthesize"},
+		{"charter", "activate", "agent-profile", "implementer-ivan"},
+		{"charter", "interview", "--defaults", "--selected-directives", "024-locality-of-change,DIRECTIVE_010", "--json"},
+		{"charter", "interview", "--defaults", "--selected-directives", "024-locality-of-change"},
+		{"mission-type", "show", "software-dev"},
+		{"charter", "mission-type", "list", "--include-inactive"},
 	} {
 		args := args
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
