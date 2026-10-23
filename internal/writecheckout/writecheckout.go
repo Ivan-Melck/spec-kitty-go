@@ -25,6 +25,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -188,6 +189,23 @@ type GitStatusError struct {
 
 func (e *GitStatusError) Error() string {
 	return fmt.Sprintf("git status failed in %s: %s", e.Checkout, strings.TrimSpace(e.Stderr))
+}
+
+// Exception is the uncaught chain upstream prints for the failure: the
+// RuntimeError raised by _git_status_entries (with outer, the caller's
+// frames down to the dirty scan) from the kernel GitCommandError.
+func (e *GitStatusError) Exception(outer ...rich.Frame) *rich.Exception {
+	detail := "no error output"
+	if s := strings.TrimSpace(e.Stderr); s != "" {
+		detail = strings.SplitN(s, "\n", 2)[0]
+	}
+	cause := &rich.Exception{Type: "GitCommandError",
+		Value: fmt.Sprintf("git status --porcelain=v1 -z -- failed in %s (exit %d): %s", e.Checkout, e.Code, detail),
+		Frames: []rich.Frame{{Name: "_git_status_entries", Line: 1850}, {Name: "status_entries", Line: 301},
+			{Name: "_git", Line: 267}, {Name: "run_git", Line: 103}}}
+	frames := append(append([]rich.Frame{}, outer...), rich.Frame{Name: "_ensure_repo_root_checkout_available", Line: 261},
+		rich.Frame{Name: "dirty_paths", Line: 347}, rich.Frame{Name: "_git_status_entries", Line: 1852})
+	return &rich.Exception{Type: "RuntimeError", Value: e.Error(), Frames: frames, Cause: cause}
 }
 
 // DirtyPaths is checkout_occupancy.dirty_paths over `git status -z`

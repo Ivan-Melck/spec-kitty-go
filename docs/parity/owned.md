@@ -126,6 +126,18 @@ Additive hooks in other packages: `lanes.OwnedCheckoutKind` /
 
 ## Remaining work
 
-* The upstream lock-order `RuntimeError` (taking the checkout lock while
-  holding a Mission lock) has no Go equivalent; a failing `git status` in
-  the dirty scan is `LANE_ALLOCATION_FAILED` instead of a traceback.
+None.
+
+Resolved in wave 5 FIX2: a failing `git status` in the single_branch dirty
+scan raises upstream's `RuntimeError` (chained from the kernel
+`GitCommandError`) as an uncaught traceback out of
+`orchestrator-api start-implementation`
+(`TestDiffSingleBranchDirtyScanGitFailure`); under `agent action implement`
+it is the generic `Error: git status failed in ...` and under `implement`
+the earlier planning-artifact probe refuses with `Could not read git status
+for the planning artifacts in ...` (`TestDiffSingleBranchDirtyScanGitFailureImplement`).
+The lock-order `RuntimeError` of `write_checkout_claim_lock` (taking the
+checkout lock while the thread already holds a Mission lock) guards a
+programming error no command reaches: every claim verb takes the checkout
+lock first, and the Go claim paths hold no in-process Mission lock before
+it, so there is no reachable behaviour to match.

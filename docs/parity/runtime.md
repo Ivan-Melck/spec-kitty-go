@@ -45,6 +45,9 @@ without `meta.json`, whose emit does not commit) cannot be set up with the
 oracle's create; its failure arm (`Error: Failed to commit workflow status
 update for WPnn: <exc>. Event log rolled back to pre-emit state.`, or the
 committed-claim report) is covered by Go-only `TestHandleCommitFailure*`.
+`implement`'s planning-artifact `git status` probe fails closed (`Could not
+read git status for the planning artifacts in ...`, validate step `(1)`;
+`TestDiffSingleBranchDirtyScanGitFailureImplement`).
 Upstream's follow-up `BookkeepingPolicyRefused` arm is not ported: the
 claim's own transactional emit runs the same preflight policy on the same
 destination first, so the follow-up transaction cannot be the one refused.

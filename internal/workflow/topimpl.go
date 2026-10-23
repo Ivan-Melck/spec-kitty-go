@@ -81,9 +81,17 @@ func statusSnapshot(s *coord.Surface) *status.Snapshot {
 
 type porcelainEntry struct{ xy, path string }
 
-func missionDirStatus(root, primary string) []porcelainEntry {
+func missionDirStatus(root, primary string) ([]porcelainEntry, error) {
 	rel := relTo(root, primary)
 	r := git(root, "status", "--porcelain", "--untracked-files=all", "--", rel)
+	if r.Code != 0 {
+		// kernel GitCommandError: the probe fails closed
+		detail := "no error output"
+		if s := strings.TrimSpace(r.Stderr); s != "" {
+			detail = strings.SplitN(s, "\n", 2)[0]
+		}
+		return nil, fmt.Errorf("git --literal-pathspecs status --porcelain=v1 -z --untracked-files=all -- %s failed in %s (exit %d): %s", primary, root, r.Code, detail)
+	}
 	var out []porcelainEntry
 	for _, l := range strings.Split(strings.TrimRight(r.Stdout, "\n"), "\n") {
 		if len(l) < 4 {
@@ -95,7 +103,7 @@ func missionDirStatus(root, primary string) []porcelainEntry {
 		}
 		out = append(out, porcelainEntry{xy: l[:2], path: strings.Trim(p, "\"")})
 	}
-	return out
+	return out, nil
 }
 
 func isVCSLockOnlyMetaChange(root, rel string) bool {
@@ -124,7 +132,11 @@ func isVCSLockOnlyMetaChange(root, rel string) bool {
 // CommitPlanningArtifacts is implement_planning_commit._ensure_planning_artifacts_committed_git.
 func CommitPlanningArtifacts(o *Out, root, slug, wpID, planningBranch string, autoCommit bool) error {
 	primary := project.Specs(root, slug)
-	entries := missionDirStatus(root, primary)
+	entries, err := missionDirStatus(root, primary)
+	if err != nil {
+		o.Console(fmt.Sprintf("\nError: Could not read git status for the planning artifacts in %s, so the claim is refused: %v", primary, err))
+		return ExitErr(1)
+	}
 	var structural []porcelainEntry
 	for _, e := range entries {
 		if strings.Contains(e.xy, "D") || strings.Contains(e.xy, "R") || strings.Contains(e.xy, "C") {
@@ -321,7 +333,12 @@ func TopImplement(o *Out, opt ImplementOptions) (*ImplementResult, error) {
 	}
 	planBranch := lanes.SingleBranchWriteRef(root, slug, planningBranch)
 	if err := CommitPlanningArtifacts(o, root, slug, wpID, planBranch, autoCommit); err != nil {
-		tracker.Error("validate", "")
+		// tracker.error("validate", str(exc)): str(typer.Exit(1)) is "1"
+		detail := err.Error()
+		if e, ok := err.(*Exit); ok {
+			detail = fmt.Sprint(e.Code)
+		}
+		tracker.Error("validate", detail)
 		o.Console(tracker.Render())
 		return nil, err
 	}

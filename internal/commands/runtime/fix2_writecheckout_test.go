@@ -122,6 +122,19 @@ func TestDiffSingleBranchClaimRefusalsImplement(t *testing.T) {
 	compareGit(t, p)
 }
 
+// TestDiffSingleBranchDirtyScanGitFailureImplement: `git status` fails in
+// the single_branch dirty scan (a corrupt index) under `implement` and
+// `agent action implement`.
+func TestDiffSingleBranchDirtyScanGitFailureImplement(t *testing.T) {
+	t.Parallel()
+	p := singleBranchRuntimePair(t)
+	p.Both(func(s *testkit.Sandbox) { s.WriteFile(".git/index", "not an index\n") })
+	sbSteps(t, p, true,
+		[]string{"implement", "WP01", "--mission", "$calc-ops"},
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$calc-ops"},
+	)
+}
+
 // TestDiffSingleBranchImplementTopClaim: a clean single_branch claim via
 // the top-level `implement` records the claim base before its claim.
 func TestDiffSingleBranchImplementTopClaim(t *testing.T) {

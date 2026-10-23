@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
+	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	orch "github.com/spec-kitty/go-kitty3/internal/orchestrator"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/writecheckout"
 )
 
@@ -42,6 +44,13 @@ func (v *verb) ensureRepoRootCheckoutOrFail(m *orch.Mission, handle, wpID string
 		return nil
 	case *writecheckout.RefusalError:
 		return v.fail(e.Code, e.Msg, identity(m.StatusDir, "wp_id", wpID, "error_code", e.Code, "message", e.Msg))
+	case *writecheckout.GitStatusError:
+		// a failing `git status` is not a StructuredError upstream: the
+		// RuntimeError escapes start-implementation (uncaught traceback)
+		rich.PrintTraceback(v.ctx.Stderr, e.Exception(rich.Frame{Name: "start_implementation", Line: 486},
+			rich.Frame{Name: "_start_implementation", Line: 558}, rich.Frame{Name: "_resolve_start_workspace", Line: 279},
+			rich.Frame{Name: "_ensure_repo_root_checkout_or_fail", Line: 232}))
+		return cli.Exit(1)
 	default:
 		return v.fail("LANE_ALLOCATION_FAILED", err.Error(), identity(m.StatusDir, "wp_id", wpID, "reason", err.Error()))
 	}
