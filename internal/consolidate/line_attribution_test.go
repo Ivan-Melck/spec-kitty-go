@@ -19,7 +19,7 @@ func TestLineAttributionMatchesOracle(t *testing.T) {
 	line, _ := bufio.NewReader(f).ReadString('\n')
 	f.Close()
 	python := strings.TrimSpace(strings.TrimPrefix(line, "#!"))
-	for _, scenario := range []string{"partial", "overwrite", "delete-stays", "delete-restored", "delete-reworked", "rename", "indent", "indent-undone", "punctuation", "empty-create", "mode", "binary"} {
+	for _, scenario := range []string{"partial", "overwrite", "delete-stays", "delete-restored", "delete-reworked", "rename", "indent", "indent-undone", "punctuation", "empty-create", "mode", "binary", "nbsp-overwrite", "nbsp-only"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := testkit.NewSandbox(t)
 			s.Git("init", "-q", "-b", "main")
@@ -40,6 +40,10 @@ func TestLineAttributionMatchesOracle(t *testing.T) {
 				content = s.ReadFile("file.txt")
 			case "binary":
 				content = "canceled\x00binary"
+			case "nbsp-overwrite":
+				content = "start anchor\nremoved value\nalpha\u00a0bravo\nend anchor\n"
+			case "nbsp-only":
+				content = "start anchor\nremoved value\n\u00a0\nend anchor\n"
 			}
 			if scenario == "empty-create" {
 				s.WriteFile("empty.txt", "")
@@ -74,6 +78,8 @@ func TestLineAttributionMatchesOracle(t *testing.T) {
 				s.WriteFile(path, "start anchor\nremoved value\nend anchor\napproved tail\n")
 			case "binary":
 				s.WriteFile(path, "approved\x00binary")
+			case "nbsp-overwrite":
+				s.WriteFile(path, strings.ReplaceAll(content, "\u00a0", " ")+"approved tail\n")
 			default:
 				s.WriteFile(path, s.ReadFile(path)+"approved tail\n")
 			}

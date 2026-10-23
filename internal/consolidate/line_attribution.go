@@ -36,13 +36,16 @@ func newLineAttribution(root string) *lineAttribution {
 }
 func trivialLine(s string) bool {
 	for _, c := range s {
-		if unicode.IsLetter(c) || unicode.IsDigit(c) {
+		if unicode.IsLetter(c) || unicode.IsNumber(c) {
 			return false
 		}
 	}
 	return true
 }
-func normalizedLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+func byteWhitespace(c rune) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'
+}
+func normalizedLine(s string) string { return strings.Join(strings.FieldsFunc(s, byteWhitespace), " ") }
 func (a *lineAttribution) run(args ...string) (string, error) {
 	r := git(a.root, args...)
 	if r.Code != 0 {
@@ -398,12 +401,12 @@ func (a *lineAttribution) exactChangeKept(sha, path string, final []blameLine, r
 	added, removed := map[string]bool{}, map[string]bool{}
 	for _, x := range exact {
 		for _, l := range x.added {
-			if strings.TrimSpace(l) != "" && !judged[normalizedLine(l)] {
+			if strings.TrimFunc(l, byteWhitespace) != "" && !judged[normalizedLine(l)] {
 				added[l] = true
 			}
 		}
 		for _, l := range x.removed {
-			if strings.TrimSpace(l) != "" && !judged[normalizedLine(l)] {
+			if strings.TrimFunc(l, byteWhitespace) != "" && !judged[normalizedLine(l)] {
 				removed[l] = true
 			}
 		}
