@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
-	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/originfresh"
 	"github.com/spec-kitty/go-kitty3/internal/refadvance"
+	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -20,25 +20,48 @@ type reviewLaneRefusal struct{ msg string }
 
 func (e *reviewLaneRefusal) Error() string { return e.msg }
 
-// foreignReviewLockMessage is _foreign_review_lock_message.
-func foreignReviewLockMessage(ws *lanes.Workspace, agent string) string {
+type reviewLockRefusal struct{ msg string }
+
+func (e *reviewLockRefusal) Error() string { return e.msg }
+
+func reviewLockRefusalMessage(ws *lanes.Workspace, root, startPoint string, claimed bool) string {
 	if !ws.Exists() {
-		return ""
+		if st, err := os.Stat(ws.WorktreePath); err == nil && st.IsDir() {
+			return ""
+		}
 	}
-	b, err := os.ReadFile(filepath.Join(ws.WorktreePath, ".spec-kitty", "review-lock.json"))
+	ref := ""
+	if !ws.Exists() && ws.BranchName != "" {
+		if git(root, "rev-parse", "--verify", ws.BranchName).Code == 0 {
+			ref = ws.BranchName
+		} else {
+			ref = startPoint
+			if ref == "" {
+				ref = "HEAD"
+			}
+		}
+	}
+	return review.LockRefusal(ws.WorktreePath, ws.Exists(), root, ref, ws.BranchName, claimed)
+}
+
+// foreignReviewLockMessage is _foreign_review_lock_message.
+func foreignReviewLockMessage(ws *lanes.Workspace, root, agent string) error {
+	if !ws.Exists() {
+		return nil
+	}
+	lock, err := review.LoadLock(ws.WorktreePath)
 	if err != nil {
-		return ""
+		msg := reviewLockRefusalMessage(ws, root, "", false)
+		if msg == "" {
+			msg = "REVIEW_LOCK_UNREADABLE: refusing to update the lane; the review lock " + filepath.Join(ws.WorktreePath, review.LockRelPath) + " changed while it was read. Re-run the review."
+		}
+		return &reviewLockRefusal{msg}
 	}
-	o, err := jsonx.DecodeObject(b)
-	if err != nil || o == nil {
-		return ""
+	if lock == nil || !status.IsProcessAlive(lock.PID) || lock.Agent == agentOr(agent, "unknown") {
+		return nil
 	}
-	pid, _ := o.GetInt("pid")
-	if pid <= 0 || !status.IsProcessAlive(pid) || o.GetString("agent") == agentOr(agent, "unknown") {
-		return ""
-	}
-	return fmt.Sprintf("Refusing to update the lane: %s has an active review by agent '%s' on %s (PID %d). Wait for it to finish, then re-run.",
-		ws.WorktreePath, o.GetString("agent"), o.GetString("wp_id"), pid)
+	return &reviewLaneRefusal{fmt.Sprintf("Refusing to update the lane: %s has an active review by agent '%s' on %s (PID %d). Wait for it to finish, then re-run.",
+		ws.WorktreePath, lock.Agent, lock.WPID, lock.PID)}
 }
 
 // advanceLaneRef is advance_branch_ref for the review fast-forward: refuse
@@ -138,8 +161,8 @@ func fastForwardReviewLane(o *Out, ws *lanes.Workspace, root, branch string, a o
 	if !descends {
 		return diverged(fmt.Sprintf("%s: %s cannot be fast-forwarded to %s (the remote changed while it was read)", originfresh.LaneDiverged, branch, remoteRef))
 	}
-	if msg := foreignReviewLockMessage(ws, agent); msg != "" {
-		return &reviewLaneRefusal{msg}
+	if err := foreignReviewLockMessage(ws, root, agent); err != nil {
+		return err
 	}
 	if err := advanceLaneRef(root, branch, local, a.RemoteSHA); err != nil {
 		return err

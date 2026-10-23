@@ -63,12 +63,15 @@ func init() {
 				{Name: "merge-commit", Kind: cli.String, Metavar: "SHA", Help: "With --mode pr: record this PR merge commit as the mission's post-merge review baseline (#4231)."},
 				{Name: "target-branch", Kind: cli.String, Metavar: "<str>", Help: "With --merge-commit: the branch the PR merged into. Defaults to the mission's declared target_branch, else the repository's primary branch."},
 				{Name: "attest-first-landing-commit", Kind: cli.Bool, Help: "With --merge-commit: attest the supplied commit's first parent is the pre-landing target tip (#4231). Required for every landing shape."},
+				{Name: "owned-checkout", Kind: cli.String, Metavar: "<path>", Help: ownedCheckoutHelp},
 			},
 			Run: func(ctx *cli.Context) error {
 				return runAccept(ctx, acceptOpts{
 					mission: ctx.String("mission"), mode: ctx.String("mode"), json: ctx.Bool("json"), lenient: ctx.Bool("lenient"),
 					noCommit: ctx.Bool("no-commit"), diagnose: ctx.Bool("diagnose"), mergeCommit: ctx.String("merge-commit"), agent: true,
 					targetBranch: ctx.OptString("target-branch"), attest: ctx.Bool("attest-first-landing-commit"),
+					owned: ctx.IsSet("owned-checkout"), ownedClaim: ctx.String("owned-checkout"),
+					normalizeEncoding: true,
 				})
 			},
 		})

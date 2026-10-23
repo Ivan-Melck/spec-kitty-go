@@ -130,19 +130,25 @@ func isDirLink(p string) bool {
 func Index(root string) []Resolved {
 	var out []Resolved
 	for _, name := range missionDirs(root) {
-		dir := project.Specs(root, name)
-		meta, err := ReadMeta(dir)
-		if err != nil || meta == nil {
-			continue
+		if row := indexEntry(root, name); row != nil {
+			out = append(out, *row)
 		}
-		id, _ := meta.Get("mission_id")
-		ids, ok := id.(string)
-		if !ok || ids == "" {
-			continue
-		}
-		out = append(out, Resolved{MissionID: ids, Slug: name, Dir: dir, Mid8: ResolveMid8(name, ids)})
 	}
 	return out
+}
+
+func indexEntry(root, name string) *Resolved {
+	dir := project.Specs(root, name)
+	meta, err := ReadMeta(dir)
+	if err != nil || meta == nil {
+		return nil
+	}
+	id, _ := meta.Get("mission_id")
+	ids, ok := id.(string)
+	if !ok || ids == "" {
+		return nil
+	}
+	return &Resolved{MissionID: ids, Slug: name, Dir: dir, Mid8: ResolveMid8(name, ids)}
 }
 
 func isDigits(s string) bool {
@@ -160,6 +166,18 @@ func isDigits(s string) bool {
 // ResolveIdentity runs the identity resolver ladder (resolve_mission):
 // ULID → mid8 prefix → exact dir name → NNN-stripped name → numeric prefix.
 func ResolveIdentity(root, handle string) (*Resolved, error) {
+	if !resolverULIDRe.MatchString(handle) && !resolverMid8Re.MatchString(handle) {
+		// Listing membership preserves exact case and excludes multi-segment
+		// handles while reading only the selected mission's metadata.
+		for _, name := range missionDirs(root) {
+			if name == handle {
+				if row := indexEntry(root, name); row != nil {
+					return row, nil
+				}
+				break
+			}
+		}
+	}
 	ms := Index(root)
 	pick := func(m []Resolved) (*Resolved, error) {
 		switch len(m) {

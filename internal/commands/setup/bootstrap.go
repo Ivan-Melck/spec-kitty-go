@@ -104,7 +104,15 @@ func StartupBootstrap(ctx *cli.Context, argv []string) error {
 	if os.Getenv("SPEC_KITTY_GO_SKIP_BOOTSTRAP") == "1" || SkipsBootstrap(argv) {
 		return nil
 	}
-	warnings, err := bootstrap.EnsureAll(bootstrap.Options{SkipCommands: isDoctorSkills(argv)})
+	var warnings []string
+	owners := []bootstrap.StartupOwner{{Label: "runtime assets", Prepare: bootstrap.EnsureRuntime}, {Label: "agent skills", Prepare: bootstrap.EnsureGlobalSkills}}
+	if !isDoctorSkills(argv) {
+		owners = append(owners, bootstrap.StartupOwner{Label: "agent commands", Prepare: func() error { var err error; warnings, err = bootstrap.EnsureGlobalCommands(nil); return err }})
+	}
+	notice, err := bootstrap.PrepareStartupAssets(owners)
+	if notice != "" {
+		fmt.Fprintln(ctx.Stderr, notice)
+	}
 	for _, w := range warnings {
 		fmt.Fprintf(ctx.Stderr, "Warning: preserved unmigrated command file %s\n", w)
 	}

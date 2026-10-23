@@ -9,6 +9,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -213,11 +214,7 @@ func statusPair(dir string) []string {
 // isPrimaryPartition reports a PRIMARY-partition mission path (WP task
 // files, spec/plan/tasks, meta, lanes) — everything except the status pair.
 func isPrimaryPartition(slug, abs string) bool {
-	base := filepath.Base(abs)
-	if base == status.EventsFile || base == status.SnapshotFile {
-		return false
-	}
-	return strings.Contains(filepath.ToSlash(abs), "/kitty-specs/"+slug+"/") && !strings.Contains(filepath.ToSlash(abs), "/.worktrees/")
+	return !mission.CoordinationKinds[mission.ArtifactKindForPath(abs)]
 }
 
 func relTo(dir, p string) string {

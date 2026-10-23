@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/issuematrix"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
@@ -39,6 +40,7 @@ func init() {
 				{Name: "actor", Kind: cli.String, Metavar: "<str>", Required: true, Help: "Identity of the acting agent."},
 				{Name: "wp", Kind: cli.String, Metavar: "<str>", Help: "Owning work-package id (e.g. WP01)."},
 				{Name: "evidence-ref", Kind: cli.String, Metavar: "<str>", Help: "Evidence text or link for the verdict. Required when --verdict is deferred-with-followup: the value must contain a follow-up handle ('#NNN' or a 'Follow-up:' substring), or the row fails validation."},
+				{Name: "owned-checkout", Kind: cli.String, Metavar: "<path>", Help: ownedcheckout.Help},
 				{Name: "json", Kind: cli.Bool, Help: "Output JSON format."},
 			},
 			Run: runIssueVerdict,
@@ -61,7 +63,7 @@ func issueMatrixReadDir(root, slug string) string {
 
 // writeIssueMatrix is write_issue_matrix: write the JSON into dir and
 // commit through the router.
-func writeIssueMatrix(root, slug string, rows *issuematrix.Rows, dir string) (*safecommit.RouterResult, error) {
+func writeIssueMatrix(root, slug string, rows *issuematrix.Rows, dir string, owned ...*ownedcheckout.Fact) (*safecommit.RouterResult, error) {
 	if dir == "" {
 		dir = issueMatrixWriteDir(root, slug)
 	}
@@ -70,7 +72,11 @@ func writeIssueMatrix(root, slug string, rows *issuematrix.Rows, dir string) (*s
 	if err := os.WriteFile(p, rows.Render(), 0o644); err != nil {
 		return nil, err
 	}
-	return safecommit.CommitForMission(root, slug, []string{p}, "chore: update issue-matrix for "+slug, mission.KindIssueMatrix, safecommit.RouterOptions{}), nil
+	opts := safecommit.RouterOptions{}
+	if len(owned) > 0 {
+		opts.Owned = owned[0]
+	}
+	return safecommit.CommitForMission(root, slug, []string{p}, "chore: update issue-matrix for "+slug, mission.KindIssueMatrix, opts), nil
 }
 
 // migrateIssueMatrix is migrate_issue_matrix_to_json (nil = nothing to do).
@@ -172,11 +178,23 @@ func runIssueVerdict(ctx *cli.Context) error {
 	if root == "" {
 		root = cwd()
 	}
-	slug, err := mission.ResolveHandle(root, ctx.String("mission"))
+	owned, err := resolveOwnedOrRefuse(ctx, root, ctx.String("mission"), jsonMode, ownedcheckout.SuccessFalseEnvelope, ownedcheckout.Options{})
 	if err != nil {
-		return renderResolveError(ctx, err, jsonMode)
+		return err
+	}
+	slug := ""
+	if owned != nil {
+		slug = owned.MissionSlug
+	} else {
+		slug, err = mission.ResolveHandle(root, ctx.String("mission"))
+		if err != nil {
+			return renderResolveError(ctx, err, jsonMode)
+		}
 	}
 	readDir := issueMatrixReadDir(root, slug)
+	if owned != nil {
+		readDir = owned.MissionDir
+	}
 	migrated := false
 	if !fileExists(filepath.Join(readDir, issuematrix.JSONFile)) {
 		r, err := migrateIssueMatrix(root, slug, readDir)
@@ -186,6 +204,9 @@ func runIssueVerdict(ctx *cli.Context) error {
 		migrated = r != nil && r.Status == safecommit.StatusCommitted
 	}
 	matrixDir := issueMatrixWriteDir(root, slug)
+	if owned != nil {
+		matrixDir = owned.MissionDir
+	}
 	rows := issuematrix.LoadRows(matrixDir)
 	entry, exists := rows.By[ref]
 	evidence := optFlag(ctx, "evidence-ref")
@@ -205,7 +226,7 @@ func runIssueVerdict(ctx *cli.Context) error {
 		}
 	}
 	rows.Set(ref, entry)
-	r, err := writeIssueMatrix(root, slug, rows, matrixDir)
+	r, err := writeIssueMatrix(root, slug, rows, matrixDir, owned)
 	if err != nil {
 		return fail(err.Error(), "write_failed")
 	}

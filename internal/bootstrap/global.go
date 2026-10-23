@@ -3,12 +3,14 @@ package bootstrap
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/app"
@@ -16,6 +18,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
 
 // ManagedMissionDirs are the package-managed mission trees copied into
@@ -63,7 +66,54 @@ type AssetError struct {
 }
 
 func (e *AssetError) Error() string {
-	return fmt.Sprintf("%s: %v; fix the reported asset path or rerun after removing the stale file", e.Owner, e.Err)
+	hint := "re-run the command; if it persists, run `spec-kitty doctor --help` to find the right diagnostic"
+	if IsUnwritableHomeError(e.Err) {
+		hint = UnwritableHomeHint
+	}
+	return fmt.Sprintf("%s: %s; %s", e.Owner, pyjson.OSErrorString(e.Err), hint)
+}
+
+func (e *AssetError) Unwrap() error { return e.Err }
+
+const UnwritableHomeHint = "a home-folder location could not be written or read (permission denied or a read-only file system) -- fix its permissions, or run spec-kitty once where the home folder is writable, to install the runtime assets and the global agent commands and skills"
+
+func IsUnwritableHomeError(err error) bool {
+	return errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EROFS)
+}
+
+type StartupOwner struct {
+	Label   string
+	Prepare func() error
+}
+
+// PrepareStartupAssets degrades only permission and read-only-home failures.
+// Direct owner calls (init, migrate and repair) remain terminal.
+func PrepareStartupAssets(owners []StartupOwner) (string, error) {
+	var labels []string
+	first := ""
+	for _, owner := range owners {
+		if err := owner.Prepare(); err != nil {
+			if !IsUnwritableHomeError(err) {
+				return "", err
+			}
+			labels = append(labels, owner.Label)
+			if first == "" {
+				if _, ok := err.(*AssetError); ok {
+					first = err.Error()
+				} else {
+					first = pyjson.OSErrorString(err) + "; " + UnwritableHomeHint
+				}
+			}
+		}
+	}
+	if len(labels) == 0 {
+		return "", nil
+	}
+	joined := labels[0]
+	if len(labels) > 1 {
+		joined = strings.Join(labels[:len(labels)-1], ", ") + " and " + labels[len(labels)-1]
+	}
+	return fmt.Sprintf("spec-kitty could not update its %s; the command continues, but the runtime mission templates and the global agent commands and skills may be missing or out of date (%s).", joined, first), nil
 }
 
 // EnsureRuntime populates ~/.kittify/missions (ensure_runtime).
