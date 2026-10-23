@@ -19,6 +19,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/toolsurface"
 )
 
@@ -644,7 +645,7 @@ func printNextSteps(w io.Writer, projectPath, projectName string, here bool, sel
 	for _, key := range selected {
 		if agents.IsCommandSkillAgent(key) {
 			fmt.Fprintln(w)
-			plain(w, "Spec Kitty command skills are now named spec-kitty-<command> (for example spec-kitty-specify).")
+			rich.PrintOpts(w, rich.PrintOptions{Markup: rich.BoolP(false), Highlight: rich.BoolP(false)}, "Spec Kitty command skills are now named spec-kitty-<command> (for example spec-kitty-specify).")
 			break
 		}
 	}

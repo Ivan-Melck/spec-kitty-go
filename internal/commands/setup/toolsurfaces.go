@@ -103,7 +103,13 @@ func printToolSurfacesHuman(w io.Writer, o toolsurface.Outcome) {
 		return
 	}
 	out(w, "\n[bold]Tool Surfaces[/bold] - issue(s) found\n")
+	seen := map[[2]string]bool{}
 	for _, f := range r.Findings {
+		key := [2]string{f.Code, f.Message}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		colour := "yellow"
 		if f.Severity == "error" {
 			colour = "red"

@@ -604,15 +604,17 @@ func renderPackSkill(s *packSkill, name string, requires []string, body string) 
 			cmd := ""
 			if strings.HasPrefix(n, "spec-kitty.") {
 				cmd = strings.TrimPrefix(n, "spec-kitty.")
+			} else if strings.HasPrefix(n, "spec-kitty-") {
+				cmd = strings.TrimPrefix(n, "spec-kitty-")
 			}
 			if !containsStr(agents.CommandSkillCommands, cmd) {
 				var known []string
 				for _, c := range agents.CommandSkillCommands {
-					known = append(known, "spec-kitty."+c)
+					known = append(known, agents.CommandSkillName(c))
 				}
 				return "", fmt.Errorf("wrapper skill '%s' targets unknown built-in command '%s'; known commands: %s", s.id, n, strings.Join(known, ", "))
 			}
-			sections = append(sections, "## Instructions\n\nInvoke the `spec-kitty."+cmd+"` command skill."+args)
+			sections = append(sections, "## Instructions\n\nInvoke the `"+agents.CommandSkillName(cmd)+"` command skill."+args)
 		case strings.HasPrefix(s.target, "cli:"):
 			argv := strings.TrimSpace(strings.TrimPrefix(s.target, "cli:"))
 			if s.args != "" {
