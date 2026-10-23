@@ -262,3 +262,27 @@ New library code (all additive):
 Foundation changes: `internal/charter/synthesis.go` `canonicalYAML` now wraps at
 ruamel width 80 (matches upstream `canonical_yaml`). `charter activate` now plans and
 commits direct-write project registration (area K; `--resynthesize` added in wave 5).
+
+## Wave 5 (area COLOR)
+
+Console output keeps upstream's markup and rich renderables (tables, panels,
+grids, trees, glossary Markdown pages) so a colour terminal gets the same SGR
+stream; see help.md "Colour". Functional fixes found by the colour harness
+(`internal/colorparity` `TestNoProjectColour`, every command run bare in an
+empty directory):
+
+- `charter context / generate / interview / status / synthesize /
+  resynthesize / preflight` resolve the root with `task_utils.find_repo_root`
+  (`findRepoRoot`): outside any project or repository they print "Unable to
+  locate repository root (missing .git or .kittify)." (exit 1; preflight
+  exit 2 on stderr) instead of running against the cwd.
+- `profiles list/show`, `agent profile list`, `invocations list` and
+  `profile-invocation complete` let that TaskCliError escape as rich's
+  traceback (`repoRootOrCrash`), as upstream does.
+- `mission-type current/info` use `get_project_root_or_exit`
+  (`projectRootOrExit`).
+- `ops log` only needs git on PATH (upstream `get_vcs`): outside a
+  repository the reflog is empty ("No operations found").
+- `charter interview`: end of input at a prompt is click's Abort, reported as
+  an empty "Unexpected error:" (exit 1).
+- `charter synthesize/resynthesize` error panels: red border, bold red title.
