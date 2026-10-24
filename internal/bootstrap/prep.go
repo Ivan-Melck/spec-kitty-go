@@ -223,7 +223,7 @@ func (p *prep) preserve(path, reason string, drift bool) {
 // parents plans creation of missing directories between the anchor and path.
 func (p *prep) parents(path string) error {
 	var chain []string
-	for d := filepath.Dir(path); d != p.anchor && strings.HasPrefix(d, p.anchor+string(filepath.Separator)); d = filepath.Dir(d) {
+	for d := filepath.Dir(path); d != p.anchor && strings.HasPrefix(d, strings.TrimRight(p.anchor, string(filepath.Separator))+string(filepath.Separator)); d = filepath.Dir(d) {
 		chain = append(chain, d)
 	}
 	for i := len(chain) - 1; i >= 0; i-- {

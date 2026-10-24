@@ -25,15 +25,17 @@ from pathlib import Path
 from specify_cli.runtime.asset_preparation import AssetPreparation, apply_assets, _write_asset, _write_order
 from specify_cli.tool_surface.operations import OperationRoot, ApplyConsent
 results = {}
-for scenario in ("unchanged", "edited-output", "source-drift", "source-role-sticky", "extra-child", "directory-replaced", "marker-only", "canonical-peer", "environment"):
+for scenario in ("unchanged", "edited-output", "source-drift", "source-role-sticky", "extra-child", "directory-replaced", "marker-only", "canonical-peer", "environment", "root-anchor"):
     root = Path(tempfile.mkdtemp())
     home = root / "home"
     directory = home / "skills"
     directory.mkdir(parents=True)
     os.environ["HOME"] = str(home)
     os.environ["SPEC_KITTY_HOME"] = str(home / ".kittify")
-    prep = AssetPreparation("test_owner", OperationRoot("test_owner", "global", root), home / ".kittify/cache", ".test.lock", ApplyConsent(automatic=True))
+    prep = AssetPreparation("test_owner", OperationRoot("test_owner", "global", Path("/") if scenario == "root-anchor" else root), home / ".kittify/cache", ".test.lock", ApplyConsent(automatic=True))
     target = directory / "SKILL.md"
+    if scenario == "root-anchor":
+        target = directory / "new/SKILL.md"
     prep.observe(directory, members=True, role="destination_probe")
     prep.asset(target, b"canonical\n", 0o644)
     source = root / "source"
@@ -70,11 +72,11 @@ print(json.dumps(results))
 	if err := json.Unmarshal([]byte(result.Stdout), &results); err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 9 {
+	if len(results) != 10 {
 		t.Fatalf("oracle omitted cases: %v", results)
 	}
 	for scenario, success := range results {
-		if success != (scenario == "unchanged" || scenario == "canonical-peer") {
+		if success != (scenario == "unchanged" || scenario == "canonical-peer" || scenario == "root-anchor") {
 			t.Fatalf("oracle disagrees with Go recheck policy for %s: %v", scenario, results)
 		}
 	}

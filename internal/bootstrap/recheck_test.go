@@ -8,7 +8,7 @@ import (
 )
 
 func TestGlobalAssetRecheck(t *testing.T) {
-	for _, scenario := range []string{"unchanged", "edited-output", "source-drift", "source-role-sticky", "extra-child", "directory-replaced", "marker-only", "canonical-peer", "environment"} {
+	for _, scenario := range []string{"unchanged", "edited-output", "source-drift", "source-role-sticky", "extra-child", "directory-replaced", "marker-only", "canonical-peer", "environment", "root-anchor"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			home := filepath.Join(root, "home")
@@ -18,11 +18,18 @@ func TestGlobalAssetRecheck(t *testing.T) {
 			}
 			t.Setenv("HOME", home)
 			t.Setenv("SPEC_KITTY_HOME", filepath.Join(home, ".kittify"))
-			p, err := newPrep("test_owner", root, filepath.Join(home, ".kittify/cache"), ".test.lock")
+			anchor := root
+			if scenario == "root-anchor" {
+				anchor = string(filepath.Separator)
+			}
+			p, err := newPrep("test_owner", anchor, filepath.Join(home, ".kittify/cache"), ".test.lock")
 			if err != nil {
 				t.Fatal(err)
 			}
 			target := filepath.Join(dir, "SKILL.md")
+			if scenario == "root-anchor" {
+				target = filepath.Join(dir, "new", "SKILL.md")
+			}
 			if _, err := p.observeAsset(dir, true, false); err != nil {
 				t.Fatal(err)
 			}
@@ -67,7 +74,7 @@ func TestGlobalAssetRecheck(t *testing.T) {
 				t.Setenv("SPEC_KITTY_PACKS_ROOT", filepath.Join(root, "other"))
 			}
 			err = p.apply()
-			wantSuccess := scenario == "unchanged" || scenario == "canonical-peer"
+			wantSuccess := scenario == "unchanged" || scenario == "canonical-peer" || scenario == "root-anchor"
 			if (err == nil) != wantSuccess {
 				t.Fatalf("apply error = %v; want success %v", err, wantSuccess)
 			}
