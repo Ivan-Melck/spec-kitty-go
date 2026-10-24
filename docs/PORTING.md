@@ -120,12 +120,14 @@ Domain and command packages live under `internal/<area>/...`.
   PARITY_TMP=$(mktemp -d /var/tmp/spec-kitty-parity.XXXXXX)
   TMPDIR="$PARITY_TMP" \
   SPEC_KITTY_ORACLE=$REF/oracle-bin/spec-kitty \
-  SPEC_KITTY_HELP_INVENTORY=$REF/inventory/help go test ./...
+  SPEC_KITTY_HELP_INVENTORY=$REF/inventory/help go test -timeout 120m ./...
   ```
 
   Keep scratch outside initialized projects and the real home directory:
   root-discovery tests must not inherit an ancestor's `.kittify` directory.
   A disk-backed location also avoids small tmpfs inode limits in broad runs.
+  The full oracle campaign includes long workflow scenarios and needs the
+  extended timeout; the ordinary native test suite does not.
 
   `Pair.Compare` diffs exit code + normalized stdout; `Pair.CompareTree`
   diffs file trees/contents. Normalisation masks ULIDs, timestamps, SHAs,

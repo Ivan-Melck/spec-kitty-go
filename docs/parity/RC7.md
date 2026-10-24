@@ -65,8 +65,11 @@ finalization, implementation and review.
 
 The broad campaign's snapshot precedes the final bulk-edit integration. A
 second immutable snapshot, `rc7-validation-tmp/postbulk-source`, and its
-`spec-kitty-postbulk` binary run the complete bulk-edit, planning and runtime
-packages. The upgrade cancellation path is compared separately against RC7.
+`spec-kitty-postbulk` binary ran the complete bulk-edit, planning and runtime
+packages. Bulk-edit passed all six tests, runtime passed all 46 test/subtest
+results, and planning passed 40 with one optional skip and the single
+frontmatter diagnostic failure described below. The upgrade cancellation path
+was compared separately against RC7.
 This keeps each campaign tied to a fixed executable while covering subsequent
 changes.
 
@@ -91,6 +94,11 @@ frontmatter probe: a YAML sequence was called `list` instead of RC7's
 probe through both finalization modes and action implementation, using the
 separate `spec-kitty-frontmatter` executable. The original campaign retains
 its failure as evidence; its running binary was not replaced.
+The same boundary was then checked against 33 root-document cases, including
+formatted numbers, block strings, anchors, dates, tags, sets, ordered maps,
+duplicate keys and malformed YAML. The guard now uses the round-trip value
+types and matches every case. An expanded six-fixture CLI replay through both
+finalization modes and action implementation passes with `spec-kitty-root-types`.
 
 The README's installation and basic usage smoke test passed with an isolated
 home and project: `go install`, version/help, initialization, Git setup,
@@ -98,10 +106,12 @@ configuration listing, setup verification, idempotent initialization,
 upgrade preview, surface repair, dispatch and Op completion. Initialization's
 execution trace contains no Python execution.
 
-The final code also passed `go test ./...`, `go vet ./...`, and race checks for
+The final production code passed `go test ./...` and `go vet ./...`. Race checks
+passed for the unchanged concurrency-sensitive packages
 `internal/bootstrap`, `internal/consolidate`, `internal/toolsurface` and
 `internal/bulkedit`. A fresh `CGO_ENABLED=0 go install`, Codex initialization,
-`agent config list`, `verify-setup` and standalone binary build passed after
-the final implementation changes; initialization again executed no Python.
+`agent config list` and `verify-setup` passed after bulk-edit integration;
+initialization again executed no Python. The latest standalone Linux build and
+a macOS ARM64 cross-build also pass; runtime comparisons were run on Linux.
 
 Final broad comparison results will be recorded here after completion.
