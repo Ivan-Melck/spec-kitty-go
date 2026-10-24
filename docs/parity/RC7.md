@@ -70,6 +70,15 @@ packages. The upgrade cancellation path is compared separately against RC7.
 This keeps each campaign tied to a fixed executable while covering subsequent
 changes.
 
+Later broad comparisons found the already-corrected EOF cancellation newline,
+one missing configuration warning during upgrade preview, and three traceback
+line numbers from the newer mission-step resolver. The upgrade runner now
+repeats migration selection after preview/confirmation, as RC7 does. The
+warning and traceback probes pass against the immutable `diagnostics-source`
+snapshot and `spec-kitty-diagnostics` binary. Upgrade-plan and commented-config
+replays also pass; the broader migration corpora replay is recorded below
+when complete.
+
 The post-bulk snapshot exposed one diagnostic mismatch in the new malformed
 frontmatter probe: a YAML sequence was called `list` instead of RC7's
 `CommentedSeq`. The corrected helper passed the complete malformed-frontmatter

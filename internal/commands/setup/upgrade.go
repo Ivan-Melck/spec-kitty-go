@@ -794,7 +794,9 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 				return nil
 			}
 		}
-		runMigrations(root, target, migrations, o, now)
+		// The upstream runner selects again after the preview/confirmation.
+		// Detection is read-only but can emit configuration diagnostics.
+		runMigrations(root, target, applicableMigrations(from, target, root), o, now)
 		if !opt.noWorktrees {
 			wr := upgradeWorktrees(root, target, migrations, opt.dryRun, wtAutoCommit)
 			o.warnings = append(o.warnings, wr.warnings...)
