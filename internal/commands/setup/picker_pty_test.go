@@ -348,8 +348,25 @@ func TestInitColourOutputMatchesOracle(t *testing.T) {
 		t.Run(strings.ReplaceAll(sel, ",", "_"), func(t *testing.T) {
 			t.Parallel()
 			args := []string{"init", "proj", "--ai", sel}
-			gout, gs, gcode := runPTY(t, testkit.Binary(t), true, false, args)
-			oout, osb, ocode := runPTY(t, oracle, true, false, args)
+			// Keep the sandbox path within the 80-column panel even when
+			// TMPDIR is long. A folded path can split the sandbox ID before
+			// initColourTranscript has a complete path to normalize.
+			run := func(bin string) (string, *testkit.Sandbox, int) {
+				base, err := os.MkdirTemp("", "sk-pty-")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { os.RemoveAll(base) })
+				s := &testkit.Sandbox{T: t, Base: base, Home: filepath.Join(base, "home"), Dir: filepath.Join(base, "proj")}
+				for _, dir := range []string{s.Home, s.Dir} {
+					if err := os.MkdirAll(dir, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return runPTYIn(t, s, bin, true, false, args)
+			}
+			gout, gs, gcode := run(testkit.Binary(t))
+			oout, osb, ocode := run(oracle)
 			if gcode != ocode {
 				t.Errorf("exit go=%d oracle=%d", gcode, ocode)
 			}

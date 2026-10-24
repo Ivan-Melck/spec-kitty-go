@@ -76,8 +76,14 @@ line numbers from the newer mission-step resolver. The upgrade runner now
 repeats migration selection after preview/confirmation, as RC7 does. The
 warning and traceback probes pass against the immutable `diagnostics-source`
 snapshot and `spec-kitty-diagnostics` binary. Upgrade-plan and commented-config
-replays also pass; the broader migration corpora replay is recorded below
-when complete.
+replays also pass. The complete diagnostics/migration-selection replay passed
+all 25 test and subtest results across three packages, including current/stale
+projects, upgrade flags/plans, legacy-layout corpora and worktree fan-out.
+
+The broad campaign's forced-colour init probe also exposed a harness issue:
+long scratch paths wrapped the sandbox IDs beyond the normalizer's path match.
+Shorter isolated PTY fixture directories retain the 80-column comparison; all
+three agent combinations pass without a production rendering change.
 
 The post-bulk snapshot exposed one diagnostic mismatch in the new malformed
 frontmatter probe: a YAML sequence was called `list` instead of RC7's
