@@ -6,8 +6,9 @@ The selected target is upstream `main` at
 was `4.0.0rc7`; this port advances the existing main-based RC8 port from
 `dccf199f7a42fd91556610163c989794d210eac9`.
 
-Implementation and focused comparisons are complete for the areas below.
-Full-suite verification is still running; completed parity is not yet claimed.
+The port is updated to this pin, with CLI parity verified by the complete
+differential campaign and the focused follow-up comparisons below. Final
+verification completed on 2026-10-24.
 
 The reference contains 279 command paths (previously 276). New commands are
 `charter pack vendor`, `migrate ledger`, and `migrate activation-ledger`.
@@ -52,14 +53,49 @@ reference-agent and Python autorebase checks also pass.
 All 279 plain help snapshots were captured with
 `scripts/capture-reference-help.py` in the subprocess environment used by the
 parity test. A `CliRunner` capture wraps long usage lines differently.
-The full colour and usage-error matrices are included in the broad campaign.
+The full colour and usage-error matrices pass in the broad campaign.
 
-The complete updated campaign uses immutable source at
+The complete updated campaign passed using immutable source at
 `/tmp/spec-kitty-rc8-final-source` and executable
 `/tmp/spec-kitty-rc8-final-bin`, with bounded package/test concurrency.
-It follows an earlier immutable survey used to identify gaps. Follow-up
-artifact-classification and glossary-ledger changes are verified separately
-and must be included in final acceptance.
+It recorded 1,019 passing test/subtest results, 10 skipped tests and no
+failures. All 69 packages with tests passed; 30 packages had no test files.
+The command, run from that source snapshot, was:
+
+```sh
+GOMAXPROCS=6 \
+SPEC_KITTY_GO_BIN=/tmp/spec-kitty-rc8-final-bin \
+SPEC_KITTY_ORACLE="$REF/oracle-bin/spec-kitty" \
+go test -p 8 -parallel 4 -json -count=1 -timeout 120m ./...
+```
+
+Later artifact-classification, glossary-ledger and filesystem-root-anchor
+changes also pass their focused oracle comparisons. The latest executable
+additionally passes replays of dispatch, invocation completion, glossary
+documentation/entity pages, owned planning, setup-plan wiring, safe commits
+and finalization ownership inference. These follow-up results, together with
+the latest native suite, cover changes made after the immutable campaign
+snapshot.
+
+The final working tree passes the native suite, static analysis and targeted
+race checks:
+
+```sh
+GOMAXPROCS=4 go test -p 4 -parallel 3 -timeout 20m ./...
+go vet ./...
+go test -race ./internal/bootstrap ./internal/glossary ./internal/writecheckout
+```
+
+The standalone executable is built with:
+
+```sh
+CGO_ENABLED=0 go build -trimpath -o bin/spec-kitty ./cmd/spec-kitty
+```
+
+It reports `spec-kitty-cli version 4.0.0rc8`. An isolated
+`init . --ai codex --non-interactive` smoke test creates command skills,
+the activation ledger and the migration ledger. Its execution trace contains
+no Python execution.
 
 Glossary producer model and JSON Schema data can be reproduced with the
 reference interpreter:
@@ -68,5 +104,7 @@ reference interpreter:
 $REF/oracle-venv/bin/python scripts/sync-event-contracts.py --check
 ```
 
-Full differential completion, the post-change native suite and final vet
-results remain to be recorded here before declaring parity.
+All verification listed above completed successfully. Parity here describes
+the tested CLI behavior, generated artifacts and Git effects against the
+selected upstream commit; the Go port does not expose upstream's Python
+library API.
