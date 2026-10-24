@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/coord"
-	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
@@ -273,28 +272,6 @@ func ActionImplement(o *Out, rc *Receipts, root, slug string, opt ActionImplemen
 	if snap.WP(wpID) == nil {
 		o.Printf("Error: %s", MissingCanonicalStatus(wpID, slug))
 		return ExitErr(1)
-	}
-	if w != nil {
-		if profile := w.String("agent_profile"); profile != "" {
-			act, err := dct.LoadActivation(root)
-			if err != nil {
-				o.Printf("Error: %v", err)
-				return ExitErr(1)
-			}
-			if !act.Admits(dct.AgentProfile, profile) {
-				activated := "(all except deactivated)"
-				if allow := act.Activated(dct.AgentProfile); allow != nil {
-					activated = strings.Join(allow.Sorted(), ", ")
-					if activated == "" {
-						activated = "(none)"
-					}
-				}
-				resolution := "spec-kitty charter activate agent-profile " + profile
-				o.Printf("Error: WP%s charter precondition FAILED\n  Assigned profile '%s' is not accessible through the active charter.\n  Currently activated: %s\n  Run: %s", wpID, profile, activated, resolution)
-				o.Printf("Error: artifact=%s, activated=%s, resolution=%s", mission.PyRepr(profile), mission.PyRepr(activated), mission.PyRepr(resolution))
-				return ExitErr(1)
-			}
-		}
 	}
 	if fmErr != "" {
 		o.Printf("Error: %s", fmErr)

@@ -6,17 +6,25 @@ import (
 	"os"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
-	"github.com/spec-kitty/go-kitty3/internal/migrationledger"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
+// legacyMigrationIDs is metadata._LEGACY_MIGRATION_ID_MAP.
+var legacyMigrationIDs = map[string]string{
+	"0.10.12_constitution_cleanup":          "0.10.12_charter_cleanup",
+	"0.13.0_update_constitution_templates":  "0.13.0_update_charter_templates",
+	"2.0.0_constitution_directory":          "2.0.0_charter_directory",
+	"2.0.2_constitution_context_bootstrap":  "2.0.2_charter_context_bootstrap",
+	"2.1.2_fix_constitution_doctrine_skill": "2.1.2_fix_charter_doctrine_skill",
+}
+
 // NormalizeAndSaveLegacyIDs is ProjectMetadata.normalize_and_save_legacy_ids.
 func (m *Metadata) NormalizeAndSaveLegacyIDs(root string) []string {
 	changed := false
 	for i, r := range m.Applied {
-		if n, ok := migrationledger.CanonicalID(r.ID); ok {
+		if n, ok := legacyMigrationIDs[r.ID]; ok {
 			m.Applied[i].ID = n
 			changed = true
 		}
@@ -30,7 +38,8 @@ func (m *Metadata) NormalizeAndSaveLegacyIDs(root string) []string {
 
 // LegacyMigrationID maps a constitution-era migration id to its charter-era id.
 func LegacyMigrationID(id string) (string, bool) {
-	return migrationledger.CanonicalID(id)
+	n, ok := legacyMigrationIDs[id]
+	return n, ok
 }
 
 // CanonicalSchemaCapabilities is metadata.canonical_schema_capabilities: an

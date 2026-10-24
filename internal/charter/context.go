@@ -33,7 +33,7 @@ const (
 )
 
 // SchemaVersion is CONTEXT_SCHEMA_VERSION.
-const SchemaVersion = "1.4.0"
+const SchemaVersion = "1.3.0"
 
 // BootstrapActions is the 4-token fast path.
 var BootstrapActions = map[string]bool{"specify": true, "plan": true, "implement": true, "review": true}

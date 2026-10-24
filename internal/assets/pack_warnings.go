@@ -35,7 +35,7 @@ func WarnPackRoot(caller PackRootCaller) {
 	if st, err := os.Stat(p); err == nil && st.IsDir() {
 		return
 	}
-	module, line, source := "charter/offering/pack_paths.py", 262, "root = get_built_in_pack_root()"
+	module, line, source := "charter/offering/pack_paths.py", 237, "return get_built_in_pack_root()"
 	switch caller {
 	case MissionAssetRoot:
 		module, line, source = "kernel/paths.py", 435, "pack_root = get_built_in_pack_root()"

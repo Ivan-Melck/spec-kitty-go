@@ -168,11 +168,7 @@ func expectedProjectEntries(skills []CatalogSkill, agentKeys []string, now strin
 					return nil, err
 				}
 				if rel == "SKILL.md" {
-					projected, err := agents.ProjectSkillForRoot(string(content), root, s.Name)
-					if err != nil {
-						return nil, err
-					}
-					content = []byte(projected)
+					content = []byte(agents.EnsureSkillFrontmatter(string(content), s.Name))
 				}
 				state := FileOf(Digest(content), s.SourceMode&^0o222)
 				entry := agents.SkillEntry{SkillName: s.Name, SourceFile: rel, InstalledPath: p, InstallationClass: agents.SkillClass(agent),
@@ -635,7 +631,7 @@ func stateList(s FileState) []any {
 }
 
 // allocateSkillBackup is prepare_skill_backup's directory choice:
-// .kittify/.migration-backup/agent-skills/state-v1-<sha256[:16]>[-n].
+// .kittify/.migration-backup/agent-skills/state-v1-<sha256>[-n] (RC7).
 func allocateSkillBackup(project string, recs [][3]any) (string, error) {
 	sort.SliceStable(recs, func(i, j int) bool { return recs[i][0].(string) < recs[j][0].(string) })
 	var records []any
@@ -643,7 +639,7 @@ func allocateSkillBackup(project string, recs [][3]any) (string, error) {
 		records = append(records, []any{r[0], stateList(r[1].(FileState)), stateList(r[2].(FileState))})
 	}
 	serialized := jsonx.Dumps([]any{"agent-skills-backup-v1", records}, jsonx.Options{Indent: -1, EnsureASCII: true, Compact: true})
-	digest := Digest([]byte(serialized))[:16]
+	digest := Digest([]byte(serialized))
 	parent := ".kittify/.migration-backup/agent-skills"
 	candidate := parent + "/state-v1-" + digest
 	for i := 1; ; i++ {

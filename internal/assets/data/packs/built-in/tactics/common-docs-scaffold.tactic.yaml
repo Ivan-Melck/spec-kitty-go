@@ -30,7 +30,7 @@ steps:
       the section already exists, add the file beside its siblings.
     examples:
       - "docs/guides/open-the-dashboard.md for a new how-to."
-      - "docs/adr/4.x/2026-10-19-1-example-decision.md for a new ADR in the current era, keeping the dated prefix."
+      - "docs/adr/3.x/2026-06-27-1-common-docs-root.md for a new era ADR, keeping the dated prefix."
   - title: Seed the frontmatter schema
     description: >
       Open the file with in-file YAML frontmatter as the per-page source of
@@ -53,7 +53,7 @@ steps:
       `doc_status`. See DIRECTIVE_042 for the full ADR frontmatter exception;
       this step does not restate it.
     examples:
-      - "A new adr/4.x/2026-10-19-1-example-decision.md starts status: Proposed."
+      - "A new adr/3.x/2026-06-27-1-common-docs-root.md starts status: Proposed."
       - "When ADR-B supersedes ADR-A, ADR-A flips to status: Superseded and gains a related: link to ADR-B."
   - title: Add the section index when the section is new
     description: >

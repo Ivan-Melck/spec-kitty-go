@@ -49,7 +49,7 @@ func LoadOperatorEnvFile(start string) {
 			delete(vals, "SPEC_KITTY_HOME")
 			// warnings.warn(..., UserWarning, stacklevel=3): reported at the
 			// `import specify_cli` call site with its source line.
-			fmt.Fprintf(os.Stderr, "%s:33: UserWarning: %s defines SPEC_KITTY_HOME; ignoring that line (the locator that finds this file cannot be redefined by it).\n  load_operator_env_file()\n",
+			fmt.Fprintf(os.Stderr, "%s:34: UserWarning: %s defines SPEC_KITTY_HOME; ignoring that line (the locator that finds this file cannot be redefined by it).\n  load_operator_env_file()\n",
 				envWarningSite, p)
 		}
 		return vals

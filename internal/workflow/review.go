@@ -182,13 +182,13 @@ func reviewCommands(wpID, slug, feedbackPath, reviewer, approveNote string) (str
 // acquireReviewLock is ReviewLock.acquire (.spec-kitty/review-lock.json).
 func acquireReviewLock(wsPath, wpID, agent string) error {
 	p := filepath.Join(wsPath, ".spec-kitty", "review-lock.json")
-	if lock, err := review.LoadLock(wsPath); err != nil {
-		return err
-	} else if lock != nil {
-		pid := lock.PID
-		if pid > 0 && status.IsProcessAlive(pid) {
-			return fmt.Errorf("Worktree %s has an active review by agent '%s' on %s (PID %d, started %s). Wait for that review to complete or use a different lane.",
-				wsPath, lock.Agent, lock.WPID, pid, lock.StartedAt)
+	if b, err := os.ReadFile(p); err == nil {
+		if o, err := jsonx.DecodeObject(b); err == nil {
+			pid, _ := o.GetInt("pid")
+			if pid > 0 && status.IsProcessAlive(pid) {
+				return fmt.Errorf("Worktree %s has an active review by agent '%s' on %s (PID %d, started %s). Wait for that review to complete or use a different lane.",
+					wsPath, o.GetString("agent"), o.GetString("wp_id"), pid, o.GetString("started_at"))
+			}
 		}
 	}
 	os.MkdirAll(filepath.Dir(p), 0o755)
@@ -264,21 +264,16 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 	// claim, so a refusal leaves the WP status untouched.
 	createFrom, rerr := reconcileReviewLane(o, ws, root, wpID, agent)
 	if rerr != nil {
-		if _, ok := rerr.(*reviewLockRefusal); ok {
-			o.ConsoleSoftWrap("[red]" + rich.EscapeMarkup(rerr.Error()) + "[/red]")
-		} else if _, ok := rerr.(*reviewLaneRefusal); ok {
+		if _, ok := rerr.(*reviewLaneRefusal); ok {
 			o.Console("[red]" + rich.EscapeMarkup(rerr.Error()) + "[/red]")
 		} else {
 			o.Console(rerr.Error())
 		}
 		return ExitErr(1)
 	}
-	if err := bulkReviewGate(o, primary, root, slug, target, ws); err != nil {
+
+	if err := bulkReviewGate(o, s.StatusDir(), root, slug, target, ws); err != nil {
 		return err
-	}
-	if msg := reviewLockRefusalMessage(ws, root, createFrom, false); msg != "" {
-		o.ConsoleSoftWrap("[red]" + rich.EscapeMarkup(msg) + "[/red]")
-		return ExitErr(1)
 	}
 
 	if req != nil {
@@ -375,17 +370,8 @@ func ActionReviewDispatch(o *Out, rc *Receipts, root, slug, rawWP, agent string,
 			o.Printf("Created review workspace from %s", strings.TrimPrefix(createFrom, "refs/remotes/"))
 		}
 	}
-	ExcludeFromGitIndex(root, []string{".spec-kitty/"})
 	if err := acquireReviewLock(wsPath, wpID, agentOr(agent, "unknown")); err != nil {
-		if e, ok := err.(*review.LockReadError); ok {
-			msg := reviewLockRefusalMessage(ws, root, createFrom, true)
-			if msg == "" {
-				msg = "REVIEW_LOCK_UNREADABLE: refusing to update the lane; the review lock " + e.Path + " changed while it was read. Re-run the review."
-			}
-			o.ConsoleSoftWrap("[red]" + rich.EscapeMarkup(msg) + "[/red]")
-		} else {
-			o.Console("[red]" + rich.EscapeMarkup(err.Error()) + "[/red]")
-		}
+		o.Console(err.Error())
 		return ExitErr(1)
 	}
 	rctx := resolveReviewContext(root, slug, wpID, wsPath, w)

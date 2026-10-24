@@ -10,7 +10,6 @@ import (
 
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
-	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -303,14 +302,7 @@ func CompileCharterWith(root, mission string, iv *Interview, templateSet string,
 		start["directive:"+d] = true
 	}
 	for _, k := range []dct.Kind{dct.Tactic, dct.Styleguide, dct.Toolguide, dct.Procedure, dct.AgentProfile} {
-		reachOnly := map[string]bool{}
-		if k == dct.Tactic || k == dct.Styleguide {
-			reachOnly = ReachOnlyIDs(root, string(k))
-		}
 		for _, id := range cr.byKind[k] {
-			if reachOnly[id] {
-				continue
-			}
 			start[string(k)+":"+id] = true
 		}
 	}
@@ -497,11 +489,7 @@ func WriteCompiled(root string, c *Compiled) ([]string, error) {
 	} else {
 		doc := jsonx.NewObject("schema_version", "2.0.0", "governance", defaultGovernance(), "directives", jsonx.NewObject("directives", []any{}),
 			"catalog", catalog, "overrides", &jsonx.Object{}, "metadata", jsonx.NewObject("generated_at", nowStamp(), "bundle_schema_version", 2))
-		store, err := dct.ResolveActivationStore(root)
-		if err != nil {
-			return nil, err
-		}
-		if cfg, err := dct.LoadConfig(root); err == nil && !store.Ledger {
+		if cfg, err := dct.LoadConfig(root); err == nil {
 			for _, k := range ActivationYAMLKeys() {
 				if v, ok := cfg.Get(k); ok {
 					if l, isL := v.([]any); isL {
@@ -526,7 +514,7 @@ func WriteCompiled(root string, c *Compiled) ([]string, error) {
 			}
 		}
 		cfgDoc.Set("charter", ".kittify/charter/charter.yaml")
-		if err := kittify.SaveConfig(root, cfgDoc); err != nil {
+		if err := writeYAMLDocument(cfgPath, cfgDoc, 80); err != nil {
 			return nil, err
 		}
 	}

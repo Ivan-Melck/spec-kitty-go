@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
@@ -16,7 +15,6 @@ import (
 
 type stateSurface struct {
 	name, pattern, root, authority, gitClass string
-	ignoredViaAgentBlock                     bool
 }
 
 func newDoctorStateRootsCmd() *cli.Command {
@@ -86,11 +84,7 @@ func surfaceCovered(root string, s stateSurface) bool {
 	if s.root != "project" || s.gitClass == "tracked" || s.gitClass == "outside_repo" || s.gitClass == "git_internal" {
 		return true
 	}
-	pattern := s.pattern
-	if s.ignoredViaAgentBlock {
-		pattern = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(pattern, "spec-kitty-doctor-probe")
-	}
-	r, err := gitx.Exec(root, nil, nil, "check-ignore", "-q", pattern)
+	r, err := gitx.Exec(root, nil, nil, "check-ignore", "-q", s.pattern)
 	if err != nil {
 		return true
 	}

@@ -5,17 +5,19 @@ domain: "other"
 
 workflow:
   phases:
-    - name: "specify"
-      description: "Define planning goals and scope (writes spec.md)"
+    - name: "goals"
+      description: "Define planning goals and scope"
     - name: "research"
       description: "Research and gather information"
-    - name: "plan"
-      description: "Create the structure and write the plan (writes plan.md)"
+    - name: "structure"
+      description: "Create outline and structure"
+    - name: "draft"
+      description: "Write the plan"
     - name: "review"
       description: "Review and approve the plan"
 
 artifacts:
-  required: [spec.md, plan.md]
+  required: [goals.md, plan.md]
   optional: [research.md, data/]
 
 paths:

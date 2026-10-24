@@ -6,8 +6,7 @@ package kittify
 // tests) discards them.
 var WarnLog func(msg string)
 
-// ErrorLog receives load_agent_config's YAML read/parse errors, including
-// when startup tolerates the failed configuration read.
+// ErrorLog receives the agent reader's YAML read/parse errors.
 var ErrorLog func(msg string)
 
 // quietAgentConfig > 0 suppresses LoadAgentConfig's warning (loads with no

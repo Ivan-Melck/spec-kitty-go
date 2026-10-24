@@ -14,7 +14,6 @@ func TestDiffBulkEditFinalizeGate(t *testing.T) {
 	testkit.Oracle(t)
 	p := &testkit.Pair{T: t, Go: missionfx.NewLocalMission(t), Oracle: missionfx.NewLocalMission(t)}
 	p.Both(func(s *testkit.Sandbox) {
-		s.WriteFile(".kittify/migration-ledger.jsonl", "")
 		file := filepath.Join("kitty-specs", missionfx.LocalSlug, "meta.json")
 		meta, err := jsonx.DecodeObject([]byte(s.ReadFile(file)))
 		if err != nil {
@@ -22,7 +21,7 @@ func TestDiffBulkEditFinalizeGate(t *testing.T) {
 		}
 		meta.Set("change_mode", "bulk_edit")
 		s.WriteFile(file, jsonx.Dumps(meta, jsonx.Pretty))
-		s.Git("add", "--", ".kittify/migration-ledger.jsonl", file)
+		s.Git("add", "--", file)
 		s.Git("commit", "-qm", "mark bulk edit")
 	})
 	for _, group := range []string{"mission", "tasks"} {

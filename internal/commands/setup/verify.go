@@ -748,10 +748,7 @@ func VerifyInstalledSkills(root string) SkillVerifyResult {
 		if s, ok := canon[e.SkillName]; ok {
 			if src, err := agents.ReadSkillFile(s, e.SourceFile); err == nil {
 				if e.SourceFile == "SKILL.md" {
-					skillRoot := filepath.ToSlash(filepath.Dir(filepath.Dir(e.InstalledPath)))
-					if projected, err := agents.ProjectSkillForRoot(string(src), skillRoot, s.Name); err == nil {
-						src = []byte(projected)
-					}
+					src = []byte(agents.EnsureSkillFrontmatter(string(src), s.Name))
 				}
 				want = "sha256:" + sha256Hex(src)
 			}

@@ -343,11 +343,6 @@ func SelectedIDToStem(k dct.Kind, raw string, lr map[string]string, chain []stri
 // PromoteSelections is interview._promote_interview_selections: append-only
 // promotion of selected directives/tactics/paradigms into activated_* keys.
 func PromoteSelections(root string, iv *Interview) ([]string, error) {
-	warnings, _, err := PromoteSelectionsWithOptions(root, iv, false)
-	return warnings, err
-}
-func PromoteSelectionsWithOptions(root string, iv *Interview, narrow bool) ([]string, *jsonx.Object, error) {
-	narrowed := &jsonx.Object{}
 	lr, chain := dct.LayerRoots(root), dct.OrgRoots(root)
 	type promo struct {
 		key   string
@@ -374,115 +369,49 @@ func PromoteSelectionsWithOptions(root string, iv *Interview, narrow bool) ([]st
 		}
 	}
 	if len(promos) == 0 {
-		return warnings, narrowed, nil
+		return warnings, nil
 	}
 	t, err := LoadWriteTarget(root)
 	if err != nil {
-		return warnings, narrowed, err
+		return warnings, err
 	}
-	activation, err := dct.LoadActivation(root)
-	if err != nil {
-		return warnings, narrowed, err
-	}
-	ix := dct.NewIdentityIndex(root)
-	var skippedMessages []string
 	var leftAbsent []string
 	changed := false
 	for _, p := range promos {
 		cur, present, err := currentList(t.Data, p.key)
 		if err != nil {
-			return warnings, narrowed, err
-		}
-		kind, _ := dct.ParseKind(p.token)
-		denied := activation.Denied[kind]
-		var previous []string
-		var skipped []string
-		for _, id := range p.stems {
-			if denied[id] {
-				skipped = appendUnique(skipped, id)
-			}
+			return warnings, err
 		}
 		var newList []string
 		if !present {
 			eff, reason := EffectiveSet(root, p.token)
-			if reason != "" && narrow {
-				warnings = append(warnings, "What stopped being in force cannot be listed: the effective set could not be resolved.")
-			} else if reason != "" {
+			if reason != "" {
 				leftAbsent = append(leftAbsent, fmt.Sprintf("%s was left absent and nothing was promoted into it: the effective set could not be resolved (%s).", p.key, reason))
 				continue
 			}
-			for _, id := range eff {
-				if denied[id] {
-					skipped = appendUnique(skipped, id)
-				} else {
-					newList = append(newList, id)
-				}
-			}
+			newList = append([]string{}, eff...)
 			sort.Strings(newList)
-			if !narrow {
-				warnings = append(warnings, fmt.Sprintf("Key %s had no explicit activation set. Preserved %d effective entries before promotion (absent-key parity).", dct.PyRepr(p.key), len(newList))+FrozenListNote)
-			}
+			warnings = append(warnings, fmt.Sprintf("Key %s had no explicit activation set. Preserved %d effective entries before promotion (absent-key parity).", dct.PyRepr(p.key), len(newList)))
 		} else {
 			newList = append([]string{}, cur...)
 		}
-		if narrow {
-			for _, id := range newList {
-				previous = appendUnique(previous, ix.Stem(kind, id))
-			}
-			newList = nil
-			for _, id := range p.stems {
-				newList = appendUnique(newList, id)
-			}
-			for _, id := range OrgRequiredIDs(root, kind.Plural()) {
-				newList = appendUnique(newList, ix.Stem(kind, id))
-			}
-		}
 		for _, id := range p.stems {
-			if denied[id] {
-				continue
-			}
 			found := false
 			for _, x := range newList {
 				found = found || x == id
 			}
-			if found && !narrow {
+			if found {
 				warnings = append(warnings, fmt.Sprintf("%s is already activated for key %s.", dct.PyRepr(id), dct.PyRepr(p.key)))
-			} else if !found {
+			} else {
 				newList = append(newList, id)
 			}
-		}
-		if narrow {
-			filtered := []string{}
-			for _, id := range newList {
-				if !denied[id] {
-					filtered = append(filtered, id)
-				}
-			}
-			newList = filtered
-			var dropped []string
-			for _, id := range previous {
-				if !contains(newList, id) {
-					dropped = append(dropped, id)
-				}
-			}
-			if len(dropped) > 0 {
-				narrowed.Set(p.key, strsAny(dropped))
-			}
-		}
-		if len(skipped) > 0 {
-			sort.Strings(skipped)
-			skippedMessages = append(skippedMessages, "kept deactivated: "+p.token+" "+strings.Join(skipped, ", "))
 		}
 		t.Data.Set(p.key, strsAny(newList))
 		changed = true
 		if err := t.Save(); err != nil {
-			return warnings, narrowed, err
+			return warnings, err
 		}
 	}
-	if changed {
-		if err := RestampBundleHash(root); err != nil {
-			return warnings, narrowed, err
-		}
-	}
-	return append(append(warnings, leftAbsent...), skippedMessages...), narrowed, nil
+	_ = changed
+	return append(warnings, leftAbsent...), nil
 }

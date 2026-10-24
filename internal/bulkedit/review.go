@@ -78,13 +78,7 @@ func ReviewDiff(dir, root, base, head string) (*DiffResult, error) {
 	relative, e := filepath.Rel(root, dir)
 	if e == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		anchor = filepath.ToSlash(relative)
-		parts := strings.Split(anchor, "/")
-		for i := len(parts) - 2; i >= 0; i-- {
-			if parts[i] == "kitty-specs" {
-				anchor = strings.Join(parts[i:i+2], "/")
-				break
-			}
-		}
+
 	}
 	r := CheckDiff(files, m, anchor, statuses)
 	return &r, nil

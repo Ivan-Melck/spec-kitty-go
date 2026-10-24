@@ -61,7 +61,7 @@ for policy in ['rename','manual_review','do_not_change']:
  for extra in extras:
   Path('occurrence_map.yaml').write_text(raw+extra);m=load_occurrence_map(Path.cwd())
   for status in ['', 'A','M','D','R']:
-   out.append(dataclasses.asdict(check_diff_compliance(paths,m,'kitty-specs/own',{p:status for p in paths})))
+   out.append(dataclasses.asdict(check_diff_compliance(paths,m,'kitty-specs/own')))
 print(json.dumps(out,sort_keys=True,indent=2))`
 	oracle := s.Exec("", python, "-c", script)
 	if oracle.Code != 0 {

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/agents"
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
@@ -18,7 +17,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
-	"github.com/spec-kitty/go-kitty3/internal/migrationledger"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/toolsurface"
@@ -116,7 +114,7 @@ func validateUpgradeTarget(from, target string) string {
 	if !ok {
 		return "Invalid project metadata version: " + displayVersion(from)
 	}
-	if t.Compare(f) < 0 {
+	if t.cmp(f) < 0 {
 		return fmt.Sprintf("Refusing to downgrade project metadata from %s to %s", displayVersion(from), displayVersion(target))
 	}
 	return ""
@@ -333,9 +331,6 @@ func runPlannerJSON(w io.Writer, root, targetVersion string, dryRun, noNag bool)
 	}
 	inv := Invocation{CommandPath: []string{"__project_compat_check__"}, RawArgs: raw, FlagNoNag: noNag, EnvCI: isCIEnv(), StdoutTTY: stdoutIsTTY()}
 	p := PlanCompatWith(inv, root, CompatOptions{ReadOnly: true, QueryLatest: true})
-	if p.PendingError != nil {
-		return p.PendingError
-	}
 	p.Pending = nil
 	payload := p.JSON()
 	payload.Set("rendered_human", "")
@@ -355,11 +350,7 @@ func runPlannerJSON(w io.Writer, root, targetVersion string, dryRun, noNag bool)
 			semantic = 2
 		}
 	} else {
-		steps, err := migrationSteps(root, targetVersion)
-		if err != nil {
-			return err
-		}
-		payload.Set("pending_migrations", steps)
+		payload.Set("pending_migrations", migrationSteps(root, targetVersion))
 	}
 	code := semantic
 	if dryRun && semantic != 5 {
@@ -431,7 +422,7 @@ func runFullPlanJSON(w io.Writer, root string, requested any, target string, pro
 		relation = "invalid"
 	} else if current != "unknown" {
 		if c, ok := parsePEP440(current); ok {
-			switch t.Compare(c) {
+			switch t.cmp(c) {
 			case -1:
 				relation = "lower"
 			case 0:
@@ -480,11 +471,7 @@ func runFullPlanJSON(w io.Writer, root string, requested any, target string, pro
 		return cli.Exit(1)
 	}
 	p.Set("roots", prepared.PlanRootsJSON())
-	steps, err := migrationSteps(root, target)
-	if err != nil {
-		return err
-	}
-	p.Set("migrations", steps)
+	p.Set("migrations", migrationSteps(root, target))
 	p.Set("effects", effects)
 	p.Set("dispositions", prepared.PlanDispositionsJSON())
 	p.Set("diagnostics", prepared.PlanDiagnosticsJSON())
@@ -744,10 +731,7 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 	if from == "unknown" {
 		from = "0.0.0"
 	}
-	migrations, err := applicableMigrations(from, target, root)
-	if err != nil {
-		return err
-	}
+	migrations := applicableMigrations(from, target, root)
 	o := &upgradeOutcome{from: current, to: target, dryRun: opt.dryRun, success: true, results: map[string]migrationResult{}, mergeDriverConfig: "skipped", projectRoot: root}
 	now := clock.NowUTCISO()
 	stamp := kittify.VersionStamp{}
@@ -898,58 +882,25 @@ func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOu
 		o.warnings = append(o.warnings, md.NormalizeAndSaveLegacyIDs(root)...)
 	}
 	pre := kittify.CaptureVersionStamp(root)
-	var recordErr error
 	record := func(id, result string, notes *string) {
 		if o.dryRun {
 			return
 		}
-		m, _ := migrationByID(id)
-		records, err := readMigrationRecords(root, m.CloneLocal)
-		if err != nil {
-			recordErr = err
-			return
+		if md.RecordMigration(id, result, notes) {
+			md.Save(root)
 		}
-		for _, old := range records {
-			if old.ID == id && old.Result == result {
-				return
-			}
-		}
-		if err := (migrationledger.Ledger{Root: root}).Append(migrationRecord(m, result, "")); err != nil {
-			recordErr = err
-			return
-		}
-		md.RecordMigration(id, result, notes)
-		_, recordErr = md.Save(root)
 	}
-	var insideRepository *bool
-	var repositoryErr error
 	for _, m := range migrations {
 		var res migrationResult
 		status := ""
 		needed, derr := false, error(nil)
-		recorded := migrationSettled(root, m) && !m.reselectWhenRecorded(root)
-		outside := false
-		if !recorded && m.RequiresGit {
-			if insideRepository == nil && repositoryErr == nil {
-				inside, err := migrationRepositoryProbe(root)
-				insideRepository, repositoryErr = &inside, err
-			}
-			outside = repositoryErr == nil && !*insideRepository
-		}
-		if !recorded && !outside && repositoryErr == nil {
+		recorded := md.HasMigration(m.ID) && !m.reselectWhenRecorded(root)
+		if !recorded {
 			needed, derr = m.detectErr(root)
 		}
 		switch {
 		case recorded:
 			res = migrationResult{Success: true, Warnings: []string{fmt.Sprintf("Migration %s already applied, skipping", m.ID)}}
-			status = "skipped"
-		case m.RequiresGit && repositoryErr != nil:
-			reason := "Cannot determine whether the project is inside a git repository: " + repositoryErr.Error()
-			record(m.ID, "failed", &reason)
-			res = migrationResult{Errors: []string{reason + " (" + m.ID + ")"}}
-			status = "failed"
-		case outside:
-			res = migrationResult{Success: true, Warnings: []string{fmt.Sprintf("Migration %s not applicable here (not inside a git repository); skipping", m.ID)}}
 			status = "skipped"
 		case derr != nil:
 			n := "Cannot safely detect: " + derr.Error()
@@ -963,8 +914,8 @@ func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOu
 			status = "skipped"
 		default:
 			if ok, reason := m.canApply(root); !ok {
-				res = migrationResult{Success: true, Warnings: []string{fmt.Sprintf("Migration %s not applicable here (%s); skipping", m.ID, reason)}}
-				status = "skipped"
+				res = migrationResult{Errors: []string{fmt.Sprintf("Cannot apply %s: %s", m.ID, reason)}}
+				status = "failed"
 				break
 			}
 			var aerr error
@@ -990,11 +941,6 @@ func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOu
 			if !res.Success {
 				status = "failed"
 			}
-		}
-		if recordErr != nil {
-			res.Success = false
-			res.Errors = append(res.Errors, recordErr.Error())
-			status = "failed"
 		}
 		o.warnings = append(o.warnings, res.Warnings...)
 		if _, seen := o.results[m.ID]; !seen {
@@ -1068,9 +1014,6 @@ func finalizeSurfaceRepair(root string, o *upgradeOutcome) {
 	o.driftedReasons = rep.DriftedReasons
 	o.surfaceRepairFailed = rep.Failed
 	o.surfaceRepairMessages = rep.FailureMessages
-	if warning := agents.RefreshAgentBlock(root); warning != "" && !contains(o.warnings, warning) {
-		o.warnings = append(o.warnings, warning)
-	}
 }
 
 // supportingRepairNotice is _supporting_repair_preview: the count of the

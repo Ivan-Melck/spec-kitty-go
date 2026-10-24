@@ -11,7 +11,6 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/branchctx"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
-	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/missionart"
@@ -658,7 +657,7 @@ func resumeProbe(root, handle string) (*jsonx.Object, error) {
 	}
 	mtype := strOf(meta, "mission_type")
 	committed := missionart.IsCommitted(spec, root)
-	substantive := committed && (!dct.RequiresSubstantiveSpecFor(root, mtype) || missionart.IsSubstantive(spec, "spec", mtype))
+	substantive := committed && ((mtype != "software-dev" && mtype != "research") || missionart.IsSubstantive(spec, "spec", mtype))
 	o := jsonx.NewObject("result", "success", "resume_state", "found")
 	for _, kv := range jsonx.NewObject(identity...).Pairs() {
 		o.Set(kv.Key, kv.Value)

@@ -247,10 +247,9 @@ func configTypeName(root string, v any, keys ...string) string {
 
 // AgentConfig is the agents: section (core/agent_config.AgentConfig).
 type AgentConfig struct {
-	Available         []string
-	AutoCommit        bool
-	LintOnEdit        bool
-	ExplicitAgentList bool
+	Available  []string
+	AutoCommit bool
+	LintOnEdit bool
 }
 
 // KnownAgent reports whether an agent key is valid; set by internal/agents
@@ -262,14 +261,8 @@ var ValidAgentKeys = func() []string { return nil }
 
 // LoadAgentConfig reads the agents (or legacy tools) section with upstream's
 // defaults and validation (load_agent_config).
-func LoadAgentConfig(root string) (out AgentConfig, err error) {
-	out = AgentConfig{AutoCommit: true}
-	defer func() {
-		var configErr *ErrConfig
-		if errors.As(err, &configErr) {
-			configErr.Msg += ". Fix .kittify/config.yaml, then check the agent list with `spec-kitty agent config list`."
-		}
-	}()
+func LoadAgentConfig(root string) (AgentConfig, error) {
+	out := AgentConfig{AutoCommit: true}
 	if !ConfigExists(root) {
 		if WarnLog != nil && quietAgentConfig == 0 {
 			WarnLog("Config file not found: " + ConfigPath(root))
@@ -313,11 +306,10 @@ func LoadAgentConfig(root string) (out AgentConfig, err error) {
 	if agents.Len() == 0 {
 		return out, nil
 	}
-	av, _ := agents.Get("available")
-	out.ExplicitAgentList = agents.Has("available")
+	av, availableSet := agents.Get("available")
 	switch t := av.(type) {
 	case nil:
-		if out.ExplicitAgentList {
+		if availableSet {
 			return out, &ErrConfig{"Invalid agents.available in config.yaml: expected a list of agent keys"}
 		}
 	case string:
@@ -367,13 +359,7 @@ func SaveAgentConfig(root string, ac AgentConfig) error {
 	for i, a := range ac.Available {
 		avail[i] = a
 	}
-	section := &jsonx.Object{}
-	if len(ac.Available) > 0 || ac.ExplicitAgentList {
-		section.Set("available", avail)
-	}
-	section.Set("auto_commit", ac.AutoCommit)
-	section.Set("lint_on_edit", ac.LintOnEdit)
-	cfg.Set("agents", section)
+	cfg.Set("agents", jsonx.NewObject("available", avail, "auto_commit", ac.AutoCommit, "lint_on_edit", ac.LintOnEdit))
 	return saveConfig(root, cfg, snap)
 }
 

@@ -1,4 +1,4 @@
-// Code generated from upgrade/migrations/_charter_pack_cutover_snapshots.py (4.0.0rc8); DO NOT EDIT.
+// Code generated from upgrade/migrations/_charter_pack_cutover_snapshots.py (4.0.0rc7); DO NOT EDIT.
 
 package setup
 

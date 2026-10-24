@@ -1,6 +1,7 @@
 package toolsurface
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +15,11 @@ const (
 	cmdSkillRepairHint = "spec-kitty doctor tool-surfaces --kind command-skill --fix"
 	cmdSkillDriftHint  = "spec-kitty doctor tool-surfaces --fix"
 )
+
+// CommandVerify is command_installer.VerifyReport.
+type CommandVerify struct {
+	Drift, Orphans, Gaps, Stale, Unsafe []string
+}
 
 // resolveRejectingLoops resolves p like Path.resolve() (non-strict).
 func resolveRejectingLoops(p string) (string, error) {
@@ -47,6 +53,63 @@ func confined(root, abs string) bool {
 	return r == rr || strings.HasPrefix(r, rr+string(filepath.Separator))
 }
 
+// VerifyCommandSkills is command_installer.verify (read-only).
+func VerifyCommandSkills(root string) (*CommandVerify, error) {
+	entries, err := LoadCommandManifest(root)
+	if err != nil {
+		return nil, err
+	}
+	v := &CommandVerify{}
+	paths := map[string]bool{}
+	for _, e := range entries {
+		paths[e.Path] = true
+	}
+	for _, e := range entries {
+		abs := filepath.Join(root, filepath.FromSlash(e.Path))
+		if !confined(root, abs) {
+			v.Unsafe = append(v.Unsafe, e.Path)
+			continue
+		}
+		if !isCanonicalRelPath(e.Path) {
+			v.Stale = append(v.Stale, e.Path)
+		}
+		b, err := os.ReadFile(abs)
+		if err != nil {
+			v.Gaps = append(v.Gaps, e.Path)
+			continue
+		}
+		if Digest(b) != e.ContentHash {
+			v.Drift = append(v.Drift, e.Path)
+		}
+	}
+	sr := filepath.Join(root, ".agents", "skills")
+	ents, _ := os.ReadDir(sr)
+	for _, d := range ents {
+		st, err := os.Stat(filepath.Join(sr, d.Name()))
+		if err != nil || !st.IsDir() || !strings.HasPrefix(d.Name(), "spec-kitty.") {
+			continue
+		}
+		filepath.WalkDir(filepath.Join(sr, d.Name()), func(p string, de fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if st, err := os.Stat(p); err != nil || !st.Mode().IsRegular() {
+				return nil
+			}
+			rel := filepath.ToSlash(relPosix(root, p))
+			if !confined(root, p) {
+				v.Unsafe = append(v.Unsafe, rel)
+				return nil
+			}
+			if !paths[rel] {
+				v.Orphans = append(v.Orphans, rel)
+			}
+			return nil
+		})
+	}
+	return v, nil
+}
+
 func (c *collectCtx) commandVerify(root string) *CommandVerify {
 	if v, ok := c.verify[root]; ok {
 		return v
@@ -73,7 +136,7 @@ type commandSkillsProvider struct{}
 func (commandSkillsProvider) key() string              { return "command_skills" }
 func (commandSkillsProvider) handles(kind string) bool { return kind == KindCommandSkill }
 func (commandSkillsProvider) definitions() []Definition {
-	return []Definition{{Kind: KindCommandSkill, SourceKind: "generated", Scope: "project", PathPattern: ".agents/skills/spec-kitty-{command}/SKILL.md",
+	return []Definition{{Kind: KindCommandSkill, SourceKind: "generated", Scope: "project", PathPattern: ".agents/skills/spec-kitty.{command}/SKILL.md",
 		Required: "repairable_required", Activation: "skills_invocable", Provider: "command_skills", RepairHint: cmdSkillRepairHint}}
 }
 
@@ -87,7 +150,7 @@ func (p commandSkillsProvider) expand(def Definition, tool, root string) []Insta
 	for _, c := range agents.CommandSkillCommands {
 		rel := agents.CommandSkillPath(c)
 		expected[rel] = true
-		inst := Instance{Def: def, Path: filepath.Join(root, filepath.FromSlash(rel)), Owner: tool, SurfaceID: tool + ".command_skill." + agents.CommandSkillName(c)}
+		inst := Instance{Def: def, Path: filepath.Join(root, filepath.FromSlash(rel)), Owner: tool, SurfaceID: tool + ".command_skill.spec-kitty." + c}
 		for _, e := range manifest {
 			if e.Path == rel {
 				inst.FileHash, inst.HasHash = e.ContentHash, true
@@ -100,7 +163,7 @@ func (p commandSkillsProvider) expand(def Definition, tool, root string) []Insta
 		return out
 	}
 	extra := map[string]bool{}
-	for _, l := range [][]string{v.Orphans, v.Stale, v.Unsafe, v.Legacy} {
+	for _, l := range [][]string{v.Orphans, v.Stale, v.Unsafe} {
 		for _, r := range l {
 			if !expected[r] {
 				extra[r] = true
@@ -141,19 +204,6 @@ func (p commandSkillsProvider) probe(c *collectCtx, inst Instance) Status {
 			switch {
 			case containsStr(v.Unsafe, rel):
 				return Status{inst, StateUnsafe, []Finding{instFinding("unsafe-managed-path", "error", "Command skill path is unsafe or escapes the project root: "+path, inst, true, "")}}
-			case containsStr(v.Collisions, rel):
-				message := agents.CommandSkillWarnings(agents.CommandSkillReport{Collisions: []string{path}})[0]
-				return Status{inst, StatePresent, []Finding{instFinding("unmanaged-spec-kitty-surface", "warning", message, inst, true, "")}}
-			case containsStr(v.Legacy, rel), containsStr(v.Legacy, rel+"/"):
-				if containsStr(v.LegacyOwned, rel) || containsStr(v.LegacyRecorded, rel) {
-					return Status{inst, StateStale, []Finding{instFinding("stale-generated-surface", "warning", "Legacy dotted command skill (renamed to spec-kitty-<command>): "+path, inst, true, "")}}
-				}
-				leftover := rel
-				if containsStr(v.Legacy, rel+"/") {
-					leftover += "/"
-				}
-				message := agents.CommandSkillWarnings(agents.CommandSkillReport{LegacyKept: []string{leftover}})[0]
-				return Status{inst, StatePresent, []Finding{instFinding("stale-generated-surface", "warning", message, inst, true, "")}}
 			case containsStr(v.Stale, rel):
 				return Status{inst, StateStale, []Finding{instFinding("stale-generated-surface", "warning", "Command skill is no longer canonical: "+path, inst, true, "")}}
 			case containsStr(v.Orphans, rel):
@@ -192,7 +242,7 @@ func isCanonicalBytes(root, rel, onDisk string, ok bool) bool {
 	if !ok || !isCanonicalRelPath(rel) {
 		return false
 	}
-	command := agents.ParseCommandSkillPath(rel, false)
+	command := strings.TrimSuffix(strings.TrimPrefix(rel, ".agents/skills/spec-kitty."), "/SKILL.md")
 	ac, err := kittify.LoadAgentConfig(root)
 	if err != nil {
 		return false
@@ -284,31 +334,9 @@ func (p commandSkillsProvider) repair(c *collectCtx, root string, statuses []Sta
 			unresolved[d.Path] = true
 		}
 	}
-	skipPaths := map[string]bool{}
-	deleted := map[string]bool{}
-	for _, e := range a.Effects {
-		if e.After.Kind == "absent" {
-			deleted[e.Path] = true
-		}
-	}
-	for _, d := range a.Dispositions {
-		if d.State == "collision" || d.State == "legacy_kept" {
-			skipPaths[d.Path] = true
-		}
-	}
+	var eligible []string
 	for _, s := range statuses {
-		rel := relPosix(root, s.Inst.Path)
-		if s.State == StateStale && strings.Contains(rel, "/spec-kitty.") && !deleted[rel] {
-			skipPaths[rel] = true
-		}
-	}
-	var eligible, skipped []string
-	for _, s := range statuses {
-		rel := relPosix(root, s.Inst.Path)
-		if containsStr(affected, s.Inst.Owner) && skipPaths[rel] {
-			skipped = append(skipped, s.Inst.ID())
-		}
-		if containsStr(affected, s.Inst.Owner) && !unresolved[rel] && !skipPaths[rel] {
+		if containsStr(affected, s.Inst.Owner) && !unresolved[relPosix(root, s.Inst.Path)] {
 			eligible = append(eligible, s.Inst.ID())
 		}
 	}
@@ -340,9 +368,9 @@ func (p commandSkillsProvider) repair(c *collectCtx, root string, statuses []Sta
 		for _, d := range res.Diagnostics {
 			failed = append(failed, d.Message)
 		}
-		return RepairResult{Repaired: repaired, Skipped: skipped, Failed: failed}
+		return RepairResult{Repaired: repaired, Failed: failed}
 	}
-	return RepairResult{Repaired: eligible, Skipped: skipped, Failed: failed}
+	return RepairResult{Repaired: eligible, Failed: failed}
 }
 
 func absPath(p string) string {

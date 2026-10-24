@@ -74,15 +74,12 @@ func HasGeneratedArtifacts(root string) bool {
 }
 
 // CatalogIsEstablished is _catalog_is_established.
-func CatalogIsEstablished(root string) (bool, error) {
-	store, err := dct.ResolveActivationStore(root)
-	if err != nil {
-		return false, err
-	}
-	for _, kv := range store.Data.Pairs() {
-		if kv.Key == "activated_kinds" || strings.HasPrefix(kv.Key, "activated_") || strings.HasPrefix(kv.Key, "deactivated_") {
-			if l, ok := kv.Value.([]any); ok && len(l) > 0 {
-				return true, nil
+func CatalogIsEstablished(root string) bool {
+	if o := readYAMLObject(Path(root, CharterYAML)); o != nil {
+		for _, k := range []string{"activated_kinds", "activated_directives", "activated_tactics", "activated_styleguides", "activated_toolguides",
+			"activated_paradigms", "activated_procedures", "activated_agent_profiles", "activated_mission_step_contracts"} {
+			if l, ok := mustGetAny(o, k).([]any); ok && len(l) > 0 {
+				return true
 			}
 		}
 	}
@@ -96,7 +93,7 @@ func CatalogIsEstablished(root string) (bool, error) {
 			prior = true
 		}
 	}
-	return prior && ReadInterview(InterviewPath(root)) != nil, nil
+	return prior && ReadInterview(InterviewPath(root)) != nil
 }
 
 // PlannedFreshPaths / PlannedFreshDeletes are _planned_fresh_project_layer_*.

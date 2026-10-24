@@ -41,32 +41,21 @@ func ProjectCharterBlock(root string) *jsonx.Object {
 // AllDirectives is the `all_directives` array (project governance resolver
 // directives, local charter entries first-class).
 func AllDirectives(root string) []any {
-	entries, _ := allDirectiveResolution(root)
-	return entries
-}
-
-func allDirectiveResolution(root string) ([]any, *Governance) {
 	out := []any{}
 	local := map[string]LocalDirective{}
 	for _, d := range LoadLocalDirectives(root) {
 		local[d.ID] = d
 	}
 	var ids []string
-	g, err := ResolveGovernance(root)
-	if err == nil {
-		ids = append(ids, g.Directives...)
-		for _, d := range LoadLocalDirectives(root) {
-			ids = append(ids, d.ID)
-		}
-		ids = dedupe(ids)
+	if g, err := ResolveGovernance(root); err == nil {
+		ids = g.Directives
 	} else {
 		for _, d := range LoadLocalDirectives(root) {
 			ids = append(ids, d.ID)
 		}
 	}
 	CatchLoad(func() { InferRepoLanguages(root, nil, false) }) // _maybe_build_offering_service swallows failures
-	repo := dct.NewOffering(root, dct.OrgRoots(root)).Repo(dct.Directive)
-	identity := dct.NewIdentityIndex(root)
+	repo := dct.NewOffering(root, nil).Repo(dct.Directive)     // _build_offering_service(repo_root): built-in + project, no org layer
 	for _, id := range ids {
 		if l, ok := local[id]; ok {
 			e := jsonx.NewObject("id", id, "source", "project")
@@ -79,13 +68,9 @@ func allDirectiveResolution(root string) ([]any, *Governance) {
 			out = append(out, e)
 			continue
 		}
-		entry := ArtifactDTO(repo.Get(id), id)
-		if layer := identity.SourceLayer(dct.Directive, id); layer != "" && layer != dct.LayerBuiltIn && entry.GetString("source") == dct.LayerBuiltIn {
-			entry.Set("source", layer)
-		}
-		out = append(out, entry)
+		out = append(out, ArtifactDTO(repo.Get(id), id))
 	}
-	return out, g
+	return out
 }
 
 // ContextJSON is the `charter context --json` envelope.
@@ -96,7 +81,7 @@ func ContextJSON(root string, res *Result, missionType string, includeAll bool) 
 	empty := func() []any { return []any{} }
 	// Upstream build order: all_directives (offering service), the
 	// project_charter block, then the action bundle.
-	allDirectives, governance := allDirectiveResolution(root)
+	allDirectives := AllDirectives(root)
 	projectCharter := ProjectCharterBlock(root)
 	directives, tactics, styleguides, toolguides, refs := empty(), empty(), empty(), empty(), empty()
 	if b := ResolveActionBundle(root, res.Action, missionType, res.Depth); BootstrapActions[res.Action] || b.actionNodeDeclared(res.Action) {
@@ -108,14 +93,6 @@ func ContextJSON(root string, res *Result, missionType string, includeAll bool) 
 	}
 	o.Set("directives", directives)
 	o.Set("all_directives", allDirectives)
-	var source any
-	diagnostics := []any{}
-	if governance != nil {
-		source = governance.DirectivesSource
-		diagnostics = strsAny(governance.Diagnostics)
-	}
-	o.Set("diagnostics", diagnostics)
-	o.Set("directives_source", source)
 	o.Set("tactics", tactics)
 	o.Set("styleguides", styleguides)
 	o.Set("toolguides", toolguides)

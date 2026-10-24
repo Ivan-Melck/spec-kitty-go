@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/spec-kitty/go-kitty3/internal/assets"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
 
 // Layout migration (runtime/migrate.py execute_migration): classify the
@@ -18,18 +20,6 @@ var projectSpecificPaths = map[string]bool{"config.yaml": true, "metadata.yaml":
 
 var sharedAssetDirs = map[string]bool{"templates": true, "missions": true, "scripts": true, "command-templates": true}
 
-// Conflict reasons (ConflictReason).
-const (
-	ConflictDestinationExists        = "destination_exists"
-	ConflictDestinationParentBlocked = "destination_parent_blocked"
-	ConflictSourceIsSymlink          = "source_is_symlink"
-)
-
-// LayoutConflict is MigrationConflict.
-type LayoutConflict struct {
-	Source, Destination, Reason string
-}
-
 // LayoutReport is MigrationReport (absolute paths).
 type LayoutReport struct {
 	Removed    []string
@@ -37,18 +27,12 @@ type LayoutReport struct {
 	Moved      [][2]string
 	Kept       []string
 	Unknown    []string
-	Conflicts  []LayoutConflict
 }
 
 const packageAssetRoot = "packs/built-in/missions"
 
 func packageCounterpart(rel, mission string) []byte {
-	var candidates []string
-	if parts := strings.Split(rel, "/"); len(parts) > 2 && parts[0] == "missions" {
-		candidates = append(candidates, path.Join(packageAssetRoot, strings.Join(parts[1:], "/")))
-	}
-	candidates = append(candidates, path.Join(packageAssetRoot, mission, rel), path.Join(packageAssetRoot, rel))
-	for _, p := range candidates {
+	for _, p := range []string{path.Join(packageAssetRoot, mission, rel), path.Join(packageAssetRoot, rel)} {
 		if st, err := assets.Stat(p); err == nil && !st.IsDir() {
 			if b, err := assets.ReadFile(p); err == nil {
 				return b
@@ -103,36 +87,12 @@ func rglob(dir string) []string {
 	return out
 }
 
-func moveBlocker(source, dest, overridesRoot string) string {
-	if isSymlink(source) {
-		return ConflictSourceIsSymlink
-	}
-	if lexists(dest) {
-		return ConflictDestinationExists
-	}
-	chain := []string{overridesRoot}
-	rel, _ := filepath.Rel(overridesRoot, filepath.Dir(dest))
-	cur := overridesRoot
-	if rel != "." {
-		for _, part := range strings.Split(rel, string(filepath.Separator)) {
-			cur = filepath.Join(cur, part)
-			chain = append(chain, cur)
-		}
-	}
-	for _, c := range chain {
-		if lexists(c) && !isDirFollow(c) {
-			return ConflictDestinationParentBlocked
-		}
-	}
-	return ""
-}
-
 // OnLayoutMove, when set, observes each customized-file move (the upgrade
 // auto-commit's mutation log; upstream's audit hook on os.rename).
 var OnLayoutMove func(src, dst string)
 
 // ExecuteLayoutMigration is execute_migration(project_dir, dry_run).
-func ExecuteLayoutMigration(projectDir string, dryRun bool) *LayoutReport {
+func ExecuteLayoutMigration(projectDir string, dryRun bool) (*LayoutReport, error) {
 	const mission = "software-dev"
 	kittify := filepath.Join(projectDir, ".kittify")
 	rep := &LayoutReport{}
@@ -155,17 +115,30 @@ func ExecuteLayoutMigration(projectDir string, dryRun bool) *LayoutReport {
 			if canon == nil {
 				overrides := filepath.Join(kittify, "overrides")
 				dest := filepath.Join(overrides, filepath.FromSlash(rel))
-				if reason := moveBlocker(p, dest, overrides); reason != "" {
-					rep.Conflicts = append(rep.Conflicts, LayoutConflict{p, dest, reason})
-					continue
-				}
 				rep.Moved = append(rep.Moved, [2]string{p, dest})
 				if !dryRun {
-					os.MkdirAll(filepath.Dir(dest), 0o755)
+					parent := filepath.Dir(dest)
+					if err := os.MkdirAll(parent, 0o755); err != nil {
+						// Path.mkdir(exist_ok=True) raises EEXIST when its
+						// immediate target is occupied by a non-directory.
+						if _, statErr := os.Lstat(parent); statErr == nil && !isDirFollow(parent) {
+							err = &os.PathError{Op: "mkdir", Path: parent, Err: syscall.EEXIST}
+						}
+						if pyerr, ok := pyjson.AsOSError(err); ok {
+							pyerr.Filename = parent
+							return nil, pyerr
+						}
+						return nil, err
+					}
 					if OnLayoutMove != nil {
 						OnLayoutMove(p, dest)
 					}
-					os.Rename(p, dest)
+					if err := os.Rename(p, dest); err != nil {
+						if pyerr, ok := pyjson.AsOSError(err); ok {
+							return nil, pyerr
+						}
+						return nil, err
+					}
 				}
 				continue
 			}
@@ -185,7 +158,7 @@ func ExecuteLayoutMigration(projectDir string, dryRun bool) *LayoutReport {
 	if !dryRun {
 		cleanupEmptyDirs(kittify)
 	}
-	return rep
+	return rep, nil
 }
 
 func cleanupEmptyDirs(kittify string) {

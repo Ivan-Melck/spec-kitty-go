@@ -16,7 +16,7 @@ import (
 )
 
 // ContractVersion is the orchestrator-api contract version (envelope.py).
-const ContractVersion = "1.18.0"
+const ContractVersion = "1.16.0"
 
 // MinProviderVersion is the minimum supported provider version.
 const MinProviderVersion = "0.1.0"

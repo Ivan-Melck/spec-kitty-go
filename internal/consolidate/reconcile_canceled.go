@@ -28,14 +28,6 @@ type canceledDependencyContent struct {
 	canceledLane, carrierLane string
 	path                      string
 	state                     pstate
-	renamedFrom               string
-}
-
-func renamedNote(from string) string {
-	if from == "" {
-		return ""
-	}
-	return " (renamed from '" + from + "')"
 }
 
 func attestTail(wpID string) string {
@@ -82,7 +74,7 @@ func describeCanceledContent(e canceledPath) string {
 	if !e.canceled.present {
 		situation = fmt.Sprintf("file '%s' was deleted by %s (lane %s) and that deletion is on the target — approved content would be lost", e.path, who, e.laneID)
 	} else {
-		situation = fmt.Sprintf("file '%s'%s carries %s's change (lane %s) on the target — canceled work would ship", e.path, renamedNote(e.renamedFrom), who, e.laneID)
+		situation = fmt.Sprintf("file '%s' carries %s's change (lane %s) on the target — canceled work would ship", e.path, who, e.laneID)
 	}
 	return situation + "; " + recovery
 }
@@ -93,9 +85,9 @@ func describeCanceledReachable(e canceledDependencyContent) string {
 	if !e.state.present {
 		effect = "its deletion"
 	}
-	situation := fmt.Sprintf("%s: file '%s'%s carries %s's work (lane %s), which reached "+
+	situation := fmt.Sprintf("%s: file '%s' carries %s's work (lane %s), which reached "+
 		"approved lane %s through a dependency lane, and %s IS on the target — canceled work would ship",
-		canceledReachableCode, e.path, renamedNote(e.renamedFrom), who, e.canceledLane, e.carrierLane, effect)
+		canceledReachableCode, e.path, who, e.canceledLane, e.carrierLane, effect)
 	recovery := fmt.Sprintf("undo %s to '%s' on lane %s through a surviving WP's governed work "+
 		"(do not rebuild the lane, and no attestation lifts this while the content ships), %s", effect, e.path, e.carrierLane, recoveryTail)
 	return situation + "; " + recovery
@@ -160,27 +152,13 @@ func unreadableCanceledDependencyRefusal(root string, m *lanes.Manifest, exclude
 			continue
 		}
 		branch := laneBranchFor(m, l.LaneID)
-		refuse, logDetail := false, ""
+		refuse := false
 		if !branchExists(root, branch) {
-			switch {
-			case !eventsOK:
-				refuse, logDetail = true, unattributableFor(reasonEventsUnreadable, l.LaneID, l.WPIDs[0]).detail+" (status event log unreadable)"
-			case !laneNeverStarted(events, l.WPIDs):
-				refuse = true
-			case revParse(root, lanes.LaneTipRefPrefix+branch) != "":
-				refuse = true
-			}
+			refuse = true
 		} else if _, err := commitsInRange(root, base, branch); err != nil {
 			refuse = true
 		}
 		if !refuse {
-			continue
-		}
-		if logDetail != "" {
-			clauses = append(clauses, fmt.Sprintf("fully-canceled lane %s (branch '%s') is a dependency of a live lane but its branch is missing, "+
-				"and the status event log could not be read to prove the lane never started (%s). "+
-				"Recovery: repair or restore the Mission's status.events.jsonl (for example from git history), "+
-				"then re-run `spec-kitty consolidate`", l.LaneID, branch, logDetail))
 			continue
 		}
 		clauses = append(clauses, fmt.Sprintf("fully-canceled lane %s (branch '%s') is a dependency of a live lane but its commits cannot be read "+
@@ -321,7 +299,7 @@ func resolveCanceledDependencyLanes(in claimInput, wps map[string]string, prefix
 		for _, p := range order {
 			v := live[p]
 			sha := v[0].(string)
-			res.content = append(res.content, canceledDependencyContent{wpsOf[laneOf[sha]], laneOf[sha], cid, p, v[1].(pstate), v[2].(string)})
+			res.content = append(res.content, canceledDependencyContent{wpsOf[laneOf[sha]], laneOf[sha], cid, p, v[1].(pstate)})
 		}
 	}
 	res.unapproved = map[string]bool{}

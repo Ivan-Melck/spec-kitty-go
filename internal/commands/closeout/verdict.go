@@ -2,13 +2,11 @@ package closeout
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spec-kitty/go-kitty3/internal/acceptance"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
-	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
 )
 
 const ownedCheckoutHelp = "Run against an owned checkout: a linked checkout that owns this mission. Refuses the repository root checkout, lane worktrees and coordination worktrees."
@@ -29,7 +27,6 @@ func verdictCommand() *cli.Command {
 			{Name: "verification-command", Kind: cli.String, Metavar: "<str>", Help: "grep pattern or command verifying the invariant's absence"},
 			{Name: "scope", Kind: cli.String, Metavar: "<str>", Help: "Whitespace-separated repo-relative search root(s); grep_absence only"},
 			{Name: "execute", Kind: cli.Bool, Negatable: true, Default: true, Help: "Run the invariant's verification immediately after registering (FR-008; default: on)"},
-			{Name: "owned-checkout", Kind: cli.String, Metavar: "<path>", Help: ownedCheckoutHelp},
 			{Name: "json", Kind: cli.Bool, Help: "Output JSON format"},
 		},
 		Run: runAcceptanceVerdict,
@@ -83,28 +80,8 @@ func runAcceptanceVerdict(ctx *cli.Context) error {
 		verdictError(ctx, jsonMode, "Could not locate project root")
 		return cli.Exit(1)
 	}
-	// Validate ownership exactly once (explicit --owned-checkout or flagless
-	// adoption); an owned verdict is recorded on the owned checkout (#6023).
-	var claim *string
-	if ctx.IsSet("owned-checkout") {
-		c := ctx.String("owned-checkout")
-		claim = &c
-	}
-	cwd, _ := os.Getwd()
-	owned, oerr := ownedcheckout.ResolveOrAdopt(root, claim, ctx.String("mission"), cwd, ownedcheckout.Options{})
-	if oerr != nil {
-		if e, ok := oerr.(*ownedcheckout.Error); ok {
-			ownedcheckout.Emit(ctx.Stdout, ctx.Stderr, e, jsonMode, ownedcheckout.SuccessFalseEnvelope)
-			return cli.Exit(1)
-		}
-		verdictError(ctx, jsonMode, oerr.Error())
-		return cli.Exit(1)
-	}
-	var slug string
-	var err error
-	if owned != nil {
-		root, slug = owned.OwnedRoot, owned.MissionSlug
-	} else if slug, err = resolveStrict(ctx, root, ctx.String("mission"), jsonMode); err != nil {
+	slug, err := resolveStrict(ctx, root, ctx.String("mission"), jsonMode)
+	if err != nil {
 		return err
 	}
 	dir, err := acceptance.MatrixWriteDir(root, slug)
@@ -170,12 +147,7 @@ func runAcceptanceVerdict(ctx *cli.Context) error {
 	} else {
 		fresh.SetCriterion(row)
 	}
-	var out *acceptance.Outcome
-	if owned != nil {
-		out, err = acceptance.WriteAndCommitMatrixOwned(owned.RepositoryRoot, root, slug, dir, fresh, message)
-	} else {
-		out, err = acceptance.WriteAndCommitMatrix(root, slug, dir, fresh, message)
-	}
+	out, err := acceptance.WriteAndCommitMatrix(root, slug, dir, fresh, message)
 	if err != nil {
 		verdictError(ctx, jsonMode, err.Error())
 		return cli.Exit(1)

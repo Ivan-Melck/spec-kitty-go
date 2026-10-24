@@ -155,13 +155,6 @@ func RunLaneMerge(root string, o LaneMergeOptions) error {
 		return &LaneMergeError{Msg: fmt.Sprintf("%s: %s Next step: %s", pr.Code, pr.Message, pr.NextStep)}
 	}
 	if planningOnly(m) {
-		refusal, err := SingleBranchEvidenceRefusal(root, sf.StatusDir(), m, lm.canceledWPs())
-		if err != nil {
-			return err
-		}
-		if refusal != "" {
-			return &ApprovedBoundError{Msg: refusal, Codes: SingleBranchRefusalCodes(refusal)}
-		}
 		var buf strings.Builder
 		ret := ResolveRetention(sf.PrimaryDir, nil, nil)
 		r := &run{w: &buf, root: root, slug: o.Slug, sf: sf, target: o.Target, strategy: o.Strategy, ret: ret, originGated: true}
@@ -183,9 +176,7 @@ func RunLaneMerge(root string, o LaneMergeOptions) error {
 	var gateWPs []string
 	for _, l := range m.Lanes {
 		for _, id := range l.WPIDs {
-			if !canceled[id] {
-				gateWPs = append(gateWPs, id)
-			}
+			gateWPs = append(gateWPs, id)
 		}
 	}
 	var blocking []string
@@ -206,9 +197,6 @@ func RunLaneMerge(root string, o LaneMergeOptions) error {
 	restore := activateDrivers(root)
 	defer restore()
 	for _, l := range m.Lanes {
-		if laneFullyCanceled(l, canceled) {
-			continue
-		}
 		if err := lm.consolidateLane(l); err != nil {
 			return err
 		}
@@ -217,9 +205,6 @@ func RunLaneMerge(root string, o LaneMergeOptions) error {
 		return err
 	}
 	for _, l := range m.Lanes {
-		if laneFullyCanceled(l, canceled) {
-			continue
-		}
 		for _, id := range l.WPIDs {
 			lm.markDone(id)
 		}

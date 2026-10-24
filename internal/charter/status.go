@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
@@ -359,9 +358,10 @@ func collectProvenanceStatus(root string, m *synthesisManifest, includeEntries b
 
 var (
 	evidenceExcludedDirs = map[string]bool{"node_modules": true, ".venv": true, "venv": true, "env": true, "__pycache__": true,
-		".git": true, "dist": true, "build": true, ".worktrees": true, ".mypy_cache": true, ".tox": true,
-		".kittify": true, ".claude": true, ".agents": true, ".codex": true, ".gemini": true, ".cursor": true, ".qwen": true, ".opencode": true, ".windsurf": true, ".kilocode": true, ".augment": true, ".amazonq": true, ".kiro": true, ".agent": true, ".llxprt": true, ".vibe": true}
-
+		".git": true, "dist": true, "build": true, ".worktrees": true, ".mypy_cache": true, ".tox": true}
+	languageIndicators = [][2]string{{"pyproject.toml", "python"}, {"setup.py", "python"}, {"setup.cfg", "python"},
+		{"requirements.txt", "python"}, {"go.mod", "go"}, {"Cargo.toml", "rust"}, {"pom.xml", "java"}, {"build.gradle", "java"},
+		{"Gemfile", "ruby"}, {"composer.json", "php"}, {"package.json", "javascript"}}
 	frameworkIndicators = [][2]string{{"manage.py", "django"}, {"next.config.ts", "nextjs"}, {"next.config.js", "nextjs"},
 		{"angular.json", "angular"}, {"svelte.config.js", "svelte"}, {"svelte.config.ts", "svelte"}, {"nuxt.config.ts", "nuxt"}, {"nuxt.config.js", "nuxt"}}
 	testFrameworkIndicators = [][2]string{{"pytest.ini", "pytest"}, {"conftest.py", "pytest"}, {"jest.config.js", "jest"},
@@ -372,7 +372,6 @@ var (
 type CodeSignals struct {
 	StackID, PrimaryLanguage  string
 	Frameworks, TestFramework []string
-	Languages                 []string
 	Representative            []string
 }
 
@@ -405,11 +404,10 @@ func readDirUnsorted(dir string) ([]os.DirEntry, error) {
 }
 
 // CollectCodeSignals is CodeReadingCollector(root).collect().
-func CollectCodeSignals(root string) CodeSignals { return collectCodeSignals(root, true) }
-func collectCodeSignals(root string, useConfigured bool) CodeSignals {
+func CollectCodeSignals(root string) CodeSignals {
 	indicators := map[string]bool{}
 	var src, tests []string
-	observation := languageObservation{Depths: map[string]int{}}
+	ts, js := 0, 0
 	var walk func(dir, rel string, depth int)
 	walk = func(dir, rel string, depth int) {
 		if depth > 3 {
@@ -440,7 +438,12 @@ func collectCodeSignals(root string, useConfigured bool) CodeSignals {
 				rp = rel + "/" + name
 			}
 			indicators[name] = true
-			observation.Observe(name, depth)
+			switch {
+			case strings.HasSuffix(name, ".ts") || strings.HasSuffix(name, ".tsx"):
+				ts++
+			case strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".jsx") || strings.HasSuffix(name, ".mjs"):
+				js++
+			}
 			if isTestFile(rp, name) {
 				tests = append(tests, rp)
 			} else {
@@ -456,16 +459,19 @@ func collectCodeSignals(root string, useConfigured bool) CodeSignals {
 		}
 	}
 	walk(root, "", 0)
-	languages := []string(nil)
-	if useConfigured {
-		languages = ConfiguredLanguages(root)
-	}
-	if len(languages) == 0 {
-		languages = observedLanguages(root, observation)
-	}
 	lang := "unknown"
-	if len(languages) > 0 {
-		lang = languages[0]
+	if indicators["package.json"] {
+		lang = "javascript"
+		if indicators["tsconfig.json"] || (ts+js > 0 && float64(ts)/float64(ts+js) > 0.5) {
+			lang = "typescript"
+		}
+	} else {
+		for _, li := range languageIndicators {
+			if li[0] != "package.json" && indicators[li[0]] {
+				lang = li[1]
+				break
+			}
+		}
 	}
 	var fws, tfs []string
 	for _, f := range frameworkIndicators {
@@ -498,7 +504,7 @@ func collectCodeSignals(root string, useConfigured bool) CodeSignals {
 		stack = strings.Join(parts, "+")
 	}
 	rep := append(append([]string{}, src[:min(5, len(src))]...), tests[:min(5, len(tests))]...)
-	return CodeSignals{StackID: stack, PrimaryLanguage: lang, Languages: languages, Frameworks: fws, TestFramework: tfs, Representative: rep}
+	return CodeSignals{StackID: stack, PrimaryLanguage: lang, Frameworks: fws, TestFramework: tfs, Representative: rep}
 }
 
 func contains(l []string, s string) bool {
@@ -575,7 +581,7 @@ func SummarizeEvidence(root string) (*jsonx.Object, error) {
 		return nil, err
 	}
 	cs := CollectCodeSignals(root)
-	code := jsonx.NewObject("stack_id", cs.StackID, "primary_language", cs.PrimaryLanguage, "languages", strs(cs.Languages), "frameworks", strs(cs.Frameworks),
+	code := jsonx.NewObject("stack_id", cs.StackID, "primary_language", cs.PrimaryLanguage, "frameworks", strs(cs.Frameworks),
 		"test_frameworks", strs(cs.TestFramework), "representative_files_count", len(cs.Representative),
 		"representative_files_preview", strs(cs.Representative[:min(5, len(cs.Representative))]))
 	warnings := []any{}
@@ -827,14 +833,5 @@ func BundleContentHash(root string) string {
 	if err != nil {
 		return ""
 	}
-	parts := []string{hashContent(string(b))}
-	if ledger, err := os.ReadFile(dct.ActivationLedgerPath(root)); err == nil {
-		if !utf8.Valid(ledger) {
-			return ""
-		}
-		parts = append(parts, hashContent(string(ledger)))
-	} else if !os.IsNotExist(err) {
-		return ""
-	}
-	return hashContent(strings.Join(parts, "\n"))
+	return hashContent(hashContent(string(b)))
 }

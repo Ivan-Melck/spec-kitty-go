@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 )
@@ -175,12 +174,8 @@ func firstParagraphDescription(body string) string {
 }
 
 func skillYAMLScalar(text string) string {
-	nonPrintable := false
-	for _, r := range text {
-		nonPrintable = nonPrintable || unicode.IsControl(r) || r == 0x2028 || r == 0x2029 || r == 0xfffe || r == 0xffff
-	}
-	if text != "" && text == strings.TrimSpace(text) && !yamlKeywords[text] && !reUnsafe.MatchString(text) && !nonPrintable && !strings.ContainsAny(text[:1], "-+.0123456789") {
+	if text != "" && text == strings.TrimSpace(text) && !yamlKeywords[text] && !reUnsafe.MatchString(text) && !strings.ContainsAny(text[:1], "-+.0123456789") {
 		return text
 	}
-	return skillDoubleQuoted(text)
+	return `"` + strings.ReplaceAll(strings.ReplaceAll(text, `\`, `\\`), `"`, `\"`) + `"`
 }

@@ -1,3 +1,6 @@
+> Historical verification of the former RC8 target. The current target is
+> [published RC7](RC7.md); these results do not qualify the RC7 executable.
+
 # Current RC8 parity target
 
 The selected target is upstream `main` at

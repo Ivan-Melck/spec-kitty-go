@@ -8,13 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/spec-kitty/go-kitty3/internal/charter"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/glossary"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/ulid"
 )
 
@@ -246,7 +246,6 @@ type CommitOutcome struct {
 	Committed bool
 	Warning   string // stderr of a successful commit (logged at WARNING)
 	Refusal   string
-	Skipped   string
 }
 
 func readStarted(root, id string) (*jsonx.Object, error) {
@@ -282,14 +281,6 @@ func Complete(root, id, outcome string, opt CompleteOptions) (*Completed, *Commi
 	if ClosedIDs(root)[id] {
 		return nil, nil, &AlreadyClosedError{id}
 	}
-	var evidence *string
-	if opt.Evidence != nil {
-		c, err := evidenceContent(root, id, *opt.Evidence)
-		if err != nil {
-			return nil, nil, err
-		}
-		evidence = &c
-	}
 	c := &Completed{InvocationID: id, CompletedAt: clock.NowUTCISO(), Outcome: outcome, ClosedBy: "agent"}
 	if opt.Evidence != nil {
 		c.EvidenceRef, c.hasEvidence = *opt.Evidence, true
@@ -297,10 +288,14 @@ func Complete(root, id, outcome string, opt CompleteOptions) (*Completed, *Commi
 	if err := WriteCompleted(root, c); err != nil {
 		return nil, nil, err
 	}
-	if evidence != nil {
+	if opt.Evidence != nil {
+		evidence, err := evidenceContent(root, *opt.Evidence)
+		if err != nil {
+			return nil, nil, err
+		}
 		dir := filepath.Join(root, ".kittify", "evidence", id)
 		os.MkdirAll(dir, 0o755)
-		os.WriteFile(filepath.Join(dir, "evidence.md"), []byte(*evidence), 0o644)
+		os.WriteFile(filepath.Join(dir, "evidence.md"), []byte(evidence), 0o644)
 		snap := jsonx.NewObject("event", "completed", "invocation_id", id, "completed_at", c.CompletedAt,
 			"outcome", c.Outcome, "closed_by", c.ClosedBy, "evidence_ref", c.EvidenceRef)
 		os.WriteFile(filepath.Join(dir, "record.json"), []byte(jsonx.Dumps(snap, jsonx.Pretty)), 0o644)
@@ -318,12 +313,7 @@ func Complete(root, id, outcome string, opt CompleteOptions) (*Completed, *Commi
 	return c, commitOpRecord(root, id, first), nil
 }
 
-// UnsupportedEvidenceError is raised for non-UTF-8 evidence.
-type UnsupportedEvidenceError struct{ Msg string }
-
-func (e *UnsupportedEvidenceError) Error() string { return e.Msg }
-
-func evidenceContent(root, id, ref string) (string, error) {
+func evidenceContent(root, ref string) (string, error) {
 	var cand string
 	if filepath.IsAbs(ref) {
 		cand = ref
@@ -336,10 +326,8 @@ func evidenceContent(root, id, ref string) (string, error) {
 	}
 	if cand != "" {
 		if b, err := os.ReadFile(cand); err == nil {
-			if !utf8.Valid(b) {
-				return "", &UnsupportedEvidenceError{fmt.Sprintf("Cannot use %s as evidence for invocation %s: the file is not UTF-8 text. Tier 2 evidence must be UTF-8 text. No completion was recorded by this call; re-run complete with a UTF-8 text evidence file.", ref, id)}
-			}
-			return string(b), nil
+			text, err := pyjson.DecodeUTF8(b)
+			return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n"), err
 		}
 	}
 	return ref, nil

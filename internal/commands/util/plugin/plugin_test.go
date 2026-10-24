@@ -72,7 +72,7 @@ func TestPluginBuildParity(t *testing.T) {
 	// manifests are withheld, the ledger records the rest, and the build
 	// fails with a BuildError traceback.
 	p.Both(func(s *testkit.Sandbox) {
-		s.WriteFile("dist/spec-kitty-plugins/claude-code/skills/spec-kitty-plan/SKILL.md", "edited\n")
+		s.WriteFile("dist/spec-kitty-plugins/claude-code/skills/spec-kitty.plan/SKILL.md", "edited\n")
 		os.Chmod(filepath.Join(s.Dir, "dist/spec-kitty-plugins/claude-code/agents/generic-agent.md"), 0o600)
 		os.Remove(filepath.Join(s.Dir, "dist/spec-kitty-plugins/claude-code/.claude-plugin/plugin.json"))
 		os.Remove(filepath.Join(s.Dir, "dist/spec-kitty-plugins/claude-code/agents/scribe-sally.md"))
@@ -110,7 +110,7 @@ func TestPluginBuildE2E(t *testing.T) {
 	if r.Code != 0 || !strings.HasSuffix(r.Stdout, "Bundle written to dist/spec-kitty-plugins/codex\n") {
 		t.Fatalf("code=%d\n%s%s", r.Code, r.Stdout, r.Stderr)
 	}
-	if !s.Exists("dist/spec-kitty-plugins/codex/skills/spec-kitty-specify/SKILL.md") || !s.Exists("dist/spec-kitty-plugins/codex/.spec-kitty-bundle.json") {
+	if !s.Exists("dist/spec-kitty-plugins/codex/skills/spec-kitty.specify/SKILL.md") || !s.Exists("dist/spec-kitty-plugins/codex/.spec-kitty-bundle.json") {
 		t.Fatal("bundle files missing")
 	}
 }

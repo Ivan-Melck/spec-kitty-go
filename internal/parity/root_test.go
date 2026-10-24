@@ -10,7 +10,7 @@ import (
 func TestVersion(t *testing.T) {
 	s := testkit.NewSandbox(t)
 	r := s.MustRun("--version")
-	if r.Stdout != "spec-kitty-cli version 4.0.0rc8\n" {
+	if r.Stdout != "spec-kitty-cli version 4.0.0rc7\n" {
 		t.Fatalf("got %q", r.Stdout)
 	}
 }

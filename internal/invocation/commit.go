@@ -43,7 +43,7 @@ func commitOpRecord(root, id string, started *jsonx.Object) *CommitOutcome {
 
 // commitOp is _commit_op_record; a doctor-sweep close commits only the
 // op-closures spine.
-func commitOp(root, id string, started *jsonx.Object, sweep bool, policy ...*commitPolicy) *CommitOutcome {
+func commitOp(root, id string, started *jsonx.Object, sweep bool) *CommitOutcome {
 	profile := started.GetString("profile_id")
 	if profile == "" {
 		profile = "unknown"
@@ -63,29 +63,12 @@ func commitOp(root, id string, started *jsonx.Object, sweep bool, policy ...*com
 		rel = ClosureSpine
 	}
 	branch := currentBranch(root)
-	if branch == "" && !gitx.OK(root, "rev-parse", "--is-inside-work-tree") {
+	if branch == "" {
 		return &CommitOutcome{Refusal: "not a git worktree"}
 	}
-	p := &commitPolicy{}
-	if len(policy) > 0 {
-		p = policy[0]
-	}
-	tracking, err := p.trackingFor(root)
-	if err != nil {
-		return &CommitOutcome{Skipped: "git probe failed while deciding whether to commit the Op record: " + err.Error()}
-	}
-	skip, err := OpCommitSkipReason(root, rel, tracking)
-	if err != nil {
-		return &CommitOutcome{Skipped: "git probe failed while deciding whether to commit the Op record: " + err.Error()}
-	}
-	if skip != "" {
-		return &CommitOutcome{Skipped: skip}
-	}
-	if branch == "" {
-		return &CommitOutcome{Refusal: "detached HEAD"}
-	}
 	if create.ProtectedBranches(root)[branch] && !protectionHatch() {
-		return &CommitOutcome{Refusal: "protected branch " + pyRepr(branch)}
+		m := fmt.Sprintf("safe_commit: refusing to commit to protected branch %s in %s. Retry against a non-protected topic branch, or set SPEC_KITTY_ALLOW_PROTECTED_BRANCH_COMMITS=1 if you own this branch.", pyRepr(branch), root)
+		return &CommitOutcome{Refusal: "ProtectedBranchRefused(" + pyRepr(m) + ")"}
 	}
 	if res, err := gitx.Exec(root, nil, nil, "add", "--force", "--", rel); err != nil || res.Code != 0 {
 		reason := strings.TrimSpace(res.Stderr)

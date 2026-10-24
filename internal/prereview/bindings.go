@@ -60,11 +60,9 @@ func ResolveGateBindings(root, missionType, edge string) (*BindingResolution, er
 	if err != nil {
 		return nil, err
 	}
-	act, err := dct.LoadActivation(root)
-	if err != nil {
-		return nil, err
+	if act, err := dct.LoadActivation(root); err == nil {
+		g = dct.FilterByActivation(g, act, off)
 	}
-	g = dct.FilterByActivation(g, act, off)
 	if !g.NodeURNs()[urn] {
 		return &BindingResolution{Reason: fmt.Sprintf("gate binding present for edge %s but owning contract %s is not activated", edge, urn)}, nil
 	}

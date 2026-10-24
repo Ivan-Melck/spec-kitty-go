@@ -13,27 +13,10 @@ import (
 
 // CommandSkillReport mirrors command_installer.InstallReport.
 type CommandSkillReport struct {
-	Added                                                   []string // written (first time or refreshed render)
-	AlreadyInstalled                                        []string // canonical bytes, manifest entry unchanged
-	ReusedShared                                            []string // canonical bytes, entry gained the agent / hash
-	Regenerated                                             []string // drifted manifest-owned projection rewritten
-	Collisions, LegacyRemoved, LegacyKept, LegacyUnrecorded []string
-}
-
-var CommandSkillInstallHook func(root, agent, now string) (CommandSkillReport, error)
-
-func CommandSkillWarnings(r CommandSkillReport) []string {
-	var out []string
-	for _, path := range r.Collisions {
-		out = append(out, "Your own folder blocks command skill "+path+" — rename or remove it, then run `spec-kitty doctor skills --fix`")
-	}
-	for _, path := range r.LegacyKept {
-		out = append(out, "Legacy dotted command skill "+path+" has your edits, so it was kept; it is no longer managed — remove it when you no longer need your edits")
-	}
-	for _, path := range r.LegacyUnrecorded {
-		out = append(out, "Legacy dotted command skill "+path+" is not recorded in the command-skill manifest and is not Spec Kitty's unmodified rendering, so it was left in place; it is not managed — remove it when you no longer need it (`spec-kitty doctor skills` lists it)")
-	}
-	return out
+	Added            []string // written (first time or refreshed render)
+	AlreadyInstalled []string // canonical bytes, manifest entry unchanged
+	ReusedShared     []string // canonical bytes, entry gained the agent / hash
+	Regenerated      []string // drifted manifest-owned projection rewritten
 }
 
 // InstalledCount is added + reused_shared + regenerated.
@@ -103,9 +86,6 @@ type cmdSkillPlan struct {
 // are written (0644); manifest-owned drifted files are regenerated; identical
 // files gain the agent as an owner.
 func InstallCommandSkills(root, agent, now string) (CommandSkillReport, error) {
-	if CommandSkillInstallHook != nil {
-		return CommandSkillInstallHook(root, agent, now)
-	}
 	var rep CommandSkillReport
 	if !IsCommandSkillAgent(agent) {
 		return rep, &InstallerError{Code: "unsupported_agent", Context: jsonx.NewObject("agents", []any{agent})}
@@ -211,20 +191,14 @@ func InstallCommandSkills(root, agent, now string) (CommandSkillReport, error) {
 
 // CommandSkillRemoveReport is command_installer.RemoveReport.
 type CommandSkillRemoveReport struct {
-	Deref, Deleted, Kept                        []string
-	LegacyRemoved, LegacyKept, LegacyUnrecorded []string
+	Deref, Deleted, Kept []string
 }
-
-var CommandSkillRemoveHook func(root, agent string) (CommandSkillRemoveReport, error)
 
 // RemoveCommandSkills is command_installer.remove: releases agent's
 // ownership; the final owner's unchanged file (and its then-empty skill
 // directory) is deleted. An edited owned file aborts with
 // file_mutation_detected before anything changes.
 func RemoveCommandSkills(root, agent string) (CommandSkillRemoveReport, error) {
-	if CommandSkillRemoveHook != nil {
-		return CommandSkillRemoveHook(root, agent)
-	}
 	var rep CommandSkillRemoveReport
 	if !IsCommandSkillAgent(agent) {
 		return rep, &InstallerError{Code: "unsupported_agent", Context: jsonx.NewObject("agents", []any{agent})}

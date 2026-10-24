@@ -66,10 +66,6 @@ func runCorpus(t *testing.T, c corpus) {
 		s.Git("add", "-A")
 		s.Git("commit", "-qm", "legacy layout", "--allow-empty")
 	})
-	// The freshness signature hashes renderer code and its installation path.
-	// Warm each executable's own cache before comparing project upgrades; a
-	// Python-to-Go renderer-cache transition is independent of legacy layout.
-	p.Go.Run("mission", "list", "--json")
 	cmp := func(args ...string) {
 		t.Helper()
 		g, o := p.Run(args...)
@@ -256,7 +252,7 @@ func writeWorktrees(s *testkit.Sandbox) {
 }
 
 func TestUpgradeWorktreeFanOutMatchesOracle(t *testing.T) {
-	for _, v := range []string{"3.2.0", "4.0.0rc8"} {
+	for _, v := range []string{"3.2.0", "4.0.0rc7"} {
 		v := v
 		t.Run(v, func(t *testing.T) {
 			t.Parallel()

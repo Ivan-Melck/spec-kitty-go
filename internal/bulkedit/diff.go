@@ -103,13 +103,6 @@ func classify(value string, m *Map, anchor, status string) Assessment {
 		a.Reason = fmt.Sprintf("'%s' is the mission's own runtime-state bookkeeping file (FR-007 allowlist) — exempt from occurrence classification.", base)
 		return a
 	}
-	parts := strings.Split(posix, "/")
-	foreign := len(parts) >= 2 && parts[0] == "kitty-specs" && (anchor == "" || parts[1] != path.Base(strings.Trim(anchor, "/")))
-	if status == "A" && !foreign {
-		a.Source = "added"
-		a.Reason = "File is CREATED by this diff — it has no pre-existing occurrence for the map to protect"
-		return a
-	}
 	for _, e := range rawObjects(m, "exceptions") {
 		if e.GetString("field_path") != "" || e.GetString("path") == "" || !glob(posix, e.GetString("path")) {
 			continue
@@ -160,25 +153,6 @@ func classify(value string, m *Map, anchor, status string) Assessment {
 		a.Source = "structural-target"
 		a.Action = "structural_edit"
 		a.Reason = "Declared structural target: " + reason
-		return a
-	}
-	nonOccurrence := ""
-	if placeholderNames[base] {
-		nonOccurrence = "empty-directory marker (zero bytes, no occurrences)"
-	} else if status == "A" && lockfileNames[base] {
-		nonOccurrence = fmt.Sprintf("'%s' is a generated dependency lockfile — resolver output, regenerated rather than edited", base)
-	} else {
-		segments := strings.Split(strings.TrimLeft(base, "."), ".")
-		for _, suffix := range segments[1:] {
-			if opaqueSuffixes["."+strings.ToLower(suffix)] {
-				nonOccurrence = fmt.Sprintf("opaque binary payload ('.%s') — carries no reviewable textual occurrence", suffix)
-				break
-			}
-		}
-	}
-	if nonOccurrence != "" {
-		a.Source = "non-occurrence"
-		a.Reason = nonOccurrence
 		return a
 	}
 	a.Category = ClassifyPath(posix)

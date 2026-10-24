@@ -261,9 +261,6 @@ func (st *moveState) run() error {
 	if err := st.runPreReviewGate(); err != nil {
 		return err
 	}
-	if err := st.requireSingleBranchImplementation(); err != nil {
-		return err
-	}
 	if err := st.completeDeferredReadiness(); err != nil {
 		return err
 	}
@@ -947,7 +944,7 @@ func (st *moveState) precedingGuards() *refusal {
 	if r := st.guardOwnership(); r != nil {
 		return r
 	}
-	return st.guardDoneExit()
+	return nil
 }
 
 // authorizeReviewOverride is _authorize_review_override.
@@ -1059,25 +1056,6 @@ func (st *moveState) roleAllowance() bool {
 		(t == string(status.Claimed) || t == string(status.InProgress) || t == string(status.ForReview)) &&
 		status.IsLatestImplementer(st.latestImplementer, st.agent)
 	return reviewer || implementer
-}
-
-func (st *moveState) guardDoneExit() *refusal {
-	if st.force || status.ResolveLaneAlias(st.oldLane) != string(status.Done) {
-		return nil
-	}
-	t := status.ResolveLaneAlias(st.target)
-	if !status.IsBackwardTransition(string(status.Done), t) {
-		return nil
-	}
-	if t == string(status.Planned) && !(st.hasFeedback && st.feedbackExists && st.feedbackIsFile && strings.TrimSpace(st.feedbackContent) != "") {
-		return nil
-	}
-	fb := ""
-	if t == string(status.Planned) {
-		fb = " --review-feedback-file <file>"
-	}
-	return &refusal{err: fmt.Sprintf("❌ Cannot move %s from 'done' to '%s' without --force: 'done' is a terminal lane, and leaving it needs an explicit force.\n\nTo rework this work package deliberately, run:\n  spec-kitty agent tasks move-task %s --mission %s --to %s%s --force --note \"<why>\"\n\nFor a merged mission, reopen it first (this does not move work package lanes):\n  spec-kitty mission reopen %s --reason \"<why>\"",
-		st.taskID, t, st.taskID, st.m.Slug, t, fb, st.m.Slug)}
 }
 
 func plannedRollbackMessage(taskID, old, target string) string {
@@ -1409,7 +1387,7 @@ func buildTransitionPlan(old, target string, force bool, feedbackPointer string,
 			reason = strp(fmt.Sprintf("move-task: %s -> %s", old, target))
 		}
 	}
-	if !force && status.ResolveLaneAlias(old) != string(status.Done) && status.IsBackwardTransition(old, canonical) {
+	if !force && status.IsBackwardTransition(old, canonical) {
 		ok, _ := status.ValidateTransition(old, canonical, status.GuardContext{Reason: reason, ReviewRef: reviewRef, ReviewResult: rr})
 		emitForce = !(ok && wireAllowsForceFree(old, canonical, reason, reviewRef))
 		var original string

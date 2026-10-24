@@ -82,14 +82,14 @@ func TestUpgradeCurrentProjectMatchesOracle(t *testing.T) {
 
 	// Damaged surfaces + missing activations: preview, repair, commit.
 	p.Both(func(s *testkit.Sandbox) {
-		os.RemoveAll(filepath.Join(s.Dir, ".claude/skills/spk-admin-git-workflow"))
-		os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty-plan"))
+		os.RemoveAll(filepath.Join(s.Dir, ".claude/skills/spec-kitty-git-workflow"))
+		os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty.plan"))
 		cfg := s.ReadFile(".kittify/config.yaml")
 		cfg = regexp.MustCompile(`(?s)mission_type_activations:\n(- [^\n]*\n)+`).ReplaceAllString(cfg, "")
 		os.Chmod(filepath.Join(s.Dir, ".kittify/config.yaml"), 0o644)
 		s.WriteFile(".kittify/config.yaml", cfg)
 		s.Git("add", "-A")
-		s.Git("commit", "-qm", "damage", "--allow-empty")
+		s.Git("commit", "-qm", "damage")
 	})
 	p.Compare(false, "upgrade", "--dry-run")
 	compareMasked(t, p, "upgrade", "--dry-run", "--json")
@@ -97,7 +97,7 @@ func TestUpgradeCurrentProjectMatchesOracle(t *testing.T) {
 	if g, o := lastCommit(p.Go), lastCommit(p.Oracle); g != o {
 		t.Errorf("repair commit go=%q oracle=%q", g, o)
 	}
-	compareFiles(t, p, ".kittify/config.yaml", ".claude/skills/spk-admin-git-workflow/SKILL.md", ".agents/skills/spec-kitty-plan/SKILL.md",
+	compareFiles(t, p, ".kittify/config.yaml", ".claude/skills/spec-kitty-git-workflow/SKILL.md", ".agents/skills/spec-kitty.plan/SKILL.md",
 		".kittify/skills-manifest.json", ".kittify/command-skills-manifest.json")
 }
 
@@ -105,7 +105,7 @@ func TestUpgradeStaleAndLegacyMatchOracle(t *testing.T) {
 	p := testkit.NewPair(t)
 	compareInit(p, "init", ".", "--ai", "claude,codex", "--non-interactive")
 	p.Both(func(s *testkit.Sandbox) {
-		md := strings.Replace(s.ReadFile(".kittify/metadata.yaml"), "  version: 4.0.0rc8", "  version: 4.0.0rc5", 1)
+		md := strings.Replace(s.ReadFile(".kittify/metadata.yaml"), "  version: 4.0.0rc7", "  version: 4.0.0rc5", 1)
 		os.Chmod(filepath.Join(s.Dir, ".kittify/metadata.yaml"), 0o644)
 		s.WriteFile(".kittify/metadata.yaml", md)
 		s.Git("add", "-A")
@@ -114,6 +114,13 @@ func TestUpgradeStaleAndLegacyMatchOracle(t *testing.T) {
 	p.Compare(false, "upgrade", "--dry-run")
 	compareMasked(t, p, "upgrade", "--dry-run", "--json")
 	comparePlan(t, p, "upgrade", "--plan-json")
+	// EOF declines the migration prompt without an extra blank line.
+	p.Both(func(s *testkit.Sandbox) {
+		if err := os.MkdirAll(filepath.Join(s.Dir, "kitty-specs"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	})
+	p.Compare(true, "upgrade")
 	p.Compare(false, "upgrade", "--yes")
 	if g, o := lastCommit(p.Go), lastCommit(p.Oracle); g != o {
 		t.Errorf("upgrade commit go=%q oracle=%q", g, o)
@@ -166,14 +173,14 @@ func TestUpgradeWithoutOracle(t *testing.T) {
 	s.MustRun("init", ".", "--ai", "claude", "--non-interactive")
 	s.Git("add", "-A")
 	s.Git("commit", "-qm", "init")
-	md := strings.Replace(s.ReadFile(".kittify/metadata.yaml"), "  version: 4.0.0rc8", "  version: 4.0.0rc5", 1)
+	md := strings.Replace(s.ReadFile(".kittify/metadata.yaml"), "  version: 4.0.0rc7", "  version: 4.0.0rc5", 1)
 	os.Chmod(filepath.Join(s.Dir, ".kittify/metadata.yaml"), 0o644)
 	s.WriteFile(".kittify/metadata.yaml", md)
 	r := s.MustRun("upgrade", "--yes")
-	if !strings.Contains(testkit.StripANSI(r.Stdout), "Upgrade complete! 4.0.0rc5 -> 4.0.0rc8") || !strings.Contains(testkit.StripANSI(r.Stdout), "4.0.0rc7_exclude_spec_kitty") {
+	if !strings.Contains(testkit.StripANSI(r.Stdout), "Upgrade complete! 4.0.0rc5 -> 4.0.0rc7") || !strings.Contains(testkit.StripANSI(r.Stdout), "4.0.0rc7_exclude_spec_kitty") {
 		t.Fatalf("upgrade:\n%s", r.Stdout)
 	}
-	if !strings.Contains(s.ReadFile(".kittify/migration-ledger.jsonl"), `"result": "success"`) || strings.Contains(s.ReadFile(".kittify/metadata.yaml"), "migrations:") || !s.Exists(".git/hooks/post-commit") {
+	if !strings.Contains(s.ReadFile(".kittify/metadata.yaml"), "result: success") || !s.Exists(".git/hooks/post-commit") {
 		t.Fatal("migrations not recorded / applied")
 	}
 	md = strings.Replace(s.ReadFile(".kittify/metadata.yaml"), "  schema_version: 3\n", "", 1)

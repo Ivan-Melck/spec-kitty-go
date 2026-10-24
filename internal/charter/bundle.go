@@ -73,41 +73,25 @@ func ResolveActionBundle(root, action, missionType string, depth int) *ActionBun
 		return b
 	}
 	merged := dct.FilterByActivation(g, act, off)
-	identity := dct.NewIdentityIndex(root)
 	pick := func(k dct.Kind) map[string]bool {
-		out := map[string]bool{}
 		if a := act.Activated(k); a != nil {
+			out := map[string]bool{}
 			for id := range a {
-				resolved := identity.LookupKey(k, id, false)
-				if !act.Denied[k][resolved] {
-					out[resolved] = true
-				}
-			}
-		} else {
-			out = graphIDs(merged, k)
-			for _, id := range dct.NewOffering("", nil).Repo(k).IDs() {
 				out[id] = true
 			}
+			return out
 		}
-		required, err := dct.OrgRequiredTokens(root, k.Plural(), false)
-		if err != nil {
-			b.Err = err
-		}
-		for _, token := range required {
-			out[identity.LookupKey(k, token, false)] = true
-		}
-		for id := range out {
-			if act.Denied[k][id] {
-				delete(out, id)
-			}
+		out := graphIDs(merged, k)
+		for _, id := range dct.NewOffering("", nil).Repo(k).IDs() {
+			out[id] = true
 		}
 		return out
 	}
-	directives := pick(dct.Directive)
-	tactics, paradigms := pick(dct.Tactic), pick(dct.Paradigm)
-	for id := range ReachOnlyIDs(root, "tactic") {
-		delete(tactics, id)
+	directives := map[string]bool{}
+	for id := range pick(dct.Directive) {
+		directives[dct.NormalizeDirectiveID(id)] = true
 	}
+	tactics, paradigms := pick(dct.Tactic), pick(dct.Paradigm)
 	local := map[string]bool{}
 	if act.Activated(dct.Directive) != nil {
 		for _, n := range merged.Nodes {

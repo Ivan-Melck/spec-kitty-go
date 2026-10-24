@@ -800,7 +800,7 @@ constituents:
   kind: tactic
   path: tactics/common-docs-find.tactic.yaml
   provenance_path:
-- content_hash: e3b7f1bd183f4717cb11b985ffd6a83c925225ec6899dcbf4960e4ae3f214fe6
+- content_hash: c195ff5b98ccaef3b335a808b2df7252331443141af410d7803f2eab759f34f0
   id: common-docs-scaffold
   kind: tactic
   path: tactics/common-docs-scaffold.tactic.yaml
@@ -1317,7 +1317,7 @@ constituents:
   kind: toolguide
   path: toolguides/github-tracker.toolguide.yaml
   provenance_path:
-- content_hash: 98fd3059b090a3cf12e4870689c2f7393160d8a277810ef4e2482c3a1253fb26
+- content_hash: 7d1c2f2866acd91edad878e5e524b6d016525a2ac2577c8547ff0ff1d9475e10
   id: java-supply-chain
   kind: toolguide
   path: toolguides/java-supply-chain.toolguide.yaml
@@ -1327,7 +1327,7 @@ constituents:
   kind: toolguide
   path: toolguides/javascript-supply-chain.toolguide.yaml
   provenance_path:
-- content_hash: 7506f1f3d233d110bd2e79152ae1c29da9fa0387efae4caaace7ba2ce4a04d3e
+- content_hash: 65c4455b338f49349c3cdb09e66844cfd7a406104e9d50ed345560efd965903f
   id: maven-review-checks
   kind: toolguide
   path: toolguides/maven-review-checks.toolguide.yaml
@@ -1375,7 +1375,7 @@ constituents:
 fetched_at:
 generated_at:
 generated_by: spec-kitty charter pack regenerate-graph
-manifest_hash: ea7f7d73e1f3e687b7634139a5cdb18a8663973344b06215bd7d3320e4b19d50
+manifest_hash: 7c322627b1cf0bd9d799280e7013babdbc232ddb4c3068bcec0b388a73558b4d
 presets:
 - content_hash: f0e3e26b23029c9073d5d7799d41f5ca8bd35e7a13f370d7e1bf400705552fc7
   name: default

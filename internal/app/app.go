@@ -10,7 +10,7 @@ import (
 )
 
 // Version is the upstream CLI version this port is functionally aligned with.
-const Version = "4.0.0rc8"
+const Version = "4.0.0rc7"
 
 // Registrar adds commands to the root.
 type Registrar struct {

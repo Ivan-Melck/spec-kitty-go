@@ -2,7 +2,6 @@ package charter
 
 import (
 	"fmt"
-	"github.com/spec-kitty/go-kitty3/internal/pep440"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -206,13 +205,6 @@ func ValidatePackDescriptor(data any) string {
 		return "RETIRED_PACK_FIELD"
 	}
 	validateModel(o, packDescriptorModel, "", &errs)
-	if raw, ok := o.Get("requires_core"); ok && raw != nil {
-		if text, ok := raw.(string); ok {
-			if err := pep440.ValidateSpecifier(text); err != nil {
-				errs = append(errs, pydErr{"requires_core", "Value error, requires_core is not a valid version specifier: " + dct.PyRepr(text), "value_error", raw})
-			}
-		}
-	}
 	if len(errs) == 0 {
 		if lv, _ := o.Get("pack_level"); lv == "built-in" {
 			if pv, ok := o.Get("pack_version"); !ok || pv == nil {

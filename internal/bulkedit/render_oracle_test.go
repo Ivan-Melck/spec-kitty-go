@@ -44,14 +44,18 @@ func TestDiffNotesAndRefusalRenderingMatchOracle(t *testing.T) {
 		var buf bytes.Buffer
 		c := rich.CliConsoleFor(&buf, 160)
 		print := func(v any) { c.Print(&buf, v) }
-		function := "_render_diff_check_warnings"
 		if failure {
 			RenderDiffFailure(r, print)
-			function = "render_diff_check_failure"
 		} else {
 			RenderDiffWarnings(r, print)
 		}
-		script := "import json\nfrom pathlib import Path\nfrom rich.console import Console\nfrom specify_cli.bulk_edit.diff_check import DiffCheckResult,FileAssessment\nfrom specify_cli.bulk_edit.gate import render_diff_check_failure\nfrom specify_cli.cli.commands.agent.workflow import _render_diff_check_warnings\nd=json.loads(Path('result.json').read_text());d['assessments']=[FileAssessment(**a) for a in d['assessments']]\n" + function + "(DiffCheckResult(**d),Console(width=160,force_terminal=False,color_system=None))"
+		script := "import json\nfrom pathlib import Path\nfrom types import SimpleNamespace\nfrom dataclasses import replace\nfrom rich.console import Console\nfrom specify_cli.bulk_edit.diff_check import DiffCheckResult,FileAssessment\nfrom specify_cli.bulk_edit.gate import render_diff_check_failure\nd=json.loads(Path('result.json').read_text());d['assessments']=[FileAssessment(**a) for a in d['assessments']]\nr=DiffCheckResult(**d)\nc=Console(width=160,force_terminal=False,color_system=None)\n"
+		if failure {
+			script += "render_diff_check_failure(r,c)\n"
+		} else {
+			script += "from specify_cli.cli.commands.agent.workflow import _enforce_bulk_edit_diff_compliance\nr=replace(r,passed=True)\n_enforce_bulk_edit_diff_compliance(feature_dir=Path.cwd(),main_repo_root=Path.cwd(),mission_slug='own',target_branch='main',review_workspace=SimpleNamespace(branch_name='HEAD'),check_review_diff_compliance=lambda **kw:r,render_diff_check_failure=render_diff_check_failure,rich_console=c)\n"
+		}
+
 		oracle := s.Exec("", python, "-c", script)
 		if oracle.Code != 0 {
 			t.Fatal(oracle.Stderr)

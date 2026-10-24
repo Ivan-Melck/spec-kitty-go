@@ -34,12 +34,12 @@ func policyMode(raw any, present bool) string {
 	if !present || raw == nil {
 		return "warn"
 	}
-	c := strings.ToLower(strings.TrimSpace(fmt.Sprint(raw)))
+	c := fmt.Sprint(raw)
 	switch c {
 	case "warn", "block", "off":
 		return c
 	}
-	return "block"
+	return "warn"
 }
 
 func pyBool(o *jsonx.Object, k string) bool {

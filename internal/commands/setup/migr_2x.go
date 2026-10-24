@@ -678,19 +678,19 @@ func mConsistencySweep() migrationImpl {
 		apply: func(root string, dryRun bool) migrationResult {
 			var ch, warn, errs []string
 			if pathExists(filepath.Join(root, ".kittify")) {
-				rep := migrate.ExecuteLayoutMigration(root, dryRun)
-				moved, removed := len(rep.Moved), len(rep.Removed)
+				rep, layoutErr := migrate.ExecuteLayoutMigration(root, dryRun)
+				moved, removed := 0, 0
+				if layoutErr != nil {
+					warn = append(warn, "runtime asset cleanup skipped: "+layoutErr.Error())
+				} else {
+					moved, removed = len(rep.Moved), len(rep.Removed)
+				}
 				if moved > 0 || removed > 0 {
 					verb := "migrated"
 					if dryRun {
 						verb = "would migrate"
 					}
 					ch = append(ch, fmt.Sprintf("%s %d identical and %d customized legacy runtime asset(s)", verb, removed, moved))
-				}
-				if len(rep.Conflicts) > 0 {
-					warn = append(warn, fmt.Sprintf("%d customized legacy runtime asset(s) not moved: an override already exists, "+
-						"a non-folder blocks the overrides path, or the file is a symbolic link; review the legacy copies "+
-						"(run 'spec-kitty migrate --dry-run --verbose' to list them)", len(rep.Conflicts)))
 				}
 			}
 			cleaned := 0

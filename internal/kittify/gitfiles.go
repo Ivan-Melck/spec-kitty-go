@@ -19,7 +19,6 @@ var GitattributesEntries = []string{
 	"kitty-specs/**/issue-matrix.json merge=spec-kitty-issue-matrix",
 	"kitty-specs/**/tasks/*/review-cycle-*.md merge=spec-kitty-review-cycle",
 	"kitty-specs/**/decisions/index.json merge=spec-kitty-decision-index",
-	"kitty-specs/**/issue-matrix.md merge=spec-kitty-issue-matrix",
 	"kitty-specs/**/status.json linguist-generated=true",
 	"kitty-specs/**/status.events.jsonl linguist-generated=true",
 	"kitty-specs/**/lanes.json linguist-generated=true",
@@ -85,7 +84,7 @@ var MergeDrivers = []MergeDriver{
 	{Key: "spec-kitty-meta", Name: "Spec Kitty mission meta field merge", Command: "spec-kitty merge-driver-meta %O %A %B"},
 	{Key: "spec-kitty-traces", Name: "Spec Kitty mission traces union merge", Command: "spec-kitty merge-driver-traces %O %A %B"},
 	{Key: "spec-kitty-acceptance-matrix", Name: "Spec Kitty acceptance matrix filled-side merge", Command: "spec-kitty merge-driver-acceptance-matrix %O %A %B"},
-	{Key: "spec-kitty-issue-matrix", Name: "Spec Kitty issue matrix row-aware merge", Command: "spec-kitty merge-driver-issue-matrix %O %A %B", Superseded: []string{"Spec Kitty issue matrix filled-side merge"}},
+	{Key: "spec-kitty-issue-matrix", Name: "Spec Kitty issue matrix row-aware merge", Command: "spec-kitty merge-driver-issue-matrix %O %A %B"},
 	{Key: "spec-kitty-review-cycle", Name: "Spec Kitty review-cycle verdict collision refusal", Command: "spec-kitty merge-driver-review-cycle %O %A %B"},
 	{Key: "spec-kitty-decision-index", Name: "Spec Kitty decision-index entry union merge", Command: "spec-kitty merge-driver-decision-index %O %A %B"},
 }

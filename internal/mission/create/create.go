@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/spec-kitty/go-kitty3/internal/charter"
-	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"os"
 	"path/filepath"
 	"sort"
@@ -178,7 +177,13 @@ func ProtectedBranches(root string) map[string]bool {
 
 // ActivatedMissionTypes reads mission_type_activations (sorted).
 func ActivatedMissionTypes(root string) []string {
-	out, _ := dct.ActivatedMissionTypes(root)
+	var out []string
+	for _, x := range mission.ProjectConfig(root).GetList("mission_type_activations") {
+		if s, ok := x.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -191,12 +196,9 @@ var specTemplates = map[string]string{
 
 // SpecTemplate resolves the activated mission type's spec template content.
 func SpecTemplate(root, missionType string) ([]byte, error) {
-	types, err := dct.ActivatedMissionTypes(root)
-	if err != nil {
-		return nil, err
-	}
+	types := ActivatedMissionTypes(root)
 	if len(types) == 0 {
-		return nil, &Error{ErrorCode: "ACTIVE_CHARTER_CONFIG", Msg: "This project has no activated mission types, so a mission cannot be created. A mission requires at least one activated mission type. Provision the project's charter: run `spec-kitty init` (new project) or `spec-kitty upgrade` (existing project), or add a non-empty `mission_type_activations` list to .kittify/charter/activation.yaml."}
+		return nil, &Error{ErrorCode: "ACTIVE_CHARTER_CONFIG", Msg: "This project has no activated mission types, so a mission cannot be created. A mission requires at least one activated mission type. Provision the project's charter: run `spec-kitty init` (new project) or `spec-kitty upgrade` (existing project), or add a non-empty `mission_type_activations` list to .kittify/config.yaml (or the charter.yaml it points to)."}
 	}
 	// resolve_mission_type_context(governance_root, mission_type=...)
 	charter.WarnMissionTypeContext(root, missionType)

@@ -23,7 +23,7 @@ func init() {
 			Flags: []*cli.Flag{
 				{Name: "invocation-id", Short: "i", Kind: cli.String, Required: true, Help: "Invocation ULID to close"},
 				{Name: "outcome", Kind: cli.String, Required: true, Help: "done | failed | abandoned"},
-				{Name: "evidence", Kind: cli.String, Help: "Path to a UTF-8 text evidence file (Tier 2 promotion); checked before the Op closes"},
+				{Name: "evidence", Kind: cli.String, Help: "Path to evidence file (Tier 2 promotion)"},
 				{Name: "artifact", Kind: cli.StringList, Help: "Path (repo-relative or absolute) or URL of an artifact produced by this invocation. Repeatable."},
 				{Name: "commit", Kind: cli.String, Help: "Git commit SHA most directly produced by this invocation. Singular."},
 				{Name: "json", Kind: cli.Bool, Help: "Output JSON payload"},
@@ -80,19 +80,15 @@ func runComplete(ctx *cli.Context) error {
 	if !jsonMode && commit != nil && commit.Warning != "" {
 		rich.LogWarning(ctx.Stderr, commit.Warning)
 	}
-	if !jsonMode && commit != nil && !commit.Committed && commit.Refusal != "" && commit.Refusal != "not a git worktree" && !strings.HasPrefix(commit.Refusal, "protected branch ") {
+	if !jsonMode && commit != nil && !commit.Committed && commit.Refusal != "not a git worktree" {
 		rich.LogWarning(ctx.Stderr, fmt.Sprintf("Op record auto-commit failed for %s: %s", id, commit.Refusal))
 	}
 	if !jsonMode && commit != nil && !commit.Committed {
-		if commit.Skipped != "" {
-			cprintRaw(ctx.Stdout, fmt.Sprintf("[dim]Op record kept on disk at kitty-ops/%s.jsonl, not committed: %s.[/dim]", id, rich.EscapeMarkup(commit.Skipped)))
-		} else {
-			ref := commit.Refusal
-			if ref == "" {
-				ref = "unknown refusal"
-			}
-			cprintRaw(ctx.Stdout, fmt.Sprintf("[yellow]Warning:[/yellow] Op record auto-commit was refused (%s). The completed event is on disk at kitty-ops/%s.jsonl but uncommitted. Commit the Op record yourself on the branch where it belongs.", rich.EscapeMarkup(ref), id))
+		ref := commit.Refusal
+		if ref == "" {
+			ref = "unknown refusal"
 		}
+		cprintRaw(ctx.Stdout, fmt.Sprintf("[yellow]Warning:[/yellow] Op record auto-commit was refused (%s). The completed event is on disk but not committed — it will not survive a checkout or reset. Commit the Op record yourself, or set SPEC_KITTY_ALLOW_PROTECTED_BRANCH_COMMITS if you own this branch.", ref))
 	}
 	if jsonMode {
 		links := []any{}

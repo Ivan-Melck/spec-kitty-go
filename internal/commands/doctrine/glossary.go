@@ -2,7 +2,6 @@ package doctrine
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -632,40 +631,20 @@ func runGlossaryResolve(ctx *cli.Context) error {
 		selected = cands[n-1]
 	}
 	actor := jsonx.NewObject("actor_id", "user:cli", "actor_type", "human", "display_name", "CLI User")
-	resolvedAt := clock.NowUTCISO()
-	prov := jsonx.NewObject("source", "cli_resolve", "timestamp", resolvedAt, "actor_id", "user:cli")
+	prov := jsonx.NewObject("source", "cli_resolve", "timestamp", "", "actor_id", "user:cli")
 	ev := jsonx.NewObject("event_type", "GlossaryClarificationResolved", "conflict_id", cid, "term_surface", term,
 		"selected_sense", selected, "actor", actor, "resolution_mode", "async", "provenance", prov, "timestamp", clock.NowUTCISO())
-	resolutionEvents := []*jsonx.Object{ev}
+	if err := glossary.AppendEvent(root, mission, ev); err != nil {
+		return err
+	}
 	if strings.ToUpper(choice) == "C" {
 		scope := evStr(selected, "scope", "team_domain")
 		conf, _ := selected.Get("confidence")
 		se := jsonx.NewObject("event_type", "GlossarySenseUpdated", "term_surface", term, "scope", scope,
 			"new_sense", jsonx.NewObject("surface", term, "scope", scope, "definition", selected.GetString("definition"), "confidence", conf, "status", "active"),
 			"actor", actor, "update_type", "create", "provenance", prov, "timestamp", clock.NowUTCISO())
-		resolutionEvents = append(resolutionEvents, se)
-	}
-	refused := func(err error) error {
-		var ledgerErr *glossary.LedgerError
-		var timeout *glossary.RepairLockTimeout
-		switch {
-		case errors.As(err, &ledgerErr):
-			gprint(w, "[red]Error: the glossary event log refused the resolution: "+err.Error()+"[/red]")
-		case errors.As(err, &timeout):
-			gprint(w, "[red]Error: the glossary event log is busy (repair lock timed out): "+err.Error()+"[/red]")
-		default:
+		if err := glossary.AppendEvent(root, mission, se); err != nil {
 			return err
-		}
-		return cli.Exit(1)
-	}
-	for _, event := range resolutionEvents {
-		if err := glossary.ValidateEvent(event); err != nil {
-			return refused(err)
-		}
-	}
-	for _, event := range resolutionEvents {
-		if err := glossary.AppendEvent(root, mission, event); err != nil {
-			return refused(err)
 		}
 	}
 	gprint(w, "[green]Conflict resolved successfully[/green]")

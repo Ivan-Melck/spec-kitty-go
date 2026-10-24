@@ -390,7 +390,7 @@
    "deprecated": false,
    "commands": {
     "activate": {
-     "help": "Activate a doctrine artifact by kind and ID (FR-004), or apply a pack's preset.\n\nTwo forms:\n\n  spec-kitty charter activate KIND ARTIFACT_ID [--cascade SCOPE [--include-deactivated]]\n\n  spec-kitty charter activate [--pack PACK] --preset PRESET [--force] [--json]\n\nA preset replaces every activation key it governs: keys it lists are\nwritten (plus the org's required ids), keys it leaves out are removed.\nA change to a customised key is refused without --force. A deactivated\nid the preset lists stays deactivated (and is left out) unless --force,\nwhich also clears its exclusion.\n\nThe cascade stops at a deactivated artifact and reports it;\n--include-deactivated walks through and clears the exclusions.",
+     "help": "Activate a doctrine artifact by kind and ID (FR-004), or apply a pack's preset.\n\nTwo forms:\n\n  spec-kitty charter activate KIND ARTIFACT_ID [--cascade SCOPE]\n\n  spec-kitty charter activate [--pack PACK] --preset PRESET [--force] [--json]\n\nA preset replaces every activation key it governs: keys it lists are\nwritten (plus the org's required ids), keys it leaves out are removed.\nA change to a customised key is refused without --force.",
      "hidden": false,
      "deprecated": false
     },
@@ -515,11 +515,6 @@
       },
       "regenerate-graph": {
        "help": "Regenerate the shipped DRG graph source deterministically (FR-009).\n\nComposes the DRG extractor + calibrator into per-populated-node-kind\n``packs/built-in/*.graph.yaml`` fragments (sharded per mission #2680 WP05;\nrelocated from ``src/charter/offering/`` by the pack flatten),\nretiring the legacy ``graph.yaml`` monolith in the same write. Running twice\non unchanged inputs yields byte-identical fragments. With ``--check`` the\ncommand never writes: it regenerates into a temp directory and compares the\nfragment set against the committed source, exiting non-zero when stale — the\noperator-facing twin of the freshness gate.\n\nBoth the write path and ``--check`` merge in the enumerable hand-authored\noverlay (:mod:`charter.offering.drg.migration.hand_authored_overlay`) — the\n``in_tension_with``/``reconciles_tension``/``rejects`` edges and\n``anti_pattern`` nodes hand-authored directly in the graph fragments\n(mission doctrine-tension-edges-01KY1WPC). The extractor has no\nfrontmatter mechanism that could ever mint these, so a bare pure\nregeneration would (a) silently drop them from the committed source on\nwrite, and (b) always report \"stale\" under ``--check`` even when nothing\nis actually stale.",
-       "hidden": false,
-       "deprecated": false
-      },
-      "vendor": {
-       "help": "Bump (or verify) a pack pin; the pack tree itself is fetched by ``make sync-packs``.",
        "hidden": false,
        "deprecated": false
       },
@@ -666,7 +661,7 @@
      "deprecated": false
     },
     "skills": {
-     "help": "Check command-skill manifest drift for Codex, Vibe, Pi, Letta, and Antigravity.",
+     "help": "Check command-skill manifest drift for Codex, Vibe, Pi, and Letta.",
      "hidden": false,
      "deprecated": false
     },
@@ -952,16 +947,6 @@
     },
     "repin-hooks": {
      "help": "Re-pin this repository's pre-commit hook to the current interpreter (#254).\n\n``policy/hook_installer.py`` pins the absolute Python interpreter path\ninto the pre-commit hook at install time. An install-method migration\n(e.g. pipx -> uv) moves that interpreter, and the OLD hook keeps pointing\nat a path that no longer exists. This command re-runs the same install\nthe ``implement`` lane calls internally, but without requiring a mission\nor workspace — the repair does not depend on the very thing it is\nrepairing (the ability to commit).\n\nIdempotent: safe to re-run; a hook already pinned to the current\ninterpreter is re-written to the same effective hook (only the\n``# Installed:`` timestamp comment differs).\n\nExit codes:\n\n- ``0`` — the hook was (re-)installed\n- ``1`` — project root could not be located, or the current\n  ``sys.executable`` does not refer to an existing file\n\nExamples:\n\n    spec-kitty migrate repin-hooks\n\n    spec-kitty migrate repin-hooks --json",
-     "hidden": false,
-     "deprecated": false
-    },
-    "ledger": {
-     "help": "Report the migration ledger: which setup steps have run, and their state.\n\nA **read-only** view of the two-partition migration ledger. It lists every\ndeclared setup step in declared (manifest) order and, for each, shows:\n\n\\b\n* whether it is **already in place** (recorded, effect present here),\n* **recorded elsewhere but not here** (a per-clone step the ledger records\n  but whose effect is absent on this checkout — e.g. a freshly pulled clone),\n* **not yet applied**, and\n* whether its source **content changed since it ran** (drift).\n\nDrift is **audit-only**: it is reported, never re-applied. This command never\ncommits and never writes a file.\n\n``--json`` emits the one structured shape the human summary renders from.\n\nExamples:\n\n    spec-kitty migrate ledger\n\n    spec-kitty migrate ledger --json",
-     "hidden": false,
-     "deprecated": false
-    },
-    "activation-ledger": {
-     "help": "Move charter activation keys into the activation ledger, and nothing else.\n\nRuns exactly the move of the ``4.0.0rc8_activation_ledger`` upgrade\nmigration: the ``activated_<kind>``, ``activated_kinds`` and\n``mission_type_activations`` keys leave the ``charter.yaml`` that\n``.kittify/config.yaml`` points to (or ``config.yaml`` itself, and any\nleftover copy there) for ``.kittify/charter/activation.yaml``, verbatim,\nand the synthesis manifest is re-stamped. Use it on a project that an\nolder CLI wrote activation keys into again, without a full upgrade.\n\n\b\n* It refuses, writing nothing (exit 1), when the files disagree about a\n  key, or when a legacy file holds a ``deactivated_<kind>`` key.\n* It is idempotent: a re-run reports nothing to do and writes nothing.\n* When ``.kittify/migration-ledger.jsonl`` exists it records the\n  migration as applied (``ledger_record: written``); otherwise it records\n  nothing (``not_recorded``) and a later upgrade finds nothing to move.\n\nExit codes: 0 moved or nothing to do, 1 refused (nothing written), 2 usage error.\n\nExamples:\n\n    spec-kitty migrate activation-ledger --dry-run\n\n    spec-kitty migrate activation-ledger\n\n    spec-kitty migrate activation-ledger --json",
      "hidden": false,
      "deprecated": false
     }

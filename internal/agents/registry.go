@@ -59,23 +59,24 @@ type CommandConfig struct {
 // that receive user-global slash command files).
 var CommandAgents = []string{
 	"claude", "gemini", "copilot", "cursor", "qwen", "opencode", "windsurf",
-	"kilocode", "auggie", "q", "kiro", "llxprt",
+	"kilocode", "auggie", "q", "kiro", "antigravity", "llxprt",
 }
 
 // CommandConfigs is AGENT_COMMAND_CONFIG.
 var CommandConfigs = map[string]CommandConfig{
-	"claude":   {".claude/commands", "md", "$ARGUMENTS"},
-	"gemini":   {".gemini/commands", "toml", "{{args}}"},
-	"copilot":  {".github/prompts", "prompt.md", "$ARGUMENTS"},
-	"cursor":   {".cursor/commands", "md", "$ARGUMENTS"},
-	"qwen":     {".qwen/commands", "toml", "{{args}}"},
-	"opencode": {".opencode/command", "md", "$ARGUMENTS"},
-	"windsurf": {".windsurf/workflows", "md", "$ARGUMENTS"},
-	"kilocode": {".kilocode/workflows", "md", "$ARGUMENTS"},
-	"auggie":   {".augment/commands", "md", "$ARGUMENTS"},
-	"q":        {".amazonq/prompts", "md", "$ARGUMENTS"},
-	"kiro":     {".kiro/prompts", "md", "$ARGUMENTS"},
-	"llxprt":   {".llxprt/commands", "toml", "{{args}}"},
+	"claude":      {".claude/commands", "md", "$ARGUMENTS"},
+	"gemini":      {".gemini/commands", "toml", "{{args}}"},
+	"copilot":     {".github/prompts", "prompt.md", "$ARGUMENTS"},
+	"cursor":      {".cursor/commands", "md", "$ARGUMENTS"},
+	"qwen":        {".qwen/commands", "toml", "{{args}}"},
+	"opencode":    {".opencode/command", "md", "$ARGUMENTS"},
+	"windsurf":    {".windsurf/workflows", "md", "$ARGUMENTS"},
+	"kilocode":    {".kilocode/workflows", "md", "$ARGUMENTS"},
+	"auggie":      {".augment/commands", "md", "$ARGUMENTS"},
+	"q":           {".amazonq/prompts", "md", "$ARGUMENTS"},
+	"kiro":        {".kiro/prompts", "md", "$ARGUMENTS"},
+	"antigravity": {".agent/workflows", "md", "$ARGUMENTS"},
+	"llxprt":      {".llxprt/commands", "toml", "{{args}}"},
 }
 
 // SortedCommandAgents returns CommandAgents sorted alphabetically.
@@ -129,7 +130,7 @@ var SkillConfigOrder = []string{
 func SkillClass(key string) string { return SkillConfigs[key].Class }
 
 // CommandSkillAgents receive .agents/skills/spec-kitty.<cmd>/SKILL.md command skills.
-var CommandSkillAgents = []string{"codex", "vibe", "pi", "letta", "antigravity"}
+var CommandSkillAgents = []string{"codex", "vibe", "pi", "letta"}
 
 // IsCommandSkillAgent reports whether key consumes command skills.
 func IsCommandSkillAgent(key string) bool {
@@ -164,7 +165,7 @@ var IDEAgents = map[string]bool{"cursor": true, "windsurf": true, "copilot": tru
 var FolderNotice = map[string]string{
 	"claude": ".claude/", "gemini": ".gemini/", "cursor": ".cursor/", "qwen": ".qwen/",
 	"opencode": ".opencode/", "codex": ".agents/skills/", "vibe": ".vibe/", "windsurf": ".windsurf/",
-	"kilocode": ".kilocode/", "auggie": ".augment/", "copilot": ".github/", "antigravity": ".agents/skills/",
+	"kilocode": ".kilocode/", "auggie": ".augment/", "copilot": ".github/", "antigravity": ".agent/",
 	"q": ".amazonq/", "kiro": ".kiro/", "pi": ".agents/skills/", "letta": ".agents/skills/", "llxprt": ".llxprt/",
 }
 
@@ -201,7 +202,7 @@ var GitignoreDirectories = []AgentDirectory{
 var AgentDirs = [][2]string{
 	{".claude", "commands"}, {".github", "prompts"}, {".gemini", "commands"}, {".cursor", "commands"},
 	{".qwen", "commands"}, {".opencode", "command"}, {".windsurf", "workflows"}, {".kilocode", "workflows"},
-	{".augment", "commands"}, {".amazonq", "prompts"}, {".kiro", "prompts"},
+	{".augment", "commands"}, {".amazonq", "prompts"}, {".kiro", "prompts"}, {".agent", "workflows"},
 	{".llxprt", "commands"},
 }
 
@@ -209,7 +210,7 @@ var AgentDirs = [][2]string{
 var AgentDirToKey = map[string]string{
 	".claude": "claude", ".github": "copilot", ".gemini": "gemini", ".cursor": "cursor",
 	".qwen": "qwen", ".opencode": "opencode", ".windsurf": "windsurf", ".kilocode": "kilocode",
-	".augment": "auggie", ".amazonq": "q", ".kiro": "kiro",
+	".augment": "auggie", ".amazonq": "q", ".kiro": "kiro", ".agent": "antigravity",
 	".llxprt": "llxprt",
 }
 

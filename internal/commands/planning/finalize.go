@@ -573,7 +573,7 @@ func (f *finalizeRun) regenerateTasksMD() error {
 	if f.manifest == nil {
 		return nil
 	}
-	generated := orch.GenerateTasksMD(f.manifest, f.slug, f.deps)
+	generated := orch.GenerateTasksMD(f.manifest, f.slug, nil)
 	path := filepath.Join(f.dir, "tasks.md")
 	if f.noWrite() {
 		b, err := os.ReadFile(path)
@@ -603,25 +603,11 @@ func (f *finalizeRun) resolveDeps() error {
 	raw, _ := reqmap.ReadAllWPRawRefs(f.tasksDir)
 	f.refs = raw
 	if f.manifest != nil {
-		explicit := map[string]bool{}
 		for _, e := range f.manifest.WorkPackages {
 			if e.DependenciesExplicit {
-				explicit[e.ID] = true
 				f.setDep(e.ID, append([]string{}, e.Dependencies...))
 			} else {
 				f.setDep(e.ID, []string{})
-			}
-		}
-		// _frontmatter_fallback_dependencies (#5448).
-		for _, p := range f.wpFiles {
-			m := wpFilePrefix.FindStringSubmatch(filepath.Base(p))
-			if m == nil || explicit[m[1]] {
-				continue
-			}
-			if w, err := wp.Read(p); err == nil {
-				if d := w.Dependencies(); len(d) > 0 {
-					f.setDep(m[1], d)
-				}
 			}
 		}
 		if len(f.wpFiles) == 0 {

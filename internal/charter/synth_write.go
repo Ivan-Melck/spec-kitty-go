@@ -2,7 +2,6 @@ package charter
 
 import (
 	"fmt"
-	"github.com/spec-kitty/go-kitty3/internal/languagecatalog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -240,19 +239,16 @@ func emitProjectLayer(targets []SynthTarget, version string, base, org *dct.Grap
 		seen[urn] = true
 		g.Nodes = append(g.Nodes, dct.Node{URN: urn, Kind: t.Kind, Label: t.Title})
 		for _, src := range t.SourceURNs {
-			reason := "Derived from synthesis target " + dct.PyRepr(t.Slug)
-			edge := dct.Edge{Source: urn, Target: src, Relation: dct.RelApplies, Reason: &reason}
+			rel := dct.RelApplies
 			if t.Kind == "directive" {
-				edge.Relation = dct.RelRequires
+				rel = dct.RelRequires
 			}
-			if contains(reachOnlyKinds, t.Kind) {
-				reason = synthesizedEdgeReason(t.Kind, t.Slug)
-				edge.Source, edge.Target, edge.Relation = src, urn, dct.RelSuggests
+			if baseTriples[urn+"\x00"+src+"\x00"+rel] {
+				return nil, nil, projectDRGError([]string{fmt.Sprintf("Duplicate edge (FR-020 / EC-6): triple (%s --%s--> %s) already exists in the built-in DRG layer.", dct.PyRepr(urn), rel, dct.PyRepr(src))},
+					fmt.Sprintf("colliding_edge=(%s --%s--> %s)", urn, rel, src))
 			}
-			if baseTriples[edge.Source+"\x00"+edge.Target+"\x00"+edge.Relation] {
-				return nil, nil, projectDRGError([]string{fmt.Sprintf("Duplicate edge (FR-020 / EC-6): triple (%s --%s--> %s) already exists in the built-in DRG layer.", dct.PyRepr(edge.Source), edge.Relation, dct.PyRepr(edge.Target))}, fmt.Sprintf("colliding_edge=(%s --%s--> %s)", edge.Source, edge.Relation, edge.Target))
-			}
-			g.Edges = append(g.Edges, edge)
+			reason := "Derived from synthesis target " + dct.PyRepr(t.Slug)
+			g.Edges = append(g.Edges, dct.Edge{Source: urn, Target: src, Relation: rel, Reason: &reason})
 		}
 	}
 	if root != "" {
@@ -550,36 +546,9 @@ func neutralityHits(p string) []string {
 	return hits
 }
 
-func runNeutralityGate(s *stagingDir, results []SynthResult, ev *SynthEvidence, snapshot *jsonx.Object) error {
-	var scope []string
-	if ev != nil && ev.Code != nil && ev.Code.PrimaryLanguage != "unknown" {
-		scope = ev.Code.Languages
-		if len(scope) == 0 {
-			scope = []string{ev.Code.PrimaryLanguage}
-		}
-	}
-	if snapshot != nil {
-		entries := iterCleanStrings(mustGetAny(snapshot, "language_scope"))
-		if len(entries) == 0 {
-			entries = iterCleanStrings(mustGetAny(snapshot, "languages_frameworks"))
-		}
-		for _, entry := range entries {
-			token := strings.ToLower(strings.TrimSpace(entry))
-			if languagecatalog.IsLanguage(token) {
-				scope = appendUnique(scope, token)
-			}
-		}
-		scope = append(scope, ExtractDeclaredLanguages(strings.Join(entries, ", "))...)
-	}
-	scope = languagecatalog.Expand(scope)
+func runNeutralityGate(s *stagingDir, results []SynthResult, ev *SynthEvidence) error {
 	for _, r := range results {
-		scoped := false
-		for _, component := range strings.Split(r.Prov.Slug, "-") {
-			if contains(scope, component) {
-				scoped = true
-			}
-		}
-		if scoped {
+		if ev != nil && ev.Code != nil && ev.Code.PrimaryLanguage != "unknown" && strings.Contains(r.Prov.Slug, ev.Code.PrimaryLanguage) {
 			continue
 		}
 		id, err := r.Prov.ArtifactID()
@@ -760,7 +729,6 @@ func rewriteManifest(existing *SynthManifest, results []SynthResult, runID, root
 type NodeOrEdgeRef struct {
 	RefKind, URN    string
 	BackingArtifact string // "" = orphaned
-	Reason          string
 }
 
 // Object renders _ref_to_dict.
@@ -769,11 +737,7 @@ func (r NodeOrEdgeRef) Object() *jsonx.Object {
 	if r.BackingArtifact != "" {
 		b = r.BackingArtifact
 	}
-	o := jsonx.NewObject("ref_kind", r.RefKind, "urn", r.URN, "backing_artifact", b)
-	if r.Reason != "" {
-		o.Set("reason", r.Reason)
-	}
-	return o
+	return jsonx.NewObject("ref_kind", r.RefKind, "urn", r.URN, "backing_artifact", b)
 }
 
 // ReconConflict is reconcile.ReconciliationConflict.
@@ -801,7 +765,6 @@ type manifestRef struct{ kind, slug string }
 type ReconDelta struct {
 	Retained, Added, Removable []NodeOrEdgeRef
 	manifestRemovable          []manifestRef
-	manifestAdded              []manifestRef
 	Conflicts                  []ReconConflict
 }
 
@@ -812,7 +775,7 @@ type reconOutcome struct {
 }
 
 // mergeProjectOverlay is reconcile.merge_project_overlay.
-func mergeProjectOverlay(existing, updated *dct.Graph, synthesized map[string]bool, topicScoped bool) *dct.Graph {
+func mergeProjectOverlay(existing, updated *dct.Graph) *dct.Graph {
 	updURNs := updated.NodeURNs()
 	byURN := map[string]dct.Node{}
 	for _, n := range updated.Nodes {
@@ -834,51 +797,32 @@ func mergeProjectOverlay(existing, updated *dct.Graph, synthesized map[string]bo
 			used[n.URN] = true
 		}
 	}
-	allURNs := existing.NodeURNs()
-	for urn := range updURNs {
-		allURNs[urn] = true
-	}
-	owner := func(edge dct.Edge) string {
-		if urn := synthEdgeOwner(edge, allURNs); urn != "" {
-			return urn
+	bySrc := map[string][]dct.Edge{}
+	var srcOrder []string
+	for _, e := range updated.Edges {
+		if _, ok := bySrc[e.Source]; !ok {
+			srcOrder = append(srcOrder, e.Source)
 		}
-		return edge.Source
-	}
-	byOwner := map[string][]dct.Edge{}
-	var ownerOrder []string
-	for _, edge := range updated.Edges {
-		urn := owner(edge)
-		if _, ok := byOwner[urn]; !ok {
-			ownerOrder = append(ownerOrder, urn)
-		}
-		byOwner[urn] = append(byOwner[urn], edge)
+		bySrc[e.Source] = append(bySrc[e.Source], e)
 	}
 	inserted := map[string]bool{}
 	var edges []dct.Edge
-	var regenerated map[string]bool
-	if topicScoped {
-		regenerated = updURNs
-	}
-	for _, edge := range existing.Edges {
-		if legacySynthEdge(edge, synthesized, regenerated) {
+	for _, e := range existing.Edges {
+		if !updURNs[e.Source] {
+			edges = append(edges, e)
 			continue
 		}
-		urn := owner(edge)
-		if !updURNs[urn] {
-			edges = append(edges, edge)
+		if inserted[e.Source] {
 			continue
 		}
-		if !inserted[urn] {
-			edges = append(edges, byOwner[urn]...)
-			inserted[urn] = true
+		edges = append(edges, bySrc[e.Source]...)
+		inserted[e.Source] = true
+	}
+	for _, s := range srcOrder {
+		if !inserted[s] {
+			edges = append(edges, bySrc[s]...)
 		}
 	}
-	for _, urn := range ownerOrder {
-		if !inserted[urn] {
-			edges = append(edges, byOwner[urn]...)
-		}
-	}
-
 	return &dct.Graph{SchemaVersion: updated.SchemaVersion, GeneratedAt: updated.GeneratedAt, GeneratedBy: updated.GeneratedBy, Nodes: nodes, Edges: edges}
 }
 
@@ -900,6 +844,10 @@ func reconcileSynthesis(root string, fresh *dct.Graph, results []SynthResult, ru
 		}
 		existing = g
 	}
+	merged := fresh
+	if existing != nil {
+		merged = mergeProjectOverlay(existing, fresh)
+	}
 	mp := Path(root, synthManifestRel)
 	var em *SynthManifest
 	if exists(mp) {
@@ -912,30 +860,14 @@ func reconcileSynthesis(root string, fresh *dct.Graph, results []SynthResult, ru
 		em = &SynthManifest{SchemaVersion: "3", CreatedAt: nowUTCISO(), RunID: runID, SynthesizerVersion: version}
 	}
 	mm := rewriteManifest(em, results, runID, root, version)
-	synthesized := synthesizedNodeURNs(mm)
-	merged := fresh
-	if existing != nil {
-		merged = mergeProjectOverlay(existing, fresh, synthesized, false)
-	}
-	overlayURNs := fresh.NodeURNs()
-	if existing != nil {
-		for urn := range existing.NodeURNs() {
-			overlayURNs[urn] = true
-		}
-	}
-
 	urnToPath := map[string]string{}
 	for _, e := range mm.Artifacts {
 		if u := provenanceURN(root, e.ProvenancePath); u != "" && exists(filepath.Join(root, filepath.FromSlash(e.Path))) {
 			urnToPath[u] = e.Path
 		}
 	}
-	nref := func(n dct.Node) NodeOrEdgeRef {
-		return NodeOrEdgeRef{RefKind: "node", URN: n.URN, BackingArtifact: urnToPath[n.URN]}
-	}
-	eref := func(e dct.Edge) NodeOrEdgeRef {
-		return NodeOrEdgeRef{RefKind: "edge", URN: edgeLabel(e), BackingArtifact: urnToPath[synthEdgeOwner(e, overlayURNs)]}
-	}
+	nref := func(n dct.Node) NodeOrEdgeRef { return NodeOrEdgeRef{"node", n.URN, urnToPath[n.URN]} }
+	eref := func(e dct.Edge) NodeOrEdgeRef { return NodeOrEdgeRef{"edge", edgeLabel(e), urnToPath[e.Source]} }
 	d := &ReconDelta{}
 	freshURNs := fresh.NodeURNs()
 	if existing == nil {
@@ -953,7 +885,7 @@ func reconcileSynthesis(root string, fresh *dct.Graph, results []SynthResult, ru
 			}
 		}
 		for _, e := range existing.Edges {
-			if !freshURNs[synthEdgeOwner(e, overlayURNs)] && !legacySynthEdge(e, synthesized, nil) {
+			if !freshURNs[e.Source] {
 				d.Retained = append(d.Retained, eref(e))
 			}
 		}
@@ -963,31 +895,15 @@ func reconcileSynthesis(root string, fresh *dct.Graph, results []SynthResult, ru
 			}
 		}
 		for _, e := range fresh.Edges {
-			if !exURNs[synthEdgeOwner(e, overlayURNs)] {
+			if !exURNs[e.Source] {
 				d.Added = append(d.Added, eref(e))
 			}
 		}
-		d.Removable = append([]NodeOrEdgeRef(nil), d.Retained...)
-		for _, edge := range existing.Edges {
-			if legacySynthEdge(edge, synthesized, nil) {
-				ref := eref(edge)
-				ref.Reason = strippedEdgeReason(edge)
-				d.Removable = append(d.Removable, ref)
-			}
-		}
+		d.Removable = d.Retained
 	}
 	newKeys := map[string]bool{}
 	for _, r := range results {
 		newKeys[r.Prov.Kind+"\x00"+r.Prov.Slug] = true
-	}
-	previousKeys := map[string]bool{}
-	for _, entry := range em.Artifacts {
-		previousKeys[entry.Kind+"\x00"+entry.Slug] = true
-	}
-	for _, entry := range mm.Artifacts {
-		if !previousKeys[entry.Kind+"\x00"+entry.Slug] {
-			d.manifestAdded = append(d.manifestAdded, manifestRef{entry.Kind, entry.Slug})
-		}
 	}
 	var pres []string
 	for _, e := range em.Artifacts {
@@ -1008,13 +924,13 @@ func reconcileSynthesis(root string, fresh *dct.Graph, results []SynthResult, ru
 			d.manifestRemovable = append(d.manifestRemovable, manifestRef{kind, slug})
 		}
 	}
-	full := dct.MergeLayers(withShippedEndpoints(base, merged), merged)
+	full := dct.MergeLayers(base, merged)
 	conflict := func(kind string, e dct.Edge) ReconConflict {
 		prov := "preserved"
-		if freshURNs[synthEdgeOwner(e, overlayURNs)] {
+		if freshURNs[e.Source] {
 			prov = "new_emit"
 		}
-		return ReconConflict{kind, edgeLabel(e), urnToPath[synthEdgeOwner(e, overlayURNs)], reconcileRemediations[kind], prov}
+		return ReconConflict{kind, edgeLabel(e), urnToPath[e.Source], reconcileRemediations[kind], prov}
 	}
 	for _, e := range duplicateEdgeTriples(full) {
 		d.Conflicts = append(d.Conflicts, conflict("duplicate_triple", e))
@@ -1040,7 +956,7 @@ func applyPrune(o *reconOutcome) *reconOutcome {
 		}
 	}
 	for _, e := range o.overlay.Edges {
-		if !rm[e.Source] && !rm[e.Target] {
+		if !rm[e.Source] {
 			g.Edges = append(g.Edges, e)
 		}
 	}
@@ -1106,7 +1022,7 @@ func validationGate(stagingRoot string, builtIn, org *dct.Graph, conflicts []Rec
 	if org != nil {
 		base = org
 	}
-	merged := dct.MergeLayers(withShippedEndpoints(base, overlay), overlay)
+	merged := dct.MergeLayers(base, overlay)
 	errs := validateGraph(graphExcludingPreserved(merged, conflicts))
 	if len(errs) == 0 {
 		return nil
@@ -1134,7 +1050,7 @@ func promote(root string, s *stagingDir, req *SynthesisRequest, results []SynthR
 		s.commitToFailed("Validation failed: " + err.Error())
 		return nil, err
 	}
-	if err := runNeutralityGate(s, results, req.Evidence, req.InterviewSnapshot); err != nil {
+	if err := runNeutralityGate(s, results, req.Evidence); err != nil {
 		return nil, err
 	}
 	for _, k := range []string{"directive", "styleguide", "tactic"} {
@@ -1319,7 +1235,7 @@ func SynthesisDryRun(root string, req *SynthesisRequest, a *SynthAdapter, versio
 		if err := validationGate(s.root, builtIn, org, nil); err != nil {
 			return err
 		}
-		if err := runNeutralityGate(s, results, req.Evidence, req.InterviewSnapshot); err != nil {
+		if err := runNeutralityGate(s, results, req.Evidence); err != nil {
 			return err
 		}
 		staged = sel
@@ -1370,7 +1286,7 @@ func OrphanedRemovals(d *ReconDelta) []NodeOrEdgeRef {
 	}
 	var out []NodeOrEdgeRef
 	for _, r := range d.Removable {
-		if r.BackingArtifact == "" && r.Reason == "" {
+		if r.BackingArtifact == "" {
 			out = append(out, r)
 		}
 	}
@@ -1417,7 +1333,6 @@ type ResynthOutcome struct {
 	Noop                      bool
 	Diagnostic                string
 	ReferenceWarnings         []string
-	CreatedSlugs              map[string][]string
 }
 
 // projectArtifactsFromProvenance is _load_project_artifacts_from_provenance.
@@ -1681,7 +1596,6 @@ func Resynthesize(root string, req *SynthesisRequest, a *SynthAdapter, version, 
 	builtIn := snapshotGraph(req)
 	org := orgChainGraph(root)
 	var written *SynthManifest
-	var referenceWarnings []string
 	err = withStaging(root, bounded.RunID, func(s *stagingDir) error {
 		m, err := promote(root, s, &bounded, results, func(s *stagingDir) error {
 			upd, _, err := emitProjectLayer(targets, version, builtIn, org, root)
@@ -1695,12 +1609,7 @@ func Resynthesize(root string, req *SynthesisRequest, a *SynthAdapter, version, 
 				if err != nil {
 					return err
 				}
-				for _, edge := range ex.Edges {
-					if legacySynthEdge(edge, synthesizedNodeURNs(nm), upd.NodeURNs()) {
-						referenceWarnings = append(referenceWarnings, legacyStripNotice(edge))
-					}
-				}
-				g = mergeProjectOverlay(ex, upd, synthesizedNodeURNs(nm), true)
+				g = mergeProjectOverlay(ex, upd)
 			}
 			if err := persistGraph(g, s.root); err != nil {
 				return err
@@ -1713,17 +1622,7 @@ func Resynthesize(root string, req *SynthesisRequest, a *SynthAdapter, version, 
 	if err != nil {
 		return nil, err
 	}
-	created := map[string][]string{"tactic": {}, "styleguide": {}}
-	previous := map[string]bool{}
-	for _, entry := range em.Artifacts {
-		previous[entry.Kind+"\x00"+entry.Slug] = true
-	}
-	for _, entry := range written.Artifacts {
-		if contains(reachOnlyKinds, entry.Kind) && !previous[entry.Kind+"\x00"+entry.Slug] {
-			created[entry.Kind] = append(created[entry.Kind], entry.Slug)
-		}
-	}
-	return &ResynthOutcome{MatchedForm: form, MatchedValue: value, Targets: targets, RunID: written.RunID, ManifestArtifacts: len(written.Artifacts), ReferenceWarnings: referenceWarnings, CreatedSlugs: created}, nil
+	return &ResynthOutcome{MatchedForm: form, MatchedValue: value, Targets: targets, RunID: written.RunID, ManifestArtifacts: len(written.Artifacts)}, nil
 }
 
 type missingManifestError struct{ msg string }

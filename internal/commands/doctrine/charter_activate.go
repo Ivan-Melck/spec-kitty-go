@@ -23,17 +23,15 @@ func charterActivateCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "activate",
 		Short: "Activate a doctrine artifact by kind and ID (FR-004), or apply a pack's preset.",
-		Long:  "Activate a doctrine artifact by kind and ID (FR-004), or apply a pack's preset.\n\nTwo forms:\n\n  spec-kitty charter activate KIND ARTIFACT_ID [--cascade SCOPE [--include-deactivated]]\n\n  spec-kitty charter activate [--pack PACK] --preset PRESET [--force] [--json]\n\nA preset replaces every activation key it governs: keys it lists are\nwritten (plus the org's required ids), keys it leaves out are removed.\nA change to a customised key is refused without --force. A deactivated\nid the preset lists stays deactivated (and is left out) unless --force,\nwhich also clears its exclusion.\n\nThe cascade stops at a deactivated artifact and reports it;\n--include-deactivated walks through and clears the exclusions.",
+		Long:  "Activate a doctrine artifact by kind and ID (FR-004), or apply a pack's preset.\n\nTwo forms:\n\n  spec-kitty charter activate KIND ARTIFACT_ID [--cascade SCOPE]\n\n  spec-kitty charter activate [--pack PACK] --preset PRESET [--force] [--json]\n\nA preset replaces every activation key it governs: keys it lists are\nwritten (plus the org's required ids), keys it leaves out are removed.\nA change to a customised key is refused without --force.",
 		Flags: []*cli.Flag{
 			{Name: "cascade", Kind: cli.String, Help: "Cascade activation scope: 'all' for every referenced kind, or a comma-separated kind list (e.g. 'agent-profile,tactic'). Omit to skip cascade (referenced artifacts are reported as a warning)."},
-			{Name: "include-deactivated", Kind: cli.Bool, Panel: "Cascade options", Help: "Walk through deactivated artifacts during the cascade: activate them and clear their exclusions. Without it the cascade stops at a deactivated artifact and reports it. Only with --cascade."},
 			{Name: "resynthesize", Kind: cli.Bool, Negatable: true, Default: false, Help: resynthesizeHelp},
 			{Name: "compile", Kind: cli.Bool, Negatable: true, Default: true, Help: noCompileHelp},
 			{Name: "preset", Kind: cli.String, Help: "Apply this activation preset of the pack with replace semantics instead of activating one artifact."},
 			{Name: "pack", Kind: cli.String, Default: "built-in", Help: "Pack whose preset --preset applies (built-in, an org pack name). Only with --preset."},
-			{Name: "force", Kind: cli.Bool, Help: "Apply the preset even when it changes a customised activation key, and clear the exclusion of every deactivated id the preset lists. Only with --preset."},
+			{Name: "force", Kind: cli.Bool, Help: "Apply the preset even when it changes a customised activation key. Only with --preset."},
 			{Name: "json", Kind: cli.Bool, Help: "Output the applied preset as JSON. Only with --preset."},
-			{Name: "only", Kind: cli.Bool, Help: "Replace this kind's activation list with this id plus org-required ids (prints what stops being in force)."},
 			{Name: "repo-root", Kind: cli.String, Default: ".", Hidden: true},
 		},
 		Args: []*cli.Arg{
@@ -115,9 +113,6 @@ func charterRoot(ctx *cli.Context) string {
 
 func runCharterActivate(ctx *cli.Context) error {
 	w := ctx.Stdout
-	if ctx.Bool("include-deactivated") && !ctx.IsSet("cascade") {
-		return cli.Usage(ctx.Cmd, "--include-deactivated only applies with --cascade.")
-	}
 	preset := ctx.OptString("preset")
 	kind, id := ctx.Arg("kind"), ctx.Arg("artifact_id")
 	positional := ctx.HasArg("kind") || ctx.HasArg("artifact_id")
@@ -127,9 +122,6 @@ func runCharterActivate(ctx *cli.Context) error {
 		}
 		if ctx.IsSet("cascade") {
 			return cli.Usage(ctx.Cmd, "--cascade cannot be combined with --preset (presets do not cascade).")
-		}
-		if ctx.Bool("only") {
-			return cli.Usage(ctx.Cmd, "--only cannot be combined with --preset (a preset already replaces every key it governs).")
 		}
 		return runApplyPreset(ctx, *preset)
 	}
@@ -193,7 +185,7 @@ func runCharterActivate(ctx *cli.Context) error {
 		if charter.IsUnexpectedError(err) {
 			if _, isLoad := err.(*charter.DRGLoadError); !isLoad {
 				return pyCrash(ctx, charter.PyExceptionClass(err), err.Error(),
-					crashFrames(err, rich.Frame{Name: "activate_cmd", Line: 1162}, rich.Frame{Name: "plan_project_registration", Line: 265})...)
+					crashFrames(err, rich.Frame{Name: "activate_cmd", Line: 976}, rich.Frame{Name: "plan_project_registration", Line: 265})...)
 			}
 		}
 		cprint(w, "[red]Error:[/red] %s", err.Error())
@@ -212,7 +204,7 @@ func runCharterActivate(ctx *cli.Context) error {
 		cprint(w, "[red]Error:[/red] %s", err.Error())
 		return cli.Exit(1)
 	}
-	res, err := charter.ActivateWithOptions(root, kind, id, ctx.Bool("only"), "activate")
+	res, err := charter.Activate(root, kind, id)
 	if err != nil {
 		cprint(w, "[red]Error:[/red] %s", err.Error())
 		return cli.Exit(1)
@@ -223,13 +215,6 @@ func runCharterActivate(ctx *cli.Context) error {
 	}
 	for _, a := range res.Activated {
 		cprint(w, "[green]Activated[/green]: %s", a)
-	}
-	if ctx.Bool("only") {
-		dropped := strings.Join(res.Deactivated, ", ")
-		if dropped == "" {
-			dropped = "(none)"
-		}
-		cprint(w, "[yellow]No longer in force (%d)[/yellow]: %s", len(res.Deactivated), dropped)
 	}
 	for _, m := range append(append([]string{}, reg.Warnings...), res.Warnings...) {
 		cprint(w, "[yellow]Warning[/yellow]: %s", m)
@@ -262,9 +247,6 @@ func reprojectPackSkills(ctx *cli.Context, root, kind string) error {
 		cprint(w, "[red]Error:[/red] pack skills were not projected: %s. The activation change is recorded; fix the cause and re-run this command.", err.Error())
 		return cli.Exit(1)
 	}
-	for _, warning := range p.Warnings {
-		cprint(w, "[yellow]Warning: %s[/yellow]", warning)
-	}
 	for _, path := range p.Changed {
 		cprint(w, "[green]Skill file synced[/green]: %s", path)
 	}
@@ -276,51 +258,11 @@ func reprojectPackSkills(ctx *cli.Context, root, kind string) error {
 
 func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeScope) error {
 	w := ctx.Stdout
-	g, err := loadCascadeGraph(ctx, root, rich.Frame{Name: "activate_cmd", Line: 1203}, rich.Frame{Name: "_render_cascade_activation", Line: 434})
+	g, err := loadCascadeGraph(ctx, root, rich.Frame{Name: "activate_cmd", Line: 1015}, rich.Frame{Name: "_render_cascade_activation", Line: 261})
 	if g == nil {
 		return err
 	}
 	act, filtered := charter.CascadeRefs(g, src)
-	activation, err := dct.LoadActivation(root)
-	if err != nil {
-		return err
-	}
-	denied := map[string]bool{}
-	for k, tokens := range activation.Denied {
-		for token := range tokens {
-			if strings.HasPrefix(token, string(k)+":") {
-				denied[token] = true
-			}
-		}
-	}
-	delete(denied, src)
-	include := ctx.Bool("include-deactivated")
-	reached := map[string]bool{src: true}
-	blockedGraph := *g
-	blockedGraph.Edges = nil
-	for _, e := range g.Edges {
-		if !denied[e.Source] || include {
-			blockedGraph.Edges = append(blockedGraph.Edges, e)
-		}
-	}
-	reachedAct, _ := charter.CascadeRefs(&blockedGraph, src)
-	for kind, ids := range reachedAct {
-		for _, id := range ids {
-			reached[kind+":"+id] = true
-		}
-	}
-	// Non-artifact parents (actions and mission types) can also require a denied child.
-	closure := dct.WalkEdges(&blockedGraph, []string{src}, map[string]bool{dct.RelRequires: true, dct.RelSuggests: true, dct.RelRefines: true, dct.RelScope: true, dct.RelInstantiates: true}, -1)
-	for urn := range closure {
-		reached[urn] = true
-	}
-	parents := map[string][]string{}
-	for _, e := range g.Edges {
-		if e.Relation == dct.RelRequires && reached[e.Source] && (!denied[e.Source] || include) {
-			parents[e.Target] = append(parents[e.Target], e.Source)
-		}
-	}
-
 	ix := charter.NewConfigIDIndex(root)
 	kinds := func(m map[string][]string) []string {
 		var ks []string
@@ -334,118 +276,34 @@ func renderActivationCascade(ctx *cli.Context, root, src string, scope *cascadeS
 	if scope == nil {
 		for _, k := range kinds(act) {
 			for _, id := range act[k] {
-				if !denied[k+":"+id] {
-					cprint(w, "[yellow]Warning[/yellow]: referenced %s/%s was not activated (no --cascade).", tok(k), ix.ConfigID(k+":"+id))
-				}
+				cprint(w, "[yellow]Warning[/yellow]: referenced %s/%s was not activated (no --cascade).", tok(k), ix.ConfigID(k+":"+id))
 			}
 		}
-		for _, k := range kinds(act) {
-			for _, id := range act[k] {
-				if denied[k+":"+id] {
-					cprint(w, "[yellow]Warning[/yellow]: referenced %s/%s is deactivated and was not activated.", tok(k), ix.ConfigID(k+":"+id))
-				}
-			}
-		}
-		hasSkipped := false
-		for k, ids := range act {
-			for _, id := range ids {
-				hasSkipped = hasSkipped || !denied[k+":"+id]
-			}
-		}
-		if hasSkipped {
+		if len(act) > 0 {
 			cprint(w, "[yellow]Hint[/yellow]: Re-run with `--cascade <scope>` (e.g. `--cascade all` for every referenced kind) to activate the referenced artifacts, or run `charter consistency-check` to confirm the activation set is coherent.")
 		}
 	} else {
 		inScope, skipped := map[string][]string{}, map[string][]string{}
 		for k, ids := range act {
-			for _, id := range ids {
-				urn := k + ":" + id
-				if !scope.selects(k) {
-					skipped[k] = append(skipped[k], id)
-				} else if include || (!denied[urn] && reached[urn]) {
-					inScope[k] = append(inScope[k], id)
-				}
+			if scope.selects(k) {
+				inScope[k] = ids
+			} else {
+				skipped[k] = ids
 			}
 		}
 		for _, k := range kinds(inScope) {
 			for _, id := range inScope[k] {
 				cid := ix.ConfigID(k + ":" + id)
-				if _, err := charter.ActivateWithOptions(root, tok(k), cid, false, func() string {
-					if include {
-						return "cascade-include-deactivated"
-					}
-					return "activate"
-				}()); err != nil {
+				if _, err := charter.Activate(root, tok(k), cid); err != nil {
 					cprint(w, "[yellow]Warning[/yellow]: could not cascade-activate %s/%s: %s", tok(k), cid, err.Error())
 					continue
 				}
 				cprint(w, "[cyan]Cascade-activated[/cyan]: %s/%s", tok(k), cid)
 			}
 		}
-		if include {
-			var reinstated []string
-			for k, ids := range inScope {
-				for _, id := range ids {
-					urn := k + ":" + id
-					if denied[urn] {
-						reinstated = append(reinstated, urn)
-					}
-				}
-			}
-			sort.Strings(reinstated)
-			after, _ := dct.LoadActivation(root)
-			for _, urn := range reinstated {
-				k, id := dct.SplitURN(urn)
-				kind, _ := dct.ParseKind(k)
-				if after != nil && !after.Denied[kind][urn] {
-					cprint(w, "[green]Reinstated[/green]: %s/%s (exclusion cleared)", tok(k), ix.ConfigID(k+":"+id))
-				}
-			}
-		}
 		for _, k := range kinds(skipped) {
 			for _, id := range skipped[k] {
-				note := ""
-				if denied[k+":"+id] && !include {
-					note = " (deactivated; nothing behind it was walked)"
-				}
-				cprint(w, "[dim]Skipped (out of scope)[/dim]: %s/%s%s", tok(k), ix.ConfigID(k+":"+id), note)
-			}
-		}
-		skippedDenied, unreached := false, false
-		if !include {
-			for _, k := range kinds(act) {
-				if !scope.selects(k) {
-					continue
-				}
-				for _, id := range act[k] {
-					urn := k + ":" + id
-					if !denied[urn] {
-						continue
-					}
-					note := ""
-					if ps := parents[urn]; len(ps) > 0 {
-						sort.Strings(ps)
-						note = " (required by " + strings.Join(ps, ", ") + " — the parent no longer has this requirement)"
-					}
-					cprint(w, "[yellow]Skipped, deactivated[/yellow]: %s/%s%s", tok(k), ix.ConfigID(urn), note)
-					skippedDenied = true
-				}
-			}
-			for _, k := range kinds(act) {
-				if !scope.selects(k) {
-					continue
-				}
-				for _, id := range act[k] {
-					urn := k + ":" + id
-					if denied[urn] || reached[urn] {
-						continue
-					}
-					cprint(w, "[yellow]Unreached (behind a deactivated artifact)[/yellow]: %s/%s", tok(k), ix.ConfigID(urn))
-					unreached = true
-				}
-			}
-			if skippedDenied || unreached {
-				cprint(w, "[yellow]Hint[/yellow]: Run with --include-deactivated to activate these and clear their exclusions.")
+				cprint(w, "[dim]Skipped (out of scope)[/dim]: %s/%s", tok(k), ix.ConfigID(k+":"+id))
 			}
 		}
 		defer func() {
@@ -542,12 +400,7 @@ func runCharterDeactivate(ctx *cli.Context) error {
 	}
 	res, err := charter.Deactivate(root, kind, id)
 	if err != nil {
-		var ce *dct.ConfigError
-		if errors.As(err, &ce) {
-			cprint(w, "[red]Error[/red] (%s): %s", ce.Code(), ce.Body)
-		} else {
-			cprint(w, "[red]Error:[/red] %s", err.Error())
-		}
+		cprint(w, "[red]Error:[/red] %s", err.Error())
 		return cli.Exit(1)
 	}
 	for _, d := range res.Deactivated {
@@ -576,7 +429,7 @@ func runCharterDeactivate(ctx *cli.Context) error {
 
 func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cascadeScope) error {
 	w := ctx.Stdout
-	g, err := loadCascadeGraph(ctx, root, rich.Frame{Name: "deactivate_cmd", Line: 418}, rich.Frame{Name: "_render_cascade_deactivation", Line: 235})
+	g, err := loadCascadeGraph(ctx, root, rich.Frame{Name: "deactivate_cmd", Line: 339}, rich.Frame{Name: "_render_cascade_deactivation", Line: 180})
 	if g == nil {
 		return err
 	}
@@ -628,7 +481,7 @@ func renderDeactivationCascade(ctx *cli.Context, root, target string, scope *cas
 		kind, _ := dct.SplitURN(urn)
 		tok := strings.ReplaceAll(kind, "_", "-")
 		cid := ix.ConfigID(urn)
-		if _, err := charter.DeactivateWithOptions(root, tok, cid, false); err != nil {
+		if _, err := charter.Deactivate(root, tok, cid); err != nil {
 			cprint(w, "[yellow]Warning[/yellow]: could not cascade-deactivate %s/%s: %s", tok, cid, err.Error())
 			continue
 		}
@@ -687,44 +540,6 @@ func runCharterList(ctx *cli.Context) error {
 		emitCharterError(ctx.Stdout, jsonMode, msg, "", nil)
 		return cli.Exit(1)
 	}
-	store, err := dct.ResolveActivationStore(root)
-	if err != nil {
-		return err
-	}
-	dct.ReportActivationWarnings(store)
-	identity := dct.NewIdentityIndex(root)
-	label := func(kind, token, layer string) string {
-		k, e := dct.ParseKind(kind)
-		if e != nil {
-			return token
-		}
-		declared := identity.DeclaredID(k, token)
-		if layer != "" {
-			declared = identity.DeclaredIDInLayer(k, token, layer)
-		}
-		stem := identity.Stem(k, token)
-		if declared != "" && declared != stem {
-			return stem + " (" + declared + ")"
-		}
-		return stem
-	}
-	deactivated := map[string][]string{}
-	showDeactivated := false
-	if store.Ledger {
-		for _, k := range dct.AllKinds {
-			if !k.Activatable() {
-				continue
-			}
-			values, _, _ := charter.CurrentActivationList(store.Data, "deactivated_"+k.Plural())
-			sort.Strings(values)
-			deactivated[k.OperatorToken()] = values
-			showDeactivated = showDeactivated || len(values) > 0
-		}
-	}
-	omissions, err := charter.RequiredNotInForce(root, false)
-	if err != nil {
-		return err
-	}
 	var lr map[string]string
 	var chain []string
 	if allLayers {
@@ -738,9 +553,6 @@ func runCharterList(ctx *cli.Context) error {
 		} else {
 			headers = append(headers, "Available (not activated)")
 		}
-	}
-	if showDeactivated {
-		headers = append(headers, "Deactivated")
 	}
 	tbl := &rtable{Title: "Charter Activation State", Headers: headers, NoWrap: []bool{true}, ShowLines: true,
 		Styles: []string{"bold cyan", "white", "dim"}}
@@ -762,36 +574,12 @@ func runCharterList(ctx *cli.Context) error {
 		if ok && actJSON == nil {
 			actJSON = []any{}
 		}
-		if len(vals) > 0 {
-			var labels []string
-			for _, v := range vals {
-				labels = append(labels, label(kind, v, ""))
-			}
-			actStr = strings.Join(labels, ", ")
-		}
-		var deniedJSON any
-		if kind != dct.MissionTypeToken {
-			deniedJSON = strs(deactivated[kind])
-		}
-		row := jsonx.NewObject("kind", kind, "activated", actJSON, "available", nil, "deactivated", deniedJSON)
-		for _, om := range omissions {
-			if om.Kind.OperatorToken() != kind {
-				continue
-			}
-			var packs []string
-			for _, p := range om.Packs {
-				packs = append(packs, p.Describe())
-			}
-			actStr += "\n[yellow]" + label(kind, om.ID, "") + " — required (not in force: explicit allow list omits it); required by " + strings.Join(packs, ", ") + "[/yellow]"
-		}
+		row := jsonx.NewObject("kind", kind, "activated", actJSON, "available", nil)
 		cells := []string{kind, actStr}
 		if showAvail {
 			actSet := map[string]bool{}
 			for _, v := range vals {
 				actSet[v] = true
-				if k, e := dct.ParseKind(kind); e == nil {
-					actSet[identity.Stem(k, v)] = true
-				}
 			}
 			if allLayers {
 				entries := listAvailableOverChain(kind, lr, chain)
@@ -811,18 +599,8 @@ func runCharterList(ctx *cli.Context) error {
 				av := []any{}
 				var parts []string
 				for _, p := range na {
-					av = append(av, jsonx.NewObject("artifact_id", p.id, "layer", p.layer, "declared_id", func() string {
-						k, e := dct.ParseKind(kind)
-						if e != nil {
-							return p.id
-						}
-						id := identity.DeclaredIDInLayer(k, p.id, p.layer)
-						if id == "" {
-							return p.id
-						}
-						return id
-					}()))
-					parts = append(parts, label(kind, p.id, p.layer)+" [dim]("+p.layer+")[/dim]")
+					av = append(av, jsonx.NewObject("artifact_id", p.id, "layer", p.layer))
+					parts = append(parts, p.id+" [dim]("+p.layer+")[/dim]")
 				}
 				row.Set("available", av)
 				if len(parts) == 0 {
@@ -843,47 +621,14 @@ func runCharterList(ctx *cli.Context) error {
 				if len(na) == 0 {
 					cells = append(cells, "[dim]—[/dim]")
 				} else {
-					var labels []string
-					for _, id := range na {
-						labels = append(labels, label(kind, id, ""))
-					}
-					cells = append(cells, strings.Join(labels, ", "))
+					cells = append(cells, strings.Join(na, ", "))
 				}
 			}
-		}
-		if showDeactivated {
-			var labels []string
-			for _, id := range deactivated[kind] {
-				labels = append(labels, label(kind, id, ""))
-			}
-			cell := strings.Join(labels, ", ")
-			if cell == "" {
-				cell = "[dim]—[/dim]"
-			}
-			cells = append(cells, cell)
 		}
 		tbl.Rows = append(tbl.Rows, cells)
 		rows = append(rows, row)
 	}
 	payload := jsonx.NewObject("result", "success", "kinds", rows, "templates", nil)
-	if len(omissions) > 0 {
-		missing := &jsonx.Object{}
-		for _, om := range omissions {
-			key := om.Kind.Plural()
-			rows := missing.GetList(key)
-			packs := []any{}
-			seen := map[string]bool{}
-			for _, p := range om.Packs {
-				if !seen[p.Pack] {
-					packs = append(packs, p.Pack)
-					seen[p.Pack] = true
-				}
-			}
-			rows = append(rows, jsonx.NewObject("id", om.ID, "packs", packs))
-			missing.Set(key, rows)
-		}
-		payload.Set("required_not_in_force", missing)
-	}
 	if allLayers {
 		refs := discoverTemplates(root, lr, chain)
 		tl := []any{}
@@ -897,8 +642,7 @@ func runCharterList(ctx *cli.Context) error {
 		if len(parts) > 0 {
 			cell = strings.Join(parts, ", ")
 		}
-		templateCells := []string{"template", "[dim](mission-scoped — not separately activated)[/dim]", cell}
-		tbl.Rows = append(tbl.Rows, templateCells)
+		tbl.Rows = append(tbl.Rows, []string{"template", "[dim](mission-scoped — not separately activated)[/dim]", cell})
 	}
 	if jsonMode {
 		jsonOut(ctx.Stdout, payload, jsonx.Pretty)

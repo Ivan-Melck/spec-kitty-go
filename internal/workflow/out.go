@@ -48,16 +48,6 @@ func (o *Out) Printf(format string, a ...any) { o.Print(fmt.Sprintf(format, a...
 // stdout, like upstream's _json_safe_output capture.
 func (o *Out) Console(s string) { o.ConsoleR(s) }
 
-func (o *Out) ConsoleSoftWrap(s string) {
-	c := rich.CliConsoleFor(o.W, 0)
-	c.SoftWrap = true
-	w := o.W
-	if o.capture != nil {
-		w = o.capture
-	}
-	c.Print(w, s)
-}
-
 // ConsoleR is console.print(r) for any renderable.
 func (o *Out) ConsoleR(r any) {
 	c := rich.CliConsoleFor(o.W, 0)

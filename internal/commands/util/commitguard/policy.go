@@ -33,21 +33,16 @@ func DefaultConfig() Config {
 
 var validModes = map[string]bool{"warn": true, "block": true, "off": true}
 
-// resolveMode is _resolve_mode: absent/null -> warn; a case/whitespace
-// tolerant valid mode -> it; anything else fails closed to block with a
-// logged warning (written to warn).
+// RC7 accepts exact mode spellings and falls back to warn for other values.
 func resolveMode(section string, raw any, present bool, warn io.Writer) string {
-	if !present || raw == nil {
+	if !present {
 		return "warn"
 	}
-	cand := strings.ToLower(pyStrip(pyjson.Str(raw)))
+	cand := pyjson.Str(raw)
 	if validModes[cand] {
 		return cand
 	}
-	if warn != nil {
-		rich.LogWarning(warn, fmt.Sprintf("policy.%s.mode %s is not one of block, off, warn; using 'block' so the gate fails closed", section, pyjson.Repr(raw)))
-	}
-	return "block"
+	return "warn"
 }
 
 func pyStrip(s string) string {

@@ -64,7 +64,11 @@ func FrontmatterReadError(path string) string {
 		return ""
 	}
 	if _, ok := v.(*jsonx.Object); !ok {
-		return fmt.Sprintf("Frontmatter is not a mapping in %s: parsed as %s", path, pyjson.TypeName(v))
+		typeName := pyjson.TypeName(v)
+		if _, ok := v.([]any); ok {
+			typeName = "CommentedSeq"
+		}
+		return fmt.Sprintf("Frontmatter is not a mapping in %s: parsed as %s", path, typeName)
 	}
 	return ""
 }

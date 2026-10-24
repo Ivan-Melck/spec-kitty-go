@@ -14,6 +14,7 @@ const GitignoreMarker = "# Added by Spec Kitty CLI (auto-managed)"
 // RuntimeGitignoreEntries is state.contract.get_runtime_gitignore_entries()
 // (sorted).
 var RuntimeGitignoreEntries = []string{
+	".agents/skills/",
 	".kittify/charter/context-state.json",
 	".kittify/derived/",
 	".kittify/dossiers/",
@@ -137,9 +138,9 @@ func worktreesWholeRootIgnored(root string) bool {
 }
 
 // ProtectAllAgents is GitignoreManager.protect_all_agents.
-func ProtectAllAgents(root string, selections ...[]string) ProtectionResult {
+func ProtectAllAgents(root string) ProtectionResult {
 	res := ProtectionResult{Success: true}
-	entries := RuntimeGitignoreEntries
+	entries := ProtectedEntries()
 	before := map[string]bool{}
 	if b, err := os.ReadFile(filepath.Join(root, ".gitignore")); err == nil {
 		for _, l := range pyLines(string(b)) {
@@ -184,33 +185,6 @@ func ProtectAllAgents(root string, selections ...[]string) ProtectionResult {
 		}
 		if !has {
 			res.Added = append(res.Added, ".worktrees/")
-		}
-	}
-	var keys []string
-	if len(selections) > 0 {
-		keys = selections[0]
-	}
-	before = map[string]bool{}
-	if b, err := os.ReadFile(filepath.Join(root, ".gitignore")); err == nil {
-		for _, line := range SplitLines(string(b)) {
-			before[line] = true
-		}
-	}
-	changed, err := SyncAgentBlock(root, keys, true)
-	if err != nil {
-		res.Success = false
-		res.Errors = append(res.Errors, "Error protecting agent files: "+err.Error())
-		return res
-	}
-	res.Modified = res.Modified || changed
-	if keys == nil {
-		keys, _ = IgnoredAgentKeys(root)
-	}
-	for _, entry := range AgentIgnoreEntries(root, keys) {
-		if before[entry] {
-			res.Skipped = append(res.Skipped, entry)
-		} else {
-			res.Added = append(res.Added, entry)
 		}
 	}
 	return res

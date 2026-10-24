@@ -137,7 +137,7 @@ func QueryCurrentState(root, slug, agent string) (*Decision, error) {
 	}
 	plan := planNext(snap, tpl)
 	if bs := boardStep(m, progress); bs != "" {
-		if bs == "implement" && tpl.HasStep(AnalyzeStepID) {
+		if bs == "implement" && m.MissionType == "software-dev" {
 			if fs := analysisFailures(m); len(fs) > 0 {
 				d := base(m, KindQuery, agent, AnalyzeStepID)
 				d.Progress, d.RunID, d.PreviewStep = progress, emittedRunID, sp(AnalyzeStepID)
@@ -502,7 +502,7 @@ func decideNext(root, slug, agent, result string) *Decision {
 	if result == "success" && snap != nil && snap.untouched() {
 		bs, action, _, _, blocked := wpBoardAction(m)
 		if action != "" {
-			if action == "implement" && tpl != nil && tpl.HasStep(AnalyzeStepID) {
+			if action == "implement" && m.MissionType == "software-dev" {
 				if fs := analysisFailures(m); len(fs) > 0 {
 					return c.stepDecision(AnalyzeStepID, fs, analysisErrorCode(fs))
 				}

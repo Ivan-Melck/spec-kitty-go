@@ -167,17 +167,13 @@ func SaveSkillsManifest(root string, m *SkillsManifest, now string) error {
 
 // globalSkillBytes returns the bytes the global installer writes for a skill
 // file (SKILL.md gains host frontmatter when missing).
-func globalSkillBytes(s Skill, rel, skillRoot string) ([]byte, error) {
+func globalSkillBytes(s Skill, rel string) ([]byte, error) {
 	b, err := ReadSkillFile(s, rel)
 	if err != nil {
 		return nil, err
 	}
 	if rel == "SKILL.md" {
-		projected, e := ProjectSkillForRoot(string(b), skillRoot, s.Name)
-		if e != nil {
-			return nil, e
-		}
-		b = []byte(projected)
+		b = []byte(EnsureSkillFrontmatter(string(b), s.Name))
 	}
 	return b, nil
 }
@@ -213,7 +209,7 @@ func InstallProjectSkills(root, agent, now string) ([]SkillEntry, int, error) {
 	written := 0
 	for _, s := range SkillOrder(Skills()) {
 		for _, rel := range s.Files {
-			content, err := globalSkillBytes(s, rel, skillRoot)
+			content, err := globalSkillBytes(s, rel)
 			if err != nil {
 				return entries, written, err
 			}

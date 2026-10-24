@@ -127,85 +127,39 @@ func ResolveGovernance(root string) (*Governance, error) {
 	}
 	sel := LoadSelection(root)
 	off := dct.NewOffering("", nil)
-	identity := dct.NewIdentityIndex(root)
 	g := &Governance{}
-	resolveSelected := func(kind dct.Kind, tokens []string, local map[string]bool) []string {
-		var result []string
-		catalog := map[string]bool{}
-		for _, id := range off.Repo(kind).IDs() {
-			catalog[id] = true
-			if kind == dct.Directive {
-				catalog[dct.NormalizeDirectiveID(id)] = true
-			}
-		}
-		for _, token := range tokens {
-			id := identity.SelectionID(kind, token)
-			if id == "" {
-				key := token
-				if kind == dct.Directive {
-					key = dct.NormalizeDirectiveID(token)
-				}
-				if catalog[key] || local[key] {
-					id = key
-				}
-			}
-			if id == "" {
-				g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("Unknown selected %s '%s' dropped: not found in built-in, org packs (charter_packs.org.packs) or .kittify/charter-packs/; see 'spec-kitty charter list'.", kind, token))
-			} else {
-				result = append(result, id)
-			}
-		}
-		return dedupe(result)
+	// paradigms
+	var base []string
+	if a := act.Activated(dct.Paradigm); a == nil {
+		base = off.Repo(dct.Paradigm).IDs()
+		g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("No activated paradigm set configured; using built-in catalog default (%d paradigms).", len(base)))
+		g.Paradigms = base
+	} else {
+		base = a.Sorted()
+		g.Paradigms = base
 	}
-	activationBase := func(kind dct.Kind) ([]string, string) {
-		allow := act.Activated(kind)
-		if allow == nil {
-			set := map[string]bool{}
-			for _, id := range off.Repo(kind).IDs() {
-				if kind == dct.Directive {
-					id = dct.NormalizeDirectiveID(id)
-				}
-				set[id] = true
-			}
-			base := dct.SortedKeys(set)
-			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("No activated %s set configured; using built-in catalog default (%d %s).", kind, len(base), kind.Plural()))
-			return base, "catalog_fallback"
+	if len(sel.Paradigms) > 0 {
+		src := "catalog_fallback"
+		if act.Activated(dct.Paradigm) != nil {
+			src = "activation"
 		}
-		set := map[string]bool{}
-		for _, token := range allow.Sorted() {
-			id := identity.DeclaredID(kind, token)
-			if id == "" {
-				id = identity.LookupKey(kind, token, false)
-				warnLog("unresolved %s activation token %s; best-effort resolved to %s", kind, dct.PyRepr(token), dct.PyRepr(id))
-			}
-			set[id] = true
-		}
-		return dct.SortedKeys(set), "activation"
-	}
-	report := func(noun string, selected, base []string, source string) {
-		if len(selected) == 0 {
-			return
-		}
-		have := map[string]bool{}
-		for _, id := range base {
-			have[id] = true
+		bs := map[string]bool{}
+		for _, p := range base {
+			bs[p] = true
 		}
 		var added []string
-		for _, id := range selected {
-			if !have[id] {
-				added = append(added, id)
+		for _, p := range sel.Paradigms {
+			if !bs[p] {
+				added = append(added, p)
 			}
 		}
 		if len(added) > 0 {
-			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("Charter selected %d %s(s) beyond the %s base: %s.", len(added), noun, source, strings.Join(added, ", ")))
+			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("Charter selected %d paradigm(s) beyond the %s base: %s.", len(added), src, strings.Join(added, ", ")))
 		} else {
-			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("All %d charter-selected %s(s) already present in the %s base; none added: %s.", len(selected), noun, source, strings.Join(selected, ", ")))
+			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("All %d charter-selected paradigm(s) already present in the %s base; none added: %s.", len(sel.Paradigms), src, strings.Join(sel.Paradigms, ", ")))
 		}
+		g.Paradigms = dedupe(append(append([]string(nil), base...), sel.Paradigms...))
 	}
-	selectedParadigms := resolveSelected(dct.Paradigm, sel.Paradigms, nil)
-	base, source := activationBase(dct.Paradigm)
-	report("paradigm", selectedParadigms, base, source)
-	g.Paradigms = dedupe(append(base, selectedParadigms...))
 	// tools
 	reg := map[string]bool{}
 	for _, t := range DefaultToolRegistry {
@@ -232,66 +186,71 @@ func ResolveGovernance(root string) (*Governance, error) {
 		g.Diagnostics = append(g.Diagnostics, "No available_tools selection provided; using runtime tool registry fallback.")
 		g.Tools = dct.SortedKeys(reg)
 	}
-
-	localIDs := map[string]bool{}
-	local := LoadLocalDirectives(root)
-	for _, d := range local {
-		localIDs[dct.NormalizeDirectiveID(d.ID)] = true
+	// directives
+	var dbase []string
+	src := "activation"
+	if a := act.Activated(dct.Directive); a == nil {
+		set := map[string]bool{}
+		for _, id := range off.Repo(dct.Directive).IDs() {
+			set[dct.NormalizeDirectiveID(id)] = true
+		}
+		dbase = dct.SortedKeys(set)
+		g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("No activated directive set configured; using built-in catalog default (%d directives).", len(dbase)))
+		src = "catalog_fallback"
+	} else {
+		set := map[string]bool{}
+		for id := range a {
+			set[dct.NormalizeDirectiveID(id)] = true
+		}
+		dbase = dct.SortedKeys(set)
 	}
-	dbase, source := activationBase(dct.Directive)
-	selectedDirectives := resolveSelected(dct.Directive, sel.Directives, localIDs)
-	report("directive", selectedDirectives, dbase, source)
-	g.Directives = dedupe(append(dbase, selectedDirectives...))
-	if len(selectedDirectives) > 0 {
-		source += "+charter"
+	g.Directives = dbase
+	if len(sel.Directives) > 0 {
+		var selected []string
+		for _, d := range sel.Directives {
+			selected = append(selected, dct.NormalizeDirectiveID(d))
+		}
+		selected = dedupe(selected)
+		bs := map[string]bool{}
+		for _, d := range dbase {
+			bs[d] = true
+		}
+		var added []string
+		for _, d := range selected {
+			if !bs[d] {
+				added = append(added, d)
+			}
+		}
+		if len(added) > 0 {
+			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("Charter selected %d directive(s) beyond the %s base: %s.", len(added), src, strings.Join(added, ", ")))
+		} else {
+			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("All %d charter-selected directive(s) already present in the %s base; none added: %s.", len(selected), src, strings.Join(selected, ", ")))
+		}
+		g.Directives = dedupe(append(append([]string(nil), dbase...), selected...))
+		src += "+charter"
 	}
-	if len(local) > 0 {
+	if local := LoadLocalDirectives(root); len(local) > 0 {
 		var ids, added []string
-		have := map[string]bool{}
-		for _, id := range g.Directives {
-			have[id] = true
+		bs := map[string]bool{}
+		for _, d := range g.Directives {
+			bs[d] = true
 		}
 		for _, d := range local {
 			ids = append(ids, d.ID)
-			if !have[d.ID] {
+			if !bs[d.ID] {
 				added = append(added, d.ID)
 			}
 		}
 		if len(added) > 0 {
-			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("Merged %d project-local directive(s) onto the %s set: %s.", len(added), source, strings.Join(added, ", ")))
+			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("Merged %d project-local directive(s) onto the %s set: %s.", len(added), src, strings.Join(added, ", ")))
 		} else {
-			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("All %d project-local directive(s) already present in the %s set; none added: %s.", len(ids), source, strings.Join(ids, ", ")))
+			g.Diagnostics = append(g.Diagnostics, fmt.Sprintf("All %d project-local directive(s) already present in the %s set; none added: %s.", len(ids), src, strings.Join(ids, ", ")))
 		}
 		g.Directives = dedupe(append(g.Directives, ids...))
-		source += "+project_local"
+		src += "+project_local"
 	}
-	g.DirectivesSource = source
-	keep := func(kind dct.Kind, ids []string) []string {
-		var result []string
-		for _, id := range ids {
-			if !act.Denied[kind][id] {
-				result = append(result, id)
-			}
-		}
-		return result
-	}
-	g.Paradigms = keep(dct.Paradigm, g.Paradigms)
-	g.Directives = keep(dct.Directive, g.Directives)
+	g.DirectivesSource = src
 	if sel.TemplateSet != "" {
-		available := map[string]bool{}
-		for _, rel := range dct.BuiltIn().Walk("missions", "mission.yaml", true) {
-			parts := strings.Split(rel, "/")
-			if len(parts) == 3 {
-				available[parts[1]+"-default"] = true
-			}
-		}
-		if dct.BuiltIn().Exists("missions") && !available[sel.TemplateSet] {
-			choices := strings.Join(dct.SortedKeys(available), ", ")
-			if choices == "" {
-				choices = "(none)"
-			}
-			return nil, fmt.Errorf("Governance resolution failed:\n- Charter selected unavailable template_set: '%s'\n- Available template sets: %s\n- Update charter template_set to one of the available template sets, or provide it through a project override (see 'spec-kitty charter list --show-available').", sel.TemplateSet, choices)
-		}
 		g.TemplateSet = sel.TemplateSet
 	} else {
 		g.TemplateSet = DefaultTemplateSet

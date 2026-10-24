@@ -129,9 +129,6 @@ func TestParityDoctorMissionType(t *testing.T) {
 
 func TestDoctorOpsGoOnly(t *testing.T) {
 	s := newProject(t)
-	s.WriteFile("kitty-ops/01KAAAAAAAAAAAAAAAAAAAAAAA.jsonl", "{}\n")
-	s.Git("add", "kitty-ops")
-	s.Git("commit", "-qm", "track Op records on primary")
 	s.Git("checkout", "-q", "-b", "topic")
 	writeOps(s)
 	r := s.Run("doctor", "ops", "--json")

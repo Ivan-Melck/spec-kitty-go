@@ -80,7 +80,7 @@ func TestAgentConfigWithoutOracle(t *testing.T) {
 		t.Fatal("codex not saved")
 	}
 	r = s.MustRun("agent", "config", "remove", "codex")
-	if !strings.Contains(testkit.StripANSI(r.Stdout), "Removed skills for codex (14 files deleted)") || s.Exists(".agents/skills/spec-kitty-plan/SKILL.md") {
+	if !strings.Contains(testkit.StripANSI(r.Stdout), "Removed skills for codex (14 files deleted)") || s.Exists(".agents/skills/spec-kitty.plan/SKILL.md") {
 		t.Fatalf("remove:\n%s", r.Stdout)
 	}
 	s.MustRun("agent", "config", "set", "lint_on_edit", "true")
@@ -93,9 +93,9 @@ func TestAgentConfigWithoutOracle(t *testing.T) {
 	}
 }
 
-// RC8's guarded agent reader reports file-stream YAML diagnostics and a
-// recovery command. An absent agent list must survive unrelated setting edits.
-func TestAgentConfigGuardedReadRC8(t *testing.T) {
+// RC7 validates null lists, preserves YAML stream diagnostics, and uses its
+// original setting-write semantics when the available list is absent.
+func TestAgentConfigGuardedReadRC7(t *testing.T) {
 	p := testkit.NewPair(t)
 	compareInit(p, "init", ".", "--ai", "claude", "--non-interactive")
 	for _, config := range []string{

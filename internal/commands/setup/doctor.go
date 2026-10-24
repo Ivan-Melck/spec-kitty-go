@@ -62,7 +62,7 @@ func init() {
 			},
 			&cli.Command{
 				Name:  "skills",
-				Short: "Check command-skill manifest drift for Codex, Vibe, Pi, Letta, and Antigravity.",
+				Short: "Check command-skill manifest drift for Codex, Vibe, Pi, and Letta.",
 				Flags: []*cli.Flag{{Name: "fix", Kind: cli.Bool, Help: "Repair missing command-skill files"}, jsonFlag()},
 				Run:   runDoctorSkills,
 			},
@@ -339,14 +339,7 @@ func runDoctorEnvFile(ctx *cli.Context) error {
 
 func agentDirsForProject(root string) [][2]string {
 	ac, err := kittify.LoadAgentConfig(root)
-	if err != nil {
-		return nil
-	}
-	return agentDirsForConfig(ac)
-}
-
-func agentDirsForConfig(ac kittify.AgentConfig) [][2]string {
-	if len(ac.Available) == 0 && !ac.ExplicitAgentList {
+	if err != nil || len(ac.Available) == 0 {
 		return agents.AgentDirs
 	}
 	var out [][2]string
@@ -375,16 +368,12 @@ func isPromptDriven(c string) bool {
 
 // CommandFileIssues is runtime.doctor.check_command_file_health.
 func CommandFileIssues(root string) []map[string]string {
-	return commandFileIssuesForDirs(root, agentDirsForProject(root))
-}
-
-func commandFileIssuesForDirs(root string, dirs [][2]string) []map[string]string {
 	marker := "<!-- spec-kitty-command-version: " + app.Version + " -->"
 	var issues []map[string]string
 	add := func(a, c, f, issue, sev string) {
 		issues = append(issues, map[string]string{"agent": a, "command": c, "file": f, "issue": issue, "severity": sev})
 	}
-	for _, d := range dirs {
+	for _, d := range agentDirsForProject(root) {
 		key := agents.AgentDirToKey[d[0]]
 		if key == "" {
 			continue
@@ -449,11 +438,7 @@ func runDoctorCommandFiles(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	ac, err := kittify.LoadAgentConfig(root)
-	if err != nil {
-		return err
-	}
-	issues := commandFileIssuesForDirs(root, agentDirsForConfig(ac))
+	issues := CommandFileIssues(root)
 	if jsonOut {
 		l := []any{}
 		for _, i := range issues {
@@ -484,11 +469,70 @@ func runDoctorCommandFiles(ctx *cli.Context) error {
 // ---------------------------------------------------------------------------
 
 // commandSkillVerify is command_installer.verify.
-type commandSkillVerify = toolsurface.CommandVerifyReport
+type commandSkillVerify struct {
+	drift, gaps, orphans, stale, unsafe []string
+}
 
-type commandManifestReadError struct{ error }
+func canonicalCommandSkill(rel string) bool {
+	for _, c := range agents.CommandSkillCommands {
+		if agents.CommandSkillPath(c) == rel {
+			return true
+		}
+	}
+	return false
+}
 
-func canonicalCommandSkill(rel string) bool { return agents.ParseCommandSkillPath(rel, false) != "" }
+func verifyCommandSkills(root string) commandSkillVerify {
+	var v commandSkillVerify
+	m := agents.LoadCommandSkillsManifest(root)
+	paths := make([]string, 0, len(m))
+	for p := range m {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		e := m[p]
+		if strings.HasPrefix(p, "/") || strings.Contains(p, "..") {
+			v.unsafe = append(v.unsafe, p)
+			continue
+		}
+		if !canonicalCommandSkill(p) {
+			v.stale = append(v.stale, p)
+		}
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
+		if err != nil {
+			v.gaps = append(v.gaps, p)
+			continue
+		}
+		if sha256Hex(b) != e.ContentHash {
+			v.drift = append(v.drift, p)
+		}
+	}
+	sr := filepath.Join(root, ".agents", "skills")
+	ents, _ := os.ReadDir(sr)
+	for _, d := range ents {
+		if !d.IsDir() || !strings.HasPrefix(d.Name(), "spec-kitty.") {
+			continue
+		}
+		filepath.Walk(filepath.Join(sr, d.Name()), func(p string, info os.FileInfo, err error) error {
+			if err != nil || !info.Mode().IsRegular() {
+				return nil
+			}
+			rel, _ := filepath.Rel(root, p)
+			rel = filepath.ToSlash(rel)
+			if m[rel] == nil {
+				v.orphans = append(v.orphans, rel)
+			}
+			return nil
+		})
+	}
+	sort.Strings(v.drift)
+	sort.Strings(v.gaps)
+	sort.Strings(v.orphans)
+	sort.Strings(v.stale)
+	sort.Strings(v.unsafe)
+	return v
+}
 
 type skillsState struct {
 	entries                    int
@@ -510,10 +554,7 @@ func loadSkillsState(root string) (skillsState, error) {
 		}
 	}
 	sort.Strings(s.configured)
-	m, err := toolsurface.LoadCommandManifest(root)
-	if err != nil {
-		return s, commandManifestReadError{fmt.Errorf("%s", commandManifestDetail(err))}
-	}
+	m := agents.LoadCommandSkillsManifest(root)
 	s.entries = len(m)
 	set := map[string]bool{}
 	for _, e := range m {
@@ -528,14 +569,7 @@ func loadSkillsState(root string) (skillsState, error) {
 		}
 	}
 	s.vibeMissing = contains(s.configured, "vibe") && !agents.VibeSkillPathConfigured(root)
-	report, e := toolsurface.VerifyCommandSkills(root)
-	err = e
-	if report != nil {
-		s.report = *report
-	}
-	if err != nil {
-		return s, commandManifestReadError{err}
-	}
+	s.report = verifyCommandSkills(root)
 	return s, nil
 }
 
@@ -596,15 +630,10 @@ func runDoctorSkills(ctx *cli.Context) error {
 	}
 	st, err := loadSkillsState(root)
 	if err != nil {
-		code, message := "config_error", err.Error()
-		if _, ok := err.(commandManifestReadError); ok {
-			code = "manifest_error"
-			message = "Could not read command-skill manifest: " + message
-		}
 		if jsonOut {
-			printJSONRaw(w, jsonError(code, err.Error()))
+			printJSONRaw(w, jsonError("config_error", err.Error()))
 		} else {
-			out(w, "[red]Error:[/red] "+escapeMarkup(message))
+			out(w, "[red]Error:[/red] "+escapeMarkup(err.Error()))
 		}
 		return cli.Exit(2)
 	}
@@ -612,22 +641,22 @@ func runDoctorSkills(ctx *cli.Context) error {
 	repairedVibe := false
 	if fix {
 		r := st.report
-		if len(r.Gaps)+len(r.Stale)+len(st.uninstalled)+len(r.LegacyOwned)+len(r.LegacyRecorded) > 0 || st.vibeMissing {
+		if len(r.gaps)+len(r.stale)+len(st.uninstalled) > 0 || st.vibeMissing {
 			switch {
-			case len(r.Drift) > 0:
+			case len(r.drift) > 0:
 				repairErrors = append(repairErrors, "Refusing --fix while managed skill files have edited-file drift.")
-			case len(r.Unsafe) > 0:
+			case len(r.unsafe) > 0:
 				repairErrors = append(repairErrors, "Refusing --fix while managed skill paths resolve outside the project.")
-			case len(r.Orphans) > 0:
+			case len(r.orphans) > 0:
 				repairErrors = append(repairErrors, "Refusing --fix while unmanaged spec-kitty skill files exist.")
 			default:
 				all := map[string]bool{}
 				for _, a := range append(append([]string(nil), st.manifestAgents...), st.uninstalled...) {
 					all[a] = true
 				}
-				if len(r.Stale) > 0 {
+				if len(r.stale) > 0 {
 					m := agents.LoadCommandSkillsManifest(root)
-					for _, p := range r.Stale {
+					for _, p := range r.stale {
 						if e := m[p]; e != nil {
 							if b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p))); err != nil || sha256Hex(b) == e.ContentHash {
 								os.Remove(filepath.Join(root, filepath.FromSlash(p)))
@@ -669,7 +698,7 @@ func runDoctorSkills(ctx *cli.Context) error {
 		}
 	}
 	r := st.report
-	cmdOK := len(r.Drift)+len(r.Gaps)+len(r.Orphans)+len(r.Stale)+len(r.Unsafe)+len(r.LegacyOwned)+len(r.LegacyRecorded)+len(r.Collisions)+len(st.uninstalled)+len(repairErrors) == 0 && !st.vibeMissing
+	cmdOK := len(r.drift)+len(r.gaps)+len(r.orphans)+len(r.stale)+len(r.unsafe)+len(st.uninstalled)+len(repairErrors) == 0 && !st.vibeMissing
 	configuredSlash, slashGaps := slashCommandState(root)
 	var slashRepaired []string
 	if fix && len(slashGaps) > 0 {
@@ -710,8 +739,8 @@ func runDoctorSkills(ctx *cli.Context) error {
 		}
 		printJSONRaw(w, jsonx.NewObject(
 			"configured_agents", strList(st.configured), "manifest_agents", strList(st.manifestAgents), "entries", st.entries,
-			"canonical_commands", len(agents.CommandSkillCommands), "drift", strList(r.Drift), "gaps", strList(r.Gaps),
-			"orphans", strList(r.Orphans), "stale", strList(r.Stale), "unsafe", strList(r.Unsafe), "legacy", strList(r.Legacy), "collisions", strList(r.Collisions), "uninstalled_agents", strList(st.uninstalled),
+			"canonical_commands", len(agents.CommandSkillCommands), "drift", strList(r.drift), "gaps", strList(r.gaps),
+			"orphans", strList(r.orphans), "stale", strList(r.stale), "unsafe", strList(r.unsafe), "uninstalled_agents", strList(st.uninstalled),
 			"vibe_config_missing", st.vibeMissing, "repaired_agents", strList(repaired), "repaired_paths", strList(repairedPaths), "pruned", strList(pruned),
 			"repaired_vibe_config", repairedVibe, "repair_errors", strList(repairErrors), "ok", ok,
 			"slash_commands", jsonx.NewObject("configured_agents", strList(configuredSlash), "gaps", gaps, "repaired", strList(slashRepaired), "errors", []any{}, "ok", slashOK),
@@ -723,13 +752,12 @@ func runDoctorSkills(ctx *cli.Context) error {
 	}
 	if ok {
 		out(w, fmt.Sprintf("[green]Command Skills[/green]: all manifest entries healthy (%d file(s))", st.entries))
-		renderCommandSkillGuidance(w, r)
 	} else {
 		out(w, "\n[bold]Command Skills[/bold] - issue(s) found\n")
 		plainTable(w, []string{"Check", "Count"}, []int{20, 6}, []byte("lr"), [][]string{
-			{"manifest entries", fmt.Sprint(st.entries)}, {"drift", fmt.Sprint(len(r.Drift))}, {"gaps", fmt.Sprint(len(r.Gaps))},
-			{"orphans", fmt.Sprint(len(r.Orphans))}, {"stale", fmt.Sprint(len(r.Stale))}, {"unsafe", fmt.Sprint(len(r.Unsafe))},
-			{"legacy", fmt.Sprint(len(r.Legacy))}, {"collisions", fmt.Sprint(len(r.Collisions))}, {"uninstalled agents", fmt.Sprint(len(st.uninstalled))}})
+			{"manifest entries", fmt.Sprint(st.entries)}, {"drift", fmt.Sprint(len(r.drift))}, {"gaps", fmt.Sprint(len(r.gaps))},
+			{"orphans", fmt.Sprint(len(r.orphans))}, {"stale", fmt.Sprint(len(r.stale))}, {"unsafe", fmt.Sprint(len(r.unsafe))},
+			{"uninstalled agents", fmt.Sprint(len(st.uninstalled))}})
 		section := func(title string, paths []string) {
 			if len(paths) == 0 {
 				return
@@ -739,12 +767,11 @@ func runDoctorSkills(ctx *cli.Context) error {
 				out(w, "  [yellow]![/yellow] "+p)
 			}
 		}
-		section("Edited managed files (manual review required)", r.Drift)
-		section("Missing managed files", r.Gaps)
-		section("Unmanaged spec-kitty skill files", r.Orphans)
-		section("Stale managed files", r.Stale)
-		section("Unsafe managed paths", r.Unsafe)
-		renderCommandSkillGuidance(w, r)
+		section("Edited managed files (manual review required)", r.drift)
+		section("Missing managed files", r.gaps)
+		section("Unmanaged spec-kitty skill files", r.orphans)
+		section("Stale managed files", r.stale)
+		section("Unsafe managed paths", r.unsafe)
 		if len(st.uninstalled) > 0 {
 			out(w, "\n[bold yellow]Configured agents without command skills[/bold yellow]")
 			for _, a := range st.uninstalled {
@@ -766,7 +793,7 @@ func runDoctorSkills(ctx *cli.Context) error {
 				out(w, "  [red]![/red] "+escapeMarkup(e))
 			}
 		}
-		if !fix && (len(r.Gaps)+len(st.uninstalled)+len(r.Stale) > 0 || st.vibeMissing) {
+		if !fix && (len(r.gaps)+len(st.uninstalled)+len(r.stale) > 0 || st.vibeMissing) {
 			out(w, "\nRun [cyan]spec-kitty doctor skills --fix[/cyan] to reinstall missing command skills.")
 		}
 	}
@@ -842,21 +869,4 @@ func toolFolderFindings(root string) []any {
 	msg := fmt.Sprintf("none of the configured tool folders exists (%s) for agents %s; run `spec-kitty upgrade` to recreate configured folders, or `spec-kitty agent config remove <agent>` to drop a tool",
 		strings.Join(sortedKeys(roots), ", "), strings.Join(ag, ", "))
 	return []any{jsonx.NewObject("kind", "no_tool_folder", "configured_agents", strList(ag), "message", msg)}
-}
-
-func renderCommandSkillGuidance(w io.Writer, r commandSkillVerify) {
-	for _, path := range r.Legacy {
-		message := "Legacy dotted command skills (no longer managed): " + path + " — remove it when you no longer need your edits"
-		if contains(r.LegacyRecorded, path) {
-			message = "Legacy dotted command skill (still recorded by Spec Kitty): " + path + " — run `spec-kitty doctor skills --fix` to retire it"
-		} else if contains(r.LegacyOwned, path) {
-			message = "Legacy dotted command skill (Spec Kitty's unmodified rendering): " + path + " — run `spec-kitty doctor skills --fix` to retire it"
-		}
-		out(w, "\n  [yellow]![/yellow] "+escapeMarkup(message))
-	}
-	for _, path := range r.Collisions {
-		for _, warning := range agents.CommandSkillWarnings(agents.CommandSkillReport{Collisions: []string{path}}) {
-			out(w, "\n  [yellow]![/yellow] "+escapeMarkup(warning))
-		}
-	}
 }

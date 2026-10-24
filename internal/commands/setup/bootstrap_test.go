@@ -49,16 +49,13 @@ func TestBootstrapPopulatesHome(t *testing.T) {
 	for _, rel := range []string{
 		".kittify/missions/software-dev/mission.yaml",
 		".kittify/cache/version.lock",
+		".claude/commands/spec-kitty.specify.md",
+		".gemini/commands/spec-kitty.plan.toml",
 		".claude/skills/spec-kitty/SKILL.md",
 		".agents/skills/spk-start-here/SKILL.md",
 	} {
 		if _, err := os.Stat(filepath.Join(s.Home, rel)); err != nil {
 			t.Errorf("missing %s: %v", rel, err)
-		}
-	}
-	for _, rel := range []string{".claude/commands/spec-kitty.specify.md", ".gemini/commands/spec-kitty.plan.toml"} {
-		if _, err := os.Stat(filepath.Join(s.Home, rel)); !os.IsNotExist(err) {
-			t.Errorf("unconfigured command was installed: %s", rel)
 		}
 	}
 	// Warm run must be a no-op on content.

@@ -73,7 +73,7 @@ func synthesizeMain(ctx *cli.Context, root, adapterName string) error {
 		if jsonMode {
 			var code, corpus any
 			if ev.Code != nil {
-				code = jsonx.NewObject("stack_id", ev.Code.StackID, "primary_language", ev.Code.PrimaryLanguage, "languages", strs(ev.Code.Languages), "representative_files_count", len(ev.Code.Representative))
+				code = jsonx.NewObject("stack_id", ev.Code.StackID, "primary_language", ev.Code.PrimaryLanguage, "representative_files_count", len(ev.Code.Representative))
 			}
 			if ev.Corpus != nil {
 				corpus = jsonx.NewObject("snapshot_id", ev.Corpus.SnapshotID, "entries_count", len(ev.Corpus.Entries))
@@ -126,20 +126,12 @@ func synthesizeMain(ctx *cli.Context, root, adapterName string) error {
 		for _, f := range staged {
 			cprint(w, "%s", "  [dim]staged:[/dim] "+f)
 		}
-		stripped := charter.StrippedLegacyEdges(delta)
-		printStrippedEdges(ctx, stripped, true)
-		pruneOnly := []charter.NodeOrEdgeRef{}
-		for _, ref := range delta.Removable {
-			if ref.Reason == "" {
-				pruneOnly = append(pruneOnly, ref)
-			}
-		}
-		if len(pruneOnly) > 0 {
+		if len(delta.Removable) > 0 {
 			cprint(w, "[yellow]Planned deletions (would run under --prune):[/yellow]")
-			for _, r := range pruneOnly {
+			for _, r := range delta.Removable {
 				cprint(w, "%s", "  - "+r.RefKind+": "+r.URN)
 			}
-		} else if len(stripped) == 0 {
+		} else {
 			cprint(w, "[dim]No divergence: --prune would remove nothing.[/dim]")
 		}
 		for _, c := range delta.Conflicts {
@@ -181,16 +173,6 @@ func synthesizeMain(ctx *cli.Context, root, adapterName string) error {
 		}
 		return cli.Exit(1)
 	}
-	activationWarnings, err := charter.AppendSynthesizedActivations(root, charter.CreatedSlugsByKind(out.Delta))
-	if err != nil {
-		return fail(err)
-	}
-	for _, warning := range activationWarnings {
-		warnings = append(warnings, warning)
-		if !jsonMode {
-			cprint(w, "[yellow]⚠ %s[/yellow]", warning)
-		}
-	}
 	written := charter.WrittenArtifactsFromManifest(root)
 	if jsonMode {
 		p := jsonx.NewObject("result", "success", "adapter", jsonx.NewObject("id", out.AdapterID, "version", out.AdapterVersion),
@@ -201,7 +183,6 @@ func synthesizeMain(ctx *cli.Context, root, adapterName string) error {
 		} else {
 			p.Set("retained", refList(out.Delta.Retained))
 			p.Set("conflicts", conflictList(out.Delta.Conflicts))
-			p.Set("stripped_legacy_edges", refList(charter.StrippedLegacyEdges(out.Delta)))
 		}
 		jsonOut(w, p, jsonx.SortedPretty)
 		return nil
@@ -225,7 +206,6 @@ func synthesizeMain(ctx *cli.Context, root, adapterName string) error {
 				cprint(w, "%s", "  - "+r.RefKind+": "+r.URN)
 			}
 		}
-		printStrippedEdges(ctx, charter.StrippedLegacyEdges(out.Delta), false)
 		for _, c := range out.Delta.Conflicts {
 			cprint(w, "%s", "[yellow]"+formatConflictLine(c.Kind, c.TargetID, c.BackingArtifact, c.Remediation)+"[/yellow]")
 		}
@@ -248,18 +228,12 @@ func installSynthLogger(ctx *cli.Context, jsonMode bool) {
 // synthHandleError is charter_synthesize's typed exception envelopes.
 func synthHandleError(ctx *cli.Context, jsonMode bool, adapter string, warnings []any, err error) error {
 	w := ctx.Stdout
-	var renameError *charter.LegacyRenameRefusedError
 	var dle *charter.DRGLoadError
 	var se *charter.SynthError
 	var re *charter.RequestError
 	var cse *charter.ConfigShapeError
 	var ce *dct.ConfigError
 	switch {
-	case errors.As(err, &renameError):
-		synthPanel(ctx.Stderr, err.Error(), "LegacyRenameRefusedError", "red")
-		if jsonMode {
-			synthFailureEnvelope(w, adapter, append(warnings, "SynthesisError: "+err.Error()))
-		}
 	case errors.As(err, &dle):
 		detail := "Refused: the on-disk doctrine overlay could not be parsed (" + dle.Msg + "). No write was made. Repair or remove the corrupt overlay under .kittify/charter-packs/ and re-run `spec-kitty charter synthesize`."
 		if jsonMode {
@@ -297,9 +271,9 @@ func synthHandleError(ctx *cli.Context, jsonMode bool, adapter string, warnings 
 			detail += ": " + ce.Body
 		}
 		if jsonMode {
-			jsonOut(w, jsonx.NewObject("result", "failure", "adapter", jsonx.NewObject("id", adapter, "version", "unknown"), "code", ce.Code(), "written_artifacts", []any{}, "warnings", append(warnings, detail)), jsonx.SortedPretty)
+			synthFailureEnvelope(w, adapter, append(warnings, detail))
 		} else {
-			cprint(w, "[red]Error:[/red] %s", detail)
+			cprint(w, "%s", "[red]Error:[/red] "+detail)
 		}
 	default:
 		if jsonMode {
@@ -333,21 +307,6 @@ func runCharterResynthesize(ctx *cli.Context) error {
 	root := findRepoRoot()
 	if root == "" {
 		return fail(repoRootMissing, false)
-	}
-	if err := charter.AssertCharterYAMLSound(root); err != nil {
-		var ce *dct.ConfigError
-		if errors.As(err, &ce) {
-			emitCharterError(w, jsonMode, ce.Body, ce.Code(), nil)
-			return cli.Exit(1)
-		}
-		return fail(err.Error(), false)
-	}
-	if err := convergeLegacyProjectIntent(ctx, root, ctx.Bool("list-topics")); err != nil {
-		if jsonMode {
-			return fail(err.Error(), false)
-		}
-		synthPanel(ctx.Stderr, err.Error(), "LegacyRenameRefusedError", "red")
-		return cli.Exit(1)
 	}
 	if fileExists(charter.Path(root, charter.CharterYAML)) {
 		if err := charter.AssertBundleCompatible(root); err != nil {
@@ -446,22 +405,6 @@ func runCharterResynthesize(ctx *cli.Context) error {
 		cprint(w, "%s", "[yellow]No-op:[/yellow] "+res.Diagnostic)
 		return nil
 	}
-	for _, warning := range res.ReferenceWarnings {
-		warnings = append(warnings, warning)
-		if !jsonMode {
-			cprint(w, "[yellow]⚠ %s[/yellow]", warning)
-		}
-	}
-	activationWarnings, err := charter.AppendSynthesizedActivations(root, res.CreatedSlugs)
-	if err != nil {
-		return fail(err.Error(), true)
-	}
-	for _, warning := range activationWarnings {
-		warnings = append(warnings, warning)
-		if !jsonMode {
-			cprint(w, "[yellow]⚠ %s[/yellow]", warning)
-		}
-	}
 	var regen []string
 	for _, t := range res.Targets {
 		regen = append(regen, t.Kind+":"+t.Slug)
@@ -479,62 +422,4 @@ func runCharterResynthesize(ctx *cli.Context) error {
 		cprint(w, "%s", "  [green]✓[/green] "+a)
 	}
 	return nil
-}
-
-func convergeLegacyProjectIntent(ctx *cli.Context, root string, dry bool) error {
-	report, err := charter.RenameLegacyProjectIntentDirective(root, dry)
-	if err != nil {
-		return err
-	}
-	if len(report.Actions) == 0 {
-		return nil
-	}
-	sink := ctx.Stdout
-	if ctx.Bool("json") {
-		sink = ctx.Stderr
-	}
-	heading := "Renamed the legacy mission-type-scope-directive to project-intent-directive"
-	if dry {
-		heading = "Legacy project-intent directive found (dry run, nothing changed)"
-	}
-	cprint(sink, "[yellow]%s:[/yellow]", heading)
-	for _, action := range report.Actions {
-		cprint(sink, "  - %s", action)
-	}
-	return nil
-}
-
-func printStrippedEdges(ctx *cli.Context, refs []charter.NodeOrEdgeRef, dry bool) {
-	var dead, replaced []charter.NodeOrEdgeRef
-	for _, ref := range refs {
-		if ref.Reason == charter.DeadMissionTypeEdgeReason {
-			dead = append(dead, ref)
-		} else {
-			replaced = append(replaced, ref)
-		}
-	}
-	if len(replaced) > 0 {
-		if dry {
-			cprint(ctx.Stdout, "[yellow]Replaced legacy edges (removed without --prune):[/yellow]")
-		} else {
-			cprint(ctx.Stdout, "[yellow]Replaced %d legacy 'applies' edge(s) with 'suggests':[/yellow]", len(replaced))
-		}
-		for _, ref := range replaced {
-			if dry {
-				cprint(ctx.Stdout, "  - %s: %s", ref.RefKind, ref.URN)
-			} else {
-				cprint(ctx.Stdout, "  - %s", ref.URN)
-			}
-		}
-	}
-	if len(dead) > 0 {
-		suffix := ""
-		if dry {
-			suffix = " (removed without --prune)"
-		}
-		cprint(ctx.Stdout, "[yellow]Removed %d dead mission-type 'requires' edge(s)%s:[/yellow]", len(dead), suffix)
-		for _, ref := range dead {
-			cprint(ctx.Stdout, "  - %s", ref.URN)
-		}
-	}
 }

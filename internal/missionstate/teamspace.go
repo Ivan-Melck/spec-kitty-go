@@ -20,7 +20,7 @@ import (
 
 // EventsPackageVersion is the spec-kitty-events version the oracle ships
 // (reported as events_package_version).
-const EventsPackageVersion = "11.0.0"
+const EventsPackageVersion = "10.5.1"
 
 // RowMapping is TeamspaceDryRunRowMapping.
 type RowMapping struct {

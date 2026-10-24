@@ -1,11 +1,9 @@
 # Porting guide: functional parity with upstream spec-kitty
 
 This repository is a Go implementation of the upstream Python `spec-kitty`
-CLI (`spec-kitty-cli`, target **4.0.0rc8**, upstream main
-`ae979820332ee259eba467d03a00e8bb50196237`). Updating from the previously
-verified `dccf199f7a` reference is in progress; see the
-[current RC8 parity inventory](parity/LATEST_MAIN.md). The goal is
-**functional adherence, not code parity**: the
+CLI (`spec-kitty-cli`, targeting published **4.0.0rc7**, tag `v4.0.0rc7`
+at `1b0fe9fc388b095f9964471b0177b4213e9c6c98`). See the
+[current RC7 parity record](parity/RC7.md). The goal is **functional adherence, not code parity**: the
 same commands, flags, exit codes, JSON outputs, on-disk files and git effects
 an agent or user observes, implemented idiomatically in Go. Python internals,
 module layout and incidental implementation details are *not* reproduced.
@@ -31,18 +29,24 @@ equality of hashes that depend on Python source files.
 
 ## Reference material (local, not committed)
 
-Reference root `REF=$HOME/.cache/spec-kitty-parity`. Recreate the upstream
-checkout and oracle with `scripts/setup-reference.sh ../spec-kitty`.
+Reference root `REF=$HOME/.cache/spec-kitty-parity/rc7-1b0fe9fc38`. Recreate the upstream
+checkout and oracle with `scripts/setup-reference.sh ../spec-kitty "$REF"`.
+Then capture the exact command inventory and subprocess help:
+
+```sh
+"$REF/oracle-venv/bin/python" scripts/capture-reference-tree.py "$REF"
+python3 scripts/capture-reference-help.py "$REF"
+```
 
 | What | Where |
 |---|---|
 | Upstream source (read-only) | `$REF/upstream` (`src/specify_cli`, `src/charter`, `src/runtime`, `src/kernel`, `packs/built-in`) |
 | **Oracle** (real wheel install) | `$REF/oracle-bin/spec-kitty`. Never use an editable install: it runs init in local template mode and writes extra files |
 | External status reducer package | `$REF/oracle-venv/lib/python3.13/site-packages/spec_kitty_events` |
-| Full command tree (279 paths at the current target) | `$REF/inventory/cli-tree.md`, `cli-tree.json`, raw help in `inventory/help/*.txt` |
-| Template invocations / priority | `$REF/inventory/template-invocations.md`, `priority.md` |
-| On-disk formats (very detailed) | `$REF/inventory/formats.md` |
-| End-to-end workflow | Summary in `$REF/reports/a6a7fcad1f30f0414.md`; the exact command sequence is in `$REF/trace/old-trace-commands.sh` (the recorded TRACE.md was lost; re-run steps against the oracle when you need exact output) |
+| Full command tree (276 paths) | `$REF/inventory/cli-tree.json`, raw help in `$REF/inventory/help/*.txt` |
+| Templates and resolution priority | `$REF/upstream/src/specify_cli/template`, `$REF/upstream/packs/built-in/missions` |
+| On-disk formats | Upstream schemas and the fixtures in `internal/testkit/missionfx/testdata` |
+| End-to-end workflow | The [README](../README.md), `internal/testkit/missionfx`, and `internal/commands/closeout` differential scenarios |
 
 Always run the oracle with an isolated `HOME` (it writes global files on every
 invocation) and `SPEC_KITTY_NO_UPGRADE_CHECK=1`.
@@ -113,8 +117,15 @@ Domain and command packages live under `internal/<area>/...`.
   `SPEC_KITTY_ORACLE` points at the oracle:
 
   ```sh
-  SPEC_KITTY_ORACLE=$REF/oracle-bin/spec-kitty go test ./...
+  PARITY_TMP=$(mktemp -d /var/tmp/spec-kitty-parity.XXXXXX)
+  TMPDIR="$PARITY_TMP" \
+  SPEC_KITTY_ORACLE=$REF/oracle-bin/spec-kitty \
+  SPEC_KITTY_HELP_INVENTORY=$REF/inventory/help go test ./...
   ```
+
+  Keep scratch outside initialized projects and the real home directory:
+  root-discovery tests must not inherit an ancestor's `.kittify` directory.
+  A disk-backed location also avoids small tmpfs inode limits in broad runs.
 
   `Pair.Compare` diffs exit code + normalized stdout; `Pair.CompareTree`
   diffs file trees/contents. Normalisation masks ULIDs, timestamps, SHAs,

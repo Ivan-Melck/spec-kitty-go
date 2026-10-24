@@ -8,6 +8,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/bulkedit"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
+	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/wp"
 )
@@ -30,7 +31,7 @@ func bulkReviewGate(o *Out, dir, root, slug, target string, ws *lanes.Workspace)
 		return err
 	}
 	base, head := target, ws.BranchName
-	if manifest, err := lanes.Read(dir); err == nil && manifest != nil {
+	if manifest, err := lanes.Read(project.Specs(root, slug)); err == nil && manifest != nil {
 		base = manifest.MissionBranch
 	}
 	if head == "" {

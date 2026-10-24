@@ -24,7 +24,7 @@ const (
 	authorityPathsHeader    = "Project authority paths:"
 	charterDeclaredWhen     = "consult when you change content under this directory"
 	terminologyAuthorityWhn = "canonical terminology — when you encounter a domain term in the diff, grep this directory"
-	adrAuthorityWhen        = "architectural intent — when you change a structural boundary, read the relevant ADR (filed by era, for example docs/adr/4.x/)"
+	adrAuthorityWhen        = "architectural intent — when you change a structural boundary, read the relevant ADR"
 )
 
 // ---------------------------------------------------------------- sections
@@ -165,7 +165,7 @@ func isDir(p string) bool {
 func renderAuthorityPaths(root string, sel Selection) string {
 	var lines []string
 	seen := map[string]bool{}
-	for _, d := range [][2]string{{"docs/context/", terminologyAuthorityWhn}, {"docs/adr/", adrAuthorityWhen}} {
+	for _, d := range [][2]string{{"docs/context/", terminologyAuthorityWhn}, {"docs/adr/3.x/", adrAuthorityWhen}} {
 		if !isDir(filepath.Join(root, d[0])) || seen[d[0]] {
 			continue
 		}
@@ -411,7 +411,6 @@ type selectionGroup struct {
 
 // renderSelectionBlock is selection_block._render_selection_block.
 func renderSelectionBlock(root string, sel Selection, off *dct.Offering) string {
-	identity := dct.NewIdentityIndex(root)
 	orgReq := OrgRequiredSelections(root)
 	plural := map[dct.Kind]string{dct.Paradigm: "paradigms", dct.Directive: "directives", dct.Tactic: "tactics",
 		dct.Styleguide: "styleguides", dct.Toolguide: "toolguides", dct.Procedure: "procedures",
@@ -452,7 +451,10 @@ func renderSelectionBlock(root string, sel Selection, off *dct.Offering) string 
 				}
 			}
 			lines = append(lines, "  - "+id+suffix)
-			lookup := identity.LookupKey(g.kindT, id, true)
+			lookup := id
+			if g.norm != nil {
+				lookup = g.norm(id)
+			}
 			var a *dct.Artifact
 			if repo != nil {
 				a = repo.Get(lookup)
@@ -684,52 +686,67 @@ var spddGuidance = map[string][]string{
 // IsSPDDReasonsActive is spdd_reasons.activation.is_spdd_reasons_active
 // (malformed sources read as inactive instead of raising).
 func IsSPDDReasonsActive(root string) bool {
-	if _, err := os.Stat(dct.ConfigPath(root)); err != nil {
+	cfg, err := dct.LoadConfig(root)
+	if err != nil || cfg == nil {
 		return false
 	}
-	store, err := dct.ResolveActivationStore(root)
-	if err != nil {
+	if _, statErr := os.Stat(dct.ConfigPath(root)); statErr != nil {
 		return false
 	}
-	src := store.Data
-	directive038 := func(id string) bool {
-		if strings.EqualFold(id, "DIRECTIVE_038") {
-			return true
-		}
-		m := regexp.MustCompile(`^(\d+)`).FindStringSubmatch(id)
-		if m == nil {
-			return false
-		}
-		n := m[1]
-		for len(n) < 3 {
-			n = "0" + n
-		}
-		return n == "038"
-	}
-	admitted := func(kind string, matches func(string) bool) bool {
-		if store.Ledger {
-			for _, raw := range src.GetList("deactivated_" + kind) {
-				if matches(pyStrOf(raw)) {
-					return false
-				}
+	src := cfg
+	if v, ok := cfg.Get("charter"); ok {
+		if s, isStr := v.(string); isStr {
+			p := s
+			if !filepath.IsAbs(p) {
+				p = filepath.Join(root, p)
 			}
+			o := readYAMLObject(p)
+			if o == nil {
+				return false
+			}
+			src = o
 		}
-		value, exists := src.Get("activated_" + kind)
-		if !exists || value == nil {
+	}
+	read := func(k string) (map[string]bool, bool) {
+		v, ok := src.Get(k)
+		if !ok || v == nil {
+			return nil, false
+		}
+		l, _ := v.([]any)
+		out := map[string]bool{}
+		for _, x := range l {
+			out[pyStrOf(x)] = true
+		}
+		return out, true
+	}
+	par, pok := read("activated_paradigms")
+	tac, tok := read("activated_tactics")
+	dir, dok := read("activated_directives")
+	if !pok || par["structured-prompt-driven-development"] {
+		return true
+	}
+	if !tok || tac["reasons-canvas-fill"] || tac["reasons-canvas-review"] {
+		return true
+	}
+	if !dok {
+		return true
+	}
+	numRe := regexp.MustCompile(`^(\d+)`)
+	for d := range dir {
+		if d == "DIRECTIVE_038" || strings.ToUpper(d) == "DIRECTIVE_038" {
 			return true
 		}
-		list, ok := value.([]any)
-		if !ok {
-			return false
-		}
-		for _, raw := range list {
-			if matches(pyStrOf(raw)) {
+		if m := numRe.FindStringSubmatch(d); m != nil {
+			n := m[1]
+			for len(n) < 3 {
+				n = "0" + n
+			}
+			if n == "038" {
 				return true
 			}
 		}
-		return false
 	}
-	return admitted("paradigms", func(id string) bool { return id == "structured-prompt-driven-development" }) || admitted("tactics", func(id string) bool { return id == "reasons-canvas-fill" }) || admitted("tactics", func(id string) bool { return id == "reasons-canvas-review" }) || admitted("directives", directive038)
+	return false
 }
 
 func appendSPDDGuidance(lines []string, mission, action string) []string {

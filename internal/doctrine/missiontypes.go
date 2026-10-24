@@ -22,9 +22,6 @@ type MissionType struct {
 	// TemplateSet maps artifact_key -> template file in sequence order (nil = none).
 	TemplateSet *jsonx.Object
 	SourceLayer string
-	// RequiresSubstantiveSpec is the optional mission capability; nil uses
-	// the built-in default for that exact mission type.
-	RequiresSubstantiveSpec *bool
 }
 
 // MissionStep is one step.yaml of a mission type.
@@ -141,11 +138,6 @@ func loadMissionTypeFile(b []byte, stem, layer, repoRoot string) (*MissionType, 
 		return nil, err
 	}
 	mt := &MissionType{ID: o.GetString("id"), DisplayName: o.GetString("display_name"), SourceLayer: layer}
-	if v, ok := o.Get("requires_substantive_spec"); ok && v != nil {
-		if value, valid := missionTypeBool(v); valid {
-			mt.RequiresSubstantiveSpec = &value
-		}
-	}
 	if mt.ID == "" {
 		mt.ID = stem
 	}

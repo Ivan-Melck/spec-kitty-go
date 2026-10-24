@@ -338,7 +338,7 @@ func (c *Context) Terminal(r TerminalRequest) (*TerminalResponse, error) {
 	if r.DryRun {
 		return &TerminalResponse{DecisionID: r.DecisionID, Status: r.Status, Outcome: r.Status}, nil
 	}
-	eventsPath, err := c.writeEventsPath()
+	_, err := c.writeEventsPath()
 	if err != nil {
 		return nil, err
 	}
@@ -361,11 +361,7 @@ func (c *Context) Terminal(r TerminalRequest) (*TerminalResponse, error) {
 	terminal := e.Status != StatusOpen
 	if terminal && !(e.Status == StatusDeferred && r.Status == StatusResolved) {
 		if e.Status == r.Status && eqPtr(e.FinalAnswer, r.FinalAnswer) && e.OtherAnswer == r.OtherAnswer && eqPtr(e.Rationale, r.Rationale) {
-			lam, err := c.repairTerminal(e, eventsPath, r.Actor)
-			if err != nil {
-				return nil, err
-			}
-			return &TerminalResponse{DecisionID: r.DecisionID, Status: r.Status, Outcome: r.Status, Idempotent: true, Lamport: lam}, nil
+			return &TerminalResponse{DecisionID: r.DecisionID, Status: r.Status, Outcome: r.Status, Idempotent: true}, nil
 		}
 		return nil, NewError(CodeTerminalConflict, fmt.Sprintf("Decision %s is already in terminal state %s; cannot transition to %s", mission.PyRepr(r.DecisionID), mission.PyRepr(e.Status), mission.PyRepr(r.Status)),
 			"decision_id", r.DecisionID, "existing_status", e.Status, "requested_status", r.Status)
@@ -383,27 +379,6 @@ func (c *Context) Terminal(r TerminalRequest) (*TerminalResponse, error) {
 		return nil, err
 	}
 	return &TerminalResponse{DecisionID: r.DecisionID, Status: r.Status, Outcome: r.Status, Lamport: &lam}, nil
-}
-
-func (c *Context) repairTerminal(e *Entry, eventsPath, actor string) (*int, error) {
-	events, err := c.readEvents(eventsPath)
-	if err != nil {
-		return nil, err
-	}
-	for _, ev := range events {
-		p := ev.GetObject("payload")
-		if ev.GetString("event_type") == "DecisionPointResolved" && p != nil && p.GetString("decision_point_id") == e.DecisionID && p.GetString("terminal_outcome") == e.Status {
-			return nil, nil
-		}
-	}
-	if _, err := WriteArtifact(c.LedgerDir(), e); err != nil {
-		return nil, NewError(CodeEventRepairFailed, fmt.Sprintf("Failed to repair terminal event for decision %s: %v", mission.PyRepr(e.DecisionID), err), "decision_id", e.DecisionID, "mission_slug", c.Slug)
-	}
-	lam, err := c.emitResolved(e, actor)
-	if err != nil {
-		return nil, NewError(CodeEventRepairFailed, fmt.Sprintf("Failed to repair terminal event for decision %s: %v", mission.PyRepr(e.DecisionID), err), "decision_id", e.DecisionID, "mission_slug", c.Slug)
-	}
-	return &lam, nil
 }
 
 // --- verify -----------------------------------------------------------------

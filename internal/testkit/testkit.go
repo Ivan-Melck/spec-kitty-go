@@ -293,7 +293,6 @@ var (
 	reMid8 = regexp.MustCompile(`-[0-9A-HJKMNP-TV-Z]{8}\b`)
 	// reBareMid8 matches a standalone mid8 (ULIDs minted this century start "0").
 	reBareMid8 = regexp.MustCompile(`\b0[0-9A-HJKMNP-TV-Z]{7}\b`)
-	reBackupTS = regexp.MustCompile(`\.backup-\d{8}T\d{6}Z`)
 	reTS       = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?`)
 	reSHA      = regexp.MustCompile(`\b[0-9a-f]{40}\b|\b[0-9a-f]{64}\b`)
 	reShort    = regexp.MustCompile(`\b[0-9a-f]{7,12}\b`)
@@ -352,7 +351,6 @@ func NormalizeValues(text string) string {
 		return m
 	})
 	text = reTS.ReplaceAllString(text, "<TS>")
-	text = reBackupTS.ReplaceAllString(text, ".backup-<TS>")
 	if strings.Contains(text, SGREnd) {
 		text = reTSAnsi.ReplaceAllString(text, "<TS>")
 	}

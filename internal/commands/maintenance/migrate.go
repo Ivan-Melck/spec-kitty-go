@@ -16,6 +16,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
@@ -135,7 +136,13 @@ func runMigrateLayout(ctx *cli.Context) error {
 		cprint(out, "  [green]Global runtime is current.[/green]")
 	}
 	cprint(out, "[bold]Step 2:[/bold] Per-project .kittify/ cleanup...")
-	rep := migrate.ExecuteLayoutMigration(root, dryRun)
+	rep, err := migrate.ExecuteLayoutMigration(root, dryRun)
+	if err != nil {
+		if oe, ok := pyjson.AsOSError(err); ok {
+			return uncaught(ctx, oe.Type, oe)
+		}
+		return err
+	}
 	if dryRun {
 		cprint(out, "[bold]Dry run -- no changes made[/bold]")
 	}
@@ -149,13 +156,6 @@ func runMigrateLayout(ctx *cli.Context) error {
 	}
 	cprintf(out, "  %d files customized -- %s to overrides/", len(rep.Moved), actMoved)
 	cprintf(out, "  %d files project-specific -- kept", len(rep.Kept))
-	if n := len(rep.Conflicts); n > 0 {
-		if dryRun {
-			cprintf(out, "  [yellow]%d files would NOT be moved to overrides/ -- would be kept in place (review the legacy copies)[/yellow]", n)
-		} else {
-			cprintf(out, "  [yellow]%d files NOT moved to overrides/ -- kept in place (review the legacy copies)[/yellow]", n)
-		}
-	}
 	if len(rep.Unknown) > 0 {
 		cprintf(out, "  [yellow]%d files unknown -- kept with warning[/yellow]", len(rep.Unknown))
 	}
@@ -169,14 +169,6 @@ func runMigrateLayout(ctx *cli.Context) error {
 		for _, m := range rep.Moved {
 			cprintf(out, "    [blue]moved: %s -> %s[/blue]", m[0], m[1])
 		}
-		reasons := map[string]string{
-			migrate.ConflictDestinationExists:        "override already exists",
-			migrate.ConflictDestinationParentBlocked: "a non-folder blocks the overrides path",
-			migrate.ConflictSourceIsSymlink:          "legacy file is a symbolic link",
-		}
-		for _, c := range rep.Conflicts {
-			cprintf(out, "    [yellow]not moved (%s): %s -> %s[/yellow]", reasons[c.Reason], c.Source, c.Destination)
-		}
 		for _, p := range rep.Kept {
 			cprintf(out, "    [green]kept: %s[/green]", p)
 		}
@@ -185,11 +177,7 @@ func runMigrateLayout(ctx *cli.Context) error {
 		}
 	}
 	if !dryRun {
-		if len(rep.Conflicts) == 0 {
-			cprint(out, "\n[green]Migration complete.[/green] Zero legacy warnings expected. Run `spec-kitty config --show-origin` to verify resolution tiers.")
-		} else {
-			cprintf(out, "\n[yellow]Migration complete with %d file(s) not moved.[/yellow] The legacy copies were left in place because an override already exists, a non-folder blocks the overrides path, or the file is a symbolic link; run `spec-kitty migrate --dry-run --verbose` to list them, then delete the ones you no longer need. Run `spec-kitty config --show-origin` to verify resolution tiers.", len(rep.Conflicts))
-		}
+		cprint(out, "\n[green]Migration complete.[/green] Zero legacy warnings expected. Run `spec-kitty config --show-origin` to verify resolution tiers.")
 	}
 	return nil
 }

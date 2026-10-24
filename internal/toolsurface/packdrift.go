@@ -168,7 +168,6 @@ func ProjectPackSkills(root string) ([]string, error) {
 // skill files created, updated or retired, and (path, reason) pairs left
 // alone (unowned same-name directories, locally modified managed files).
 type PackSkillProjection struct {
-	Warnings  []string
 	Changed   []string
 	Preserved [][2]string
 }
@@ -257,9 +256,6 @@ func ReprojectPackSkills(root string) (PackSkillProjection, error) {
 		if d.State == "preserve" || d.State == "consent_required" {
 			proj.Preserved = append(proj.Preserved, [2]string{d.Path, d.Reason})
 		}
-	}
-	if warning := agents.RefreshAgentBlock(root); warning != "" {
-		proj.Warnings = append(proj.Warnings, warning)
 	}
 	return proj, nil
 }

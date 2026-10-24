@@ -37,17 +37,6 @@ func TestWindows(t *testing.T) {
 	}
 }
 
-func TestLaneNeverStarted(t *testing.T) {
-	never := []*status.Event{ev("WP01", "planned", "canceled", "")}
-	if !laneNeverStarted(never, []string{"WP01"}) {
-		t.Error("planned -> canceled never started")
-	}
-	started := []*status.Event{ev("WP01", "planned", "claimed", "x"), ev("WP01", "claimed", "canceled", "")}
-	if laneNeverStarted(started, []string{"WP01"}) || laneNeverStarted(never, nil) {
-		t.Error("a claimed lane started; an empty lane proves nothing")
-	}
-}
-
 func TestDetailFor(t *testing.T) {
 	got := detailFor(reasonCommitOutside, "lane-a", "WP02", []string{"1111111111aa", "2222222222bb", "3333333333cc", "4444444444dd"}, "src/x.py")
 	want := "lane-a carries commit(s) 1111111111, 2222222222, 3333333333 and 1 more (touching 'src/x.py') that lie outside every WP's " +

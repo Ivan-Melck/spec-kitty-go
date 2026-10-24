@@ -315,30 +315,12 @@ func (c *ProfileCatalog) Resolve(id string) *Profile {
 // ActivatedProfiles returns the three-state activated_agent_profiles set
 // (nil = key absent / no config).
 func ActivatedProfiles(repoRoot string) (IDSet, error) {
+	if _, err := os.Stat(ConfigPath(repoRoot)); err != nil {
+		return nil, nil
+	}
 	act, err := LoadActivation(repoRoot)
 	if err != nil {
 		return nil, err
 	}
-	allowed := act.Activated(AgentProfile)
-	identity := NewIdentityIndex(repoRoot)
-	if allowed != nil {
-		resolved := IDSet{}
-		for token := range allowed {
-			id := identity.LookupKey(AgentProfile, token, false)
-			if !act.Denied[AgentProfile][id] {
-				resolved[id] = true
-			}
-		}
-		allowed = resolved
-	}
-	if len(act.Denied[AgentProfile]) > 0 && allowed == nil {
-		allowed = IDSet{}
-		for token := range AvailableIDs("agent-profile", LayerRoots(repoRoot), OrgRoots(repoRoot)) {
-			id := identity.LookupKey(AgentProfile, token, false)
-			if !act.Denied[AgentProfile][id] {
-				allowed[id] = true
-			}
-		}
-	}
-	return allowed, nil
+	return act.Activated(AgentProfile), nil
 }

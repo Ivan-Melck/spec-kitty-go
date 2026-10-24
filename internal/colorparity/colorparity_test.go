@@ -302,6 +302,12 @@ func TestNoProjectColour(t *testing.T) {
 							out = strings.ReplaceAll(out, base+"/", "<BASE>/")
 							res[side] = fmt.Sprintf("exit %d\n%s", code, normalize(testkit.MaskTracebackFrames(out)))
 						}
+						// Each probe has independent homes. Retaining every
+						// populated runtime until this subtest ends exhausts
+						// small tmpfs inode limits during the full campaign.
+						if err := os.RemoveAll(tmp); err != nil {
+							t.Errorf("clean up %s: %v", p.name, err)
+						}
 						if res["o"] != res["g"] {
 							mu.Lock()
 							bad = append(bad, p.name)

@@ -197,20 +197,19 @@ func BuildInclude(root, selector string) (string, error) {
 		return templateInclude(root, ident)
 	}
 	off := dct.NewOffering(root, dct.OrgRoots(root))
-	lookup := dct.NewIdentityIndex(root).LookupKey(k, ident, false)
-	a := off.Repo(k).Get(lookup)
-	if a == nil || (k == dct.AgentProfile && !profileActivated(root, lookup)) {
+	a := off.Repo(k).Get(ident)
+	if a == nil || (k == dct.AgentProfile && !profileActivated(root, ident)) {
 		return "", fmt.Errorf("No %s found for selector '%s'.", string(k), selector)
 	}
 	return renderArtifactInclude(k, a), nil
 }
 
 func profileActivated(root, id string) bool {
-	allowed, err := dct.ActivatedProfiles(root)
+	act, err := dct.LoadActivation(root)
 	if err != nil {
 		return true
 	}
-	return allowed.Has(id)
+	return act.Activated(dct.AgentProfile).Has(id)
 }
 
 // withModelDefaults adds the list defaults the upstream pydantic models

@@ -260,9 +260,6 @@ func prepareHooksMember(root string) (presenceMember, error) {
 	if err != nil {
 		return presenceMember{}, err
 	}
-	if desired != nil && agents.ClaudeSettingsCommitted(root) {
-		return presenceMember{Path: ".claude/settings.json", Before: before, Content: raw, Disposition: "preserve", Reason: "Committed team settings are never edited"}, nil
-	}
 	content := raw
 	if desired != nil {
 		content = desired

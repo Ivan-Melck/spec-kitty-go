@@ -48,7 +48,7 @@ func postCheckpointMissionPaths(root, slug, checkpoint, coordRef string) ([]stri
 			continue
 		}
 		kind := mission.ArtifactKindForPath(p)
-		if !mission.CoordinationKinds[kind] || kind == mission.KindIssueMatrix || kind == mission.KindAcceptanceMatrix {
+		if kind != "" && (!mission.CoordinationKinds[kind] || kind == mission.KindIssueMatrix || kind == mission.KindAcceptanceMatrix) {
 			continue
 		}
 		out = append(out, p)

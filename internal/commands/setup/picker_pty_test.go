@@ -262,7 +262,7 @@ func nagTranscript(t *testing.T, bin string) string {
 	dir := filepath.Join(s.Home, ".cache", "spec-kitty")
 	os.MkdirAll(dir, 0o700)
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000+00:00")
-	rec := `{"always_upgrade": false, "cli_version_key": "4.0.0rc8", "fetched_at": "` + now + `", "last_shown_at": null, ` +
+	rec := `{"always_upgrade": false, "cli_version_key": "4.0.0rc7", "fetched_at": "` + now + `", "last_shown_at": null, ` +
 		`"latest_source": "pypi", "latest_version": "99.1.0", "never_ask": false, "remote_version_seen": null, "snooze_step": null, "snoozed_until": null}`
 	if err := os.WriteFile(filepath.Join(dir, "upgrade-nag.json"), []byte(rec), 0o600); err != nil {
 		t.Fatal(err)
@@ -299,7 +299,7 @@ func TestDoctorColourTablesMatchOracle(t *testing.T) {
 	if r := s.Run("init", ".", "--ai", "claude,codex", "--non-interactive"); r.Code != 0 {
 		t.Fatalf("init: %s", r.Stderr)
 	}
-	os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty-plan"))
+	os.RemoveAll(filepath.Join(s.Dir, ".agents/skills/spec-kitty.plan"))
 	for _, args := range [][]string{{"doctor", "state-roots"}, {"doctor", "skills"}, {"doctor", "command-files"}} {
 		g, _, gc := runPTYIn(t, s, testkit.Binary(t), true, false, args)
 		o, _, oc := runPTYIn(t, s, oracle, true, false, args)

@@ -16,15 +16,15 @@ import (
 // comment-preserving config.yaml writers.
 
 var (
-	reHex64 = regexp.MustCompile(`[0-9a-f]{64}`)
-	reHex16 = regexp.MustCompile(`state-v1-[0-9a-f]{16}`)
+	reHex64        = regexp.MustCompile(`[0-9a-f]{64}`)
+	reBackupDigest = regexp.MustCompile(`state-v1-[0-9a-f]{64}`)
 )
 
 // maskHashes hides content digests that embed run-specific bytes (manifest
 // timestamps, project ids) and so differ between any two runs.
 func maskHashes(s string) string {
 	s = reHex64.ReplaceAllString(s, "<H>")
-	return reHex16.ReplaceAllString(s, "state-v1-<H>")
+	return reBackupDigest.ReplaceAllString(s, "state-v1-<H>")
 }
 
 func compareHashed(t *testing.T, p *testkit.Pair, args ...string) (testkit.Result, testkit.Result) {
@@ -54,7 +54,7 @@ func drift(s *testkit.Sandbox) {
 		f.WriteString(text)
 		f.Close()
 	}
-	rm(".agents/skills/spec-kitty-plan/SKILL.md")
+	rm(".agents/skills/spec-kitty.plan/SKILL.md")
 	rm(".agents/skills/spk-start-here/SKILL.md")
 	rm(".claude/skills/spk-start-here/SKILL.md")
 	edit(".agents/skills/spk-run-next/SKILL.md", "local edit\n")

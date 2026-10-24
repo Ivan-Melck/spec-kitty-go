@@ -48,7 +48,7 @@ func itoa(n int) string {
 
 func TestCommandSkillsMatchReference(t *testing.T) {
 	ref := refProject(t)
-	if _, err := os.Stat(filepath.Join(ref, filepath.Dir(CommandSkillPath("plan")))); err != nil {
+	if _, err := os.Stat(filepath.Join(ref, ".agents/skills/spec-kitty.plan")); err != nil {
 		t.Skip("reference has no command skills")
 	}
 	for _, c := range CommandSkillCommands {
@@ -56,7 +56,7 @@ func TestCommandSkillsMatchReference(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, _ := os.ReadFile(filepath.Join(ref, CommandSkillPath(c)))
+		want, _ := os.ReadFile(filepath.Join(ref, ".agents/skills/spec-kitty."+c+"/SKILL.md"))
 		if string(got) != string(want) {
 			t.Errorf("%s differs: %s", c, refDiff(string(want), string(got)))
 			if d := os.Getenv("SPEC_KITTY_DUMP"); d != "" {

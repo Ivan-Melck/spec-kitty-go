@@ -1060,7 +1060,10 @@ func checkLaneGates(s *Summary, sf *coord.Surface, mutate bool) {
 		appendSkippedLaneChecks(s, "meta.json target_branch does not match lanes.json target_branch", true)
 		return
 	}
-	hasCode := missionHasCode(m, featureDir)
+	// RC7's WP-kind index reads the primary repository even for an owned
+	// acceptance call. The lane kind still supplies the independent code floor.
+	kindDir := project.Specs(s.PrimaryRepoRoot, s.Feature)
+	hasCode := missionHasCode(m, kindDir)
 	allowed := map[string]bool{m.TargetBranch: true}
 	if hasCode {
 		allowed[m.MissionBranch] = true

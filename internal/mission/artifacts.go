@@ -24,11 +24,6 @@ const (
 	KindTracerFile             = "tracer_file"
 	KindDecisionLedger         = "decision_ledger"
 	KindContract               = "contract"
-	KindResearchOutput         = "research_output"
-	KindOccurrenceMap          = "occurrence_map"
-	KindMissionGoals           = "mission_goals"
-	KindReleaseRecord          = "release_record"
-	KindPrimaryMetadata        = "primary_metadata"
 	KindReviewCycle            = "review_cycle"
 	KindPrimaryMetadataUnknown = ""
 )
@@ -39,16 +34,11 @@ var kindByBasename = map[string]string{
 	"status.events.jsonl": KindStatusState, "status.json": KindStatusState, "analysis-report.md": KindAnalysisReport,
 	"spec.md": KindSpec, "data-model.md": KindDataModel, "research.md": KindResearch, "quickstart.md": KindChecklist,
 	"retrospective.yaml": KindRetrospective, "baseline-tests.json": KindWorkPackageTask, "decisions.events.jsonl": KindDecisionLog,
-	"findings.md": KindResearchOutput, "report.md": KindResearchOutput, "methodology.md": KindResearchOutput,
-	"synthesis.md": KindResearchOutput, "literature-review.md": KindResearchOutput,
-	"gap-analysis.md": KindAnalysisReport, "audit-report.md": KindAnalysisReport,
-	"occurrence_map.yaml": KindOccurrenceMap, "goals.md": KindMissionGoals, "release.md": KindReleaseRecord,
-	"meta.json": KindPrimaryMetadata,
 }
 
 var kindByDir = map[string]string{
 	"tasks": KindWorkPackageTask, "checklists": KindChecklist, "traces": KindTracerFile,
-	"decisions": KindDecisionLedger, "contracts": KindContract, "research": KindResearch,
+	"decisions": KindDecisionLedger, "contracts": KindContract,
 }
 
 // CoordinationKinds is the COORD partition (_PLACEMENT_ARTIFACT_KINDS).
