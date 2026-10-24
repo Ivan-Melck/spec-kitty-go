@@ -32,14 +32,15 @@ status-directory anchoring and human output follow RC7 rather than RC8.
 Other area notes in this directory are historical implementation audits.
 This file identifies the current target and its acceptance evidence.
 
-## Verification in progress
+## Verification
 
 The reference lives at `$HOME/.cache/spec-kitty-parity/rc7-1b0fe9fc38`.
-The final differential campaign uses immutable source at
+The broad differential campaign used immutable source at
 `$HOME/.cache/spec-kitty-parity/rc7-validation-tmp/final-source` and binary
 `$HOME/.cache/spec-kitty-parity/rc7-validation-tmp/spec-kitty-final`:
 
 ```sh
+REF="$HOME/.cache/spec-kitty-parity/rc7-1b0fe9fc38"
 GOMAXPROCS=6 \
 TMPDIR=/var/tmp/spec-kitty-rc7-validation \
 SPEC_KITTY_GO_BIN="$HOME/.cache/spec-kitty-parity/rc7-validation-tmp/spec-kitty-final" \
@@ -47,6 +48,20 @@ SPEC_KITTY_ORACLE="$REF/oracle-bin/spec-kitty" \
 SPEC_KITTY_HELP_INVENTORY="$REF/inventory/help" \
 go test -p 8 -parallel 4 -json -count=1 -timeout 120m ./...
 ```
+
+Evidence combines this frozen campaign with final-build replays. The broad
+log records 821 passed, ten skipped and eleven failed test/subtest results
+(including two failed parent results). Those nine failing leaf cases fall
+into the corrected diagnostics and PTY-fixture issues described below; every
+one has a passing corrective replay.
+
+The session interruption stopped that campaign with four closeout tests
+unfinished. All four were completed against the final `spec-kitty-root-types`
+binary using `closeout-followup-source`: retrospective backfill, legacy
+retrospective synthesis, WP metadata validation and the review-artifact gate.
+All eight test/subtest results passed, and the replay exited successfully.
+The original broad log retains its failures and interrupted ending; the
+combined evidence covers its unfinished cases and subsequent code changes.
 
 An earlier survey was stopped after the temporary filesystem exhausted its
 inode limit. Scratch under the real home also lets no-project fixtures discover
@@ -114,4 +129,7 @@ passed for the unchanged concurrency-sensitive packages
 initialization again executed no Python. The latest standalone Linux build and
 a macOS ARM64 cross-build also pass; runtime comparisons were run on Linux.
 
-Final broad comparison results will be recorded here after completion.
+There are no unresolved mismatches in these comparisons. Completed logs and
+smoke-test results are retained under
+`$HOME/.cache/spec-kitty-parity/rc7-validation-tmp/logs/`; the adjacent
+`qualification-manifest.json` records frozen-source and executable hashes.

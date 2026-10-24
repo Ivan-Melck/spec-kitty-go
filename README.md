@@ -184,7 +184,7 @@ go test ./...
 go vet ./...
 ```
 
-Reference-dependent tests skip unless `SPEC_KITTY_ORACLE` is set. The
+Set `SPEC_KITTY_ORACLE` to enable upstream CLI differential tests. The
 [porting guide](docs/PORTING.md) explains how to build the reference, capture
 its help inventory, and run differential tests. The
 [RC7 parity record](docs/parity/RC7.md) identifies the reference and verification
