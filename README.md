@@ -177,6 +177,85 @@ Use `spec-kitty doctor --help` to select a diagnostic. Every command group has
 RC7 does not undo migrations applied by RC8. Use an RC7-compatible project
 checkout when switching an existing RC8 project back to this version.
 
+## Uninstall
+
+RC7 has no dedicated uninstall command. If you are retiring Spec Kitty from
+a project, complete the optional project cleanup before removing the CLI.
+
+### Optional project cleanup
+
+Back up mission work, custom configuration and memory before removing project
+files. In each affected repository:
+
+1. Run `git worktree list`. Save any changes in Spec Kitty worktrees, then
+   remove unwanted worktrees with `git worktree remove <path>`.
+2. Remove Spec Kitty hooks from your assistant's settings and the Git hooks
+   directory shown by `git rev-parse --git-path hooks`. Remove only Spec Kitty
+   hooks or hook entries; restore any previous hooks from their backups.
+3. Inspect `git config --local --get-regexp '^merge\.spec-kitty-'`. Remove
+   the corresponding `merge.spec-kitty-*` sections from local Git configuration,
+   together with their `merge=spec-kitty-*` entries in `.gitattributes`.
+4. Use the manifests in `.kittify/` to identify generated agent files. Remove
+   those files, such as `.agents/skills/spec-kitty.<command>/SKILL.md`, and
+   Spec Kitty orientation blocks in `AGENTS.md` or `CLAUDE.md` between
+   `<!-- spec-kitty:orientation -->` and `<!-- /spec-kitty:orientation -->`.
+   Keep unrelated skills, instructions and settings.
+5. After backing them up, remove `.kittify/` and any unwanted Spec Kitty entries
+   in `.gitignore` and the file shown by `git rev-parse --git-path info/exclude`.
+   Archive `kitty-specs/` and `kitty-ops/` if you want to retain mission and Op
+   history; deleting those directories removes that history from the working
+   tree.
+
+Review `git diff` before committing project cleanup.
+
+### Remove the executable
+
+Locate the active installation:
+
+```sh
+command -v spec-kitty
+```
+
+For the installation command documented above:
+
+```sh
+rm -f "$HOME/.local/bin/spec-kitty"
+```
+
+For the local build, run from this checkout:
+
+```sh
+rm -f ./bin/spec-kitty
+```
+
+If you used another `GOBIN` or copied the executable elsewhere, remove that
+copy instead. A plain `go install` normally installs to `~/go/bin` unless
+`GOBIN` or `GOPATH` changes it; `go env GOBIN GOPATH` shows your settings.
+Remove any Spec Kitty aliases from your shell configuration. Refresh Bash's
+command cache with `hash -r` (or `rehash` in zsh), then run
+`command -v spec-kitty` again. Another installed copy may still be found.
+
+### Optional user-level cleanup
+
+Inspect the inventories in `~/.kittify/cache/*-assets.json` before deleting
+them: they identify generated files in your assistants' global command and
+skill directories. Remove only the Spec Kitty files you no longer need;
+preserve unrelated files and any customizations you want to keep.
+
+After backing up custom content, you can remove the shared runtime and state
+directories if no other Spec Kitty installation uses them:
+
+```sh
+rm -rf "$HOME/.kittify" "$HOME/.spec-kitty"
+```
+
+If `SPEC_KITTY_HOME` is set, inspect and clean that directory instead of the
+default locations. Upgrade preferences and caches can also be removed from
+`${XDG_CONFIG_HOME:-$HOME/.config}/spec-kitty` and
+`${XDG_CACHE_HOME:-$HOME/.cache}/spec-kitty`. These locations can be shared
+with the Python CLI. Remove any obsolete Spec Kitty environment settings
+from your shell configuration, then restart your assistant sessions.
+
 ## Development and verification
 
 ```sh
