@@ -20,7 +20,7 @@ Local benchmarks on Linux (AMD Ryzen 7 5800X, 2026-10-25) found:
 
 Based on 410 measured invocations with warm OS caches. These measure local CLI
 performance; full AI mission throughput also depends on model and tool latency.
-See the [full benchmark report and methodology](docs/benchmarks/rc7-2026-10-25/report.html)
+See the [full benchmark report and methodology](docs/benchmarks/rc7-2026-10-25/report.md)
 and [raw measurements](docs/benchmarks/rc7-2026-10-25/results.json).
 
 ## Requirements
