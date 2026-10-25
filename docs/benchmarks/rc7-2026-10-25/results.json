@@ -1,0 +1,3738 @@
+{
+  "metadata": {
+    "started_at": "2026-10-25T14:30:06+0100",
+    "platform": "Linux-7.2.11-arch1-1-x86_64-with-glibc2.44",
+    "cpu_count": 16,
+    "load_average_start": [
+      2.2001953125,
+      2.04931640625,
+      1.794921875
+    ],
+    "go_commit": "770e770fb35588200bb65ac17052eb597012d2ca",
+    "go_build": "/var/tmp/spec-kitty-rc7-benchmark/spec-kitty: go1.27.3-X:nodwarf5\n\tpath\tgithub.com/spec-kitty/go-kitty3/cmd/spec-kitty\n\tmod\tgithub.com/spec-kitty/go-kitty3\tv0.0.0-20261025125846-770e770fb355\t\n\tdep\tgopkg.in/yaml.v3\tv3.0.1\th1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=\n\tbuild\t-buildmode=exe\n\tbuild\t-compiler=gc\n\tbuild\t-trimpath=true\n\tbuild\tDefaultGODEBUG=tracebacklabels=0,x509sslcertoverrideplatform=0\n\tbuild\tCGO_ENABLED=0\n\tbuild\tGOARCH=amd64\n\tbuild\tGOEXPERIMENT=nodwarf5\n\tbuild\tGOOS=linux\n\tbuild\tGOAMD64=v1\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=770e770fb35588200bb65ac17052eb597012d2ca\n\tbuild\tvcs.time=2026-10-25T12:58:46Z\n\tbuild\tvcs.modified=false\n",
+    "go_binary_sha256": "d992bc8292fd68cfe24bb59930f9dc193efcb8cf24aef16e18704f52bbed0897",
+    "python_reference_revision": "1b0fe9fc388b095f9964471b0177b4213e9c6c98",
+    "python_runtime": "Python 3.13.15",
+    "binaries": {
+      "go": "/var/tmp/spec-kitty-rc7-benchmark/spec-kitty",
+      "python": "/home/user/.cache/spec-kitty-parity/rc7-1b0fe9fc38/oracle-venv/bin/spec-kitty"
+    },
+    "read_runs": 25,
+    "write_runs": 10,
+    "warmups": 3,
+    "random_seed": 20261025,
+    "method": "Sequential randomized pairs; small C launcher measures fork/exec through wait4; warm OS caches; no shell or package launcher; fresh fixtures copied outside timing; all commands must exit zero.",
+    "limitations": "Shared desktop host; not CPU pinned; fresh home does not mean dropped OS caches. Peak RSS includes reaped descendants and is not simultaneous process-tree memory. Disk sizes are logical bytes with hardlinks counted once; shared interpreter and generated HOME assets are listed separately. Fresh Codex project without an active charter; two-WP mission; next query exercises the missing-analysis guard, not implementation dispatch. No remote/network workflows or build/install timing.",
+    "cpu": "AMD Ryzen 7 5800X 8-Core Processor",
+    "python_interpreter_root": "/home/user/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu",
+    "go_version": "spec-kitty-cli version 4.0.0rc7",
+    "python_version": "spec-kitty-cli version 4.0.0rc7",
+    "finished_at": "2026-10-25T14:37:53+0100",
+    "load_average_end": [
+      2.31005859375,
+      2.0361328125,
+      1.88037109375
+    ],
+    "semantic_output_checks": [
+      "Task status JSON equal across implementations",
+      "Next query JSON equal after excluding timestamp"
+    ]
+  },
+  "sizes": {
+    "go_binary_bytes": 41808525,
+    "python_venv_bytes": 97155668,
+    "python_shared_interpreter_bytes": 107738486,
+    "warm_home_bytes": {
+      "go": 4260881,
+      "python": 4264281
+    }
+  },
+  "benchmarks": [
+    {
+      "name": "version",
+      "args": [
+        "--version"
+      ],
+      "fresh_home": false,
+      "samples": {
+        "go": [
+          {
+            "wall_ms": 7.815768,
+            "user_ms": 7.149,
+            "system_ms": 4.483,
+            "max_rss_kib": 25620,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 8.170119,
+            "user_ms": 8.959,
+            "system_ms": 2.757,
+            "max_rss_kib": 27464,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 8.296584,
+            "user_ms": 2.344,
+            "system_ms": 10.15,
+            "max_rss_kib": 27324,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 8.11685,
+            "user_ms": 10.681,
+            "system_ms": 0.753,
+            "max_rss_kib": 25452,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 8.086523,
+            "user_ms": 9.067,
+            "system_ms": 3.641,
+            "max_rss_kib": 27516,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 8.253735,
+            "user_ms": 8.039,
+            "system_ms": 4.809,
+            "max_rss_kib": 27556,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 8.838264,
+            "user_ms": 10.495,
+            "system_ms": 2.257,
+            "max_rss_kib": 27468,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 7.336555,
+            "user_ms": 9.323,
+            "system_ms": 1.551,
+            "max_rss_kib": 27752,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 7.601268,
+            "user_ms": 7.229,
+            "system_ms": 3.61,
+            "max_rss_kib": 27600,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 8.998283,
+            "user_ms": 9.303,
+            "system_ms": 3.72,
+            "max_rss_kib": 27476,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 7.224045,
+            "user_ms": 8.348,
+            "system_ms": 2.382,
+            "max_rss_kib": 27440,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 8.1008,
+            "user_ms": 7.924,
+            "system_ms": 4.52,
+            "max_rss_kib": 27408,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 8.402301,
+            "user_ms": 6.731,
+            "system_ms": 6.705,
+            "max_rss_kib": 27516,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 7.555273,
+            "user_ms": 9.827,
+            "system_ms": 1.318,
+            "max_rss_kib": 27248,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 8.033455,
+            "user_ms": 10.438,
+            "system_ms": 1.165,
+            "max_rss_kib": 27464,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 8.322313,
+            "user_ms": 7.477,
+            "system_ms": 4.277,
+            "max_rss_kib": 27576,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 7.681318,
+            "user_ms": 4.888,
+            "system_ms": 6.506,
+            "max_rss_kib": 27596,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 8.116599,
+            "user_ms": 8.516,
+            "system_ms": 3.758,
+            "max_rss_kib": 27324,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 8.340947,
+            "user_ms": 9.239,
+            "system_ms": 3.056,
+            "max_rss_kib": 27424,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 7.446329,
+            "user_ms": 5.77,
+            "system_ms": 4.82,
+            "max_rss_kib": 25752,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 8.758966,
+            "user_ms": 7.588,
+            "system_ms": 4.552,
+            "max_rss_kib": 25704,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 7.91343,
+            "user_ms": 8.706,
+            "system_ms": 2.868,
+            "max_rss_kib": 27472,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 7.891299,
+            "user_ms": 5.384,
+            "system_ms": 6.143,
+            "max_rss_kib": 27292,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 8.826082,
+            "user_ms": 11.813,
+            "system_ms": 2.15,
+            "max_rss_kib": 27340,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 7.546547,
+            "user_ms": 6.892,
+            "system_ms": 4.591,
+            "max_rss_kib": 27648,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ],
+        "python": [
+          {
+            "wall_ms": 1189.017912,
+            "user_ms": 1099.698,
+            "system_ms": 82.543,
+            "max_rss_kib": 113380,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 1201.378061,
+            "user_ms": 1117.824,
+            "system_ms": 76.545,
+            "max_rss_kib": 113636,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 1146.664138,
+            "user_ms": 1069.048,
+            "system_ms": 71.669,
+            "max_rss_kib": 113464,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 1184.148317,
+            "user_ms": 1100.286,
+            "system_ms": 77.586,
+            "max_rss_kib": 112888,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 1155.971328,
+            "user_ms": 1072.238,
+            "system_ms": 77.574,
+            "max_rss_kib": 112956,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 1148.525339,
+            "user_ms": 1060.903,
+            "system_ms": 81.526,
+            "max_rss_kib": 113716,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 1166.405066,
+            "user_ms": 1078.853,
+            "system_ms": 81.507,
+            "max_rss_kib": 113176,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 1177.608519,
+            "user_ms": 1092.798,
+            "system_ms": 77.625,
+            "max_rss_kib": 112884,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 1206.797918,
+            "user_ms": 1112.533,
+            "system_ms": 86.616,
+            "max_rss_kib": 112760,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 1176.485217,
+            "user_ms": 1084.807,
+            "system_ms": 84.653,
+            "max_rss_kib": 112724,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 1186.86234,
+            "user_ms": 1108.977,
+            "system_ms": 70.581,
+            "max_rss_kib": 112636,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 1196.17066,
+            "user_ms": 1118.22,
+            "system_ms": 71.633,
+            "max_rss_kib": 113524,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 1176.958361,
+            "user_ms": 1091.06,
+            "system_ms": 79.532,
+            "max_rss_kib": 113380,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 1150.302566,
+            "user_ms": 1066.696,
+            "system_ms": 77.597,
+            "max_rss_kib": 112884,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 1168.257223,
+            "user_ms": 1088.083,
+            "system_ms": 73.608,
+            "max_rss_kib": 113800,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 1161.798085,
+            "user_ms": 1069.693,
+            "system_ms": 85.558,
+            "max_rss_kib": 113364,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 1158.866291,
+            "user_ms": 1057.794,
+            "system_ms": 94.636,
+            "max_rss_kib": 113316,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 1163.158992,
+            "user_ms": 1052.629,
+            "system_ms": 103.561,
+            "max_rss_kib": 113464,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 1158.55428,
+            "user_ms": 1065.43,
+            "system_ms": 86.539,
+            "max_rss_kib": 113712,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 1177.952217,
+            "user_ms": 1096.61,
+            "system_ms": 74.682,
+            "max_rss_kib": 113588,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 1143.557347,
+            "user_ms": 1070.139,
+            "system_ms": 67.636,
+            "max_rss_kib": 113564,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 1170.673051,
+            "user_ms": 1088.773,
+            "system_ms": 75.568,
+            "max_rss_kib": 113292,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 1174.57829,
+            "user_ms": 1077.463,
+            "system_ms": 90.516,
+            "max_rss_kib": 113208,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 1168.226,
+            "user_ms": 1090.633,
+            "system_ms": 71.642,
+            "max_rss_kib": 113748,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 1184.51301,
+            "user_ms": 1101.858,
+            "system_ms": 76.538,
+            "max_rss_kib": 112968,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ]
+      },
+      "summary": {
+        "go": {
+          "n": 25,
+          "median_ms": 8.1008,
+          "mean_ms": 8.06694612,
+          "stdev_ms": 0.4796241409890074,
+          "min_ms": 7.224045,
+          "max_ms": 8.998283,
+          "p95_ms": 8.838264,
+          "median_cpu_ms": 11.716,
+          "median_max_rss_mib": 26.8203125
+        },
+        "python": {
+          "n": 25,
+          "median_ms": 1170.673051,
+          "mean_ms": 1171.73722112,
+          "stdev_ms": 16.9752722606749,
+          "min_ms": 1143.557347,
+          "max_ms": 1206.797918,
+          "p95_ms": 1201.378061,
+          "median_cpu_ms": 1164.341,
+          "median_max_rss_mib": 110.70703125
+        }
+      },
+      "speedup": 144.51326424550663
+    },
+    {
+      "name": "help",
+      "args": [
+        "--help"
+      ],
+      "fresh_home": false,
+      "samples": {
+        "go": [
+          {
+            "wall_ms": 9.560159,
+            "user_ms": 10.948,
+            "system_ms": 3.967,
+            "max_rss_kib": 28228,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 8.402912,
+            "user_ms": 8.811,
+            "system_ms": 4.41,
+            "max_rss_kib": 28448,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 9.551022,
+            "user_ms": 12.116,
+            "system_ms": 2.792,
+            "max_rss_kib": 28200,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 9.363292,
+            "user_ms": 5.742,
+            "system_ms": 8.061,
+            "max_rss_kib": 27812,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 10.770636,
+            "user_ms": 11.356,
+            "system_ms": 4.719,
+            "max_rss_kib": 28072,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 8.202148,
+            "user_ms": 6.954,
+            "system_ms": 4.677,
+            "max_rss_kib": 26132,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 9.054317,
+            "user_ms": 8.104,
+            "system_ms": 4.062,
+            "max_rss_kib": 27688,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 10.47741,
+            "user_ms": 14.267,
+            "system_ms": 1.788,
+            "max_rss_kib": 27908,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 9.812811,
+            "user_ms": 11.101,
+            "system_ms": 4.849,
+            "max_rss_kib": 28444,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 10.029885,
+            "user_ms": 10.385,
+            "system_ms": 3.748,
+            "max_rss_kib": 27860,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 9.791721,
+            "user_ms": 5.763,
+            "system_ms": 8.989,
+            "max_rss_kib": 28112,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 9.603461,
+            "user_ms": 3.676,
+            "system_ms": 9.638,
+            "max_rss_kib": 25648,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 9.632365,
+            "user_ms": 7.489,
+            "system_ms": 5.805,
+            "max_rss_kib": 27636,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 10.410104,
+            "user_ms": 13.983,
+            "system_ms": 3.694,
+            "max_rss_kib": 32256,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 9.262275,
+            "user_ms": 9.413,
+            "system_ms": 3.529,
+            "max_rss_kib": 27812,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 9.180853,
+            "user_ms": 10.952,
+            "system_ms": 2.445,
+            "max_rss_kib": 28084,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 9.301157,
+            "user_ms": 8.826,
+            "system_ms": 6.305,
+            "max_rss_kib": 30188,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 9.499226,
+            "user_ms": 10.335,
+            "system_ms": 5.178,
+            "max_rss_kib": 28308,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 8.791027,
+            "user_ms": 7.348,
+            "system_ms": 7.385,
+            "max_rss_kib": 30392,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 9.841274,
+            "user_ms": 10.921,
+            "system_ms": 3.638,
+            "max_rss_kib": 27964,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 9.673281,
+            "user_ms": 8.322,
+            "system_ms": 6.659,
+            "max_rss_kib": 30172,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 10.394635,
+            "user_ms": 9.438,
+            "system_ms": 5.641,
+            "max_rss_kib": 27840,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 9.929768,
+            "user_ms": 11.475,
+            "system_ms": 4.751,
+            "max_rss_kib": 26092,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 9.690573,
+            "user_ms": 13.667,
+            "system_ms": 1.614,
+            "max_rss_kib": 27892,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 8.163086,
+            "user_ms": 9.945,
+            "system_ms": 2.484,
+            "max_rss_kib": 25880,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ],
+        "python": [
+          {
+            "wall_ms": 1224.123705,
+            "user_ms": 1126.719,
+            "system_ms": 90.57,
+            "max_rss_kib": 116204,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 1221.178045,
+            "user_ms": 1136.468,
+            "system_ms": 77.553,
+            "max_rss_kib": 115596,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 1213.918313,
+            "user_ms": 1118.785,
+            "system_ms": 88.514,
+            "max_rss_kib": 116092,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 1209.371178,
+            "user_ms": 1123.243,
+            "system_ms": 78.533,
+            "max_rss_kib": 115388,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 1243.842772,
+            "user_ms": 1147.081,
+            "system_ms": 89.594,
+            "max_rss_kib": 115492,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 1217.291122,
+            "user_ms": 1137.14,
+            "system_ms": 72.747,
+            "max_rss_kib": 115744,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 1206.507873,
+            "user_ms": 1126.992,
+            "system_ms": 72.604,
+            "max_rss_kib": 115648,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 1203.931942,
+            "user_ms": 1128.105,
+            "system_ms": 68.643,
+            "max_rss_kib": 116232,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 1233.696823,
+            "user_ms": 1136.198,
+            "system_ms": 90.508,
+            "max_rss_kib": 115664,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 1215.006366,
+            "user_ms": 1107.791,
+            "system_ms": 100.422,
+            "max_rss_kib": 115812,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 1190.020182,
+            "user_ms": 1093.68,
+            "system_ms": 89.494,
+            "max_rss_kib": 116316,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 1219.11238,
+            "user_ms": 1127.936,
+            "system_ms": 84.613,
+            "max_rss_kib": 116168,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 1201.872186,
+            "user_ms": 1121.709,
+            "system_ms": 72.849,
+            "max_rss_kib": 115444,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 1195.009644,
+            "user_ms": 1106.093,
+            "system_ms": 82.558,
+            "max_rss_kib": 115972,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 1220.684913,
+            "user_ms": 1137.418,
+            "system_ms": 75.622,
+            "max_rss_kib": 115520,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 1212.026375,
+            "user_ms": 1130.219,
+            "system_ms": 74.619,
+            "max_rss_kib": 116056,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 1217.542947,
+            "user_ms": 1136.498,
+            "system_ms": 74.623,
+            "max_rss_kib": 115888,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 1189.12108,
+            "user_ms": 1102.078,
+            "system_ms": 79.506,
+            "max_rss_kib": 116368,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 1209.316205,
+            "user_ms": 1117.101,
+            "system_ms": 84.439,
+            "max_rss_kib": 115832,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 1206.913436,
+            "user_ms": 1117.276,
+            "system_ms": 82.526,
+            "max_rss_kib": 116200,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 1238.377044,
+            "user_ms": 1162.489,
+            "system_ms": 68.619,
+            "max_rss_kib": 115784,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 1212.198138,
+            "user_ms": 1124.878,
+            "system_ms": 80.567,
+            "max_rss_kib": 115760,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 1213.647069,
+            "user_ms": 1121.698,
+            "system_ms": 84.603,
+            "max_rss_kib": 115796,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 1235.236172,
+            "user_ms": 1145.719,
+            "system_ms": 82.473,
+            "max_rss_kib": 115232,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 1232.952926,
+            "user_ms": 1140.757,
+            "system_ms": 84.535,
+            "max_rss_kib": 115824,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ]
+      },
+      "summary": {
+        "go": {
+          "n": 25,
+          "median_ms": 9.603461,
+          "mean_ms": 9.53557592,
+          "stdev_ms": 0.665388016796523,
+          "min_ms": 8.163086,
+          "max_ms": 10.770636,
+          "p95_ms": 10.47741,
+          "median_cpu_ms": 14.752,
+          "median_max_rss_mib": 27.30859375
+        },
+        "python": {
+          "n": 25,
+          "median_ms": 1213.918313,
+          "mean_ms": 1215.31595344,
+          "stdev_ms": 14.214121809086752,
+          "min_ms": 1189.12108,
+          "max_ms": 1243.842772,
+          "p95_ms": 1238.377044,
+          "median_cpu_ms": 1207.299,
+          "median_max_rss_mib": 113.09765625
+        }
+      },
+      "speedup": 126.40425290423941
+    },
+    {
+      "name": "config-list",
+      "args": [
+        "agent",
+        "config",
+        "list"
+      ],
+      "fresh_home": false,
+      "samples": {
+        "go": [
+          {
+            "wall_ms": 134.46567,
+            "user_ms": 95.529,
+            "system_ms": 72.726,
+            "max_rss_kib": 34656,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 133.220851,
+            "user_ms": 100.786,
+            "system_ms": 68.5,
+            "max_rss_kib": 36604,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 133.977641,
+            "user_ms": 111.527,
+            "system_ms": 59.128,
+            "max_rss_kib": 38300,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 135.920773,
+            "user_ms": 94.454,
+            "system_ms": 76.943,
+            "max_rss_kib": 37236,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 130.470153,
+            "user_ms": 89.128,
+            "system_ms": 74.771,
+            "max_rss_kib": 34584,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 134.300062,
+            "user_ms": 105.607,
+            "system_ms": 63.931,
+            "max_rss_kib": 35220,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 133.425903,
+            "user_ms": 113.804,
+            "system_ms": 54.999,
+            "max_rss_kib": 36888,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 133.765497,
+            "user_ms": 117.967,
+            "system_ms": 49.215,
+            "max_rss_kib": 36244,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 132.845601,
+            "user_ms": 106.337,
+            "system_ms": 61.443,
+            "max_rss_kib": 36168,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 132.549099,
+            "user_ms": 106.056,
+            "system_ms": 66.181,
+            "max_rss_kib": 36552,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 132.44194,
+            "user_ms": 102.395,
+            "system_ms": 64.465,
+            "max_rss_kib": 34644,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 136.554415,
+            "user_ms": 98.785,
+            "system_ms": 71.614,
+            "max_rss_kib": 36816,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 132.310705,
+            "user_ms": 88.207,
+            "system_ms": 77.613,
+            "max_rss_kib": 34792,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 127.74786,
+            "user_ms": 104.511,
+            "system_ms": 56.926,
+            "max_rss_kib": 36884,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 131.064642,
+            "user_ms": 110.012,
+            "system_ms": 57.566,
+            "max_rss_kib": 35044,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 132.131491,
+            "user_ms": 92.815,
+            "system_ms": 73.388,
+            "max_rss_kib": 35352,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 131.056457,
+            "user_ms": 93.301,
+            "system_ms": 71.479,
+            "max_rss_kib": 35292,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 131.278121,
+            "user_ms": 99.974,
+            "system_ms": 66.149,
+            "max_rss_kib": 34980,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 134.871629,
+            "user_ms": 106.886,
+            "system_ms": 57.738,
+            "max_rss_kib": 37292,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 133.005681,
+            "user_ms": 98.509,
+            "system_ms": 69.232,
+            "max_rss_kib": 36976,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 130.59604,
+            "user_ms": 98.08,
+            "system_ms": 67.228,
+            "max_rss_kib": 37536,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 130.906779,
+            "user_ms": 103.948,
+            "system_ms": 60.53,
+            "max_rss_kib": 36616,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 133.365462,
+            "user_ms": 110.56,
+            "system_ms": 60.815,
+            "max_rss_kib": 38272,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 131.788943,
+            "user_ms": 86.396,
+            "system_ms": 82.788,
+            "max_rss_kib": 34656,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 134.352402,
+            "user_ms": 113.099,
+            "system_ms": 55.621,
+            "max_rss_kib": 35804,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ],
+        "python": [
+          {
+            "wall_ms": 2225.67137,
+            "user_ms": 2089.659,
+            "system_ms": 123.303,
+            "max_rss_kib": 109720,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 2201.992415,
+            "user_ms": 2044.901,
+            "system_ms": 143.237,
+            "max_rss_kib": 110104,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 2209.223205,
+            "user_ms": 2028.293,
+            "system_ms": 164.905,
+            "max_rss_kib": 109808,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 2182.379592,
+            "user_ms": 2024.635,
+            "system_ms": 145.315,
+            "max_rss_kib": 109936,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 2182.978059,
+            "user_ms": 2009.309,
+            "system_ms": 161.152,
+            "max_rss_kib": 110180,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 2190.110226,
+            "user_ms": 2049.982,
+            "system_ms": 127.373,
+            "max_rss_kib": 110076,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 2198.887459,
+            "user_ms": 2038.786,
+            "system_ms": 147.27,
+            "max_rss_kib": 109916,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 2199.036547,
+            "user_ms": 2029.336,
+            "system_ms": 156.47,
+            "max_rss_kib": 109892,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 2191.077895,
+            "user_ms": 2027.892,
+            "system_ms": 149.647,
+            "max_rss_kib": 110424,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 2201.537694,
+            "user_ms": 2022.089,
+            "system_ms": 166.367,
+            "max_rss_kib": 109292,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 2181.467886,
+            "user_ms": 2015.104,
+            "system_ms": 153.412,
+            "max_rss_kib": 109872,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 2211.366639,
+            "user_ms": 2052.851,
+            "system_ms": 145.489,
+            "max_rss_kib": 109856,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 2192.475097,
+            "user_ms": 2034.469,
+            "system_ms": 145.432,
+            "max_rss_kib": 110032,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 2195.675103,
+            "user_ms": 2017.989,
+            "system_ms": 165.171,
+            "max_rss_kib": 110104,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 2187.12566,
+            "user_ms": 2035.485,
+            "system_ms": 139.36,
+            "max_rss_kib": 110360,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 2185.159156,
+            "user_ms": 2013.354,
+            "system_ms": 159.216,
+            "max_rss_kib": 110036,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 2174.908491,
+            "user_ms": 2020.122,
+            "system_ms": 142.37,
+            "max_rss_kib": 110336,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 2193.194256,
+            "user_ms": 2033.432,
+            "system_ms": 147.22,
+            "max_rss_kib": 110080,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 2179.814139,
+            "user_ms": 2012.669,
+            "system_ms": 154.177,
+            "max_rss_kib": 110236,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 2175.848087,
+            "user_ms": 1993.09,
+            "system_ms": 170.063,
+            "max_rss_kib": 109996,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 2209.990761,
+            "user_ms": 2036.384,
+            "system_ms": 160.486,
+            "max_rss_kib": 109952,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 2212.957553,
+            "user_ms": 2023.912,
+            "system_ms": 176.086,
+            "max_rss_kib": 109740,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 2186.884725,
+            "user_ms": 2016.32,
+            "system_ms": 158.151,
+            "max_rss_kib": 110228,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 2179.403673,
+            "user_ms": 2014.843,
+            "system_ms": 152.201,
+            "max_rss_kib": 110356,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 2180.34029,
+            "user_ms": 2014.127,
+            "system_ms": 153.344,
+            "max_rss_kib": 110064,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ]
+      },
+      "summary": {
+        "go": {
+          "n": 25,
+          "median_ms": 132.845601,
+          "mean_ms": 132.73655268,
+          "stdev_ms": 1.9189162234093842,
+          "min_ms": 127.74786,
+          "max_ms": 136.554415,
+          "p95_ms": 135.920773,
+          "median_cpu_ms": 167.74099999999999,
+          "median_max_rss_mib": 35.39453125
+        },
+        "python": {
+          "n": 25,
+          "median_ms": 2191.077895,
+          "mean_ms": 2193.18023912,
+          "stdev_ms": 13.257994312532777,
+          "min_ms": 2174.908491,
+          "max_ms": 2225.67137,
+          "p95_ms": 2212.957553,
+          "median_cpu_ms": 2177.539,
+          "median_max_rss_mib": 107.45703125
+        }
+      },
+      "speedup": 16.493417008215424
+    },
+    {
+      "name": "verify-setup",
+      "args": [
+        "verify-setup"
+      ],
+      "fresh_home": false,
+      "samples": {
+        "go": [
+          {
+            "wall_ms": 126.551151,
+            "user_ms": 82.524,
+            "system_ms": 68.597,
+            "max_rss_kib": 36096,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 128.102372,
+            "user_ms": 75.397,
+            "system_ms": 81.905,
+            "max_rss_kib": 37904,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 122.799808,
+            "user_ms": 83.37,
+            "system_ms": 63.193,
+            "max_rss_kib": 33600,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 126.52951,
+            "user_ms": 77.21,
+            "system_ms": 75.141,
+            "max_rss_kib": 34308,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 126.113466,
+            "user_ms": 78.438,
+            "system_ms": 74.005,
+            "max_rss_kib": 35728,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 124.024852,
+            "user_ms": 85.18,
+            "system_ms": 60.739,
+            "max_rss_kib": 33920,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 133.26184,
+            "user_ms": 75.359,
+            "system_ms": 81.403,
+            "max_rss_kib": 33440,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 123.573661,
+            "user_ms": 84.289,
+            "system_ms": 67.826,
+            "max_rss_kib": 37932,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 127.225459,
+            "user_ms": 81.259,
+            "system_ms": 70.593,
+            "max_rss_kib": 35960,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 127.971569,
+            "user_ms": 81.22,
+            "system_ms": 70.685,
+            "max_rss_kib": 35840,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 122.695334,
+            "user_ms": 78.474,
+            "system_ms": 67.899,
+            "max_rss_kib": 34048,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 131.350558,
+            "user_ms": 78.826,
+            "system_ms": 76.716,
+            "max_rss_kib": 35896,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 128.379109,
+            "user_ms": 85.537,
+            "system_ms": 69.355,
+            "max_rss_kib": 38440,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 123.044215,
+            "user_ms": 82.958,
+            "system_ms": 69.444,
+            "max_rss_kib": 35448,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 125.757813,
+            "user_ms": 71.367,
+            "system_ms": 77.725,
+            "max_rss_kib": 34188,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 124.126633,
+            "user_ms": 87.935,
+            "system_ms": 61.915,
+            "max_rss_kib": 36540,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 129.138695,
+            "user_ms": 90.592,
+            "system_ms": 61.871,
+            "max_rss_kib": 35844,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 130.200595,
+            "user_ms": 85.437,
+            "system_ms": 68.961,
+            "max_rss_kib": 36804,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 125.348931,
+            "user_ms": 89.247,
+            "system_ms": 60.391,
+            "max_rss_kib": 36040,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 123.408415,
+            "user_ms": 85.627,
+            "system_ms": 60.945,
+            "max_rss_kib": 35952,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 125.200862,
+            "user_ms": 80.466,
+            "system_ms": 67.131,
+            "max_rss_kib": 34048,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 125.530692,
+            "user_ms": 82.212,
+            "system_ms": 68.205,
+            "max_rss_kib": 35424,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 125.523795,
+            "user_ms": 84.357,
+            "system_ms": 63.957,
+            "max_rss_kib": 33632,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 128.600756,
+            "user_ms": 86.426,
+            "system_ms": 67.828,
+            "max_rss_kib": 35852,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 128.302488,
+            "user_ms": 95.884,
+            "system_ms": 57.943,
+            "max_rss_kib": 33832,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ],
+        "python": [
+          {
+            "wall_ms": 1571.507233,
+            "user_ms": 1390.964,
+            "system_ms": 167.737,
+            "max_rss_kib": 86020,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 1569.299118,
+            "user_ms": 1394.643,
+            "system_ms": 162.374,
+            "max_rss_kib": 85688,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 1565.566491,
+            "user_ms": 1392.472,
+            "system_ms": 160.856,
+            "max_rss_kib": 85584,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 1562.24472,
+            "user_ms": 1372.829,
+            "system_ms": 177.401,
+            "max_rss_kib": 85936,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 1567.789497,
+            "user_ms": 1395.284,
+            "system_ms": 159.878,
+            "max_rss_kib": 85488,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 1581.912173,
+            "user_ms": 1395.756,
+            "system_ms": 173.361,
+            "max_rss_kib": 85952,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 1570.682742,
+            "user_ms": 1385.887,
+            "system_ms": 172.487,
+            "max_rss_kib": 85752,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 1578.72884,
+            "user_ms": 1397.396,
+            "system_ms": 168.134,
+            "max_rss_kib": 85840,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 1567.695435,
+            "user_ms": 1374.114,
+            "system_ms": 180.523,
+            "max_rss_kib": 85404,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 1560.82508,
+            "user_ms": 1361.19,
+            "system_ms": 187.514,
+            "max_rss_kib": 85668,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 1579.259382,
+            "user_ms": 1403.639,
+            "system_ms": 163.149,
+            "max_rss_kib": 85572,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 1595.945376,
+            "user_ms": 1435.571,
+            "system_ms": 147.8,
+            "max_rss_kib": 85872,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 1592.03629,
+            "user_ms": 1404.314,
+            "system_ms": 174.943,
+            "max_rss_kib": 85752,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 1636.35984,
+            "user_ms": 1472.968,
+            "system_ms": 151.969,
+            "max_rss_kib": 85456,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 1566.281024,
+            "user_ms": 1370.88,
+            "system_ms": 182.587,
+            "max_rss_kib": 85740,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 1584.696151,
+            "user_ms": 1414.935,
+            "system_ms": 157.042,
+            "max_rss_kib": 86012,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 1560.777227,
+            "user_ms": 1383.58,
+            "system_ms": 164.656,
+            "max_rss_kib": 85832,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 1574.776132,
+            "user_ms": 1394.064,
+            "system_ms": 168.119,
+            "max_rss_kib": 85384,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 1554.709267,
+            "user_ms": 1374.993,
+            "system_ms": 167.854,
+            "max_rss_kib": 85452,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 1561.563274,
+            "user_ms": 1402.7,
+            "system_ms": 146.848,
+            "max_rss_kib": 86032,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 1565.357606,
+            "user_ms": 1393.557,
+            "system_ms": 159.669,
+            "max_rss_kib": 85752,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 1552.946356,
+            "user_ms": 1374.551,
+            "system_ms": 166.296,
+            "max_rss_kib": 85548,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 1567.739822,
+            "user_ms": 1412.675,
+            "system_ms": 143.193,
+            "max_rss_kib": 85160,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 1566.820093,
+            "user_ms": 1392.8,
+            "system_ms": 161.35,
+            "max_rss_kib": 85608,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 1559.417168,
+            "user_ms": 1373.925,
+            "system_ms": 173.927,
+            "max_rss_kib": 85788,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ]
+      },
+      "summary": {
+        "go": {
+          "n": 25,
+          "median_ms": 126.113466,
+          "mean_ms": 126.51050316,
+          "stdev_ms": 2.753454442039245,
+          "min_ms": 122.695334,
+          "max_ms": 133.26184,
+          "p95_ms": 131.350558,
+          "median_cpu_ms": 151.905,
+          "median_max_rss_mib": 35.0
+        },
+        "python": {
+          "n": 25,
+          "median_ms": 1567.739822,
+          "mean_ms": 1572.59745348,
+          "stdev_ms": 17.025976653197645,
+          "min_ms": 1552.946356,
+          "max_ms": 1636.35984,
+          "p95_ms": 1595.945376,
+          "median_cpu_ms": 1555.162,
+          "median_max_rss_mib": 83.73046875
+        }
+      },
+      "speedup": 12.431184961643984
+    },
+    {
+      "name": "charter-status",
+      "args": [
+        "charter",
+        "status",
+        "--json"
+      ],
+      "fresh_home": false,
+      "samples": {
+        "go": [
+          {
+            "wall_ms": 110.193712,
+            "user_ms": 62.419,
+            "system_ms": 74.371,
+            "max_rss_kib": 36200,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 112.689073,
+            "user_ms": 77.101,
+            "system_ms": 64.215,
+            "max_rss_kib": 35500,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 116.391835,
+            "user_ms": 78.961,
+            "system_ms": 64.302,
+            "max_rss_kib": 34480,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 113.339215,
+            "user_ms": 68.212,
+            "system_ms": 72.676,
+            "max_rss_kib": 36104,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 111.209158,
+            "user_ms": 70.868,
+            "system_ms": 67.957,
+            "max_rss_kib": 36204,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 110.95928,
+            "user_ms": 59.713,
+            "system_ms": 77.366,
+            "max_rss_kib": 33744,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 115.818297,
+            "user_ms": 83.292,
+            "system_ms": 61.068,
+            "max_rss_kib": 35756,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 115.405263,
+            "user_ms": 70.354,
+            "system_ms": 72.421,
+            "max_rss_kib": 35744,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 113.249383,
+            "user_ms": 54.035,
+            "system_ms": 85.057,
+            "max_rss_kib": 35824,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 113.688197,
+            "user_ms": 78.095,
+            "system_ms": 63.032,
+            "max_rss_kib": 33600,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 115.025655,
+            "user_ms": 82.05,
+            "system_ms": 66.943,
+            "max_rss_kib": 35672,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 117.327189,
+            "user_ms": 78.464,
+            "system_ms": 63.976,
+            "max_rss_kib": 36184,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 116.495318,
+            "user_ms": 79.749,
+            "system_ms": 61.854,
+            "max_rss_kib": 36160,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 113.797981,
+            "user_ms": 81.644,
+            "system_ms": 58.375,
+            "max_rss_kib": 34236,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 111.275879,
+            "user_ms": 70.966,
+            "system_ms": 65.955,
+            "max_rss_kib": 34040,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 106.083838,
+            "user_ms": 69.058,
+            "system_ms": 62.706,
+            "max_rss_kib": 35832,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 115.602302,
+            "user_ms": 82.57,
+            "system_ms": 58.942,
+            "max_rss_kib": 35880,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 114.325901,
+            "user_ms": 64.195,
+            "system_ms": 75.499,
+            "max_rss_kib": 36712,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 110.039968,
+            "user_ms": 79.322,
+            "system_ms": 57.131,
+            "max_rss_kib": 35712,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 114.686522,
+            "user_ms": 65.967,
+            "system_ms": 79.079,
+            "max_rss_kib": 37848,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 112.6078,
+            "user_ms": 73.479,
+            "system_ms": 66.264,
+            "max_rss_kib": 34148,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 115.388709,
+            "user_ms": 93.039,
+            "system_ms": 50.023,
+            "max_rss_kib": 35540,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 114.831363,
+            "user_ms": 76.198,
+            "system_ms": 66.245,
+            "max_rss_kib": 35180,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 109.391416,
+            "user_ms": 69.965,
+            "system_ms": 64.136,
+            "max_rss_kib": 35996,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 115.58321,
+            "user_ms": 60.695,
+            "system_ms": 81.234,
+            "max_rss_kib": 34672,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ],
+        "python": [
+          {
+            "wall_ms": 1441.092325,
+            "user_ms": 1282.839,
+            "system_ms": 150.939,
+            "max_rss_kib": 89688,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 1448.660564,
+            "user_ms": 1300.109,
+            "system_ms": 141.548,
+            "max_rss_kib": 89764,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 1445.384894,
+            "user_ms": 1306.15,
+            "system_ms": 132.556,
+            "max_rss_kib": 89464,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 1439.594727,
+            "user_ms": 1295.626,
+            "system_ms": 137.301,
+            "max_rss_kib": 89640,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 1432.714902,
+            "user_ms": 1300.384,
+            "system_ms": 125.517,
+            "max_rss_kib": 89648,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 1441.14011,
+            "user_ms": 1307.037,
+            "system_ms": 127.391,
+            "max_rss_kib": 89760,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 1445.782734,
+            "user_ms": 1309.381,
+            "system_ms": 129.499,
+            "max_rss_kib": 89748,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 1436.924057,
+            "user_ms": 1284.69,
+            "system_ms": 145.363,
+            "max_rss_kib": 89608,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 1443.381824,
+            "user_ms": 1301.129,
+            "system_ms": 135.495,
+            "max_rss_kib": 89804,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 1430.650123,
+            "user_ms": 1295.123,
+            "system_ms": 128.938,
+            "max_rss_kib": 89764,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 1435.602688,
+            "user_ms": 1300.942,
+            "system_ms": 127.533,
+            "max_rss_kib": 89528,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 1459.616604,
+            "user_ms": 1329.976,
+            "system_ms": 122.575,
+            "max_rss_kib": 89352,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 1440.342435,
+            "user_ms": 1316.229,
+            "system_ms": 116.676,
+            "max_rss_kib": 89888,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 1437.977806,
+            "user_ms": 1295.682,
+            "system_ms": 135.495,
+            "max_rss_kib": 89520,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 1451.267925,
+            "user_ms": 1294.158,
+            "system_ms": 150.229,
+            "max_rss_kib": 89864,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 1447.765885,
+            "user_ms": 1314.359,
+            "system_ms": 126.544,
+            "max_rss_kib": 89400,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 1439.849798,
+            "user_ms": 1302.742,
+            "system_ms": 130.344,
+            "max_rss_kib": 89768,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 1444.759181,
+            "user_ms": 1308.1,
+            "system_ms": 129.521,
+            "max_rss_kib": 89792,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 1449.452303,
+            "user_ms": 1312.781,
+            "system_ms": 129.356,
+            "max_rss_kib": 89532,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 1451.512745,
+            "user_ms": 1313.489,
+            "system_ms": 130.814,
+            "max_rss_kib": 89560,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 1456.108029,
+            "user_ms": 1313.611,
+            "system_ms": 135.464,
+            "max_rss_kib": 89836,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 1442.260081,
+            "user_ms": 1312.386,
+            "system_ms": 122.494,
+            "max_rss_kib": 89672,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 1446.181451,
+            "user_ms": 1320.218,
+            "system_ms": 118.62,
+            "max_rss_kib": 89176,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 1443.868727,
+            "user_ms": 1299.679,
+            "system_ms": 137.419,
+            "max_rss_kib": 89788,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 1436.17148,
+            "user_ms": 1286.746,
+            "system_ms": 142.452,
+            "max_rss_kib": 89580,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ]
+      },
+      "summary": {
+        "go": {
+          "n": 25,
+          "median_ms": 113.797981,
+          "mean_ms": 113.41625856,
+          "stdev_ms": 2.6803893671121273,
+          "min_ms": 106.083838,
+          "max_ms": 117.327189,
+          "p95_ms": 116.495318,
+          "median_cpu_ms": 141.127,
+          "median_max_rss_mib": 34.90625
+        },
+        "python": {
+          "n": 25,
+          "median_ms": 1443.381824,
+          "mean_ms": 1443.5225359199999,
+          "stdev_ms": 6.9638549328031845,
+          "min_ms": 1430.650123,
+          "max_ms": 1459.616604,
+          "p95_ms": 1456.108029,
+          "median_cpu_ms": 1436.6239999999998,
+          "median_max_rss_mib": 87.5703125
+        }
+      },
+      "speedup": 12.683720847384807
+    },
+    {
+      "name": "tasks-status",
+      "args": [
+        "agent",
+        "tasks",
+        "status",
+        "--mission",
+        "calc-ops-01M54Y16",
+        "--json"
+      ],
+      "fresh_home": false,
+      "samples": {
+        "go": [
+          {
+            "wall_ms": 117.205113,
+            "user_ms": 83.457,
+            "system_ms": 60.509,
+            "max_rss_kib": 33932,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 119.356831,
+            "user_ms": 88.316,
+            "system_ms": 57.468,
+            "max_rss_kib": 36600,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 121.645427,
+            "user_ms": 89.552,
+            "system_ms": 54.361,
+            "max_rss_kib": 36484,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 119.489827,
+            "user_ms": 86.571,
+            "system_ms": 63.134,
+            "max_rss_kib": 35912,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 116.897404,
+            "user_ms": 82.028,
+            "system_ms": 62.452,
+            "max_rss_kib": 33912,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 120.814004,
+            "user_ms": 79.299,
+            "system_ms": 64.323,
+            "max_rss_kib": 36072,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 119.309284,
+            "user_ms": 64.681,
+            "system_ms": 78.383,
+            "max_rss_kib": 35372,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 118.844973,
+            "user_ms": 68.234,
+            "system_ms": 74.1,
+            "max_rss_kib": 34144,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 120.747196,
+            "user_ms": 86.123,
+            "system_ms": 60.661,
+            "max_rss_kib": 33872,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 117.583678,
+            "user_ms": 80.59,
+            "system_ms": 60.639,
+            "max_rss_kib": 36092,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 119.549487,
+            "user_ms": 75.758,
+            "system_ms": 70.814,
+            "max_rss_kib": 35880,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 117.043969,
+            "user_ms": 76.498,
+            "system_ms": 67.919,
+            "max_rss_kib": 33780,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 113.269182,
+            "user_ms": 69.036,
+            "system_ms": 68.373,
+            "max_rss_kib": 36228,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 119.884559,
+            "user_ms": 83.184,
+            "system_ms": 62.0,
+            "max_rss_kib": 36304,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 118.978865,
+            "user_ms": 69.083,
+            "system_ms": 73.45,
+            "max_rss_kib": 33972,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 119.95104,
+            "user_ms": 89.082,
+            "system_ms": 55.797,
+            "max_rss_kib": 33676,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 123.382939,
+            "user_ms": 76.164,
+            "system_ms": 70.851,
+            "max_rss_kib": 34196,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 118.911025,
+            "user_ms": 74.962,
+            "system_ms": 70.776,
+            "max_rss_kib": 36208,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 114.261411,
+            "user_ms": 80.816,
+            "system_ms": 55.414,
+            "max_rss_kib": 33972,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 123.767081,
+            "user_ms": 80.745,
+            "system_ms": 64.735,
+            "max_rss_kib": 36028,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 115.102143,
+            "user_ms": 82.539,
+            "system_ms": 60.843,
+            "max_rss_kib": 34124,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 117.144982,
+            "user_ms": 72.207,
+            "system_ms": 72.384,
+            "max_rss_kib": 35688,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 117.127014,
+            "user_ms": 65.014,
+            "system_ms": 79.97,
+            "max_rss_kib": 36632,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 110.26075,
+            "user_ms": 73.109,
+            "system_ms": 60.759,
+            "max_rss_kib": 36064,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 116.640668,
+            "user_ms": 73.447,
+            "system_ms": 69.458,
+            "max_rss_kib": 36532,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ],
+        "python": [
+          {
+            "wall_ms": 1676.409475,
+            "user_ms": 1511.345,
+            "system_ms": 149.647,
+            "max_rss_kib": 106188,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 1681.398572,
+            "user_ms": 1536.913,
+            "system_ms": 133.698,
+            "max_rss_kib": 105976,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 1669.280539,
+            "user_ms": 1503.911,
+            "system_ms": 157.517,
+            "max_rss_kib": 105984,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 1702.7603,
+            "user_ms": 1556.568,
+            "system_ms": 134.621,
+            "max_rss_kib": 105888,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 1693.956897,
+            "user_ms": 1522.647,
+            "system_ms": 159.433,
+            "max_rss_kib": 105496,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 1697.80725,
+            "user_ms": 1543.59,
+            "system_ms": 142.342,
+            "max_rss_kib": 105936,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 1686.409703,
+            "user_ms": 1541.16,
+            "system_ms": 135.829,
+            "max_rss_kib": 105572,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 1708.20255,
+            "user_ms": 1536.194,
+            "system_ms": 158.09,
+            "max_rss_kib": 105424,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 1689.223705,
+            "user_ms": 1517.401,
+            "system_ms": 156.256,
+            "max_rss_kib": 105824,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 1678.037794,
+            "user_ms": 1521.048,
+            "system_ms": 145.791,
+            "max_rss_kib": 105816,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 1686.079805,
+            "user_ms": 1529.673,
+            "system_ms": 146.477,
+            "max_rss_kib": 106004,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 1687.651656,
+            "user_ms": 1530.364,
+            "system_ms": 147.285,
+            "max_rss_kib": 105848,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 1680.410545,
+            "user_ms": 1512.392,
+            "system_ms": 158.808,
+            "max_rss_kib": 105904,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 1696.852807,
+            "user_ms": 1529.816,
+            "system_ms": 154.033,
+            "max_rss_kib": 105740,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 1718.669089,
+            "user_ms": 1527.722,
+            "system_ms": 178.386,
+            "max_rss_kib": 105940,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 1671.917905,
+            "user_ms": 1514.687,
+            "system_ms": 148.686,
+            "max_rss_kib": 105776,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 1722.185589,
+            "user_ms": 1567.19,
+            "system_ms": 142.623,
+            "max_rss_kib": 105668,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 1672.860964,
+            "user_ms": 1500.861,
+            "system_ms": 163.38,
+            "max_rss_kib": 106300,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 1684.758239,
+            "user_ms": 1517.988,
+            "system_ms": 155.438,
+            "max_rss_kib": 105700,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 1676.021403,
+            "user_ms": 1530.237,
+            "system_ms": 136.439,
+            "max_rss_kib": 105440,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 1691.235579,
+            "user_ms": 1521.12,
+            "system_ms": 161.617,
+            "max_rss_kib": 105856,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 1671.250527,
+            "user_ms": 1523.247,
+            "system_ms": 139.711,
+            "max_rss_kib": 105776,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 1682.098962,
+            "user_ms": 1549.576,
+            "system_ms": 123.663,
+            "max_rss_kib": 105740,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 1689.414048,
+            "user_ms": 1541.552,
+            "system_ms": 138.955,
+            "max_rss_kib": 105696,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 1680.683587,
+            "user_ms": 1525.338,
+            "system_ms": 146.804,
+            "max_rss_kib": 106000,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ]
+      },
+      "summary": {
+        "go": {
+          "n": 25,
+          "median_ms": 118.911025,
+          "mean_ms": 118.28675408,
+          "stdev_ms": 3.013147792657137,
+          "min_ms": 110.26075,
+          "max_ms": 123.767081,
+          "p95_ms": 123.382939,
+          "median_cpu_ms": 144.417,
+          "median_max_rss_mib": 35.0390625
+        },
+        "python": {
+          "n": 25,
+          "median_ms": 1686.079805,
+          "mean_ms": 1687.8230996,
+          "stdev_ms": 13.935441652323062,
+          "min_ms": 1669.280539,
+          "max_ms": 1722.185589,
+          "p95_ms": 1718.669089,
+          "median_cpu_ms": 1673.6570000000002,
+          "median_max_rss_mib": 103.34375
+        }
+      },
+      "speedup": 14.179339594457286
+    },
+    {
+      "name": "next-query-analysis-guard",
+      "args": [
+        "next",
+        "--mission",
+        "calc-ops-01M54Y16",
+        "--json"
+      ],
+      "fresh_home": false,
+      "samples": {
+        "go": [
+          {
+            "wall_ms": 12.742167,
+            "user_ms": 13.752,
+            "system_ms": 3.734,
+            "max_rss_kib": 29280,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 12.222575,
+            "user_ms": 11.704,
+            "system_ms": 5.859,
+            "max_rss_kib": 31840,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 11.681904,
+            "user_ms": 11.222,
+            "system_ms": 5.64,
+            "max_rss_kib": 29468,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 13.087798,
+            "user_ms": 14.939,
+            "system_ms": 3.725,
+            "max_rss_kib": 31764,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 12.493358,
+            "user_ms": 14.297,
+            "system_ms": 4.197,
+            "max_rss_kib": 29328,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 12.289659,
+            "user_ms": 12.719,
+            "system_ms": 4.872,
+            "max_rss_kib": 31468,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 12.588885,
+            "user_ms": 9.338,
+            "system_ms": 9.295,
+            "max_rss_kib": 31312,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 12.887397,
+            "user_ms": 9.527,
+            "system_ms": 10.721,
+            "max_rss_kib": 29700,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 11.655335,
+            "user_ms": 10.615,
+            "system_ms": 6.763,
+            "max_rss_kib": 29728,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 11.75444,
+            "user_ms": 14.513,
+            "system_ms": 2.409,
+            "max_rss_kib": 31448,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 13.009674,
+            "user_ms": 14.768,
+            "system_ms": 3.248,
+            "max_rss_kib": 29544,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 12.836333,
+            "user_ms": 13.887,
+            "system_ms": 4.346,
+            "max_rss_kib": 29616,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 11.994886,
+            "user_ms": 13.042,
+            "system_ms": 3.924,
+            "max_rss_kib": 31796,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 12.772536,
+            "user_ms": 15.936,
+            "system_ms": 1.974,
+            "max_rss_kib": 31496,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 12.013499,
+            "user_ms": 12.123,
+            "system_ms": 4.681,
+            "max_rss_kib": 31376,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 13.181052,
+            "user_ms": 12.936,
+            "system_ms": 5.368,
+            "max_rss_kib": 29296,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 12.514829,
+            "user_ms": 9.706,
+            "system_ms": 7.791,
+            "max_rss_kib": 31352,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 11.778065,
+            "user_ms": 13.394,
+            "system_ms": 4.116,
+            "max_rss_kib": 31368,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 12.549553,
+            "user_ms": 11.253,
+            "system_ms": 6.6,
+            "max_rss_kib": 28976,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 11.961755,
+            "user_ms": 13.442,
+            "system_ms": 3.735,
+            "max_rss_kib": 29288,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 13.901158,
+            "user_ms": 13.973,
+            "system_ms": 11.141,
+            "max_rss_kib": 31792,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 12.994068,
+            "user_ms": 11.546,
+            "system_ms": 6.296,
+            "max_rss_kib": 31456,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 12.609075,
+            "user_ms": 12.721,
+            "system_ms": 5.066,
+            "max_rss_kib": 29652,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 12.442236,
+            "user_ms": 11.19,
+            "system_ms": 6.118,
+            "max_rss_kib": 31688,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 13.477804,
+            "user_ms": 16.522,
+            "system_ms": 2.363,
+            "max_rss_kib": 31468,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ],
+        "python": [
+          {
+            "wall_ms": 766.661441,
+            "user_ms": 698.996,
+            "system_ms": 58.005,
+            "max_rss_kib": 88204,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 768.958999,
+            "user_ms": 700.898,
+            "system_ms": 58.046,
+            "max_rss_kib": 88580,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 765.748164,
+            "user_ms": 689.704,
+            "system_ms": 65.904,
+            "max_rss_kib": 88240,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 762.746809,
+            "user_ms": 685.296,
+            "system_ms": 67.608,
+            "max_rss_kib": 88416,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 774.302462,
+            "user_ms": 694.738,
+            "system_ms": 68.628,
+            "max_rss_kib": 88524,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 767.007836,
+            "user_ms": 698.518,
+            "system_ms": 57.858,
+            "max_rss_kib": 88316,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 773.795752,
+            "user_ms": 701.677,
+            "system_ms": 61.993,
+            "max_rss_kib": 88136,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 767.553625,
+            "user_ms": 700.392,
+            "system_ms": 56.812,
+            "max_rss_kib": 88596,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 766.558124,
+            "user_ms": 693.411,
+            "system_ms": 64.053,
+            "max_rss_kib": 88396,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 769.834886,
+            "user_ms": 701.18,
+            "system_ms": 58.901,
+            "max_rss_kib": 88404,
+            "exit_code": 0,
+            "iteration": 9
+          },
+          {
+            "wall_ms": 772.836547,
+            "user_ms": 695.023,
+            "system_ms": 67.843,
+            "max_rss_kib": 88288,
+            "exit_code": 0,
+            "iteration": 10
+          },
+          {
+            "wall_ms": 757.080039,
+            "user_ms": 694.698,
+            "system_ms": 52.832,
+            "max_rss_kib": 88400,
+            "exit_code": 0,
+            "iteration": 11
+          },
+          {
+            "wall_ms": 765.762875,
+            "user_ms": 691.209,
+            "system_ms": 64.949,
+            "max_rss_kib": 88336,
+            "exit_code": 0,
+            "iteration": 12
+          },
+          {
+            "wall_ms": 756.84468,
+            "user_ms": 680.407,
+            "system_ms": 66.577,
+            "max_rss_kib": 88592,
+            "exit_code": 0,
+            "iteration": 13
+          },
+          {
+            "wall_ms": 757.449333,
+            "user_ms": 694.677,
+            "system_ms": 52.949,
+            "max_rss_kib": 88300,
+            "exit_code": 0,
+            "iteration": 14
+          },
+          {
+            "wall_ms": 791.785228,
+            "user_ms": 709.346,
+            "system_ms": 72.753,
+            "max_rss_kib": 88212,
+            "exit_code": 0,
+            "iteration": 15
+          },
+          {
+            "wall_ms": 775.60848,
+            "user_ms": 707.777,
+            "system_ms": 57.997,
+            "max_rss_kib": 88520,
+            "exit_code": 0,
+            "iteration": 16
+          },
+          {
+            "wall_ms": 767.517978,
+            "user_ms": 694.226,
+            "system_ms": 63.03,
+            "max_rss_kib": 88512,
+            "exit_code": 0,
+            "iteration": 17
+          },
+          {
+            "wall_ms": 764.423121,
+            "user_ms": 688.004,
+            "system_ms": 65.858,
+            "max_rss_kib": 88104,
+            "exit_code": 0,
+            "iteration": 18
+          },
+          {
+            "wall_ms": 771.397271,
+            "user_ms": 692.934,
+            "system_ms": 67.867,
+            "max_rss_kib": 88232,
+            "exit_code": 0,
+            "iteration": 19
+          },
+          {
+            "wall_ms": 768.102701,
+            "user_ms": 703.761,
+            "system_ms": 53.819,
+            "max_rss_kib": 88320,
+            "exit_code": 0,
+            "iteration": 20
+          },
+          {
+            "wall_ms": 767.381126,
+            "user_ms": 692.477,
+            "system_ms": 64.524,
+            "max_rss_kib": 88348,
+            "exit_code": 0,
+            "iteration": 21
+          },
+          {
+            "wall_ms": 772.419652,
+            "user_ms": 694.299,
+            "system_ms": 67.806,
+            "max_rss_kib": 88472,
+            "exit_code": 0,
+            "iteration": 22
+          },
+          {
+            "wall_ms": 773.827642,
+            "user_ms": 713.733,
+            "system_ms": 49.86,
+            "max_rss_kib": 88136,
+            "exit_code": 0,
+            "iteration": 23
+          },
+          {
+            "wall_ms": 780.192036,
+            "user_ms": 702.363,
+            "system_ms": 67.617,
+            "max_rss_kib": 88392,
+            "exit_code": 0,
+            "iteration": 24
+          }
+        ]
+      },
+      "summary": {
+        "go": {
+          "n": 25,
+          "median_ms": 12.549553,
+          "mean_ms": 12.53760164,
+          "stdev_ms": 0.5766897802024126,
+          "min_ms": 11.655335,
+          "max_ms": 13.901158,
+          "p95_ms": 13.477804,
+          "median_cpu_ms": 17.787,
+          "median_max_rss_mib": 30.6171875
+        },
+        "python": {
+          "n": 25,
+          "median_ms": 767.553625,
+          "mean_ms": 769.03187228,
+          "stdev_ms": 7.424140076144961,
+          "min_ms": 756.84468,
+          "max_ms": 791.785228,
+          "p95_ms": 780.192036,
+          "median_cpu_ms": 757.4639999999999,
+          "median_max_rss_mib": 86.27734375
+        }
+      },
+      "speedup": 61.16182982772375
+    },
+    {
+      "name": "init-warm-home",
+      "args": [
+        "init",
+        ".",
+        "--ai",
+        "codex",
+        "--non-interactive"
+      ],
+      "fresh_home": false,
+      "samples": {
+        "go": [
+          {
+            "wall_ms": 241.369304,
+            "user_ms": 197.231,
+            "system_ms": 115.592,
+            "max_rss_kib": 37848,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 246.134757,
+            "user_ms": 194.599,
+            "system_ms": 132.697,
+            "max_rss_kib": 38468,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 241.901766,
+            "user_ms": 200.19,
+            "system_ms": 114.542,
+            "max_rss_kib": 38544,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 240.690298,
+            "user_ms": 207.718,
+            "system_ms": 108.007,
+            "max_rss_kib": 38196,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 244.11613,
+            "user_ms": 203.843,
+            "system_ms": 115.707,
+            "max_rss_kib": 40020,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 242.117542,
+            "user_ms": 196.106,
+            "system_ms": 115.878,
+            "max_rss_kib": 37856,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 254.525204,
+            "user_ms": 218.044,
+            "system_ms": 113.765,
+            "max_rss_kib": 38304,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 255.440801,
+            "user_ms": 196.711,
+            "system_ms": 135.497,
+            "max_rss_kib": 40464,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 250.171169,
+            "user_ms": 200.338,
+            "system_ms": 127.865,
+            "max_rss_kib": 38612,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 254.517242,
+            "user_ms": 215.705,
+            "system_ms": 116.374,
+            "max_rss_kib": 38788,
+            "exit_code": 0,
+            "iteration": 9
+          }
+        ],
+        "python": [
+          {
+            "wall_ms": 3084.772011,
+            "user_ms": 2771.102,
+            "system_ms": 247.755,
+            "max_rss_kib": 123640,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 3088.75424,
+            "user_ms": 2790.483,
+            "system_ms": 235.627,
+            "max_rss_kib": 123920,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 3105.374437,
+            "user_ms": 2761.423,
+            "system_ms": 280.364,
+            "max_rss_kib": 123296,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 3148.458492,
+            "user_ms": 2832.241,
+            "system_ms": 249.39,
+            "max_rss_kib": 123680,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 3129.975211,
+            "user_ms": 2824.998,
+            "system_ms": 240.586,
+            "max_rss_kib": 123416,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 3182.953404,
+            "user_ms": 2850.838,
+            "system_ms": 266.522,
+            "max_rss_kib": 123760,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 3213.083084,
+            "user_ms": 2880.477,
+            "system_ms": 256.965,
+            "max_rss_kib": 123068,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 3229.019258,
+            "user_ms": 2886.824,
+            "system_ms": 267.132,
+            "max_rss_kib": 123176,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 3241.260538,
+            "user_ms": 2896.592,
+            "system_ms": 256.279,
+            "max_rss_kib": 123472,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 3211.035623,
+            "user_ms": 2896.819,
+            "system_ms": 230.226,
+            "max_rss_kib": 123604,
+            "exit_code": 0,
+            "iteration": 9
+          }
+        ]
+      },
+      "summary": {
+        "go": {
+          "n": 10,
+          "median_ms": 245.12544350000002,
+          "mean_ms": 247.0984213,
+          "stdev_ms": 6.007005204972441,
+          "min_ms": 240.690298,
+          "max_ms": 255.440801,
+          "p95_ms": 255.440801,
+          "median_cpu_ms": 323.423,
+          "median_max_rss_mib": 37.603515625
+        },
+        "python": {
+          "n": 10,
+          "median_ms": 3165.705948,
+          "mean_ms": 3163.4686298,
+          "stdev_ms": 59.58167279979749,
+          "min_ms": 3084.772011,
+          "max_ms": 3241.260538,
+          "p95_ms": 3241.260538,
+          "median_cpu_ms": 3099.4955,
+          "median_max_rss_mib": 120.642578125
+        }
+      },
+      "speedup": 12.914636289072128
+    },
+    {
+      "name": "init-fresh-home",
+      "args": [
+        "init",
+        ".",
+        "--ai",
+        "codex",
+        "--non-interactive"
+      ],
+      "fresh_home": true,
+      "samples": {
+        "go": [
+          {
+            "wall_ms": 355.22642,
+            "user_ms": 273.453,
+            "system_ms": 171.812,
+            "max_rss_kib": 40488,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 372.745214,
+            "user_ms": 262.315,
+            "system_ms": 202.141,
+            "max_rss_kib": 38784,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 370.379834,
+            "user_ms": 268.287,
+            "system_ms": 204.377,
+            "max_rss_kib": 40232,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 366.593295,
+            "user_ms": 262.295,
+            "system_ms": 196.982,
+            "max_rss_kib": 40672,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 367.366148,
+            "user_ms": 273.556,
+            "system_ms": 191.224,
+            "max_rss_kib": 40816,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 358.926968,
+            "user_ms": 281.802,
+            "system_ms": 169.362,
+            "max_rss_kib": 40400,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 358.987821,
+            "user_ms": 255.087,
+            "system_ms": 201.067,
+            "max_rss_kib": 40128,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 362.676838,
+            "user_ms": 259.257,
+            "system_ms": 194.288,
+            "max_rss_kib": 42128,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 357.918588,
+            "user_ms": 268.531,
+            "system_ms": 184.855,
+            "max_rss_kib": 38332,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 375.221481,
+            "user_ms": 279.537,
+            "system_ms": 190.834,
+            "max_rss_kib": 39916,
+            "exit_code": 0,
+            "iteration": 9
+          }
+        ],
+        "python": [
+          {
+            "wall_ms": 6103.718379,
+            "user_ms": 5532.441,
+            "system_ms": 440.437,
+            "max_rss_kib": 128048,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 6286.740383,
+            "user_ms": 5692.941,
+            "system_ms": 458.199,
+            "max_rss_kib": 127616,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 6200.747023,
+            "user_ms": 5617.988,
+            "system_ms": 448.7,
+            "max_rss_kib": 127440,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 6087.01745,
+            "user_ms": 5551.147,
+            "system_ms": 410.807,
+            "max_rss_kib": 127588,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 6211.14925,
+            "user_ms": 5669.805,
+            "system_ms": 420.595,
+            "max_rss_kib": 127596,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 6120.97506,
+            "user_ms": 5582.517,
+            "system_ms": 426.995,
+            "max_rss_kib": 127856,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 6086.485265,
+            "user_ms": 5511.471,
+            "system_ms": 461.303,
+            "max_rss_kib": 127040,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 6083.158736,
+            "user_ms": 5580.61,
+            "system_ms": 390.184,
+            "max_rss_kib": 127616,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 6105.246889,
+            "user_ms": 5565.785,
+            "system_ms": 425.645,
+            "max_rss_kib": 127932,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 6111.722399,
+            "user_ms": 5581.73,
+            "system_ms": 396.665,
+            "max_rss_kib": 127964,
+            "exit_code": 0,
+            "iteration": 9
+          }
+        ]
+      },
+      "summary": {
+        "go": {
+          "n": 10,
+          "median_ms": 364.6350665,
+          "mean_ms": 364.6042607,
+          "stdev_ms": 6.864361543471788,
+          "min_ms": 355.22642,
+          "max_ms": 375.221481,
+          "p95_ms": 375.221481,
+          "median_cpu_ms": 457.7155,
+          "median_max_rss_mib": 39.37109375
+        },
+        "python": {
+          "n": 10,
+          "median_ms": 6108.484644,
+          "mean_ms": 6139.6960834,
+          "stdev_ms": 69.0183916676799,
+          "min_ms": 6083.158736,
+          "max_ms": 6286.740383,
+          "p95_ms": 6286.740383,
+          "median_cpu_ms": 5984.9125,
+          "median_max_rss_mib": 124.625
+        }
+      },
+      "speedup": 16.752323638626237
+    },
+    {
+      "name": "mission-create",
+      "args": [
+        "agent",
+        "mission",
+        "create",
+        "benchmark-mission",
+        "--topology",
+        "lanes",
+        "--json"
+      ],
+      "fresh_home": false,
+      "samples": {
+        "go": [
+          {
+            "wall_ms": 156.945524,
+            "user_ms": 85.206,
+            "system_ms": 80.815,
+            "max_rss_kib": 33268,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 155.80771,
+            "user_ms": 83.707,
+            "system_ms": 82.561,
+            "max_rss_kib": 36120,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 153.700171,
+            "user_ms": 88.106,
+            "system_ms": 76.489,
+            "max_rss_kib": 38188,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 153.244133,
+            "user_ms": 97.869,
+            "system_ms": 66.14,
+            "max_rss_kib": 36148,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 156.430789,
+            "user_ms": 94.955,
+            "system_ms": 68.623,
+            "max_rss_kib": 33604,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 151.660546,
+            "user_ms": 89.154,
+            "system_ms": 72.379,
+            "max_rss_kib": 33856,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 155.333455,
+            "user_ms": 84.279,
+            "system_ms": 81.723,
+            "max_rss_kib": 36116,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 153.420177,
+            "user_ms": 82.028,
+            "system_ms": 82.34,
+            "max_rss_kib": 35684,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 157.878135,
+            "user_ms": 82.543,
+            "system_ms": 88.903,
+            "max_rss_kib": 34084,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 156.244995,
+            "user_ms": 91.011,
+            "system_ms": 76.846,
+            "max_rss_kib": 34128,
+            "exit_code": 0,
+            "iteration": 9
+          }
+        ],
+        "python": [
+          {
+            "wall_ms": 1911.947872,
+            "user_ms": 1692.537,
+            "system_ms": 182.092,
+            "max_rss_kib": 104980,
+            "exit_code": 0,
+            "iteration": 0
+          },
+          {
+            "wall_ms": 1936.052662,
+            "user_ms": 1708.644,
+            "system_ms": 190.435,
+            "max_rss_kib": 105612,
+            "exit_code": 0,
+            "iteration": 1
+          },
+          {
+            "wall_ms": 1818.030139,
+            "user_ms": 1601.117,
+            "system_ms": 179.925,
+            "max_rss_kib": 105596,
+            "exit_code": 0,
+            "iteration": 2
+          },
+          {
+            "wall_ms": 1829.292948,
+            "user_ms": 1607.103,
+            "system_ms": 186.249,
+            "max_rss_kib": 105916,
+            "exit_code": 0,
+            "iteration": 3
+          },
+          {
+            "wall_ms": 1911.734658,
+            "user_ms": 1666.463,
+            "system_ms": 205.021,
+            "max_rss_kib": 105464,
+            "exit_code": 0,
+            "iteration": 4
+          },
+          {
+            "wall_ms": 1893.181397,
+            "user_ms": 1668.043,
+            "system_ms": 186.213,
+            "max_rss_kib": 105744,
+            "exit_code": 0,
+            "iteration": 5
+          },
+          {
+            "wall_ms": 1915.35254,
+            "user_ms": 1697.462,
+            "system_ms": 178.127,
+            "max_rss_kib": 105200,
+            "exit_code": 0,
+            "iteration": 6
+          },
+          {
+            "wall_ms": 1913.836483,
+            "user_ms": 1667.44,
+            "system_ms": 208.383,
+            "max_rss_kib": 105348,
+            "exit_code": 0,
+            "iteration": 7
+          },
+          {
+            "wall_ms": 1921.589339,
+            "user_ms": 1708.166,
+            "system_ms": 175.331,
+            "max_rss_kib": 104848,
+            "exit_code": 0,
+            "iteration": 8
+          },
+          {
+            "wall_ms": 1892.636499,
+            "user_ms": 1682.024,
+            "system_ms": 169.195,
+            "max_rss_kib": 105984,
+            "exit_code": 0,
+            "iteration": 9
+          }
+        ]
+      },
+      "summary": {
+        "go": {
+          "n": 10,
+          "median_ms": 155.5705825,
+          "mean_ms": 155.0665635,
+          "stdev_ms": 1.9665421766114217,
+          "min_ms": 151.660546,
+          "max_ms": 157.878135,
+          "p95_ms": 157.878135,
+          "median_cpu_ms": 165.2985,
+          "median_max_rss_mib": 34.087890625
+        },
+        "python": {
+          "n": 10,
+          "median_ms": 1911.841265,
+          "mean_ms": 1894.3654537,
+          "stdev_ms": 39.405689485402455,
+          "min_ms": 1818.030139,
+          "max_ms": 1936.052662,
+          "p95_ms": 1936.052662,
+          "median_cpu_ms": 1873.0565000000001,
+          "median_max_rss_mib": 103.056640625
+        }
+      },
+      "speedup": 12.289220971451977
+    }
+  ]
+}

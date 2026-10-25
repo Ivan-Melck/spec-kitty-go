@@ -10,6 +10,19 @@ The target is RC7. Command skills retain names such as `spec-kitty.specify`;
 RC8-only commands and ledger migrations are outside this release's surface.
 See [parity scope and verification](docs/parity/RC7.md).
 
+## Performance against Python RC7
+
+Local benchmarks on Linux (AMD Ryzen 7 5800X, 2026-10-25) found:
+
+- **12.3–16.8× faster** project operations, including initialization and mission creation.
+- **126–145× faster** version/help startup.
+- **58–76% lower peak memory** across the tested commands.
+
+Based on 410 measured invocations with warm OS caches. These measure local CLI
+performance; full AI mission throughput also depends on model and tool latency.
+See the [full benchmark report and methodology](docs/benchmarks/rc7-2026-10-25/report.html)
+and [raw measurements](docs/benchmarks/rc7-2026-10-25/results.json).
+
 ## Requirements
 
 - **Go 1.26 or newer** to build or install from this checkout.

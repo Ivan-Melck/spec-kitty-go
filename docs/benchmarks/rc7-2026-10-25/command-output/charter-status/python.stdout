@@ -1,0 +1,98 @@
+{
+  "result": "success",
+  "charter_sync": {
+    "available": false,
+    "error": "Charter not found at /var/tmp/sk-rc7-bench-8231h4jb/current-run/project/.kittify/charter/charter.md\n  Run 'spec-kitty charter interview' to create one,\n  or 'spec-kitty upgrade' if migrating from an older version."
+  },
+  "synthesis": {
+    "generation_state": "not_started",
+    "generated_inputs": {
+      "path": ".kittify/charter/generated",
+      "exists": false,
+      "counts": {
+        "directive": 0,
+        "tactic": 0,
+        "styleguide": 0
+      },
+      "total": 0
+    },
+    "manifest": {
+      "path": ".kittify/charter/synthesis-manifest.yaml",
+      "exists": false,
+      "state": "missing",
+      "artifact_count": 0,
+      "live_artifact_count": 0,
+      "live_provenance_count": 0,
+      "run_id": null,
+      "created_at": null,
+      "adapter_id": null,
+      "adapter_version": null,
+      "missing_provenance_paths": [],
+      "error": null
+    },
+    "provenance": {
+      "path": ".kittify/charter/provenance",
+      "count": 0,
+      "parsed_count": 0,
+      "manifest_artifact_count": 0,
+      "missing_for_manifest_count": 0,
+      "missing_for_manifest": [],
+      "corpus_snapshot_ids": [],
+      "adapters": [],
+      "warnings": [],
+      "entries": []
+    },
+    "evidence": {
+      "warnings": [],
+      "code": {
+        "stack_id": "unknown",
+        "primary_language": "unknown",
+        "frameworks": [],
+        "test_frameworks": [],
+        "representative_files_count": 5,
+        "representative_files_preview": [
+          ".gitignore",
+          ".gitattributes",
+          "AGENTS.md",
+          ".kittify/config.yaml",
+          ".kittify/canonical-events.jsonl"
+        ]
+      },
+      "configured_urls": [],
+      "configured_url_count": 0,
+      "corpus_snapshot_id": "generic-v1.0.0",
+      "corpus_entry_count": 3
+    }
+  },
+  "org_layer": {
+    "has_built_in": true,
+    "packs": [],
+    "collision_warnings": [],
+    "errors": []
+  },
+  "governance_references": {
+    "available": true,
+    "references": [],
+    "warnings": []
+  },
+  "freshness": {
+    "charter_source": {
+      "state": "missing",
+      "last_change": null,
+      "remediation": "spec-kitty charter generate --no-from-interview",
+      "detail": "no charter.yaml and no legacy charter bundle files; this project has no charter at all"
+    },
+    "synced_bundle": {
+      "state": "missing",
+      "last_change": null,
+      "remediation": "spec-kitty charter generate --no-from-interview",
+      "detail": "no charter.yaml and no legacy charter bundle files; this project has no charter at all"
+    },
+    "synthesized_drg": {
+      "state": "missing",
+      "last_change": null,
+      "remediation": "spec-kitty charter synthesize",
+      "detail": null
+    }
+  }
+}

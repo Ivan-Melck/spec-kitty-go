@@ -1,0 +1,63 @@
+                                                                                                                                                                                                        
+ Usage: spec-kitty [OPTIONS] COMMAND [ARGS]...                                                                                                                                                          
+                                                                                                                                                                                                        
+ Setup tool for Spec Kitty spec-driven development projects.                                                                                                                                            
+                                                                                                                                                                                                        
+ Set SPEC_KITTY_NO_UPGRADE_CHECK=1 to disable the upgrade-check notice.                                                                                                                                 
+                                                                                                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --version             -v        Show version and exit                                                                                                                                                │
+│ --install-completion            Install completion for the current shell.                                                                                                                            │
+│ --show-completion               Show completion for the current shell, to copy it or customize the installation.                                                                                     │
+│ --help                -h        Show this message and exit.                                                                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ accept              Validate mission readiness before merging to main.                                                                                                                               │
+│ agent               Commands for AI agents to execute spec-kitty mission actions programmatically                                                                                                    │
+│ archive             Archive a terminal mission (operator-invoked only).                                                                                                                              │
+│ charter             Charter management commands                                                                                                                                                      │
+│ config              Display project configuration and asset resolution information.                                                                                                                  │
+│ consolidate         Consolidate a lane-based mission into its target branch.                                                                                                                         │
+│ context             Query workspace context information                                                                                                                                              │
+│ cutover-guard       Diff-scoped fail-closed cut-over gate (pre-merge required check).                                                                                                                │
+│ dispatch            Dispatch a request to a governed Op (canonical surface).                                                                                                                         │
+│ docs                Common Docs retrieval commands                                                                                                                                                   │
+│ doctor              Project health diagnostics                                                                                                                                                       │
+│ events              Event log tailing commands                                                                                                                                                       │
+│ glossary            Glossary management commands                                                                                                                                                     │
+│ implement           Internal — allocate or reuse the lane worktree for a work package.                                                                                                               │
+│ init                Initialize a new Spec Kitty project.                                                                                                                                             │
+│ intake              Ingest a plan document as a mission brief for /spec-kitty.specify.                                                                                                               │
+│ invocations         Query local invocation records.                                                                                                                                                  │
+│ issue-matrix        Issue-matrix commands (structured issue-matrix.json).                                                                                                                            │
+│ lint                Run ruff and mypy on a file and report errors.                                                                                                                                   │
+│ materialize         Regenerate all derived views from the canonical event log.                                                                                                                       │
+│ migrate             Migration commands: update .kittify/ layout and backfill identity fields in legacy missions.                                                                                     │
+│ mission             Inspect mission types for this project.                                                                                                                                          │
+│ mission-type        Inspect mission types for this project.                                                                                                                                          │
+│ next                Decide and emit the next agent action for the current mission.                                                                                                                   │
+│ ops                 Operation history (git reflog)                                                                                                                                                   │
+│ orchestrator-api    Machine-contract API for external orchestrators (JSON-first)                                                                                                                     │
+│ plan                Scaffold plan.md for a Mission.                                                                                                                                                  │
+│ plugin              Plugin bundle commands                                                                                                                                                           │
+│ profile-invocation  Manage invocation records.                                                                                                                                                       │
+│ profiles            Manage and list agent profiles.                                                                                                                                                  │
+│ reconcile           Reconcile a mission dossier against its recorded snapshot (exit 0=parity, non-zero=divergence).                                                                                  │
+│ regen               Regenerate the committed generated agent-command + skill fixtures from source (#3447).                                                                                           │
+│ research            Scaffold research artifacts from the mission type's shipped templates.                                                                                                           │
+│ retrospect          Retrospective authoring and summary (create / backfill / summary)                                                                                                                │
+│ review              Validate a merged mission: WP lane check, dead-code scan, BLE001 audit.                                                                                                          │
+│ safe-commit         Commit only the requested files via Spec Kitty's safe-commit path.                                                                                                               │
+│ session-start       Emit spec-kitty orientation for the Claude Code SessionStart hook.                                                                                                               │
+│ session-stop        Emit the open-Ops reminder for the Claude Code Stop hook.                                                                                                                        │
+│ spec-commit         Commit spec artifacts to the mission's resolved placement.                                                                                                                       │
+│ specify             Create a feature scaffold in kitty-specs/.                                                                                                                                       │
+│ tasks               Finalize tasks metadata after task generation.                                                                                                                                   │
+│ tracker             Task tracker commands                                                                                                                                                            │
+│ upgrade             Upgrade a Spec Kitty project to the current version.                                                                                                                             │
+│ validate-encoding   Validate and optionally fix file encoding in feature artifacts.                                                                                                                  │
+│ validate-tasks      LEGACY: Validate and repair directory/frontmatter lane mismatches.                                                                                                               │
+│ verify-setup        Verify that the current environment matches Spec Kitty expectations.                                                                                                             │
+│ workflow            Manage mission workflow definitions                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

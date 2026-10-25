@@ -1,0 +1,38 @@
+{
+  "kind": "query",
+  "agent": null,
+  "mission_slug": "calc-ops-01M54Y16",
+  "mission_number": "",
+  "mission_type": "software-dev",
+  "mission": "software-dev",
+  "mission_state": "analyze",
+  "timestamp": "2026-10-25T13:34:56.679820+00:00",
+  "action": null,
+  "wp_id": null,
+  "workspace_path": null,
+  "prompt_file": null,
+  "reason": null,
+  "guard_failures": [
+    "Analysis report missing: analysis-report.md has not been recorded"
+  ],
+  "guard_failure_paths": {},
+  "progress": {
+    "total_wps": 2,
+    "done_wps": 0,
+    "approved_wps": 0,
+    "in_progress_wps": 0,
+    "planned_wps": 2,
+    "for_review_wps": 0,
+    "weighted_percentage": 0.0
+  },
+  "origin": {},
+  "run_id": null,
+  "step_id": null,
+  "decision_id": null,
+  "input_key": null,
+  "question": null,
+  "options": null,
+  "is_query": true,
+  "preview_step": "analyze",
+  "error_code": "ANALYSIS_REPORT_MISSING"
+}

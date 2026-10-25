@@ -1,0 +1,52 @@
+{
+  "mission_slug": "calc-ops-01M54Y16",
+  "mission_number": null,
+  "mission_type": "software-dev",
+  "total_wps": 2,
+  "by_lane": {
+    "planned": 2
+  },
+  "work_packages": [
+    {
+      "id": "WP01",
+      "title": "Subtraction and shared helper",
+      "lane": "planned",
+      "phase": "Phase 1 - Core",
+      "file": "WP01-subtract-helper.md",
+      "agent": "",
+      "agent_profile": "python-pedro",
+      "resolved_agent_profile": "",
+      "resolved_role": "",
+      "resolved_model": "",
+      "shell_pid": "",
+      "shell_pid_created_at": null,
+      "execution_mode": "code_change",
+      "workspace_kind": "lane_workspace"
+    },
+    {
+      "id": "WP02",
+      "title": "Multiplication",
+      "lane": "planned",
+      "phase": "Phase 1 - Core",
+      "file": "WP02-multiply.md",
+      "agent": "",
+      "agent_profile": "python-pedro",
+      "resolved_agent_profile": "",
+      "resolved_role": "",
+      "resolved_model": "",
+      "shell_pid": "",
+      "shell_pid_created_at": null,
+      "execution_mode": "code_change",
+      "workspace_kind": "lane_workspace"
+    }
+  ],
+  "progress_percentage": 0.0,
+  "progress_semantics": "weighted_readiness",
+  "weighted_percentage": 0.0,
+  "done_count": 0,
+  "done_percentage": 0.0,
+  "stale_wps": 0,
+  "stale_verdicts": [],
+  "stalled_wps": [],
+  "auto_commit": true
+}

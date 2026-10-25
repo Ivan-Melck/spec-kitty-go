@@ -1,0 +1,22 @@
+Configured agents:
+  ✓ codex (.agents/skills/ (project skills))
+
+Auto-commit: enabled
+
+Available but not configured:
+  - antigravity
+  - auggie
+  - claude
+  - copilot
+  - cursor
+  - gemini
+  - kilocode
+  - kiro
+  - letta
+  - llxprt
+  - opencode
+  - pi
+  - q
+  - qwen
+  - vibe
+  - windsurf

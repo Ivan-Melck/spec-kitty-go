@@ -1,0 +1,50 @@
+Checking for installed tools...
+
+Check Available Tools
+├── ● Git version control (available)
+├── ● Claude Code CLI (available)
+├── ● Gemini CLI (not found)
+├── ● LLxprt Code (not found)
+├── ● Qwen Code CLI (not found)
+├── ● Visual Studio Code (not found)
+├── ● Visual Studio Code Insiders (not found)
+├── ● Cursor IDE agent (not found)
+├── ● Windsurf IDE (not found)
+├── ● Kilo Code IDE (not found)
+├── ● opencode (not found)
+├── ● Codex CLI (available)
+├── ● Mistral Vibe (not found)
+├── ● Pi (available)
+├── ● Letta Code (not found)
+├── ● Auggie CLI (not found)
+├── ● Amazon Q Developer CLI (legacy) (not found)
+└── ● Kiro CLI (not found)
+
+
+
+System Integrity Check
+
+1. Environment
+   Working directory: /var/tmp/sk-rc7-bench-8231h4jb/current-run/project
+   Repository root: /var/tmp/sk-rc7-bench-8231h4jb/current-run/project
+   ○ Not in worktree
+   Current branch: feat/calc-ops
+
+2. Mission File Integrity
+   Active mission: no mission context
+   ✓ All 0 expected files present
+
+3. Worktree Overview
+   Total features: 0
+   Active worktrees: 0
+   Merged features: 0
+   In development: 0
+
+4. Feature Analysis
+   ⚠ Skipped: No --mission provided; skipping feature analysis.
+
+6. Managed Skills
+   ✓ All 74 files intact
+
+✓ Verification complete
+
