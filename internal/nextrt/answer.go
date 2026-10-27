@@ -86,6 +86,11 @@ func ResolvePendingDecisionID(ref *RunRef) (string, error) {
 // ProvideDecisionAnswer is engine.provide_decision_answer for input-keyed
 // decisions answered by a human actor (the CLI default).
 func ProvideDecisionAnswer(ref *RunRef, decisionID, answer, actorID string) error {
+	lock, err := runCursorLock(ref.RunDir)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	s, err := ReadSnapshot(ref.RunDir)
 	if err != nil {
 		return err

@@ -469,8 +469,17 @@ func raciDecision(stepID string) *jsonx.Object {
 }
 
 // advanceRun completes the issued step (success) and issues the next
-// planned step; returns the planner decision after the advance.
-func advanceRun(ref *RunRef, agent, result string) (planned, error) {
+// planned step; returns the planner decision after the advance. The whole
+// read-plan-append-write runs under the run-cursor lock (run_lock).
+// beforeCompleted, when set, is the abort-only guard on the transition into
+// terminal: it runs after planning and before anything is appended or
+// written, and its error aborts the advance with the run untouched.
+func advanceRun(ref *RunRef, agent, result string, beforeCompleted func() error) (planned, error) {
+	lock, err := runCursorLock(ref.RunDir)
+	if err != nil {
+		return planned{}, err
+	}
+	defer lock.Release()
 	s, err := ReadSnapshot(ref.RunDir)
 	if err != nil {
 		return planned{}, err
@@ -502,12 +511,19 @@ func advanceRun(ref *RunRef, agent, result string) (planned, error) {
 			s.Obj.Set("blocked_reason", fmt.Sprintf("Previous step '%s' reported blocked state.", issued))
 		}
 		s.Obj.Set("issued_step_id", nil)
-		if err := appendRunEvent(ref.RunDir, "NextStepAutoCompleted", jsonx.NewObject("actor", agentActor(agent), "agent_id", agent,
-			"mission_id", nil, "mission_slug", nil, "result", result, "run_id", ref.RunID, "step_id", issued)); err != nil {
+	}
+	p := planNext(s, t)
+	if beforeCompleted != nil && p.Kind == KindTerminal && completed != "" {
+		if err := beforeCompleted(); err != nil {
 			return planned{}, err
 		}
 	}
-	p := planNext(s, t)
+	if completed != "" {
+		if err := appendRunEvent(ref.RunDir, "NextStepAutoCompleted", jsonx.NewObject("actor", agentActor(agent), "agent_id", agent,
+			"mission_id", nil, "mission_slug", nil, "result", result, "run_id", ref.RunID, "step_id", completed)); err != nil {
+			return planned{}, err
+		}
+	}
 	if p.Kind == KindStep {
 		s.Obj.Set("issued_step_id", p.StepID)
 		dec := s.Obj.GetObject("decisions")

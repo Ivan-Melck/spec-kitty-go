@@ -82,7 +82,6 @@ These upstream behaviors are not yet ported:
 
 - Merge gates do not read the issue matrix from the coordination ref. This
   gap predates this pin.
-- `next` has no terminal retrospective.
 - `accept` does not handle a WP file without frontmatter.
 
 `next` prompt construction falls back to the compact governance block when
