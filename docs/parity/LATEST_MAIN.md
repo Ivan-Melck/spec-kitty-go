@@ -84,8 +84,6 @@ These upstream behaviors are not yet ported:
   gap predates this pin.
 - `next` has no terminal retrospective.
 - Research and documentation missions have no composed-action guards.
-- The `charter list` unknown-ledger-key error shows an absolute path where
-  upstream shows a relative one.
 - `accept` does not handle a WP file without frontmatter.
 - `next` prompts drop charter context errors silently.
 - Locked appends in `missions/_archive.py` and charter `_io.py` are not
