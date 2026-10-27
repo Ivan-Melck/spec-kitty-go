@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
@@ -86,8 +87,9 @@ func SerializeLine(row *jsonx.Object) string {
 }
 
 // AppendRows atomically appends rows to the JSONL file at path (read whole
-// file, append, temp + rename; resulting mode 0600). Symlinked logs are
-// refused.
+// file, append, temp + rename; resulting mode 0600) under the Mission status
+// lock of its directory, so concurrent writers never lose each other's rows.
+// Symlinked logs are refused.
 func AppendRows(path string, rows ...*jsonx.Object) error {
 	if len(rows) == 0 {
 		return nil
@@ -95,6 +97,15 @@ func AppendRows(path string, rows ...*jsonx.Object) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	lock, err := LockMission(filepath.Dir(path), "", filelock.Forever)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	return appendRowsLocked(path, rows)
+}
+
+func appendRowsLocked(path string, rows []*jsonx.Object) error {
 	if st, err := os.Lstat(path); err == nil && st.Mode()&os.ModeSymlink != 0 {
 		return &StoreError{Msg: "Refusing to read symbolic link event log: " + path}
 	}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -111,6 +112,14 @@ func (s *Surface) EmitTransition(req *status.TransitionRequest) (*EmitResult, er
 	if err != nil {
 		return nil, err
 	}
+	// Steps 1-5 of the shell run under the Mission status lock: the from-lane
+	// is derived from the log this append extends, and (transactional) the
+	// commit or its rollback lands before another writer reads the log.
+	lock, err := lockStatus(dir, transactional)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
 	stream, err := status.ReadStream(dir, "")
 	if err != nil {
 		return nil, err
@@ -148,8 +157,20 @@ func (s *Surface) EmitTransition(req *status.TransitionRequest) (*EmitResult, er
 			return res, err
 		}
 	}
+	lock.Release()
 	status.RefreshDerivedViews(dir, s.Root)
 	return res, nil
+}
+
+// lockStatus takes the Mission status lock for a write to dir: bounded like
+// BookkeepingTransaction.acquire for a transactional write, unbounded like
+// the flat shell's feature_status_lock otherwise.
+func lockStatus(dir string, transactional bool) (*status.MissionLock, error) {
+	timeout := filelock.Forever
+	if transactional {
+		timeout = status.TransactionLockTimeout
+	}
+	return status.LockMission(dir, "", timeout)
 }
 
 // EmitAnnotation is emit_runtime_annotation: with autoCommit on a
@@ -170,6 +191,11 @@ func (s *Surface) EmitAnnotationAt(wpID string, delta status.Delta, actor status
 	if autoCommit && s.annotationTransactional() {
 		dir, checkout, err := s.statusCommitTarget()
 		if err == nil {
+			lock, err := lockStatus(dir, true)
+			if err != nil {
+				return nil, err
+			}
+			defer lock.Release()
 			rb := txnPoint(true, dir)
 			if err := status.AppendEvents(dir, a); err != nil {
 				return nil, err
@@ -180,6 +206,7 @@ func (s *Surface) EmitAnnotationAt(wpID string, delta status.Delta, actor status
 			if err := s.commitStatusTxn(checkout, dir, "chore(spec-kitty): inner-state annotation "+wpID, rb, []string{a.EventID}); err != nil {
 				return a, err
 			}
+			lock.Release()
 			status.RefreshDerivedViews(dir, s.Root)
 			return a, nil
 		}
@@ -188,6 +215,11 @@ func (s *Surface) EmitAnnotationAt(wpID string, delta status.Delta, actor status
 	if err != nil {
 		return nil, err
 	}
+	lock, err := lockStatus(dir, false)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
 	if err := status.AppendEvents(dir, a); err != nil {
 		return nil, err
 	}

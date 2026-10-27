@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/ulid"
@@ -100,6 +101,16 @@ func HasEvent(path, eventType string, dedup *jsonx.Object) bool {
 // with the same (type, dedup keys) exists. Returns nil when skipped.
 func Persist(dir, eventType string, payload *jsonx.Object, aggregateID, aggregateType string, projectUUID, projectSlug any, dedup *jsonx.Object) (*jsonx.Object, error) {
 	path := status.EventsPath(dir)
+	// The dedup read and the append run under one Mission status lock
+	// acquisition, so two writers cannot both miss the other's row.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	lock, err := status.LockMission(dir, "", filelock.Forever)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
 	if dedup != nil && dedup.Len() > 0 && HasEvent(path, eventType, dedup) {
 		return nil, nil
 	}
