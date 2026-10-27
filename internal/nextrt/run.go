@@ -45,20 +45,9 @@ func ParseTemplate(b []byte) (*Template, error) {
 	if m := o.GetObject("mission"); m != nil {
 		t.Key = m.GetString("key")
 	}
-	v, _ := o.Get("steps")
-	list, _ := v.([]any)
-	for _, it := range list {
-		so, ok := it.(*jsonx.Object)
-		if !ok {
-			continue
-		}
-		st := TemplateStep{ID: so.GetString("id"), Title: so.GetString("title"), Description: so.GetString("description"),
-			PromptTemplate: so.GetString("prompt_template"), AgentProfile: so.GetString("agent_profile"),
-			ContractRef: so.GetString("contract_ref")}
-		st.DependsOn = strList(so, "depends_on")
-		st.RequiresInputs = strList(so, "requires_inputs")
-		t.Steps = append(t.Steps, st)
-	}
+	// stepsOf reads PromptStep's agent-profile alias, which the built-in
+	// research and documentation templates use.
+	t.Steps = stepsOf(o.GetList("steps"))
 	return t, nil
 }
 
