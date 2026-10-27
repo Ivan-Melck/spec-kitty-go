@@ -43,8 +43,9 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Body }
 
-// Warn receives logger.warning messages (provenance write failures);
-// defaults to discarding them like an unconfigured logger.
+// Warn receives logger.warning messages (provenance write failures). It
+// discards them until the CLI logging bootstrap (internal/commands/doctrine)
+// routes them to stderr in human mode.
 var Warn = func(string) {}
 
 // LoadFile is load_charter_file(path, unsafe=unsafe). The error is an

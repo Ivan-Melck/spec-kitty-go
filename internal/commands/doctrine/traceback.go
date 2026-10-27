@@ -6,6 +6,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/charter"
+	"github.com/spec-kitty/go-kitty3/internal/charterenc"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/glossary"
@@ -89,6 +90,9 @@ func init() {
 	kittify.WarnLog = func(m string) { rich.LogWarning(os.Stderr, m) }
 	kittify.ErrorLog = func(m string) { rich.Log(os.Stderr, "ERROR", m) }
 	glossary.LedgerWarnLog = func(m string) { rich.LogWarning(os.Stderr, m) }
+	// _write_provenance: a refused append (a torn log, a lock timeout) is
+	// logged and ingest goes on.
+	charterenc.Warn = func(m string) { rich.LogWarning(os.Stderr, m) }
 	charter.PyWarnLog = func(module string, line int, category, msg, source string) {
 		rich.LogWarning(os.Stderr, fmt.Sprintf("%s:%d: %s: %s\n  %s\n", module, line, category, msg, source))
 	}

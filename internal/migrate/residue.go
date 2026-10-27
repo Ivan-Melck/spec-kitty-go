@@ -57,18 +57,24 @@ func gitPrefix(root string) (string, bool) {
 
 // trackedMissionPaths is tracked_mission_paths: every git-tracked path under
 // kitty-specs/ relative to root (nil = None: not inside a work tree). A
-// failing `git ls-files` is returned as err.
+// failing `git ls-files` is returned as err, worded like GitCommandError.
 func trackedMissionPaths(root string) (map[string]bool, error) {
 	prefix, ok := gitPrefix(root)
 	if !ok {
 		return nil, nil
 	}
-	res, err := gitx.Exec(root, nil, nil, "ls-files", "-z", "--full-name", "--", project.SpecsDir)
+	// kernel.git.tracked_paths: literal pathspecs after "--".
+	argv := []string{"--literal-pathspecs", "ls-files", "--full-name", "-z", "--", project.SpecsDir}
+	res, err := gitx.Exec(root, nil, nil, argv...)
 	if err != nil {
 		return nil, nil
 	}
 	if res.Code != 0 {
-		return nil, fmt.Errorf("git ls-files failed (exit %d): %s", res.Code, strings.TrimSpace(res.Stderr))
+		detail := "no error output"
+		if s := strings.TrimSpace(res.Stderr); s != "" {
+			detail = strings.SplitN(s, "\n", 2)[0]
+		}
+		return nil, fmt.Errorf("git %s failed in %s (exit %d): %s", strings.Join(argv, " "), root, res.Code, detail)
 	}
 	tracked := map[string]bool{}
 	for _, p := range strings.Split(res.Stdout, "\x00") {
