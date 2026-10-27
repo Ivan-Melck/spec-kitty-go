@@ -1,6 +1,7 @@
 package doctrine
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -117,6 +118,13 @@ func runCharterGenerate(ctx *cli.Context) error {
 	}
 	c, err := charter.CompileCharterWith(root, mission, iv, ctx.String("template-set"), source == "interview")
 	if err != nil {
+		var sm *charter.SynthesisMembershipUnreadableError
+		if errors.As(err, &sm) && !jsonMode {
+			// #6454: not a ValueError, so generate's `except Exception`
+			// renders str(exc) (the code) as an unexpected error.
+			cprint(w, "[red]Unexpected error:[/red] %s", uconsoleEscape(err.Error()))
+			return cli.Exit(1)
+		}
 		return fail(err.Error())
 	}
 	files, err := charter.WriteCompiled(root, c)

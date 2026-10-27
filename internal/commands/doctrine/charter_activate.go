@@ -3,6 +3,7 @@ package doctrine
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -483,7 +484,9 @@ var actionProfileDefaults = [][3]string{
 	{"documentation", "accept", "reviewer-renata"}, {"documentation", "audit", "researcher-robbie"},
 	{"documentation", "design", "architect-alphonso"}, {"documentation", "discover", "researcher-robbie"},
 	{"documentation", "generate", "implementer-ivan"}, {"documentation", "publish", "reviewer-renata"},
-	{"documentation", "validate", "reviewer-renata"}, {"research", "gathering", "researcher-robbie"},
+	{"documentation", "validate", "reviewer-renata"}, {"plan", "plan", "architect-alphonso"},
+	{"plan", "research", "researcher-robbie"}, {"plan", "review", "reviewer-renata"},
+	{"plan", "specify", "researcher-robbie"}, {"research", "gathering", "researcher-robbie"},
 	{"research", "methodology", "researcher-robbie"}, {"research", "output", "reviewer-renata"},
 	{"research", "scoping", "researcher-robbie"}, {"research", "synthesis", "researcher-robbie"},
 	{"software-dev", "implement", "implementer-ivan"}, {"software-dev", "plan", "architect-alphonso"},
@@ -725,6 +728,7 @@ func runCharterList(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	inForce, floorUnreadable := requiredInForceByKind(root, present, identity)
 	var lr map[string]string
 	var chain []string
 	if allLayers {
@@ -751,7 +755,7 @@ func runCharterList(ctx *cli.Context) error {
 		var actJSON any
 		switch {
 		case !ok:
-			actStr = "[dim](All built-ins — no explicit activation)[/dim]"
+			actStr = absentKeyCell(kind)
 		case len(vals) == 0:
 			actStr = "[yellow](Nothing activated — explicit restriction)[/yellow]"
 			actJSON = []any{}
@@ -783,6 +787,17 @@ func runCharterList(ctx *cli.Context) error {
 				packs = append(packs, p.Describe())
 			}
 			actStr += "\n[yellow]" + label(kind, om.ID, "") + " — required (not in force: explicit allow list omits it); required by " + strings.Join(packs, ", ") + "[/yellow]"
+		}
+		// #6417: the org-required ids an absent allow list leaves in force.
+		for _, rf := range inForce[kind] {
+			var packs []string
+			for _, p := range rf.packs {
+				packs = append(packs, p.Describe())
+			}
+			actStr += "\n[green]" + label(kind, rf.stem, "") + " — in force: required by " + strings.Join(packs, ", ") + "[/green]"
+		}
+		if slices.Contains(floorUnreadable, kind) {
+			actStr += "\n[dim]org required floor unreadable — run `spec-kitty doctor charter-packs`[/dim]"
 		}
 		cells := []string{kind, actStr}
 		if showAvail {
@@ -884,6 +899,38 @@ func runCharterList(ctx *cli.Context) error {
 		}
 		payload.Set("required_not_in_force", missing)
 	}
+	// #6417: additive, present only when an absent allow list leaves a
+	// required id in force / the floor of an absent kind cannot be read.
+	if len(inForce) > 0 {
+		obj := &jsonx.Object{}
+		for _, kind := range dct.CharterKindTokens {
+			items, ok := inForce[kind]
+			if !ok {
+				continue
+			}
+			k, _ := dct.ParseKind(kind)
+			list := []any{}
+			for _, rf := range items {
+				packs := []any{}
+				for _, p := range rf.packs {
+					if !slices.Contains(packs, any(p.Pack)) {
+						packs = append(packs, p.Pack)
+					}
+				}
+				list = append(list, jsonx.NewObject("id", rf.stem, "packs", packs))
+			}
+			obj.Set(k.Plural(), list)
+		}
+		payload.Set("required_in_force", obj)
+	}
+	if len(floorUnreadable) > 0 {
+		var plurals []string
+		for _, kind := range floorUnreadable {
+			k, _ := dct.ParseKind(kind)
+			plurals = append(plurals, k.Plural())
+		}
+		payload.Set("required_floor_unreadable", strs(plurals))
+	}
 	if allLayers {
 		refs := discoverTemplates(root, lr, chain)
 		tl := []any{}
@@ -910,6 +957,73 @@ func runCharterList(ctx *cli.Context) error {
 	}
 	tbl.render(ctx.Stdout, width)
 	return nil
+}
+
+// requiredInForce is one org-required id an absent allow list leaves in
+// force, with the packs requiring it.
+type requiredInForce struct {
+	stem  string
+	packs []dct.RequiringPack
+}
+
+// requiredInForceByKind is list_cmd._required_in_force_by_kind (#6417): per
+// operator kind token whose activated_<kind> key is absent, the org-required
+// ids some layer (built-in, project or any org pack) provides, in floor
+// order. The floor is read strictly; a kind whose floor cannot be read is
+// returned in the second result instead (the listing itself never fails).
+func requiredInForceByKind(root string, present map[string]bool, ix *dct.IdentityIndex) (map[string][]requiredInForce, []string) {
+	out := map[string][]requiredInForce{}
+	var unreadable []string
+	for _, kind := range dct.CharterKindTokens {
+		if present[kind] {
+			continue
+		}
+		k, err := dct.ParseKind(kind)
+		if err != nil || !slices.Contains(charter.OrgRequirableKinds, k.Plural()) {
+			continue
+		}
+		floor, err := dct.OrgRequiredProvenance(root, k, true, ix)
+		if err != nil {
+			unreadable = append(unreadable, kind)
+			continue
+		}
+		if len(floor) == 0 {
+			continue
+		}
+		// read_org_required_provenance is first-seen ordered over the packs'
+		// required_<plural> lists.
+		tokens, err := dct.OrgRequiredTokens(root, k.Plural(), true)
+		if err != nil {
+			unreadable = append(unreadable, kind)
+			continue
+		}
+		provided := map[string]bool{}
+		for _, e := range listAvailableOverChain(kind, dct.LayerRoots(root), dct.OrgRoots(root)) {
+			provided[e.ID] = true
+		}
+		seen := map[string]bool{}
+		for _, token := range tokens {
+			stem := ix.Stem(k, token)
+			if seen[stem] {
+				continue
+			}
+			seen[stem] = true
+			if provided[stem] {
+				out[kind] = append(out[kind], requiredInForce{stem, floor[stem]})
+			}
+		}
+	}
+	return out, unreadable
+}
+
+// absentKeyCell is list_cmd._absent_key_cell: an absent allow key leaves
+// every built-in in force, or (effective_when_absent == "required", the
+// skill kind) only the org-required ids.
+func absentKeyCell(kind string) string {
+	if kind == "skill" {
+		return "[dim](Org-required only — no explicit activation)[/dim]"
+	}
+	return "[dim](All built-ins — no explicit activation)[/dim]"
 }
 
 func listAvailableOverChain(kind string, lr map[string]string, chain []string) []dct.AvailableArtifact {

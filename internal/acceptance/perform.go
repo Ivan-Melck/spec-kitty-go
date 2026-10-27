@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
@@ -11,6 +13,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
 
 // ChecksFailedMessage is ACCEPTANCE_CHECKS_FAILED_MESSAGE.
@@ -147,7 +150,11 @@ func commitAcceptanceMeta(s *Summary, actor, mode string) (parent, accept string
 	metaRel := relTo(root, filepath.Join(s.FeatureDir, mission.MetaFile))
 	branch := gitx.CurrentBranch(root)
 	if branch != "" && coord.IsProtected(root, s.Feature, branch) {
-		out := CommitMission(root, s.Feature, []string{filepath.Join(s.FeatureDir, mission.MetaFile)}, "Accept "+s.Feature, "")
+		// _commit_acceptance_meta_via_router: commit_for_mission with the
+		// PRIMARY_METADATA kind (a protected placement refuses as
+		// no_op_wrong_surface with the router's remedy).
+		metaPath := filepath.Join(s.FeatureDir, mission.MetaFile)
+		out := safecommit.CommitForMission(root, s.Feature, []string{metaPath}, "Accept "+s.Feature, mission.KindPrimaryMetadata, safecommit.RouterOptions{})
 		if out.Status == StatusUnchanged {
 			return parent, "", false, nil
 		}
@@ -160,7 +167,7 @@ func commitAcceptanceMeta(s *Summary, actor, mode string) (parent, accept string
 		}
 		accept = out.CommitHash
 		if accept != "" && stampAcceptCommit(s.FeatureDir, accept) {
-			CommitMission(root, s.Feature, []string{filepath.Join(s.FeatureDir, mission.MetaFile)}, "Record acceptance commit for "+s.Feature, "")
+			safecommit.CommitForMission(root, s.Feature, []string{metaPath}, "Record acceptance commit for "+s.Feature, mission.KindPrimaryMetadata, safecommit.RouterOptions{})
 		}
 		return parent, accept, true, nil
 	}
@@ -279,22 +286,43 @@ func dirtyTracked(checkout, prefix string) []string {
 	return out
 }
 
+// missionLedgerFiles is ledger_dirt.mission_decision_ledger_files: the dirty
+// (modified or untracked) decision-ledger files of the mission, a collapsed
+// untracked directory expanded to its files. The decision service's runtime
+// lock is never listed: it feeds accept's residual commit, and the lock is
+// kept out of every commit.
+func missionLedgerFiles(entries []StatusEntry, root, slug string) []string {
+	var out []string
+	for _, e := range entries {
+		files := []string{e.Path}
+		if e.IsDir {
+			files = nil
+			filepath.WalkDir(filepath.Join(root, e.Path), func(p string, d os.DirEntry, err error) error {
+				if err == nil && d.Type().IsRegular() {
+					if rel, rerr := filepath.Rel(root, p); rerr == nil {
+						files = append(files, filepath.ToSlash(rel))
+					}
+				}
+				return nil
+			})
+			sort.Strings(files)
+		}
+		for _, p := range files {
+			if isMissionLedger(StatusEntry{Path: p}, slug) && !IsDecisionsRuntimeLock(p) && !slices.Contains(out, p) {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
 // ResidualCommit is _run_residual_acceptance_commit (nil when clean).
 func ResidualCommit(root, slug string) *Outcome {
 	prim := dirtyTracked(root, "kitty-specs/"+slug+"/")
 	if entries, err := StatusEntries(root); err == nil {
-		for _, e := range entries {
-			// #6628: the decisions runtime lock is never committed.
-			if isMissionLedger(e, slug) && !IsDecisionsRuntimeLock(e.Path) {
-				found := false
-				for _, p := range prim {
-					if p == e.Path {
-						found = true
-					}
-				}
-				if !found {
-					prim = append(prim, e.Path)
-				}
+		for _, p := range missionLedgerFiles(entries, root, slug) {
+			if !slices.Contains(prim, p) {
+				prim = append(prim, p)
 			}
 		}
 	}

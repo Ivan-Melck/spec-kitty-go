@@ -105,7 +105,12 @@ func ResolveActionBundle(root, action, missionType string, depth int) *ActionBun
 	}
 	directives := pick(dct.Directive)
 	tactics, paradigms := pick(dct.Tactic), pick(dct.Paradigm)
-	for id := range ReachOnlyIDs(root, "tactic") {
+	reachOnly, err := ReachOnlyIDs(root, "tactic")
+	if err != nil {
+		b.Err = err
+		return b
+	}
+	for id := range reachOnly {
 		delete(tactics, id)
 	}
 	local := map[string]bool{}

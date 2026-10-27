@@ -2,6 +2,7 @@ package charter
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -28,49 +29,130 @@ func manifestSlugs(root, kind string) map[string]bool {
 	return out
 }
 
+// SynthesisMembershipUnreadableError is reach_only.SynthesisMembershipUnreadableError
+// (#6454), a KittyInternalConsistencyError: neither the synthesis manifest nor
+// a created-artifact record says which artifacts synthesis created. Raised
+// instead of an empty set, which would re-root every synthesized artifact and
+// deliver it even while its directive is inactive (fail-open). Error() is
+// str(exc), the code.
+type SynthesisMembershipUnreadableError struct{ Body string }
+
+func (e *SynthesisMembershipUnreadableError) Error() string { return e.Code() }
+
+// Code is the coded error's code.
+func (e *SynthesisMembershipUnreadableError) Code() string { return "SYNTHESIS_MEMBERSHIP_UNREADABLE" }
+
+// synthesizedSlugs is reach_only._synthesized_slugs: the bare slugs of kind
+// synthesis created. The manifest is the authority and an absent manifest
+// means nothing was synthesized; a manifest that cannot be read (a dangling
+// symlink or a failing stat included) falls back to the created-artifact
+// record, which fails closed when it cannot stand in.
+func synthesizedSlugs(root, kind string) (map[string]bool, error) {
+	p := filepath.Join(root, ManifestPath)
+	_, err := os.Lstat(p)
+	if os.IsNotExist(err) {
+		return map[string]bool{}, nil
+	}
+	if err == nil {
+		var m *SynthManifest
+		if m, err = LoadSynthManifest(p); err == nil {
+			out := map[string]bool{}
+			for _, entry := range m.Artifacts {
+				if entry.Kind == kind && entry.Kind != "directive" {
+					out[entry.Slug] = true
+				}
+			}
+			return out, nil
+		}
+	}
+	return recordedSlugs(root, kind, err)
+}
+
+// recordedSlugs is reach_only._recorded_slugs: the created-artifact record's
+// ids of kind standing in for an unreadable manifest (it never under-counts).
+func recordedSlugs(root, kind string, manifestErr error) (map[string]bool, error) {
+	state := "unreadable"
+	if recorded, _, err := createdRecord(root); err == nil {
+		if len(recorded[kind]) > 0 {
+			warnLog("%s is unreadable (%v); using %s for the synthesized %ss.", ManifestPath, manifestErr, createdArtifactsPath, kind)
+			return recorded[kind], nil
+		}
+		// An absent record, or one listing no id of this kind, says nothing
+		// about what was synthesized.
+		state = "absent or lists no " + kind
+	}
+	return nil, &SynthesisMembershipUnreadableError{Body: fmt.Sprintf(unreadableMembership, ManifestPath, createdArtifactsPath, state, kind, kind, ManifestPath, ManifestPath)}
+}
+
+const unreadableMembership = "%s cannot be read and %s is %s, so spec-kitty cannot tell which %ss synthesis " +
+	"created. Refusing to deliver governance: every synthesized %s would otherwise reach agents even while its " +
+	"directive is inactive.\nRemediation: restore %s from version control (for example " +
+	"`git checkout -- %s`)."
+
 // ReachOnlyIDs excludes synthesized artifacts from closure roots; their owning
 // directive's suggests edge supplies them when that directive is in force.
-func ReachOnlyIDs(root, kind string) map[string]bool {
+// An absent or unloadable overlay or an absent manifest yields the empty set;
+// an unreadable manifest falls back to the created-artifact record and fails
+// closed (*SynthesisMembershipUnreadableError) when that cannot stand in.
+func ReachOnlyIDs(root, kind string) (map[string]bool, error) {
 	out := map[string]bool{}
 	pack := filepath.Join(root, filepath.FromSlash(dct.ProjectPackRoot))
 	if !dct.HasGraphFiles(pack) {
-		return out
+		return out, nil
 	}
 	graph, err := loadGraphOrDir(pack)
 	if err != nil {
-		return out
+		return out, nil
 	}
-	registered := manifestSlugs(root, kind)
 	nodes := map[string]bool{}
 	for _, node := range graph.Nodes {
-		k, id := dct.SplitURN(node.URN)
-		if k == kind && node.Kind == kind && registered[id] {
+		if k, _ := dct.SplitURN(node.URN); k == kind && node.Kind == kind {
 			nodes[node.URN] = true
 		}
 	}
-	required := OrgRequiredIDs(root, dct.Kind(kind).Plural())
+	candidates := map[string]bool{}
 	for _, edge := range graph.Edges {
 		if synthesizedSourceEdge(edge) && nodes[edge.Target] {
-			_, id := dct.SplitURN(edge.Target)
-			if !contains(required, id) {
-				out[id] = true
-			}
+			candidates[edge.Target] = true
 		}
 	}
-	return out
-}
-func eligibleCreated(root, kind string, slugs []string) []string {
-	if kind != "styleguide" {
-		return slugs
+	if len(candidates) == 0 {
+		return out, nil // the manifest is read only when an edge could make something reach-only
 	}
-	reach := ReachOnlyIDs(root, kind)
+	registered, err := synthesizedSlugs(root, kind)
+	if err != nil {
+		return nil, err
+	}
+	var required []string
+	for urn := range candidates {
+		_, id := dct.SplitURN(urn)
+		if !registered[id] {
+			continue
+		}
+		if required == nil {
+			required = OrgRequiredIDs(root, dct.Kind(kind).Plural())
+		}
+		if !contains(required, id) {
+			out[id] = true
+		}
+	}
+	return out, nil
+}
+func eligibleCreated(root, kind string, slugs []string) ([]string, error) {
+	if kind != "styleguide" || len(slugs) == 0 {
+		return slugs, nil
+	}
+	reach, err := ReachOnlyIDs(root, kind)
+	if err != nil {
+		return nil, err
+	}
 	var out []string
 	for _, slug := range slugs {
 		if reach[slug] {
 			out = append(out, slug)
 		}
 	}
-	return out
+	return out, nil
 }
 func createdRecord(root string) (map[string]map[string]bool, *jsonx.Object, error) {
 	recorded := map[string]map[string]bool{"tactic": {}, "styleguide": {}}
@@ -117,7 +199,10 @@ func createdRecord(root string) (map[string]map[string]bool, *jsonx.Object, erro
 func AppendSynthesizedActivations(root string, created map[string][]string) ([]string, error) {
 	participating := map[string][]string{}
 	for _, kind := range reachOnlyKinds {
-		slugs := eligibleCreated(root, kind, dedupe(created[kind]))
+		slugs, err := eligibleCreated(root, kind, dedupe(created[kind]))
+		if err != nil {
+			return nil, err
+		}
 		if len(slugs) > 0 {
 			participating[kind] = slugs
 		}
@@ -148,7 +233,11 @@ func AppendSynthesizedActivations(root string, created map[string][]string) ([]s
 			}
 			updated[kind][slug] = true
 		}
-		for _, slug := range eligibleCreated(root, kind, dct.SortedKeys(manifest)) {
+		earlier, err := eligibleCreated(root, kind, dct.SortedKeys(manifest))
+		if err != nil {
+			return nil, err
+		}
+		for _, slug := range earlier {
 			updated[kind][slug] = true
 		}
 		recordChanged = recordChanged || len(updated[kind]) != len(recorded[kind])

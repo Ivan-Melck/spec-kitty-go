@@ -545,6 +545,11 @@ func decideNext(root, slug, agent, result string) *Decision {
 			}
 		} else if m.MissionType == "software-dev" && action != "implement" && action != "review" {
 			failures = c.softwareDevGuards(action)
+		} else if m.MissionType == "plan" {
+			failures = mission.PlanGuardFailures(action, func(n string) bool {
+				st, err := os.Stat(filepath.Join(c.m.Primary, n))
+				return err == nil && st.Mode().IsRegular()
+			})
 		}
 		if len(failures) > 0 {
 			return c.compositionBlocked(current, failures)
