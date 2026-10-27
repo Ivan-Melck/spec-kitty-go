@@ -89,9 +89,6 @@ These upstream behaviors are not yet ported:
   upstream shows a relative one.
 - `accept` does not handle a WP file without frontmatter.
 - `next` prompts drop charter context errors silently.
-- Locked appends in `missions/_archive.py` and charter `_io.py` are not
-  ported; encoding-provenance writes are unlocked.
-- Upgrade does not print the "probe degraded" warning.
 
 An upstream defect is deliberately not replicated: Python fails to promote
 selections when `.kittify/encoding-provenance` is missing.

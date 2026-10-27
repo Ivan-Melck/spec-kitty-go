@@ -18,6 +18,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
+	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/migrationledger"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
@@ -162,6 +163,12 @@ func runUpgrade(ctx *cli.Context) error {
 	if !jsonOut {
 		toolsurface.LogWriter = ctx.Stderr
 		defer func() { toolsurface.LogWriter = nil }()
+		// The CLI logging bootstrap shows the migration library's
+		// logger.warning records (e.g. the degraded residue probe) on stderr;
+		// --json silences them.
+		stderr := ctx.Stderr
+		migrate.Warn = func(msg string) { rich.LogWarning(stderr, msg) }
+		defer func() { migrate.Warn = func(string) {} }()
 	}
 	cliMode, projectMode := ctx.Bool("cli"), ctx.Bool("project")
 	noWorktrees := ctx.Bool("no-worktrees")
