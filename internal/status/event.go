@@ -633,6 +633,11 @@ func deltaFromObject(o *jsonx.Object) (*Delta, error) {
 		sub := &jsonx.Object{}
 		for _, kv := range st.Pairs() {
 			s := PyStr(kv.Value)
+			// "not_applicable" is an input alias of "skipped" (as in the
+			// shared diary reducer): normalized on read, never persisted.
+			if raw, ok := kv.Value.(string); ok && raw == "not_applicable" {
+				s = "skipped"
+			}
 			if !IsLane(s) && s != "skipped" {
 				return nil, fmt.Errorf("%s is not a valid Lane", reprAny(kv.Value))
 			}
