@@ -5,9 +5,10 @@ package orchestrator
 import (
 	"os"
 	"os/exec"
-	"syscall"
 	"testing"
 	"time"
+
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
 )
 
 // TestAuthoringLock pins the cooperative authoring lock (PLAN-12): a real
@@ -33,15 +34,15 @@ func TestAuthoringLock(t *testing.T) {
 	}
 	other, _ := os.OpenFile(path, os.O_RDWR, 0)
 	defer other.Close()
-	if syscall.Flock(int(other.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
+	if ok, _ := filelock.TryLockFile(other); ok {
 		t.Fatal("lock not held while acquired")
 	}
 	rel2()
-	if syscall.Flock(int(other.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
+	if ok, _ := filelock.TryLockFile(other); ok {
 		t.Fatal("inner release dropped the outer hold")
 	}
 	rel1()
-	if err := syscall.Flock(int(other.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if ok, err := filelock.TryLockFile(other); !ok || err != nil {
 		t.Fatalf("lock still held after release: %v", err)
 	}
 	saved := authoringLockTimeout

@@ -2,11 +2,18 @@
 
 package missionstate
 
-import "os"
+import (
+	"os"
 
-func tryLock(*os.File) bool { return true }
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
+)
 
-func unlock(*os.File) {}
+func tryLock(f *os.File) bool {
+	ok, err := filelock.TryLockFile(f)
+	return ok && err == nil
+}
+
+func unlock(f *os.File) { filelock.UnlockFile(f) }
 
 func openNoFollow(path string) (*os.File, error) {
 	if st, err := os.Lstat(path); err == nil && st.Mode()&os.ModeSymlink != 0 {

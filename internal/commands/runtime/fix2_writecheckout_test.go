@@ -6,9 +6,9 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
 	"github.com/spec-kitty/go-kitty3/internal/testkit/missionfx"
 	"github.com/spec-kitty/go-kitty3/internal/writecheckout"
@@ -162,8 +162,8 @@ func TestDiffSingleBranchClaimLockHeldImplement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-			t.Fatal(err)
+		if ok, err := filelock.TryLockFile(f); !ok || err != nil {
+			t.Fatal(ok, err)
 		}
 		t.Cleanup(func() { f.Close() })
 		os.WriteFile(lock+".holder", []byte(`{"acquired_at": "2026-01-01T00:00:00+00:00", "pid": 4242, "thread": "MainThread"}`), 0o644)

@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/spec-kitty/go-kitty3/internal/cli"
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
@@ -83,10 +83,10 @@ func repairRuntimeLock(owned *ownedcheckout.Fact, dryRun bool) (*jsonx.Object, e
 		return nil, err
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := filelock.LockFile(f); err != nil {
 		return nil, err
 	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer filelock.UnlockFile(f)
 	_, _, ignoredNow, err := ownedcheckout.RuntimeLockIgnoreState(owned)
 	if err != nil {
 		return nil, err

@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
@@ -240,10 +239,7 @@ func readNagCache() *nagRecord {
 	if err != nil || st.Mode()&os.ModeSymlink != 0 || st.Size() > maxNagCacheBytes {
 		return nil
 	}
-	if sys, ok := st.Sys().(*syscall.Stat_t); ok && int(sys.Uid) != os.Geteuid() {
-		return nil
-	}
-	if st.Mode().Perm() != 0o600 {
+	if !nagCacheOwnedPrivately(st) {
 		return nil
 	}
 	b, err := os.ReadFile(p)

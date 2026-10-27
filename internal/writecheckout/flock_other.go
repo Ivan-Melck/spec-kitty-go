@@ -2,8 +2,12 @@
 
 package writecheckout
 
-import "os"
+import (
+	"os"
 
-func tryFlock(*os.File) (bool, error) { return true, nil }
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
+)
 
-func unflock(*os.File) {}
+func tryFlock(f *os.File) (bool, error) { return filelock.TryLockFile(f) }
+
+func unflock(f *os.File) { filelock.UnlockFile(f) }

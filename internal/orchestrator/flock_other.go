@@ -2,10 +2,14 @@
 
 package orchestrator
 
-import "os"
+import (
+	"os"
 
-// tryLockFile: no advisory flock on this platform; the lock file is still
-// created so the on-disk effect matches.
-func tryLockFile(f *os.File) (bool, error) { return true, nil }
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
+)
 
-func unlockFile(f *os.File) {}
+// tryLockFile is fcntl.flock(fd, LOCK_EX | LOCK_NB) (msvcrt.locking on
+// Windows): (false, nil) when another holder has it.
+func tryLockFile(f *os.File) (bool, error) { return filelock.TryLockFile(f) }
+
+func unlockFile(f *os.File) { filelock.UnlockFile(f) }

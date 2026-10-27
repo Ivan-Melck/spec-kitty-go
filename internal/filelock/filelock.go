@@ -287,3 +287,15 @@ func RealPath(p string) string {
 		cur = parent
 	}
 }
+
+// TryLockFile takes the OS lock on an open file without waiting: (true, nil)
+// when acquired, (false, nil) on contention. It is the per-platform primitive
+// (flock on Unix, LockFileEx on the first byte on Windows) for callers that
+// manage their own lock file.
+func TryLockFile(f *os.File) (bool, error) { return tryLock(f) }
+
+// LockFile waits for the OS lock on an open file.
+func LockFile(f *os.File) error { return lockBlocking(f) }
+
+// UnlockFile drops the OS lock on an open file.
+func UnlockFile(f *os.File) { unlock(f) }

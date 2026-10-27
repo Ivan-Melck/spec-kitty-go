@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
 )
 
 // Head-run states (HeadRunState).
@@ -53,30 +55,10 @@ func RuntimeRoot() string {
 // cannot be taken within 5s is skipped, like upstream).
 func withRunLock(fn func()) {
 	path := filepath.Join(RuntimeRoot(), "gate-locks", "pre-review-gate-run.lock")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		fn()
-		return
-	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		fn()
-		return
-	}
-	defer f.Close()
-	deadline := time.Now().Add(lockAcquire)
-	locked := false
-	for {
-		if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
-			locked = true
-			break
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if locked {
-		defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	// machine_file_lock(blocking=True, timeout_s=5); an unobtainable lock
+	// runs unserialised.
+	if l, err := filelock.Acquire(path, lockAcquire); err == nil {
+		defer l.Release()
 	}
 	fn()
 }

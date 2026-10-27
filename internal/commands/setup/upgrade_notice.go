@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/app"
@@ -361,7 +360,7 @@ func upgradeCheckInBackground() {
 	}
 	cmd := exec.Command(exe, "--version")
 	cmd.Env = append(os.Environ(), refreshUpgradeCacheEnv+"=1")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	detachBackgroundCheck(cmd)
 	if cmd.Start() == nil {
 		cmd.Process.Release()
 	}
