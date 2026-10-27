@@ -88,7 +88,7 @@ func withGuardFailurePaths(root, slug string, d *Decision) *Decision {
 	o := &jsonx.Object{}
 	sort.Strings(tags)
 	for _, t := range tags {
-		p := filepath.Join(m.Primary, t)
+		p := filepath.Join(m.artifactHome(t), t)
 		if rel, err := filepath.Rel(root, p); err == nil && !strings.HasPrefix(rel, "..") {
 			p = rel
 		}

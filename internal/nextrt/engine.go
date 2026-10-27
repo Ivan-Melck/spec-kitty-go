@@ -551,6 +551,8 @@ func decideNext(root, slug, agent, result string) *Decision {
 				st, err := os.Stat(filepath.Join(c.m.Primary, n))
 				return err == nil && st.Mode().IsRegular()
 			})
+		} else if m.MissionType == "research" || m.MissionType == "documentation" {
+			failures = c.researchDocumentationGuards(m.MissionType, action)
 		}
 		if len(failures) > 0 {
 			return c.compositionBlocked(current, failures)
