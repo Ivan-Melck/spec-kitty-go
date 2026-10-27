@@ -83,9 +83,12 @@ These upstream behaviors are not yet ported:
 - Merge gates do not read the issue matrix from the coordination ref. This
   gap predates this pin.
 - `next` has no terminal retrospective.
-- Research and documentation missions have no composed-action guards.
 - `accept` does not handle a WP file without frontmatter.
-- `next` prompts drop charter context errors silently.
+
+`next` prompt construction falls back to the compact governance block when
+charter context fails with `SYNTHESIS_MEMBERSHIP_UNREADABLE`. This is upstream's
+behaviour too (`prompt_builder._governance_context` re-raises only scope and
+config errors), and the prompts match the oracle.
 
 An upstream defect is deliberately not replicated: Python fails to promote
 selections when `.kittify/encoding-provenance` is missing.
