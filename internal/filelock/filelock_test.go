@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 )
 
 func TestAcquireWritesRecordAndReleaseTruncates(t *testing.T) {
@@ -81,7 +82,7 @@ func TestContendedAcquireTimesOut(t *testing.T) {
 	if time.Since(start) < 200*time.Millisecond {
 		t.Errorf("gave up after %v", time.Since(start))
 	}
-	if want := "Could not acquire machine lock at '" + path + "' within bounded wait"; err.Error() != want {
+	if want := "Could not acquire machine lock at " + pyjson.ReprString(path) + " within bounded wait"; err.Error() != want {
 		t.Errorf("message %q", err.Error())
 	}
 }
