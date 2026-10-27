@@ -2,9 +2,8 @@
 
 This repository is a Go implementation of the upstream Python `spec-kitty`
 CLI (`spec-kitty-cli`, target **4.0.0rc8**, upstream main
-`ae979820332ee259eba467d03a00e8bb50196237`). Updating from the previously
-verified `dccf199f7a` reference is in progress; see the
-[current RC8 parity inventory](parity/LATEST_MAIN.md). The goal is
+`581b5c46da1700987d0352c3cc53eaec80372a02`). See the
+[current parity record](parity/LATEST_MAIN.md). The goal is
 **functional adherence, not code parity**: the
 same commands, flags, exit codes, JSON outputs, on-disk files and git effects
 an agent or user observes, implemented idiomatically in Go. Python internals,
@@ -31,8 +30,15 @@ equality of hashes that depend on Python source files.
 
 ## Reference material (local, not committed)
 
-Reference root `REF=$HOME/.cache/spec-kitty-parity`. Recreate the upstream
-checkout and oracle with `scripts/setup-reference.sh ../spec-kitty`.
+Reference root `REF=$HOME/.cache/spec-kitty-parity/main-581b5c46da`. Recreate
+the upstream checkout and oracle, then capture the command inventory and the
+subprocess help:
+
+```sh
+scripts/setup-reference.sh ../spec-kitty "$REF"
+"$REF/oracle-venv/bin/python" -I scripts/capture-reference-tree.py "$REF"
+python3 scripts/capture-reference-help.py "$REF"
+```
 
 | What | Where |
 |---|---|
