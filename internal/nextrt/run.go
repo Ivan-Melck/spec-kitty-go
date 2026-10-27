@@ -14,6 +14,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/assets"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
+	"github.com/spec-kitty/go-kitty3/internal/eventlog"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
@@ -323,15 +324,15 @@ func agentActor(agent string) *jsonx.Object {
 	return jsonx.NewObject("actor_id", agent, "actor_type", "llm", "display_name", "", "model", nil, "provider", nil, "tool", nil)
 }
 
-// appendRunEvent appends one runtime event to run.events.jsonl.
-func appendRunEvent(runDir, eventType string, payload *jsonx.Object) {
+// appendRunEvent appends one runtime event to run.events.jsonl
+// (engine._append_event). A refusal propagates: it stops the advance, which
+// `next` reports as a blocked "Runtime engine error".
+func appendRunEvent(runDir, eventType string, payload *jsonx.Object) error {
 	o := jsonx.NewObject("event_type", eventType, "payload", payload, "timestamp", clock.NowUTCISO())
-	f, err := os.OpenFile(filepath.Join(runDir, "run.events.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	f.WriteString(jsonx.Dumps(o, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true}) + "\n")
+	// One locked O_APPEND write plus fsync per event; a torn last line left
+	// by a crash is refused rather than extended (#6606).
+	return eventlog.Append(filepath.Join(runDir, "run.events.jsonl"),
+		[]string{jsonx.Dumps(o, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true})}, eventlog.Options{})
 }
 
 // startRun creates a run directory under store (frozen template, state,
@@ -362,8 +363,10 @@ func startRun(store, root, slug, missionType string) (*RunRef, error) {
 	if err := writeSnapshot(dir, &Snapshot{Obj: st}); err != nil {
 		return nil, err
 	}
-	appendRunEvent(dir, "MissionRunStarted", jsonx.NewObject("actor", systemActor(), "mission_id", nil, "mission_slug", nil,
-		"mission_type", missionType, "run_id", runID))
+	if err := appendRunEvent(dir, "MissionRunStarted", jsonx.NewObject("actor", systemActor(), "mission_id", nil, "mission_slug", nil,
+		"mission_type", missionType, "run_id", runID)); err != nil {
+		return nil, err
+	}
 	return &RunRef{RunID: runID, RunDir: dir, MissionType: key}, nil
 }
 
@@ -510,8 +513,10 @@ func advanceRun(ref *RunRef, agent, result string) (planned, error) {
 			s.Obj.Set("blocked_reason", fmt.Sprintf("Previous step '%s' reported blocked state.", issued))
 		}
 		s.Obj.Set("issued_step_id", nil)
-		appendRunEvent(ref.RunDir, "NextStepAutoCompleted", jsonx.NewObject("actor", agentActor(agent), "agent_id", agent,
-			"mission_id", nil, "mission_slug", nil, "result", result, "run_id", ref.RunID, "step_id", issued))
+		if err := appendRunEvent(ref.RunDir, "NextStepAutoCompleted", jsonx.NewObject("actor", agentActor(agent), "agent_id", agent,
+			"mission_id", nil, "mission_slug", nil, "result", result, "run_id", ref.RunID, "step_id", issued)); err != nil {
+			return planned{}, err
+		}
 	}
 	p := planNext(s, t)
 	if p.Kind == KindStep {
@@ -524,13 +529,16 @@ func advanceRun(ref *RunRef, agent, result string) (planned, error) {
 		if !dec.Has("raci:" + p.StepID) {
 			dec.Set("raci:"+p.StepID, raciDecision(p.StepID))
 		}
-		appendRunEvent(ref.RunDir, "NextStepIssued", jsonx.NewObject("actor", agentActor(agent), "agent_id", agent,
+		err = appendRunEvent(ref.RunDir, "NextStepIssued", jsonx.NewObject("actor", agentActor(agent), "agent_id", agent,
 			"mission_id", nil, "mission_slug", nil, "run_id", ref.RunID, "step_id", p.StepID))
 	} else if p.Kind == KindDecisionRequired && p.DecisionID != "" {
-		requestDecisionInput(ref, s, p, agent)
+		err = requestDecisionInput(ref, s, p, agent)
 	} else if p.Kind == KindTerminal && completed != "" {
-		appendRunEvent(ref.RunDir, "MissionRunCompleted", jsonx.NewObject("actor", agentActor(agent), "mission_id", nil,
+		err = appendRunEvent(ref.RunDir, "MissionRunCompleted", jsonx.NewObject("actor", agentActor(agent), "mission_id", nil,
 			"mission_slug", nil, "mission_type", s.Obj.GetString("mission_key"), "run_id", ref.RunID))
+	}
+	if err != nil {
+		return planned{}, err
 	}
 	if err := writeSnapshot(ref.RunDir, s); err != nil {
 		return planned{}, err

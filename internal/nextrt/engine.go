@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/eventlog"
 	"github.com/spec-kitty/go-kitty3/internal/invocation"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/lanes"
@@ -652,14 +653,13 @@ func readLifecycle(root string) []*jsonx.Object {
 	return out
 }
 
+// appendLifecycle is append_lifecycle_record through the interim locked
+// append; a refusal (torn tail, held lock) is dropped like any other I/O
+// error of this observability log.
 func appendLifecycle(root string, rec *jsonx.Object) {
-	os.MkdirAll(filepath.Dir(lifecyclePath(root)), 0o755)
-	f, err := os.OpenFile(lifecyclePath(root), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	f.WriteString(jsonx.Dumps(rec, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true}) + "\n")
+	_ = eventlog.Append(lifecyclePath(root),
+		[]string{jsonx.Dumps(rec, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true})},
+		eventlog.Options{CreateParents: true})
 }
 
 // PairPreviousLifecycleRecord is pair_previous_lifecycle_record.
@@ -725,10 +725,6 @@ func EmitMissionNextInvoked(root, slug, agent, result string, d *Decision) {
 	ev := jsonx.NewObject("mission", d.Mission, "payload", jsonx.NewObject("action", pv(d.Action), "agent", agent,
 		"decision_kind", d.Kind, "mission_state", d.MissionState, "result_input", result, "wp_id", pv(d.WPID)),
 		"timestamp", clock.NowUTCISO(), "type", "MissionNextInvoked")
-	f, err := os.OpenFile(filepath.Join(dir, "mission-events.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	f.WriteString(jsonx.Dumps(ev, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true}) + "\n")
+	_ = eventlog.Append(filepath.Join(dir, "mission-events.jsonl"),
+		[]string{jsonx.Dumps(ev, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true})}, eventlog.Options{})
 }

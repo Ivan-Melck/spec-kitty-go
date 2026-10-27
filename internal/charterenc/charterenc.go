@@ -13,6 +13,7 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/charsetnorm"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/eventlog"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/ulid"
@@ -155,12 +156,9 @@ func WriteProvenance(c *Content) {
 		"source_encoding", c.SourceEncoding, "confidence", c.Confidence, "normalization_applied", c.NormalizationApplied,
 		"bypass_used", c.BypassUsed, "actor", "spec-kitty charter", "mission_id", resolveMissionID(c.SourcePath))
 	target := ProvenancePath(c.SourcePath)
-	os.MkdirAll(filepath.Dir(target), 0o755)
-	f, err := os.OpenFile(target, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
+	// Interim locked append (#6606); any refusal is non-fatal, like an I/O error.
+	line := jsonx.Dumps(record, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true})
+	if err := eventlog.Append(target, []string{line}, eventlog.Options{CreateParents: true}); err != nil {
 		Warn(fmt.Sprintf("Failed to write encoding provenance to %s", target))
-		return
 	}
-	defer f.Close()
-	f.WriteString(jsonx.Dumps(record, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true}) + "\n")
 }

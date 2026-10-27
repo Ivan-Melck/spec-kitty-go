@@ -1,6 +1,8 @@
 package runtime_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spec-kitty/go-kitty3/internal/testkit"
@@ -45,6 +47,42 @@ func TestDiffNextFinalizedBoard(t *testing.T) {
 		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success"},
 	)
 	compareTree(t, p, "kitty-ops")
+}
+
+// TestDiffNextTornRunJournal: a run journal whose last line is torn refuses
+// the next append (#6606), so the advance stops as a blocked "Runtime engine
+// error" ending in EVENT_LOG_TORN_TAIL, and the journal is left untouched.
+func TestDiffNextTornRunJournal(t *testing.T) {
+	p := missionfx.NewOraclePair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		missionfx.RunOracle(t, s, "agent", "mission", "create", "calc-ops", "--json", "--pr-bound", "--branch-strategy", "already-confirmed", "--start-branch", "feat/calc-ops")
+	})
+	steps(t, p, false, []string{"next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"})
+	journals := map[*testkit.Sandbox]string{}
+	p.Both(func(s *testkit.Sandbox) {
+		logs, _ := filepath.Glob(filepath.Join(s.Dir, ".kittify", "runtime", "runs", "*", "run.events.jsonl"))
+		if len(logs) != 1 {
+			t.Fatalf("run journals: %v", logs)
+		}
+		f, err := os.OpenFile(logs[0], os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.WriteString(`{"event_type": "NextStepIss`)
+		f.Close()
+		b, _ := os.ReadFile(logs[0])
+		journals[s] = string(b)
+	})
+	steps(t, p, false,
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success", "--json"},
+		[]string{"next", "--agent", "claude", "--mission", "$M", "--result", "success"},
+	)
+	p.Both(func(s *testkit.Sandbox) {
+		logs, _ := filepath.Glob(filepath.Join(s.Dir, ".kittify", "runtime", "runs", "*", "run.events.jsonl"))
+		if b, _ := os.ReadFile(logs[0]); string(b) != journals[s] {
+			t.Errorf("torn journal changed:\n%s", b)
+		}
+	})
 }
 
 // TestDiffNextFreshMission covers the DAG planner before tasks exist:
