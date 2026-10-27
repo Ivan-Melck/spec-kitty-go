@@ -6,10 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/healthcheck"
 	"github.com/spec-kitty/go-kitty3/internal/issuematrix"
-	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -104,40 +102,11 @@ func doctorIssueMatrix(m *missionCtx) []status.Finding {
 }
 
 // readIssueMatrixRef is read_issue_matrix_ref_content for an unmaterialized
-// coordination surface: issue-matrix.json, else issue-matrix.md, read from
-// the coordination branch with `git show`.
+// coordination surface (issue-matrix.json, else issue-matrix.md, read from
+// the coordination branch).
 func readIssueMatrixRef(m *missionCtx) (string, error) {
-	root, ref := m.Root, m.Surface.CoordBranch
-	if !gitx.OK(root, "rev-parse", "--verify", "--quiet", ref) {
-		return "", fmt.Errorf("issue-matrix read ref %s does not resolve in %s — it has been deleted; refusing rather than falling back to the primary residue.", mission.PyRepr(ref), root)
-	}
-	show := func(name string) (string, string, error) {
-		obj := ref + ":kitty-specs/" + m.Slug + "/" + name
-		res, err := gitx.Exec(root, nil, nil, "show", obj)
-		if err != nil {
-			return "", obj, fmt.Errorf("git show %s could not be run in %s: %v", mission.PyRepr(obj), root, err)
-		}
-		if res.Code != 0 {
-			return "", obj, &probeError{fmt.Sprintf("git show %s failed in %s: %s", mission.PyRepr(obj), root, strings.TrimSpace(res.Stderr))}
-		}
-		return res.Stdout, obj, nil
-	}
-	content, obj, err := show(issuematrix.JSONFile)
-	if _, ok := err.(*probeError); ok {
-		content, obj, err = show(issuematrix.MDFile)
-	}
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(content) == "" {
-		return "", fmt.Errorf("issue-matrix content at %s is empty — refusing rather than treating an empty authored set as nothing to enforce.", obj)
-	}
-	return content, nil
+	return issuematrix.ReadRefContent(m.Root, m.Slug, m.Surface.CoordBranch)
 }
-
-type probeError struct{ msg string }
-
-func (e *probeError) Error() string { return e.msg }
 
 // doctorSparse is status.doctor.check_sparse_checkout over scan_repo
 // (primary plus lane / coordination worktrees).

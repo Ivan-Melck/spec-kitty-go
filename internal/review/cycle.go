@@ -12,12 +12,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/fm"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
@@ -62,10 +64,14 @@ type Cycle struct {
 // CreateInput carries create_rejected_review_cycle's inputs. Exactly one of
 // FeedbackSource / Body must be set.
 type CreateInput struct {
-	Surface             *coord.Surface
-	WPID, WPSlug        string
-	FeedbackSource      string
-	Body                string
+	Surface        *coord.Surface
+	WPID, WPSlug   string
+	FeedbackSource string
+	Body           string
+	// BodyHeader (#6652, FeedbackSource only) is a caller-generated line
+	// written above the reviewer's file content; the file still goes
+	// through the provenance guard.
+	BodyHeader          string
 	Reviewer            string
 	Verdict             string // "approved" | "rejected"
 	ReproductionCommand *string
@@ -133,7 +139,25 @@ func RenderArtifact(cycle int, wpID, missionSlug, reviewer, reviewedAt string, r
 	return out
 }
 
+// ReadFeedbackText is Path.read_text(encoding="utf-8") for a feedback file:
+// strict UTF-8 with universal-newline translation. A read or decode failure
+// is the typed "not readable UTF-8 text" ReviewCycleError (#6652).
+func ReadFeedbackText(src string) (string, error) {
+	b, err := os.ReadFile(src)
+	if err == nil {
+		var text string
+		if text, err = pyjson.DecodeUTF8(b); err == nil {
+			text = strings.ReplaceAll(text, "\r\n", "\n")
+			return strings.ReplaceAll(text, "\r", "\n"), nil
+		}
+	}
+	return "", &Error{Msg: fmt.Sprintf("Review feedback file is not readable UTF-8 text: %s (%v)", src, err)}
+}
+
 func resolveBody(in CreateInput, subDir string) (string, error) {
+	if in.BodyHeader != "" && in.FeedbackSource == "" {
+		return "", &Error{Msg: "create_rejected_review_cycle accepts body_header only with feedback_source"}
+	}
 	if in.FeedbackSource == "" {
 		if strings.TrimSpace(in.Body) == "" {
 			return "", &Error{Msg: "Review feedback body is empty"}
@@ -148,11 +172,10 @@ func resolveBody(in CreateInput, subDir string) (string, error) {
 	if st.IsDir() {
 		return "", &Error{Msg: "Review feedback path is not a file: " + src}
 	}
-	b, err := os.ReadFile(src)
+	body, err := ReadFeedbackText(src)
 	if err != nil {
 		return "", err
 	}
-	body := string(b)
 	if strings.TrimSpace(body) == "" {
 		return "", &Error{Msg: "Review feedback file is empty: " + src}
 	}
@@ -163,6 +186,9 @@ func resolveBody(in CreateInput, subDir string) (string, error) {
 	}
 	if looksLikeArtifact(body) {
 		return "", &Error{Msg: fmt.Sprintf("feedback_source content parses as a review-cycle artifact (%s); pass distinct reviewer feedback instead of a prior review-cycle artifact's content.", filepath.Base(src))}
+	}
+	if in.BodyHeader != "" {
+		return strings.TrimRightFunc(in.BodyHeader, unicode.IsSpace) + "\n\n" + body, nil
 	}
 	return body, nil
 }

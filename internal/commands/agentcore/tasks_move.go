@@ -21,6 +21,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/lifecycle"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/ownedcheckout"
+	"github.com/spec-kitty/go-kitty3/internal/prereview"
 	"github.com/spec-kitty/go-kitty3/internal/project"
 	"github.com/spec-kitty/go-kitty3/internal/review"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -60,7 +61,7 @@ func init() {
 				{Name: "assignee", Kind: cli.String, Metavar: "<str>", Help: "Assignee name, recorded on this transition regardless of the target lane (not limited to --to doing)."},
 				{Name: "shell-pid", Kind: cli.String, Metavar: "<str>", Help: "Shell PID"},
 				{Name: "note", Aliases: []string{"reason"}, Kind: cli.String, Metavar: "<str>", Help: "History note (alias: --reason, matching issue-verdict's vocabulary). If both --note and --reason are given, the one supplied LAST on the command line wins."},
-				{Name: "review-feedback-file", Kind: cli.String, Metavar: "<path>", Help: "Path to review feedback file. Required for review-rejection edges (--to planned, incl. with --force; and in_review->in_progress). Recorded as the transition's on-wire review_ref rationale; omitting it makes the status event contract-invalid and hosted sync drops it."},
+				{Name: "review-feedback-file", Kind: cli.String, Metavar: "<path>", Help: "Path to review feedback file. Required for review-rejection edges (--to planned, incl. with --force; and in_review->in_progress). Recorded as the transition's on-wire review_ref rationale; omitting it makes the status event contract-invalid. On --to approved/done its content is recorded when the move writes a new approval review-cycle record; otherwise a warning on stderr says it was not recorded (JSON stdout is unchanged)."},
 				{Name: "approval-ref", Kind: cli.String, Metavar: "<str>", Help: "Approval reference for approval/done transitions (e.g., PR#42)"},
 				{Name: "reviewer", Kind: cli.String, Metavar: "<str>", Help: "Reviewer name (auto-detected from git if omitted)"},
 				{Name: "self-review-fallback", Kind: cli.Bool, Help: "Record that approval is a self-review fallback after the intended reviewer failed."},
@@ -510,8 +511,11 @@ func (st *moveState) gatherReviewFacts() error {
 			st.feedbackExists = true
 			st.feedbackIsFile = !s.IsDir()
 			if st.feedbackIsFile && isReviewRejectionEdge(st.oldLane, st.target) {
-				b, _ := os.ReadFile(p)
-				st.feedbackContent = strings.TrimSpace(string(b))
+				text, err := review.ReadFeedbackText(p)
+				if err != nil {
+					return err
+				}
+				st.feedbackContent = strings.TrimSpace(text)
 			}
 		}
 	}
@@ -1628,6 +1632,9 @@ func (st *moveState) finalizePlan() error {
 		st.rejectedResult = &rr
 		st.announceDurabilityGap(c)
 	}
+	if (st.target == string(status.Approved) || st.target == string(status.Done)) && st.isArbiter {
+		st.warnFeedbackNotRecorded("an arbiter override is recorded as a review override, not an approval")
+	}
 	if (st.target == string(status.Approved) || st.target == string(status.Done)) && !st.isArbiter {
 		c, err := st.persistApprovedCycle()
 		if err != nil {
@@ -1701,28 +1708,84 @@ func (st *moveState) announceDurabilityGap(c *review.Cycle) {
 	}
 }
 
-func (st *moveState) persistApprovedCycle() (*review.Cycle, error) {
+// approvalWriteSkipReason is _approval_write_skip_reason: why the approval
+// writer writes nothing for this move ("" when it writes).
+func (st *moveState) approvalWriteSkipReason() string {
 	snap, _ := status.ReduceDir(st.featureDir)
 	if state := snap.WP(st.taskID); state != nil {
 		if raw, ok := state.Get("review_result"); ok {
 			rr, isObj := raw.(*jsonx.Object)
 			if raw != nil && (!isObj || rr.GetString("verdict") == "") {
-				return nil, nil
+				return "the recorded review verdict could not be read"
 			}
 			if isObj && rr.GetString("verdict") != "changes_requested" {
-				return nil, nil
+				return "the work package already has an approval record"
 			}
 		}
+	}
+	return ""
+}
+
+// warnFeedbackNotRecorded is _warn_feedback_file_not_recorded (#6652): a
+// supplied --review-feedback-file is never dropped in silence. Written to
+// stderr so a --json caller's stdout is unchanged.
+func (st *moveState) warnFeedbackNotRecorded(reason string) {
+	if !st.feedbackUsable() {
+		return
+	}
+	fmt.Fprintf(st.ctx.Stderr, "Warning: --review-feedback-file %s was not recorded for %s: %s.\n", st.feedbackSource, st.taskID, reason)
+}
+
+// feedbackUsable reports whether --review-feedback-file resolved to an
+// existing file (st.resolved_feedback_source is not None).
+func (st *moveState) feedbackUsable() bool {
+	return st.hasFeedback && st.feedbackSource != "" && st.feedbackExists && st.feedbackIsFile
+}
+
+// approvalFeedbackSource is _approval_feedback_source: the supplied feedback
+// file to record on approval ("" = nothing to record). An empty file is
+// warned about and the synthesized approval body is kept; an unreadable or
+// non-UTF-8 file is handed to the writer, which refuses it with a typed error.
+func (st *moveState) approvalFeedbackSource() string {
+	if !st.feedbackUsable() {
+		return ""
+	}
+	text, err := review.ReadFeedbackText(st.feedbackSource)
+	if err != nil || strings.TrimSpace(text) != "" {
+		return st.feedbackSource
+	}
+	st.warnFeedbackNotRecorded("the file is empty")
+	return ""
+}
+
+func (st *moveState) persistApprovedCycle() (*review.Cycle, error) {
+	if reason := st.approvalWriteSkipReason(); reason != "" {
+		st.warnFeedbackNotRecorded(reason)
+		return nil, nil
 	}
 	reviewer := st.resolveReviewerIdentity()
 	ref := strings.TrimSpace(st.approvalRef)
 	if ref == "" {
 		ref = review.SyntheticApprovalRef(st.taskID)
 	}
-	repro := fmt.Sprintf("spec-kitty agent tasks move-task %s --to approved --mission %s --agent %s", st.taskID, st.m.Slug, reviewer)
-	c, err := review.Create(review.CreateInput{Surface: st.m.Surface, WPID: st.taskID, WPSlug: st.w.Stem(),
-		Body: fmt.Sprintf("Approved by %s: %s\n", reviewer, ref), Reviewer: reviewer, Verdict: "approved",
-		ReproductionCommand: &repro, Commit: st.autoCommit && !st.skipPrimary})
+	// #6654: shlex.join, so a free-text reviewer replays as ONE --agent value.
+	var quoted []string
+	for _, a := range []string{"spec-kitty", "agent", "tasks", "move-task", st.taskID, "--to", "approved", "--mission", st.m.Slug, "--agent", reviewer} {
+		quoted = append(quoted, prereview.ShellQuote(a))
+	}
+	repro := strings.Join(quoted, " ")
+	approvalLine := fmt.Sprintf("Approved by %s: %s\n", reviewer, ref)
+	in := review.CreateInput{Surface: st.m.Surface, WPID: st.taskID, WPSlug: st.w.Stem(),
+		Reviewer: reviewer, Verdict: "approved", ReproductionCommand: &repro, Commit: st.autoCommit && !st.skipPrimary}
+	// #6652: reviewer feedback takes the guarded feedback-source leg; the
+	// synthesized line rides along as the header so the approval reference
+	// stays in the record.
+	if src := st.approvalFeedbackSource(); src != "" {
+		in.FeedbackSource, in.BodyHeader = src, approvalLine
+	} else {
+		in.Body = approvalLine
+	}
+	c, err := review.Create(in)
 	if err != nil {
 		return nil, err
 	}
@@ -1772,6 +1835,23 @@ func bindingRoleForLane(l string) string {
 		return "reviewer"
 	}
 	return ""
+}
+
+// hopRecordsBinding is _mt_hop_records_binding (#6630): whether a hop to
+// target may record the resolved binding as an annotation. A pick-up always
+// does (explicit absence included); a verdict hop (approved/done/canceled)
+// only with --profile/--model/--invocation-id, or when it hands the WP to a
+// different --agent.
+func (st *moveState) hopRecordsBinding(target string) bool {
+	switch status.ResolveLaneAlias(target) {
+	case string(status.Approved), string(status.Done), string(status.Canceled):
+	default:
+		return true
+	}
+	if st.hasProfile || st.hasModel || st.hasInvID {
+		return true
+	}
+	return st.agent != "" && status.ActorKeyStr(st.agent) != status.ActorKeyStr(st.currentAgent)
 }
 
 func (st *moveState) hopActor(prev *status.Event, current, target string) string {
@@ -1886,12 +1966,16 @@ func (st *moveState) execute() error {
 		var delta *status.Delta
 		if role := bindingRoleForLane(target); role != "" && st.binding != nil {
 			actor = status.SelfAssertingActor(role, st.agent, hopActor, st.binding)
-			d := st.binding.ToDelta(role)
-			if target == string(status.Claimed) && st.agent != "" {
-				a := st.agent
-				d.Agent = &a
+			// #6630: a verdict hop without dispatch flags records no binding,
+			// so the review claim's resolved profile is not cleared.
+			if st.hopRecordsBinding(target) {
+				d := st.binding.ToDelta(role)
+				if target == string(status.Claimed) && st.agent != "" {
+					a := st.agent
+					d.Agent = &a
+				}
+				delta = &d
 			}
-			delta = &d
 		}
 		if target == string(status.Claimed) && st.shellPID != "" {
 			st.claimEmitted = true
@@ -1958,7 +2042,7 @@ func (st *moveState) emitRuntimeState() error {
 		if st.agent != "" && !(st.target == string(status.Planned) && status.ActorKeyStr(st.agent) == status.ActorKeyStr(st.currentAgent)) {
 			a := st.agent
 			d.Agent = &a
-			if st.binding != nil {
+			if st.binding != nil && st.hopRecordsBinding(st.target) {
 				role := bindingRoleForLane(st.target)
 				if role == "" {
 					role = "implementer"

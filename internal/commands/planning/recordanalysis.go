@@ -43,7 +43,15 @@ func init() {
 var (
 	ulidJSONLRe   = regexp.MustCompile(`^kitty-ops/[0-9A-HJKMNP-TV-Z]{26}\.jsonl$`)
 	missionMetaRe = regexp.MustCompile(`(?:^|/)kitty-specs/[^/]+/meta\.json$`)
+	// #6628: the decision service's runtime lock (is_decisions_runtime_lock).
+	decisionsLockRe = regexp.MustCompile(`(?:^|/)kitty-specs/[^/]+/decisions/index\.json\.lock$`)
 )
+
+// dirtyWorktreeRemediation is the DIRTY_WORKTREE payload's remediation list.
+var dirtyWorktreeRemediation = []string{
+	"Commit or stash the listed paths, then rerun /spec-kitty.analyze.",
+	"Spec Kitty's own bookkeeping files, such as decisions/index.json.lock, are never listed here; do not commit them.",
+}
 
 // isSelfBookkeepingChurn is coherence.is_self_bookkeeping_churn.
 func isSelfBookkeepingChurn(p string) bool {
@@ -51,7 +59,8 @@ func isSelfBookkeepingChurn(p string) bool {
 	switch {
 	case missionMetaRe.MatchString(p), strings.HasSuffix("/"+p, "/.kittify/meta.json"),
 		p == ".kittify/encoding-provenance/global.jsonl", ulidJSONLRe.MatchString(p),
-		strings.Contains(p, "/.kittify/dossiers/") && strings.HasSuffix(p, "/snapshot-latest.json"):
+		strings.Contains(p, "/.kittify/dossiers/") && strings.HasSuffix(p, "/snapshot-latest.json"),
+		decisionsLockRe.MatchString(strings.TrimRight(p, "/")):
 		return true
 	}
 	return false
@@ -309,7 +318,7 @@ func runRecordAnalysis(ctx *cli.Context) error {
 		msg := "Refusing to record analysis report with pre-existing dirty working tree."
 		if jsonMode {
 			emitJSON(ctx.Stdout, jsonx.NewObject("success", false, "error_code", "DIRTY_WORKTREE", "error", msg, "dirty_paths", strList(dirty),
-				"remediation", strList([]string{"Commit or stash existing changes, then rerun /spec-kitty.analyze."})))
+				"remediation", strList(dirtyWorktreeRemediation)))
 		} else {
 			say(ctx.Stdout, "[red]Error:[/red] "+msg)
 			for _, p := range dirty {

@@ -140,3 +140,23 @@ func TestDiffMoveTaskArbiterIssueMatrix(t *testing.T) {
 	p.CompareTree(".worktrees", true)
 	compareGit(t, p)
 }
+
+// TestDiffStatusDoctorIssueMatrixNotAuthored covers #6653: with the
+// coordination worktree gone, the doctor reads the issue-matrix from the
+// coordination branch, which holds none: a typed ISSUE_MATRIX_NOT_AUTHORED
+// read error, surfaced as a warning finding.
+func TestDiffStatusDoctorIssueMatrixNotAuthored(t *testing.T) {
+	p := newOraclePair(t)
+	g, o := oracleCalcMission(t, p)
+	p.Both(func(s *testkit.Sandbox) {
+		slug := missionSlug(t, s)
+		spec := "kitty-specs/" + slug + "/spec.md"
+		s.WriteFile(spec, s.ReadFile(spec)+"\n## Issues\n\n- Implements #4321 (subtract).\n")
+		s.Git("commit", "-qam", "issues")
+		s.Git("worktree", "remove", "--force", ".worktrees/"+slug+"-coord")
+	})
+	comparePairSteps(t, p, g, o, [][]string{
+		{"agent", "status", "doctor", "--mission", "$M", "--json"},
+		{"agent", "status", "doctor", "--mission", "$M"},
+	})
+}
