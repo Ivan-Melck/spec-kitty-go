@@ -249,8 +249,8 @@ func stampableActivationManifest(root string) (*SynthManifest, error) {
 
 func RestampBundleHash(root string) error {
 	path := filepath.Join(root, ManifestPath)
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil
+	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() {
+		return nil // manifest_path.is_file() is False
 	}
 	m, err := LoadSynthManifest(path)
 	if err != nil {

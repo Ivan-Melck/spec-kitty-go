@@ -679,7 +679,13 @@ func runCharterList(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
 	allLayers := ctx.Bool("all")
 	showAvail := ctx.Bool("show-available") || allLayers
-	root := charterRoot(ctx)
+	// Upstream keeps the --repo-root path as given (default ".", the cwd,
+	// never walked up), so messages carry cwd-relative paths such as the
+	// activation ledger's in an unknown-key error.
+	root := ctx.String("repo-root")
+	if root == "" {
+		root = "."
+	}
 	activated, present, err := charter.ListActivated(root)
 	if err != nil {
 		var ce *dct.ConfigError

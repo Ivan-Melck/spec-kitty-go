@@ -65,3 +65,25 @@ func TestParityCharterListRequiredInForce(t *testing.T) {
 		})
 	}
 }
+
+// charter list keeps its --repo-root as given (default ".", never walked
+// up): an unknown activation-ledger key names the cwd-relative ledger path,
+// and from a subdirectory the project's ledger is not read at all.
+func TestParityCharterListUnknownLedgerKey(t *testing.T) {
+	p := testkit.NewPair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		s.WriteFile(".kittify/charter/activation.yaml", "mission_type_activations: [software-dev]\nactivated_directivess: []\n")
+		s.WriteFile("sub/keep.txt", "x\n")
+	})
+	for _, dir := range []string{"", "sub"} {
+		for _, args := range [][]string{{"charter", "list", "--json"}, {"charter", "list"}} {
+			g, o := p.RunIn(dir, args...)
+			if g.Code != o.Code {
+				t.Errorf("%s (in %q): exit go=%d oracle=%d\n--- go:\n%s%s\n--- oracle:\n%s%s", strings.Join(args, " "), dir, g.Code, o.Code, g.Stdout, g.Stderr, o.Stdout, o.Stderr)
+			}
+			if gs, os := p.Go.Normalize(g.Stdout), p.Oracle.Normalize(o.Stdout); gs != os {
+				t.Errorf("%s (in %q): stdout differs\n%s", strings.Join(args, " "), dir, testkit.Diff(os, gs))
+			}
+		}
+	}
+}
