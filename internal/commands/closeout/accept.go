@@ -1,6 +1,7 @@
 package closeout
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -213,6 +214,17 @@ func runAccept(ctx *cli.Context, o acceptOpts) error {
 	}
 	sum, err := r.collectWithOptionalRepair(root, slug, acceptance.CollectOptions{StrictMetadata: !o.lenient, MutateMatrix: !o.diagnose}, o.normalizeEncoding)
 	if err != nil {
+		var me *migrate.MetaReadError
+		if errors.As(err, &me) {
+			// The global GuardedReadError hook: a JSON envelope under --json,
+			// a plain stderr line otherwise.
+			if o.json {
+				printJSON(ctx.Stdout, jsonx.NewObject("error", me.Error(), "kind", "MissionMetaReadError", "path", me.Path))
+			} else {
+				fmt.Fprintln(ctx.Stderr, "Error: "+me.Error())
+			}
+			return cli.Exit(1)
+		}
 		return r.fail(err.Error(), 1, "verify", nil)
 	}
 	if !o.json {

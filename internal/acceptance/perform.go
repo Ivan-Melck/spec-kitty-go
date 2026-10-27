@@ -14,6 +14,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
 
 // ChecksFailedMessage is ACCEPTANCE_CHECKS_FAILED_MESSAGE.
@@ -150,7 +151,11 @@ func commitAcceptanceMeta(s *Summary, actor, mode string) (parent, accept string
 	metaRel := relTo(root, filepath.Join(s.FeatureDir, mission.MetaFile))
 	branch := gitx.CurrentBranch(root)
 	if branch != "" && coord.IsProtected(root, s.Feature, branch) {
-		out := CommitMission(root, s.Feature, []string{filepath.Join(s.FeatureDir, mission.MetaFile)}, "Accept "+s.Feature, "")
+		// _commit_acceptance_meta_via_router: commit_for_mission with the
+		// PRIMARY_METADATA kind (a protected placement refuses as
+		// no_op_wrong_surface with the router's remedy).
+		metaPath := filepath.Join(s.FeatureDir, mission.MetaFile)
+		out := safecommit.CommitForMission(root, s.Feature, []string{metaPath}, "Accept "+s.Feature, mission.KindPrimaryMetadata, safecommit.RouterOptions{})
 		if out.Status == StatusUnchanged {
 			return parent, "", false, nil
 		}
@@ -163,7 +168,7 @@ func commitAcceptanceMeta(s *Summary, actor, mode string) (parent, accept string
 		}
 		accept = out.CommitHash
 		if accept != "" && stampAcceptCommit(s.FeatureDir, accept) {
-			CommitMission(root, s.Feature, []string{filepath.Join(s.FeatureDir, mission.MetaFile)}, "Record acceptance commit for "+s.Feature, "")
+			safecommit.CommitForMission(root, s.Feature, []string{metaPath}, "Record acceptance commit for "+s.Feature, mission.KindPrimaryMetadata, safecommit.RouterOptions{})
 		}
 		return parent, accept, true, nil
 	}

@@ -750,6 +750,108 @@ func Collect(root, slug string, opts CollectOptions) (*Summary, error) {
 		s.Lanes[l] = []string{}
 	}
 
+	// A non-WP workflow is vouched for by its real completed runtime and
+	// declared artifacts, never by fabricated tasks, lanes or WP state: only
+	// the WP-specific gathering varies, everything below is shared.
+	nonWP, err := collectNonWPFacts(root, featureDir, statusDir)
+	if err != nil {
+		return nil, err
+	}
+	allAcceptable := false
+	if nonWP == nil {
+		if allAcceptable, err = gatherWorkPackages(s, root, slug, featureDir, statusDir, opts); err != nil {
+			return nil, err
+		}
+	} else {
+		s.ActivityIssues = append(s.ActivityIssues, nonWP.activity...)
+	}
+
+	planning := featureDir
+	tasksFile := filepath.Join(planning, "tasks.md")
+	var unchecked []string
+	var clarificationFiles []string
+	if nonWP == nil {
+		if err := strictArtifactCheck(tasksFile); err != nil {
+			return nil, err
+		}
+		if text, err := readStrict(tasksFile); err != nil {
+			unchecked = []string{"tasks.md missing"}
+		} else {
+			unchecked = UncheckedSubtaskRows(text)
+		}
+		clarificationFiles = []string{
+			filepath.Join(planning, "spec.md"), filepath.Join(planning, "plan.md"), filepath.Join(planning, "quickstart.md"),
+			tasksFile, filepath.Join(planning, "research.md"), filepath.Join(planning, "data-model.md")}
+	} else {
+		for _, name := range nonWP.required {
+			clarificationFiles = append(clarificationFiles, filepath.Join(planning, name))
+		}
+	}
+	for _, f := range clarificationFiles {
+		if err := strictArtifactCheck(f); err != nil {
+			return nil, err
+		}
+	}
+	s.NeedsClarification = needsClarification(clarificationFiles)
+
+	meta := mission.ReadMetaOrEmpty(featureDir)
+	mc := LoadMissionConfig(root, mission.MissionType(meta))
+	if nonWP == nil {
+		for _, f := range []string{"spec.md", "plan.md", "tasks.md"} {
+			if _, err := os.Stat(filepath.Join(planning, f)); err != nil {
+				s.MissingArtifacts = append(s.MissingArtifacts, f)
+			}
+		}
+	} else {
+		s.MissingArtifacts = nonWP.missing
+	}
+	optional := []string{"quickstart.md", "data-model.md", "research.md", "contracts"}
+	if mc != nil && mc.Optional != nil {
+		optional = mc.Optional
+	}
+	for _, t := range optional {
+		if _, err := os.Stat(filepath.Join(planning, t)); err != nil {
+			s.OptionalMissing = append(s.OptionalMissing, strings.TrimRight(t, "/"))
+		}
+	}
+	violations, pcWarning, dedup := pathConventions(mc, root, planning, opts.StrictMetadata, approvedLaneRoots(root, featureDir, s.Lanes))
+	if len(dedup) > 0 {
+		var kept []string
+		for _, o := range s.OptionalMissing {
+			if !dedup[normToken(o)] {
+				kept = append(kept, o)
+			}
+		}
+		s.OptionalMissing = kept
+	}
+	s.PathViolations = violations
+	if len(s.OptionalMissing) > 0 {
+		s.Warnings = append(s.Warnings, "Optional artifacts missing: "+strings.Join(s.OptionalMissing, ", "))
+	}
+	if len(violations) > 0 {
+		s.Warnings = append(s.Warnings, "Path conventions not satisfied.")
+	} else if pcWarning != "" {
+		s.Warnings = append(s.Warnings, pcWarning)
+	}
+
+	if nonWP == nil {
+		checkLaneGates(s, sf, opts.MutateMatrix)
+	} else {
+		// No code lanes, so no acceptance matrix is ever produced.
+		s.MatrixSkipReason = PlanningArtifactOnlySkip
+	}
+
+	if !(len(unchecked) == 1 && unchecked[0] == "tasks.md missing") && !allAcceptable {
+		s.UncheckedTasks = unchecked
+	}
+	s.RecommendedFixOrder = fixOrder(s)
+	return s, nil
+}
+
+// gatherWorkPackages is _gather_work_packages: the WP-specific state of a
+// WP-driven mission (lanes, per-WP state, canceled WPs, readiness); it
+// reports whether every tracked WP has an acceptable ending.
+func gatherWorkPackages(s *Summary, root, slug, featureDir, statusDir string, opts CollectOptions) (bool, error) {
 	missingMsg := fmt.Sprintf("No canonical state found for mission '%s'. Cannot validate acceptance without status.events.jsonl. Run 'spec-kitty agent mission finalize-tasks --mission %s' to bootstrap the event log.", slug, slug)
 	var snapWPs *jsonx.Object
 	if _, err := os.Stat(status.EventsPath(statusDir)); err != nil {
@@ -757,7 +859,7 @@ func Collect(root, slug string, opts CollectOptions) (*Summary, error) {
 	} else {
 		snap, err := status.ReduceDir(statusDir)
 		if err != nil {
-			return nil, &Error{fmt.Sprintf("Status event log is corrupted for mission '%s': %v", slug, err)}
+			return false, &Error{fmt.Sprintf("Status event log is corrupted for mission '%s': %v", slug, err)}
 		}
 		snapWPs = snap.WorkPackages
 		if snapWPs == nil || snapWPs.Len() == 0 {
@@ -767,7 +869,7 @@ func Collect(root, slug string, opts CollectOptions) (*Summary, error) {
 
 	tasksDir := filepath.Join(featureDir, "tasks")
 	if st, err := os.Stat(tasksDir); err != nil || !st.IsDir() {
-		return nil, &Error{fmt.Sprintf("Feature '%s' has no tasks directory at %s.", slug, tasksDir)}
+		return false, &Error{fmt.Sprintf("Feature '%s' has no tasks directory at %s.", slug, tasksDir)}
 	}
 	files, _ := filepath.Glob(filepath.Join(tasksDir, "*.md"))
 	sort.Strings(files)
@@ -777,11 +879,11 @@ func Collect(root, slug string, opts CollectOptions) (*Summary, error) {
 			continue
 		}
 		if err := strictArtifactCheck(f); err != nil {
-			return nil, err
+			return false, err
 		}
 		w, err := wp.Read(f)
 		if err != nil {
-			return nil, &Error{err.Error()}
+			return false, &Error{err.Error()}
 		}
 		id := strings.TrimSpace(w.Meta().GetString("work_package_id"))
 		if id == "" {
@@ -825,70 +927,7 @@ func Collect(root, slug string, opts CollectOptions) (*Summary, error) {
 		}
 	}
 
-	planning := featureDir
-	tasksFile := filepath.Join(planning, "tasks.md")
-	var unchecked []string
-	if err := strictArtifactCheck(tasksFile); err != nil {
-		return nil, err
-	}
-	if text, err := readStrict(tasksFile); err != nil {
-		unchecked = []string{"tasks.md missing"}
-	} else {
-		unchecked = UncheckedSubtaskRows(text)
-	}
-	clarificationFiles := []string{
-		filepath.Join(planning, "spec.md"), filepath.Join(planning, "plan.md"), filepath.Join(planning, "quickstart.md"),
-		tasksFile, filepath.Join(planning, "research.md"), filepath.Join(planning, "data-model.md")}
-	for _, f := range clarificationFiles {
-		if err := strictArtifactCheck(f); err != nil {
-			return nil, err
-		}
-	}
-	s.NeedsClarification = needsClarification(clarificationFiles)
-
-	meta := mission.ReadMetaOrEmpty(featureDir)
-	mc := LoadMissionConfig(root, mission.MissionType(meta))
-	for _, f := range []string{"spec.md", "plan.md", "tasks.md"} {
-		if _, err := os.Stat(filepath.Join(planning, f)); err != nil {
-			s.MissingArtifacts = append(s.MissingArtifacts, f)
-		}
-	}
-	optional := []string{"quickstart.md", "data-model.md", "research.md", "contracts"}
-	if mc != nil && mc.Optional != nil {
-		optional = mc.Optional
-	}
-	for _, t := range optional {
-		if _, err := os.Stat(filepath.Join(planning, t)); err != nil {
-			s.OptionalMissing = append(s.OptionalMissing, strings.TrimRight(t, "/"))
-		}
-	}
-	violations, pcWarning, dedup := pathConventions(mc, root, planning, opts.StrictMetadata, approvedLaneRoots(root, featureDir, s.Lanes))
-	if len(dedup) > 0 {
-		var kept []string
-		for _, o := range s.OptionalMissing {
-			if !dedup[normToken(o)] {
-				kept = append(kept, o)
-			}
-		}
-		s.OptionalMissing = kept
-	}
-	s.PathViolations = violations
-	if len(s.OptionalMissing) > 0 {
-		s.Warnings = append(s.Warnings, "Optional artifacts missing: "+strings.Join(s.OptionalMissing, ", "))
-	}
-	if len(violations) > 0 {
-		s.Warnings = append(s.Warnings, "Path conventions not satisfied.")
-	} else if pcWarning != "" {
-		s.Warnings = append(s.Warnings, pcWarning)
-	}
-
-	checkLaneGates(s, sf, opts.MutateMatrix)
-
-	if !(len(unchecked) == 1 && unchecked[0] == "tasks.md missing") && !allAcceptable {
-		s.UncheckedTasks = unchecked
-	}
-	s.RecommendedFixOrder = fixOrder(s)
-	return s, nil
+	return allAcceptable, nil
 }
 
 func buildWPState(w *wp.WP, id string, snap *jsonx.Object, root string, strict bool) (WPState, []string) {
