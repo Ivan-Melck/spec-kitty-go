@@ -27,6 +27,7 @@ func init() {
 				{Name: "artifact", Kind: cli.StringList, Help: "Path (repo-relative or absolute) or URL of an artifact produced by this invocation. Repeatable."},
 				{Name: "commit", Kind: cli.String, Help: "Git commit SHA most directly produced by this invocation. Singular."},
 				{Name: "json", Kind: cli.Bool, Help: "Output JSON payload"},
+				ownedCheckoutFlag(opRecordOwnedCheckoutHelp),
 			},
 			Run: runComplete,
 		})
@@ -39,6 +40,7 @@ func init() {
 				{Name: "profile", Short: "p", Kind: cli.String, Help: "Filter by profile ID (reads file content, not filename)"},
 				{Name: "limit", Short: "n", Kind: cli.Int, Default: 20, Help: "Maximum number of records to return (default: 20)"},
 				{Name: "json", Kind: cli.Bool, Help: "Emit a JSON array instead of a table"},
+				ownedCheckoutFlag(opRecordListOwnedCheckoutHelp),
 			},
 			Run: runInvocationsList,
 		})
@@ -52,17 +54,31 @@ func runComplete(ctx *cli.Context) error {
 	if outcome != "done" && outcome != "failed" && outcome != "abandoned" {
 		return cli.Usage(ctx.Cmd, "Invalid value for --outcome: %s", fmt.Sprintf("invalid outcome %s: must be one of done, failed, abandoned", pyStrRepr(outcome)))
 	}
-	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "complete_invocation", Line: 138}, rich.Frame{Name: "_get_repo_root", Line: 33})
+	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "complete_invocation", Line: 167}, rich.Frame{Name: "_get_repo_root", Line: 42})
 	if err != nil {
 		return err
 	}
+	// #6564: close the Op in the checkout that holds its record (the invoking
+	// one first, or the owned checkout under --owned-checkout) and judge
+	// admission there. An Op no checkout holds keeps the not-found error.
+	invoking, err := invokingRecordRoot(ctx, root, jsonMode)
+	if err != nil {
+		return err
+	}
+	record := invocation.LocateRecordRoot(root, id, invoking)
+	if record == "" {
+		record = invoking
+	}
 	artifacts := ctx.Strings("artifact")
 	opt := invocation.CompleteOptions{Evidence: ctx.OptString("evidence"), Artifacts: artifacts, Commit: ctx.OptString("commit")}
-	completed, commit, err := invocation.Complete(root, id, outcome, opt)
+	completed, commit, err := invocation.Complete(invocation.Roots{Project: root, Record: record}, id, outcome, opt)
 	if err != nil {
 		var im *invocation.InvalidModeForEvidenceError
 		var ac *invocation.AlreadyClosedError
+		var wr *invocation.WriteRefusedError
 		switch {
+		case errors.As(err, &wr):
+			return exitOpWriteRefused(ctx, wr, jsonMode)
 		case errors.As(err, &im):
 			cprintRaw(ctx.Stdout, "[red]Error:[/red] "+im.Error())
 			return cli.Exit(2)
@@ -97,7 +113,7 @@ func runComplete(ctx *cli.Context) error {
 	if jsonMode {
 		links := []any{}
 		for _, a := range artifacts {
-			links = append(links, invocation.NormaliseRef(a, root))
+			links = append(links, invocation.NormaliseRef(a, record))
 		}
 		var ev, cm any
 		if opt.Evidence != nil {
@@ -113,7 +129,7 @@ func runComplete(ctx *cli.Context) error {
 	cprint(ctx.Stdout, "[green]✓[/green] Invocation [bold]%s[/bold] closed.", id)
 	cprint(ctx.Stdout, "  Outcome: %s", outcome)
 	for _, a := range artifacts {
-		cprintRaw(ctx.Stdout, "  Artifact: "+invocation.NormaliseRef(a, root))
+		cprintRaw(ctx.Stdout, "  Artifact: "+invocation.NormaliseRef(a, record))
 	}
 	if opt.Commit != nil && *opt.Commit != "" {
 		cprintRaw(ctx.Stdout, "  Commit: "+*opt.Commit)
@@ -136,7 +152,14 @@ func pyStrRepr(s string) string {
 }
 
 func runInvocationsList(ctx *cli.Context) error {
-	root, err := repoRootOrCrash(ctx, rich.Frame{Name: "list_invocations", Line: 396}, rich.Frame{Name: "_get_repo_root", Line: 55})
+	projectRoot, err := repoRootOrCrash(ctx, rich.Frame{Name: "list_invocations", Line: 381}, rich.Frame{Name: "_get_repo_root", Line: 61})
+	if err != nil {
+		return err
+	}
+	// #6564: list the Op records of the checkout the command runs in (the
+	// one dispatch and complete write to); under --owned-checkout, those of
+	// the owned checkout (#6682). The command only reads.
+	root, err := invokingRecordRoot(ctx, projectRoot, ctx.Bool("json"))
 	if err != nil {
 		return err
 	}

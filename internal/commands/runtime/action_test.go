@@ -85,6 +85,12 @@ func TestDiffImplementReviewLoop(t *testing.T) {
 // writeOpRecord writes a dispatch Op started record correlated with the
 // side's mission (same id on both sides).
 func writeOpRecord(t *testing.T, p *testkit.Pair, id, wpID, action, profile, model string) {
+	writeOpRecordIn(t, p, "", id, wpID, action, profile, model)
+}
+
+// writeOpRecordIn is writeOpRecord into the checkout at dir (relative to
+// the project; "" = the project itself).
+func writeOpRecordIn(t *testing.T, p *testkit.Pair, dir, id, wpID, action, profile, model string) {
 	p.Both(func(s *testkit.Sandbox) {
 		slug := missionfx.MissionSlug(t, s)
 		meta, err := jsonx.DecodeObject([]byte(s.ReadFile(filepath.Join("kitty-specs", slug, "meta.json"))))
@@ -98,8 +104,32 @@ func writeOpRecord(t *testing.T, p *testkit.Pair, id, wpID, action, profile, mod
 		if model != "" {
 			rec.Set("model_id", model)
 		}
-		s.WriteFile("kitty-ops/"+id+".jsonl", jsonx.Dumps(rec, jsonx.Options{Indent: -1, EnsureASCII: true})+"\n")
+		s.WriteFile(filepath.Join(dir, "kitty-ops", id+".jsonl"), jsonx.Dumps(rec, jsonx.Options{Indent: -1, EnsureASCII: true})+"\n")
 	})
+}
+
+// TestDiffActionInvocationIDLinkedCheckout: an Op opened from a linked
+// checkout keeps its record there (Python main, #6564); the claim seam run
+// from the repository root checkout finds it in that checkout.
+func TestDiffActionInvocationIDLinkedCheckout(t *testing.T) {
+	p := newAnalyzedPair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		s.Git("worktree", "add", "-q", "-b", "ops-x", filepath.Join(s.Base, "opsco"))
+	})
+	const okID = "01KAAAAAAAAAAAAAAAAAAAAAAA"
+	writeOpRecordIn(t, p, "../opsco", okID, "WP01", "implement", "implementer-ivan", "claude-opus-4-6")
+	steps(t, p, false,
+		[]string{"agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M", "--invocation-id", okID},
+	)
+	// Both sides must record the binding read from the linked checkout's Op.
+	p.Both(func(s *testkit.Sandbox) {
+		if r := s.Exec("", "grep", "-rl", "--exclude-dir=opsco", "claude-opus-4-6", s.Base); r.Code != 0 {
+			t.Errorf("claim did not record the dispatched model (%s)", s.Dir)
+		}
+	})
+	compareGit(t, p)
+	dropAnalysis(t, p)
+	compareTree(t, p, "kitty-specs")
 }
 
 // TestDiffActionInvocationID covers the dispatch→claim resolved binding:

@@ -275,6 +275,7 @@ func ExecuteStepContract(root, mission, action, actor, profileHint, requestText 
 	if actor == "" {
 		actor = "unknown"
 	}
+	record := opRecordRoot(root)
 	var ids []string
 	for _, st := range c.Steps {
 		var resolved, unresolved []string
@@ -287,12 +288,12 @@ func ExecuteStepContract(root, mission, action, actor, profileHint, requestText 
 			resolved = append(resolved, u)
 		}
 		p, err := invocation.InvokeWithHint(root, buildRequestText(c, st, requestText, resolved, unresolved),
-			invocation.InvokeOptions{ProfileHint: profile, Actor: actor, ActionHint: c.Action})
+			invocation.InvokeOptions{ProfileHint: profile, Actor: actor, ActionHint: c.Action, RecordRoot: record})
 		if err != nil {
 			return ids, err
 		}
 		ids = append(ids, p.InvocationID)
-		if _, _, err := invocation.Complete(root, p.InvocationID, "done", invocation.CompleteOptions{}); err != nil {
+		if _, _, err := invocation.Complete(invocation.Roots{Project: root, Record: record}, p.InvocationID, "done", invocation.CompleteOptions{}); err != nil {
 			return ids, err
 		}
 	}

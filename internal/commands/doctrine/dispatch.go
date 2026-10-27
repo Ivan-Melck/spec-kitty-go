@@ -27,6 +27,7 @@ func init() {
 				{Name: "profile", Kind: cli.String, Help: "Optional profile ID. Bypasses the router — use when the request is ambiguous."},
 				{Name: "json", Kind: cli.Bool, Help: "Output JSON payload"},
 				{Name: "dry-run", Kind: cli.Bool, Help: "Route the request and return the routing signal without opening an Op or writing anything."},
+				ownedCheckoutFlag(opRecordOwnedCheckoutHelp),
 			},
 			Args: []*cli.Arg{{Name: "request", Help: "Natural language request. The router picks the best profile.", Required: true, Metavar: "{request}"}},
 			Run:  runDispatch,
@@ -59,7 +60,10 @@ func dispatchErr(ctx *cli.Context, err error, jsonMode bool) error {
 	var re *invocation.RouterError
 	var pnf *invocation.ProfileNotFoundError
 	var we *invocation.WriteError
+	var wr *invocation.WriteRefusedError
 	switch {
+	case errors.As(err, &wr):
+		return exitOpWriteRefused(ctx, wr, jsonMode)
 	case errors.As(err, &re):
 		return routingFailed(ctx, re.Code, re.Error(), re.Candidates, re.Suggestion)
 	case errors.As(err, &pnf):
@@ -76,6 +80,12 @@ func runDispatch(ctx *cli.Context) error {
 	request := ctx.Arg("request")
 	hint := ctx.OptString("profile")
 	jsonMode := ctx.Bool("json")
+	// The Op record goes to the owned checkout under --owned-checkout, else
+	// to the invoking checkout (#6564, #6682); governance stays at root.
+	record, err := invokingRecordRoot(ctx, root, jsonMode)
+	if err != nil {
+		return err
+	}
 	if ctx.Bool("dry-run") {
 		p, err := invocation.DryRun(root, request, hint, detectActor())
 		if err != nil {
@@ -106,7 +116,7 @@ func runDispatch(ctx *cli.Context) error {
 		cprint(ctx.Stdout, "[dim]Dry run — no Op opened, nothing written.[/dim]")
 		return nil
 	}
-	p, err := invocation.Invoke(root, request, hint, detectActor(), invocation.ModeTaskExecution)
+	p, err := invocation.Invoke(invocation.Roots{Project: root, Record: record}, request, hint, detectActor(), invocation.ModeTaskExecution)
 	if err != nil {
 		return dispatchErr(ctx, err, jsonMode)
 	}
@@ -120,7 +130,7 @@ func runDispatch(ctx *cli.Context) error {
 	cprint(w, "  [dim]spec-kitty profile-invocation complete --invocation-id %s --outcome <done|failed|abandoned> \\[--evidence <file>] \\[--artifact <path>] \\[--commit <sha>][/dim]", p.InvocationID)
 	cprint(w, "[dim]Unclosed Ops are reported by `spec-kitty doctor ops` and swept to 'abandoned' when stale.[/dim]")
 	// Inline glossary drift notices for this invocation (never fails).
-	if ns := glossary.CollectNotices(root, p.InvocationID); len(ns) > 0 {
+	if ns := glossary.CollectNotices(record, p.InvocationID); len(ns) > 0 {
 		// ObservationSurface.render_notices: Text objects (no highlighting).
 		rich.PrintTo(w)
 		for _, n := range ns {

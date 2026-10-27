@@ -604,6 +604,8 @@ func (c *advanceCtx) compositionBlocked(step string, failures []string) *Decisio
 // pyErrType names an error class for the composition crash surface.
 func pyErrType(err error) string {
 	switch err.(type) {
+	case *invocation.WriteRefusedError:
+		return "OpWriteRefused"
 	case *invocation.WriteError:
 		return "InvocationWriteError"
 	case *invocation.Error:
@@ -652,14 +654,12 @@ func readLifecycle(root string) []*jsonx.Object {
 	return out
 }
 
+// appendLifecycle is append_lifecycle_record through the interim locked
+// append (#6606). The lifecycle log is observability: a refused append (a
+// torn last line, a held lock) writes nothing and `next` carries on
+// (upstream logs the refusal at WARNING, which the CLI does not show).
 func appendLifecycle(root string, rec *jsonx.Object) {
-	os.MkdirAll(filepath.Dir(lifecyclePath(root)), 0o755)
-	f, err := os.OpenFile(lifecyclePath(root), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	f.WriteString(jsonx.Dumps(rec, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true}) + "\n")
+	_ = invocation.AppendEventLogLine(lifecyclePath(root), jsonx.Dumps(rec, jsonx.Options{Indent: -1, SortKeys: true, EnsureASCII: true}))
 }
 
 // PairPreviousLifecycleRecord is pair_previous_lifecycle_record.

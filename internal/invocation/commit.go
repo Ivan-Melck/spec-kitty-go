@@ -7,7 +7,6 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
-	"github.com/spec-kitty/go-kitty3/internal/mission/create"
 )
 
 // protectionHatch is the SPEC_KITTY_ALLOW_PROTECTED_BRANCH_COMMITS escape
@@ -37,13 +36,16 @@ func currentBranch(root string) string {
 
 // commitOpRecord is _commit_op_record for an agent close: a best-effort
 // safe_commit of kitty-ops/<id>.jsonl onto the current branch.
-func commitOpRecord(root, id string, started *jsonx.Object) *CommitOutcome {
-	return commitOp(root, id, started, false)
+func commitOpRecord(roots Roots, id string, started *jsonx.Object) *CommitOutcome {
+	return commitOp(roots, id, started, false)
 }
 
 // commitOp is _commit_op_record; a doctor-sweep close commits only the
 // op-closures spine.
-func commitOp(root, id string, started *jsonx.Object, sweep bool, policy ...*commitPolicy) *CommitOutcome {
+func commitOp(roots Roots, id string, started *jsonx.Object, sweep bool, policy ...*commitPolicy) *CommitOutcome {
+	// The record checkout takes the commit; the project root's protection
+	// policy applies as well as its own (preflight_commit ORs the two).
+	root := roots.RecordRoot()
 	profile := started.GetString("profile_id")
 	if profile == "" {
 		profile = "unknown"
@@ -84,7 +86,9 @@ func commitOp(root, id string, started *jsonx.Object, sweep bool, policy ...*com
 	if branch == "" {
 		return &CommitOutcome{Refusal: "detached HEAD"}
 	}
-	if create.ProtectedBranches(root)[branch] && !protectionHatch() {
+	if protected, err := branchProtected(roots, branch); err != nil {
+		return &CommitOutcome{Refusal: "ProtectionConfigError(" + pyRepr(err.Error()) + ")"}
+	} else if protected {
 		return &CommitOutcome{Refusal: "protected branch " + pyRepr(branch)}
 	}
 	if res, err := gitx.Exec(root, nil, nil, "add", "--force", "--", rel); err != nil || res.Code != 0 {

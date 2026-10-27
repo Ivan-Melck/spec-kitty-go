@@ -152,6 +152,9 @@ func runNext(ctx *cli.Context) error {
 		// resolves from the owned checkout P.
 		root, slug = owned.OwnedRoot, owned.MissionSlug
 		nextrt.AnalysisGoverningRoot = owned.RepositoryRoot
+		// An owned mission's Op records stay in P, whatever the working
+		// directory (#6682).
+		nextrt.OpRecordRoot = owned.OwnedRoot
 	}
 	if err := charterPreflightForNext(ctx, root, ctx.IsSet("result"), jsonMode); err != nil {
 		return err
