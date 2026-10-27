@@ -27,7 +27,7 @@ func charterContextCmd() *cli.Command {
 			{Name: "json", Kind: cli.Bool, Help: "Output JSON. `context_schema_version` stamps the top-level payload shape (#2787, tracking contract -- not yet frozen). `directives` is action-scoped; `all_directives` and `project_charter` describe the project-local charter, while `org_charter` describes imported org packs."},
 			{Name: "include-all", Kind: cli.Bool, Help: "Escape hatch: materialise the entire reachable closure inline in the structured (--json) payload instead of the default progressive disclosure (requires eager, suggests linked). Output is a superset of the progressive render for the same grain."},
 		},
-		Run: catchCharterLoad(runCharterContext),
+		Run: catchCharterLoad(catchCodedInvariant(runCharterContext)),
 	}
 }
 
@@ -81,6 +81,24 @@ func codedInvariant(err error) (code, body string, ok bool) {
 		return dp.Code(), dp.Body, true
 	}
 	return "", "", false
+}
+
+// catchCodedInvariant is context's `except KittyInternalConsistencyError`
+// (#6454) around the whole body: a CharterEncodingError raised by a charter
+// read anywhere in it refuses with its code and body.
+func catchCodedInvariant(run func(*cli.Context) error) func(*cli.Context) error {
+	return func(ctx *cli.Context) error {
+		var ret error
+		err := charter.CatchLoad(func() { ret = run(ctx) })
+		if err == nil {
+			return ret
+		}
+		if code, body, ok := codedInvariant(err); ok {
+			emitCharterError(ctx.Stdout, ctx.Bool("json"), body, code, nil)
+			return cli.Exit(1)
+		}
+		panic(&charter.LoadPanic{Err: err})
+	}
 }
 
 func runCharterContext(ctx *cli.Context) error {
