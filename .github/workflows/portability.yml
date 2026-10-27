@@ -1,0 +1,72 @@
+name: portability
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "parity/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portability-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - name: Check out committed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.7
+          cache: true
+
+      - name: Vet and build every release target
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            echo "== $target"
+            GOOS=${target%/*} GOARCH=${target#*/} go vet ./...
+            CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} go build -trimpath -o /dev/null ./cmd/spec-kitty
+          done
+
+  windows-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - name: Check out committed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.7
+          cache: true
+
+      - name: Build and initialise a project
+        shell: pwsh
+        run: |
+          go build -o spec-kitty.exe ./cmd/spec-kitty
+          $env:HOME = Join-Path $env:RUNNER_TEMP 'home'
+          $env:USERPROFILE = $env:HOME
+          $env:SPEC_KITTY_NO_UPGRADE_CHECK = '1'
+          New-Item -ItemType Directory -Force -Path $env:HOME | Out-Null
+          ./spec-kitty.exe --version
+          Set-Location $env:RUNNER_TEMP
+          & "$env:GITHUB_WORKSPACE/spec-kitty.exe" init smoke --ai codex --non-interactive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Set-Location smoke
+          & "$env:GITHUB_WORKSPACE/spec-kitty.exe" verify-setup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
