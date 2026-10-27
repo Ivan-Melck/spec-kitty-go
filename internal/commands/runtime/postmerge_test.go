@@ -9,6 +9,16 @@ import (
 // mergedPair drives the calc mission through implement / review / approve
 // / consolidate with the oracle on both sides.
 func mergedPair(t *testing.T) *testkit.Pair {
+	p := approvedPair(t)
+	// all approved: next query -> accept (TRACE 5.21)
+	steps(t, p, false, []string{"next", "--agent", "claude", "--mission", "$M", "--json"})
+	oracleBoth(t, p, "consolidate", "--mission", "$M", "--yes")
+	return p
+}
+
+// approvedPair drives the calc mission through implement / review /
+// approve of both work packages with the oracle on both sides.
+func approvedPair(t *testing.T) *testkit.Pair {
 	p := newAnalyzedPair(t)
 	oracleBoth(t, p, "agent", "action", "implement", "WP01", "--agent", "claude", "--mission", "$M")
 	laneCommit(t, p, "lane-a", "feat(WP01): subtract", map[string]string{
@@ -28,9 +38,6 @@ func mergedPair(t *testing.T) *testkit.Pair {
 	oracleBoth(t, p, "agent", "tasks", "move-task", "WP02", "--to", "for_review", "--mission", "$M", "--agent", "claude", "--note", "Ready")
 	oracleBoth(t, p, "agent", "action", "review", "WP02", "--agent", "claude", "--mission", "$M")
 	oracleBoth(t, p, "agent", "tasks", "move-task", "WP02", "--to", "approved", "--mission", "$M", "--agent", "claude", "--note", "ok")
-	// all approved: next query -> accept (TRACE 5.21)
-	steps(t, p, false, []string{"next", "--agent", "claude", "--mission", "$M", "--json"})
-	oracleBoth(t, p, "consolidate", "--mission", "$M", "--yes")
 	return p
 }
 

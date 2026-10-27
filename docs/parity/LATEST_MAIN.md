@@ -82,7 +82,6 @@ These upstream behaviors are not yet ported:
 
 - Merge gates do not read the issue matrix from the coordination ref. This
   gap predates this pin.
-- `next` has no terminal retrospective.
 - Research and documentation missions have no composed-action guards.
 - `charter generate` does not handle a corrupt synthesis manifest.
 - The `charter list` unknown-ledger-key error shows an absolute path where

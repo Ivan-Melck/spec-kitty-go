@@ -330,7 +330,7 @@ func (c *advanceCtx) wpIterationDecision(stepID string, guards []string) *Decisi
 	d.StepID, d.GuardFailures = sp(state), guards
 	if action == "" {
 		d.Kind = KindBlocked
-		d.Reason = sp(fmt.Sprintf("No work packages available for step '%s'", stepID))
+		d.Reason = sp(fmt.Sprintf("No action mapped for WP step '%s'", stepID))
 		return materialize(d)
 	}
 	d.Action, d.WPID, d.WorkspacePath = sp(action), spOrNil(wpID), spOrNil(wsPath)
@@ -556,13 +556,21 @@ func decideNext(root, slug, agent, result string) *Decision {
 			return c.compositionBlocked(current, failures)
 		}
 	}
-	plan, err := advanceRun(ref, agent, result)
+	// Retrospective policy is a P-local governance read: root is the owned
+	// checkout for an owned mission.
+	retro := &terminalRetrospective{root: root, slug: slug, featureDir: featureDir}
+	plan, err := advanceRun(ref, agent, result, retro.before)
 	if err != nil {
 		d := c.decision(KindBlocked, firstNonEmpty(current, "unknown"))
-		d.Reason = sp("Runtime engine error: " + err.Error())
+		if refused, ok := err.(*retrospectiveGateRefused); ok {
+			d.Reason = sp("Retrospective gate refused completion: " + refused.Error())
+		} else {
+			d.Reason = sp("Runtime engine error: " + err.Error())
+		}
 		d.RunID = nil
 		return materialize(d)
 	}
+	retro.after()
 	switch plan.Kind {
 	case KindStep:
 		return c.stepDecision(plan.StepID, nil, nil)
