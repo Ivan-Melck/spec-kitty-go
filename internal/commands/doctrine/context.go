@@ -7,9 +7,11 @@ import (
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/charter"
+	"github.com/spec-kitty/go-kitty3/internal/charterenc"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/kittify"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
 )
 
@@ -64,6 +66,23 @@ func charterErr(ctx *cli.Context, jsonMode bool, err error) error {
 	return cli.Exit(1)
 }
 
+// codedInvariant reports a KittyInternalConsistencyError other than
+// ActiveCharterConfigError (rendered by its own branch): its code and body.
+func codedInvariant(err error) (code, body string, ok bool) {
+	var sm *charter.SynthesisMembershipUnreadableError
+	var ee *charterenc.Error
+	var dp *kittify.DefaultPresetError
+	switch {
+	case errors.As(err, &sm):
+		return sm.Code(), sm.Body, true
+	case errors.As(err, &ee):
+		return ee.Code, ee.Body, true
+	case errors.As(err, &dp):
+		return dp.Code(), dp.Body, true
+	}
+	return "", "", false
+}
+
 func runCharterContext(ctx *cli.Context) error {
 	jsonMode := ctx.Bool("json")
 	root := findRepoRoot()
@@ -89,6 +108,13 @@ func runCharterContext(ctx *cli.Context) error {
 	mt := ctx.String("mission-type")
 	res, err := charter.BuildContext(root, ctx.String("action"), charter.Options{MarkLoaded: ctx.Bool("mark-loaded"), MissionType: mt})
 	if err != nil {
+		if code, body, ok := codedInvariant(err); ok {
+			// #6454: a coded invariant violation (KittyInternalConsistencyError,
+			// e.g. SYNTHESIS_MEMBERSHIP_UNREADABLE) refuses with its body and
+			// remedy; str(exc) is only the code.
+			emitCharterError(ctx.Stdout, jsonMode, body, code, nil)
+			return cli.Exit(1)
+		}
 		var ce *dct.ConfigError
 		if !errors.As(err, &ce) && charter.IsUnexpectedError(err) {
 			// A non-ValueError exception: `except Exception` -> "Unexpected error".
