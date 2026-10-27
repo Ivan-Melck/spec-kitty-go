@@ -1774,6 +1774,23 @@ func bindingRoleForLane(l string) string {
 	return ""
 }
 
+// hopRecordsBinding is _mt_hop_records_binding (#6630): whether a hop to
+// target may record the resolved binding as an annotation. A pick-up always
+// does (explicit absence included); a verdict hop (approved/done/canceled)
+// only with --profile/--model/--invocation-id, or when it hands the WP to a
+// different --agent.
+func (st *moveState) hopRecordsBinding(target string) bool {
+	switch status.ResolveLaneAlias(target) {
+	case string(status.Approved), string(status.Done), string(status.Canceled):
+	default:
+		return true
+	}
+	if st.hasProfile || st.hasModel || st.hasInvID {
+		return true
+	}
+	return st.agent != "" && status.ActorKeyStr(st.agent) != status.ActorKeyStr(st.currentAgent)
+}
+
 func (st *moveState) hopActor(prev *status.Event, current, target string) string {
 	from := status.ResolveLaneAlias(current)
 	if prev != nil {
@@ -1886,12 +1903,16 @@ func (st *moveState) execute() error {
 		var delta *status.Delta
 		if role := bindingRoleForLane(target); role != "" && st.binding != nil {
 			actor = status.SelfAssertingActor(role, st.agent, hopActor, st.binding)
-			d := st.binding.ToDelta(role)
-			if target == string(status.Claimed) && st.agent != "" {
-				a := st.agent
-				d.Agent = &a
+			// #6630: a verdict hop without dispatch flags records no binding,
+			// so the review claim's resolved profile is not cleared.
+			if st.hopRecordsBinding(target) {
+				d := st.binding.ToDelta(role)
+				if target == string(status.Claimed) && st.agent != "" {
+					a := st.agent
+					d.Agent = &a
+				}
+				delta = &d
 			}
-			delta = &d
 		}
 		if target == string(status.Claimed) && st.shellPID != "" {
 			st.claimEmitted = true
@@ -1958,7 +1979,7 @@ func (st *moveState) emitRuntimeState() error {
 		if st.agent != "" && !(st.target == string(status.Planned) && status.ActorKeyStr(st.agent) == status.ActorKeyStr(st.currentAgent)) {
 			a := st.agent
 			d.Agent = &a
-			if st.binding != nil {
+			if st.binding != nil && st.hopRecordsBinding(st.target) {
 				role := bindingRoleForLane(st.target)
 				if role == "" {
 					role = "implementer"
