@@ -218,6 +218,13 @@ var DefaultScopes = []string{ScopeSpecKittyCore, ScopeTeamDomain}
 // Scan is GlossaryChokepoint.run. When invocationID is non-empty, unknown
 // tokens are recorded as TermCandidateObserved events.
 func Scan(root, text, invocationID, actor string) *Observation {
+	return ScanEvents(root, root, text, invocationID, actor)
+}
+
+// ScanEvents is GlossaryChokepoint(root, events_root=eventsRoot).run: the
+// seeds are read from root, the invocation-scoped events go to eventsRoot
+// (an Op run from a linked worktree keeps its trail there, #6564).
+func ScanEvents(root, eventsRoot, text, invocationID, actor string) *Observation {
 	t0 := time.Now()
 	ix := BuildIndex(root, DefaultScopes)
 	seen := map[string]bool{}
@@ -241,7 +248,7 @@ func Scan(root, text, invocationID, actor string) *Observation {
 		}
 		if len(senses) == 0 {
 			if invocationID != "" {
-				EmitTermCandidate(root, n, invocationID, actor)
+				EmitTermCandidate(eventsRoot, n, invocationID, actor)
 			}
 			continue
 		}

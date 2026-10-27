@@ -7,6 +7,7 @@
 package ownedcheckout
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -93,6 +94,13 @@ func (e *topologyError) Error() string { return e.msg }
 
 func notARepo(resolved string) error {
 	return &topologyError{posixRepr(resolved) + " is not inside a git repository."}
+}
+
+// IsNotARepository reports a NotAGitRepositoryError from GitToplevel /
+// GitCommonDir (as opposed to git being unavailable).
+func IsNotARepository(err error) bool {
+	var te *topologyError
+	return errors.As(err, &te) && strings.HasSuffix(te.msg, " is not inside a git repository.")
 }
 
 func unavailable(resolved, detail string) error {

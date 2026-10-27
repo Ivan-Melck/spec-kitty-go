@@ -136,7 +136,10 @@ func runSafeCommit(ctx *cli.Context) error {
 	}
 	committed := false
 	if len(expanded) > 0 {
-		entries, err := safecommit.StatusEntries(root, "all", relFiles...)
+		// _has_candidate_changes: ignored entries count (#6649) — the commit
+		// force-stages every requested path, so a named untracked file under
+		// an ignored directory is committed, not reported as "no changes".
+		entries, err := safecommit.StatusEntriesWithIgnored(root, "all", relFiles...)
 		if err != nil {
 			return fail("Unable to inspect requested files before commit.")
 		}

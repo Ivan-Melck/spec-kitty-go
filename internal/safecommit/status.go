@@ -26,9 +26,22 @@ func (e StatusEntry) Code() string { return string([]byte{e.X, e.Y}) }
 // StatusEntries runs `git status --porcelain=v1 -z` in dir. untracked is
 // "all", "normal", "no" ("" = git default). pathspecs limit the scope.
 func StatusEntries(dir, untracked string, pathspecs ...string) ([]StatusEntry, error) {
+	return statusEntries(dir, untracked, false, pathspecs)
+}
+
+// StatusEntriesWithIgnored is StatusEntries plus ignored (`!!`) entries
+// (status_entries(ignored=True)).
+func StatusEntriesWithIgnored(dir, untracked string, pathspecs ...string) ([]StatusEntry, error) {
+	return statusEntries(dir, untracked, true, pathspecs)
+}
+
+func statusEntries(dir, untracked string, ignored bool, pathspecs []string) ([]StatusEntry, error) {
 	args := []string{"--literal-pathspecs", "status", "--porcelain=v1", "-z"}
 	if untracked != "" {
 		args = append(args, "--untracked-files="+untracked)
+	}
+	if ignored {
+		args = append(args, "--ignored")
 	}
 	if len(pathspecs) > 0 {
 		args = append(append(args, "--"), pathspecs...)

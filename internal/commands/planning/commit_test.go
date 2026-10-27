@@ -38,6 +38,21 @@ func TestDiffSafeCommit(t *testing.T) {
 	compareGit(t, p)
 }
 
+// TestDiffSafeCommitNamedIgnoredFile covers #6649: a named untracked file
+// under an ignored directory is a candidate change (it is force-staged and
+// committed), while an ignored directory argument still expands to nothing.
+func TestDiffSafeCommitNamedIgnoredFile(t *testing.T) {
+	t.Parallel()
+	p := missionfx.NewOraclePair(t)
+	shellSteps(t, p, "", "",
+		`git switch -q -c feat/x; echo build/ >> .gitignore; git add .gitignore; git commit -qm ignore; mkdir -p build; echo 1 > build/a.txt; echo 2 > build/b.txt`,
+		`$SK safe-commit build/a.txt -m 'ignored file' --to-branch feat/x --json`,
+		`$SK safe-commit build -m 'ignored dir' --to-branch feat/x --json`,
+		`$SK safe-commit build/b.txt -m 'ignored file 2' --to-branch feat/x; git status --short`,
+	)
+	compareGit(t, p)
+}
+
 // TestDiffSafeCommitMission covers the mission-aware target resolution (no
 // --to-branch), a commit inside the coordination worktree (TRACE 7.3) and
 // spec-commit (TRACE 1.9 / 2.5).

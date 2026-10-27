@@ -217,7 +217,7 @@ func closeOnSpine(root, id string, c *Completed) error {
 	if err := os.MkdirAll(filepath.Dir(sp), 0o755); err != nil {
 		return &WriteError{err.Error()}
 	}
-	if err := appendNoFollow(sp, c.Line()+"\n"); err != nil {
+	if err := appendNoFollow(sp, c.Line()); err != nil {
 		return &WriteError{"Failed to append op closure: " + err.Error()}
 	}
 	return nil
@@ -254,7 +254,7 @@ func sweepClose(root, id string, closed map[string]bool, policy *commitPolicy) (
 	if err != nil {
 		return &CommitOutcome{Refusal: errRepr(err)}, nil
 	}
-	return commitOp(root, id, first, true, policy), nil
+	return commitOp(Roots{Project: root}, id, first, true, policy), nil
 }
 
 // CloseStaleOps is close_stale_ops: close open Ops older than

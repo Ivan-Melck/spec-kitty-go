@@ -142,7 +142,9 @@ type resolution struct {
 	obs        *glossary.Observation
 }
 
-func resolveRouting(root, request string, hint *string, actor, invocationID, explicitConfidence string) (*resolution, error) {
+// resolveRouting reads governance from root; the glossary events of the
+// routing scan go to eventsRoot (the record root, #6564).
+func resolveRouting(root, eventsRoot, request string, hint *string, actor, invocationID, explicitConfidence string) (*resolution, error) {
 	reg := NewRegistry(root)
 	// ProfileInvocationExecutor(repo_root, ...) builds its own charter
 	// service: another infer_repo_languages (recorded interview read).
@@ -186,15 +188,21 @@ func resolveRouting(root, request string, hint *string, actor, invocationID, exp
 	sum := sha256.Sum256([]byte(ctx.Text))
 	r.hash = hex.EncodeToString(sum[:])[:16]
 	r.available = ctx.Mode != "missing"
-	r.obs = glossary.Scan(root, request, invocationID, actor)
+	r.obs = glossary.ScanEvents(root, eventsRoot, request, invocationID, actor)
 	return r, nil
 }
 
 // Invoke routes the request, writes the started record and returns the
-// payload (ProfileInvocationExecutor.invoke).
-func Invoke(root, request string, hint *string, actor, mode string) (*Payload, error) {
+// payload (ProfileInvocationExecutor.invoke). Governance is read in
+// roots.Project; the Op record (and the routing scan's glossary events) go
+// to roots.RecordRoot(), admitted there before anything is written.
+func Invoke(roots Roots, request string, hint *string, actor, mode string) (*Payload, error) {
+	if err := RequireOpWriteAdmitted(roots, "open the Op"); err != nil {
+		return nil, err
+	}
+	root, record := roots.Project, roots.RecordRoot()
 	id := ulid.New()
-	r, err := resolveRouting(root, request, hint, actor, id, "")
+	r, err := resolveRouting(root, record, request, hint, actor, id, "")
 	if err != nil {
 		return nil, err
 	}
@@ -209,10 +217,10 @@ func Invoke(root, request string, hint *string, actor, mode string) (*Payload, e
 			st.ModelID = c.ModelID
 		}
 	}
-	if _, err := WriteStarted(root, st); err != nil {
+	if _, err := WriteStarted(record, st); err != nil {
 		return nil, err
 	}
-	WriteGlossaryObservation(root, id, r.obs)
+	WriteGlossaryObservation(record, id, r.obs)
 	return &Payload{InvocationID: id, ProfileID: r.profile.ID, ProfileName: r.profile.Name(), Action: r.action,
 		ContextText: r.ctx.Text, ContextHash: r.hash, ContextAvailable: r.available, RouterConfidence: r.confidence,
 		Glossary: r.obs, ModeOfWork: mode, Recommendation: r.rec, EmptyCharterFallback: r.fallback, Alternatives: r.alts}, nil
@@ -220,7 +228,7 @@ func Invoke(root, request string, hint *string, actor, mode string) (*Payload, e
 
 // DryRun routes and assembles context without writing anything.
 func DryRun(root, request string, hint *string, actor string) (*Payload, error) {
-	r, err := resolveRouting(root, request, hint, actor, "", "exact")
+	r, err := resolveRouting(root, root, request, hint, actor, "", "exact")
 	if err != nil {
 		return nil, err
 	}
@@ -266,10 +274,16 @@ func readStarted(root, id string) (*jsonx.Object, error) {
 	return o, nil
 }
 
-// Complete closes an open Op (complete_invocation with closed_by=agent).
-func Complete(root, id, outcome string, opt CompleteOptions) (*Completed, *CommitOutcome, error) {
+// Complete closes an open Op (complete_invocation with closed_by=agent) in
+// the checkout that holds its record (roots.RecordRoot()); an agent close
+// commits there, so it is admitted there before any write (#6564).
+func Complete(roots Roots, id, outcome string, opt CompleteOptions) (*Completed, *CommitOutcome, error) {
+	root := roots.RecordRoot()
 	first, err := readStarted(root, id)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := RequireOpWriteAdmitted(roots, "close the Op"); err != nil {
 		return nil, nil, err
 	}
 	rawMode, present := first.Get("mode_of_work")
@@ -315,7 +329,7 @@ func Complete(root, id, outcome string, opt CompleteOptions) (*Completed, *Commi
 			return nil, nil, err
 		}
 	}
-	return c, commitOpRecord(root, id, first), nil
+	return c, commitOpRecord(roots, id, first), nil
 }
 
 // UnsupportedEvidenceError is raised for non-UTF-8 evidence.

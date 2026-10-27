@@ -23,6 +23,8 @@ type InvokeOptions struct {
 	ActionHint  string // "" = role-default verb derivation
 	MissionID   string
 	WPID        string
+	// RecordRoot is the checkout that owns the Op records ("" = root).
+	RecordRoot string
 }
 
 // InvokeWithHint is ProfileInvocationExecutor.invoke(request, profile_hint,
@@ -30,6 +32,11 @@ type InvokeOptions struct {
 // governance context for the hinted action, the started record and the
 // glossary observation.
 func InvokeWithHint(root, request string, opt InvokeOptions) (*Payload, error) {
+	roots := Roots{Project: root, Record: opt.RecordRoot}
+	if err := RequireOpWriteAdmitted(roots, "open the Op"); err != nil {
+		return nil, err
+	}
+	record := roots.RecordRoot()
 	id := ulid.New()
 	reg := NewRegistry(root)
 	p, err := reg.Resolve(opt.ProfileHint)
@@ -56,7 +63,7 @@ func InvokeWithHint(root, request string, opt InvokeOptions) (*Payload, error) {
 	if actor == "" {
 		actor = "unknown"
 	}
-	obs := glossary.Scan(root, request, id, actor)
+	obs := glossary.ScanEvents(root, record, request, id, actor)
 	mode := opt.Mode
 	if mode == "" {
 		mode = ModeTaskExecution
@@ -69,10 +76,10 @@ func InvokeWithHint(root, request string, opt InvokeOptions) (*Payload, error) {
 			st.ModelID = c.ModelID
 		}
 	}
-	if _, err := WriteStarted(root, st); err != nil {
+	if _, err := WriteStarted(record, st); err != nil {
 		return nil, err
 	}
-	WriteGlossaryObservation(root, id, obs)
+	WriteGlossaryObservation(record, id, obs)
 	return &Payload{InvocationID: id, ProfileID: p.ID, ProfileName: p.Name(), Action: action,
 		ContextText: ctx.Text, ContextHash: hash, ContextAvailable: available,
 		Glossary: obs, ModeOfWork: mode, Recommendation: rec, Alternatives: []Alternative{}}, nil

@@ -32,6 +32,11 @@ func ReadStartedForClaim(root, id string) (*Started, error) {
 	if err := ValidateID(id); err != nil {
 		return nil, err
 	}
+	// #6564: an Op opened from a linked worktree keeps its record there, so
+	// the invoking checkout is searched first, then every other checkout.
+	if located := LocateRecordRoot(root, id, ResolveRecordRoot(root, "")); located != "" {
+		root = located
+	}
 	p, err := RecordPath(root, id)
 	if err != nil {
 		return nil, fmt.Errorf("Could not read Op record for invocation_id=%s: %v", pyRepr(id), err)

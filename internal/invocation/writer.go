@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
+	"unicode/utf8"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/glossary"
@@ -50,18 +50,15 @@ func RecordPath(root, id string) (string, error) {
 	return p, nil
 }
 
+// appendNoFollow is InvocationWriter._append_line_no_follow: one locked,
+// owner-only append (line has no terminator) that never follows a final
+// symlink and refuses a torn last line.
 func appendNoFollow(path, line string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = f.WriteString(line)
-	return err
+	return appendEventLogLine(path, line, appendOptions{noFollow: true, mode: recordMode})
 }
 
-// WriteStarted creates kitty-ops/<id>.jsonl exclusively and appends the
-// index entry.
+// WriteStarted creates kitty-ops/<id>.jsonl exclusively (owner-only, under
+// the kitty-ops family lock) and appends the index entry.
 func WriteStarted(root string, s *Started) (string, error) {
 	dir := filepath.Join(root, EventsDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -71,34 +68,72 @@ func WriteStarted(root string, s *Started) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	err = eventLogLock(dir, func() error {
+		f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, recordMode)
+		if err != nil {
+			return err
+		}
+		_, err = f.WriteString(s.Line() + "\n")
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		return err
+	})
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return "", &WriteError{fmt.Sprintf("ULID collision on %s — retry with a new invocation_id", p)}
 		}
 		return "", &WriteError{"Failed to write invocation record: " + err.Error()}
 	}
-	_, err = f.WriteString(s.Line() + "\n")
-	f.Close()
-	if err != nil {
-		return "", &WriteError{"Failed to write invocation record: " + err.Error()}
-	}
+	// The index is a performance aid: a refused append (a torn index tail)
+	// degrades `invocations list` and never fails the Op (upstream only logs).
 	idx := jsonx.NewObject("invocation_id", s.InvocationID, "profile_id", s.ProfileID, "started_at", s.StartedAt)
-	_ = appendNoFollow(filepath.Join(dir, IndexFile), jsonx.Dumps(idx, lineOpts)+"\n")
+	_ = appendNoFollow(filepath.Join(dir, IndexFile), jsonx.Dumps(idx, lineOpts))
 	return p, nil
 }
 
-// readRows reads a trail file and validates its started-event identity.
-func readRows(p, id string) ([]*jsonx.Object, error) {
-	b, err := os.ReadFile(p)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, &Error{"Invocation record not found: " + id}
+// appendValidated is InvocationWriter._append_validated: under the kitty-ops
+// family lock, verify the trail's started-event identity (and, for a close,
+// that it is not completed yet), then append line. Nothing is written when a
+// check refuses.
+func appendValidated(root, p, id, line string, refuseIfCompleted bool) error {
+	check := func(existing []byte) error {
+		rows, err := parseRows(existing, id)
+		if err != nil {
+			return err
 		}
-		return nil, &WriteError{"Failed to open invocation record safely: " + err.Error()}
+		if refuseIfCompleted {
+			for _, r := range rows {
+				if r.GetString("event") == "completed" {
+					return &AlreadyClosedError{id}
+				}
+			}
+		}
+		return nil
+	}
+	err := appendEventLogLine(p, line, appendOptions{lockAnchor: filepath.Join(root, EventsDir), noCreate: true,
+		noFollow: true, mode: recordMode, precondition: check})
+	var el *EventLogError
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, os.ErrNotExist):
+		return &Error{"Invocation record not found: " + id}
+	case errors.As(err, &el) && el.Code == EventLogSymlink:
+		return &WriteError{"Failed to open invocation record safely: " + err.Error()}
+	case errors.As(err, &el) && el.Code == EventLogTornTail:
+		return &Error{fmt.Sprintf("Invocation record is unreadable: %s (%v)", id, err)}
+	}
+	return err
+}
+
+// parseRows validates a trail's started-event identity.
+func parseRows(b []byte, id string) ([]*jsonx.Object, error) {
+	if !utf8.Valid(b) {
+		return nil, &Error{"Invocation record is unreadable: " + id}
 	}
 	var rows []*jsonx.Object
-	for _, l := range strings.Split(string(b), "\n") {
+	for _, l := range strings.FieldsFunc(string(b), func(r rune) bool { return r == '\n' || r == '\r' }) {
 		if strings.TrimSpace(l) == "" {
 			continue
 		}
@@ -127,6 +162,14 @@ func reprAny(v any) string {
 	return fmt.Sprint(v)
 }
 
+// passThrough reports the invocation errors the writer re-raises as is.
+func passThrough(err error) bool {
+	var ac *AlreadyClosedError
+	var ie *Error
+	var we *WriteError
+	return errors.As(err, &ac) || errors.As(err, &ie) || errors.As(err, &we)
+}
+
 // WriteCompleted appends the completed event (AlreadyClosedError when one
 // exists).
 func WriteCompleted(root string, c *Completed) error {
@@ -134,16 +177,10 @@ func WriteCompleted(root string, c *Completed) error {
 	if err != nil {
 		return err
 	}
-	rows, err := readRows(p, c.InvocationID)
-	if err != nil {
-		return err
-	}
-	for _, r := range rows {
-		if r.GetString("event") == "completed" {
-			return &AlreadyClosedError{c.InvocationID}
+	if err := appendValidated(root, p, c.InvocationID, c.Line(), true); err != nil {
+		if passThrough(err) {
+			return err
 		}
-	}
-	if err := appendNoFollow(p, c.Line()+"\n"); err != nil {
 		return &WriteError{"Failed to append completed event: " + err.Error()}
 	}
 	return nil
@@ -163,10 +200,10 @@ func AppendLink(root, id, kind, ref, sha string) error {
 		entry.Set("event", "commit_link")
 		entry.Set("sha", sha)
 	}
-	if _, err := readRows(p, id); err != nil {
-		return err
-	}
-	if err := appendNoFollow(p, jsonx.Dumps(entry, lineOpts)+"\n"); err != nil {
+	if err := appendValidated(root, p, id, jsonx.Dumps(entry, lineOpts), false); err != nil {
+		if passThrough(err) {
+			return err
+		}
 		return &WriteError{"Failed to append correlation event: " + err.Error()}
 	}
 	return nil
@@ -182,14 +219,11 @@ func WriteGlossaryObservation(root, id string, obs *glossary.Observation) {
 	if err != nil {
 		return
 	}
-	if _, err := readRows(p, id); err != nil {
-		return
-	}
 	entry := jsonx.NewObject("event", "glossary_checked", "invocation_id", id)
 	for _, kv := range obs.ToObject().Pairs() {
 		entry.Set(kv.Key, kv.Value)
 	}
-	_ = appendNoFollow(p, jsonx.Dumps(entry, lineOpts)+"\n")
+	_ = appendValidated(root, p, id, jsonx.Dumps(entry, lineOpts), false)
 }
 
 // ClosedIDs is closed_invocation_ids (the op-closures spine).
