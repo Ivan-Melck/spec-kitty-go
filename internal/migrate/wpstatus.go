@@ -271,32 +271,35 @@ func ApplyWPStatusBackfill(root, dir string, dryRun bool, manifest map[string]st
 	return p.result(res)
 }
 
-// ApplyWPStatusBackfillRepo is apply_wp_status_backfill_repo.
-func ApplyWPStatusBackfillRepo(root string, mission *string, dryRun bool, manifest map[string]string) ([]WPStatusResult, error) {
+// ApplyWPStatusBackfillRepo is apply_wp_status_backfill_repo; it also
+// returns residue_mission_dirs: the kitty-specs/ children the walk left
+// untouched because they are not Missions (#6669).
+func ApplyWPStatusBackfillRepo(root string, mission *string, dryRun bool, manifest map[string]string) ([]WPStatusResult, []string, error) {
 	var names []string
 	if !SpecsExist(root) {
 		warnf("kitty-specs/ not found at %s", root)
-		return nil, nil
+		return nil, nil, nil
 	}
 	if mission != nil {
 		if !(len(*mission) > 0 && !strings.ContainsAny(*mission, "/\\") && *mission != "." && *mission != "..") {
-			return nil, &SelectorRejectedError{fmt.Sprintf("Unsafe path segment: %s", pyjson.ReprString(*mission))}
+			return nil, nil, &SelectorRejectedError{fmt.Sprintf("Unsafe path segment: %s", pyjson.ReprString(*mission))}
 		}
 		if !isDirFollow(project.Specs(root, *mission)) {
 			warnf("No mission directory found for slug %s", pyjson.ReprString(*mission))
-			return nil, nil
+			return nil, nil, nil
 		}
 		names = []string{*mission}
 	} else {
 		names = MissionDirs(root)
 	}
+	names, residue := PartitionMissionDirs(root, names, ProbeTrackedMissionPaths(root))
 	var out []WPStatusResult
 	for _, n := range names {
 		r := ApplyWPStatusBackfill(root, project.Specs(root, n), dryRun, manifest)
 		if r.crash != nil {
-			return nil, r.crash
+			return nil, nil, r.crash
 		}
 		out = append(out, r)
 	}
-	return out, nil
+	return out, residue, nil
 }

@@ -277,6 +277,8 @@ func runDoctorCutover(ctx *cli.Context) error {
 	for _, r := range results {
 		reason := "not yet migrated (no verify result)"
 		switch {
+		case r.Residue:
+			reason = migrate.ResidueNotice("kitty-specs/" + r.Slug)
 		case r.Error != nil:
 			reason = *r.Error
 		case r.WouldFlip:
@@ -287,10 +289,11 @@ func runDoctorCutover(ctx *cli.Context) error {
 		case r.Verify != nil && len(r.Verify.Mismatches) > 0:
 			reason = strings.Join(r.Verify.Mismatches, "; ")
 		}
-		if r.WouldFlip {
+		cut := r.WouldFlip || r.Residue
+		if cut {
 			count++
 		}
-		entries = append(entries, entry{r.Slug, r.WouldFlip, reason})
+		entries = append(entries, entry{r.Slug, cut, reason})
 	}
 	if jsonOut {
 		ms := []any{}
