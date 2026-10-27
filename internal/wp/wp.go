@@ -4,6 +4,7 @@
 package wp
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -121,6 +122,23 @@ func Read(path string) (*WP, error) {
 		w.ID = IDFromFilename(path)
 	}
 	return w, nil
+}
+
+// ReadLenient is Read for scans built on upstream's split_frontmatter
+// (the acceptance flat-layout walk): a file without a frontmatter block
+// reads as empty frontmatter with the whole text as body instead of
+// failing. YAML errors inside a present block still fail.
+func ReadLenient(path string) (*WP, error) {
+	w, err := Read(path)
+	if !errors.Is(err, fm.ErrNoFrontmatter) {
+		return w, err
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	text := strings.TrimPrefix(string(b), "\ufeff")
+	return &WP{ID: IDFromFilename(path), Path: path, Doc: &fm.Doc{Meta: &jsonx.Object{}, Body: text}, Raw: text}, nil
 }
 
 // Meta returns the frontmatter object.

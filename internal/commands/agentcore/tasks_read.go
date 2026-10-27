@@ -165,7 +165,8 @@ func runListTasks(ctx *cli.Context) error {
 	type row struct{ id, title, lane, path string }
 	var rows []row
 	for _, p := range wpGlob(tasksDir) {
-		w, err := wp.Read(p)
+		// split_frontmatter: a file without frontmatter lists with its stem.
+		w, err := wp.ReadLenient(p)
 		if err != nil {
 			outputError(ctx, jsonMode, err.Error())
 			return cli.Exit(1)

@@ -12,6 +12,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
+	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/safecommit"
 )
@@ -255,7 +256,8 @@ func Perform(s *Summary, mode, actor string, tests []string, autoCommit bool) (*
 
 // StampBirthCutover is _stamp_birth_cutover_for_accept, reduced to the
 // status_phase flip (the legacy frontmatter seed is a no-op for missions
-// created by this version).
+// created by this version). A WP file the seed cannot read (no frontmatter)
+// fails upstream's best-effort cutover, which then leaves status_phase alone.
 func StampBirthCutover(featureDir string) error {
 	meta, err := mission.ReadMeta(featureDir)
 	if err != nil {
@@ -265,6 +267,9 @@ func StampBirthCutover(featureDir string) error {
 		return &Error{fmt.Sprintf("Refusing to stamp birth-cutover for %s: meta.json carries no mission_id (fail-closed, NFR-003/R6 — no slug-namespaced seed fallback).", mission.PyRepr(filepath.Base(featureDir)))}
 	}
 	if meta.GetString("status_phase") == "1" {
+		return nil
+	}
+	if migrate.LegacyRuntimeReadError(featureDir) != nil {
 		return nil
 	}
 	meta.Set("status_phase", "1")

@@ -890,7 +890,7 @@ func gatherWorkPackages(s *Summary, root, slug, featureDir, statusDir string, op
 		if err := strictArtifactCheck(f); err != nil {
 			return false, err
 		}
-		w, err := wp.Read(f)
+		w, err := wp.ReadLenient(f)
 		if err != nil {
 			return false, &Error{err.Error()}
 		}
