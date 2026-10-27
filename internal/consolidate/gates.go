@@ -216,7 +216,7 @@ func pyFmt2(f float64) string { return strconv.FormatFloat(f, 'f', 2, 64) }
 // ---------------------------------------------------------------------------
 
 // EvaluateGates is evaluate_merge_gates.
-func EvaluateGates(root, primaryDir, statusDir, matrixDir string, wpIDs []string, pol GatePolicy) []GateResult {
+func EvaluateGates(root, primaryDir, statusDir string, wpIDs []string, pol GatePolicy) []GateResult {
 	if !pol.Enabled || pol.Mode == "off" {
 		return nil
 	}
@@ -279,50 +279,76 @@ func EvaluateGates(root, primaryDir, statusDir, matrixDir string, wpIDs []string
 			}
 		}
 	}
+	return append(out, completenessGate(root, primaryDir, blocking), terminalityGate(root, primaryDir, blocking))
+}
+
+// completenessGate is _evaluate_issue_matrix_completeness_gate: gating
+// references are discovered on the primary surface first (a mission with
+// none never probes the coordination partition, #5222); the rows come from
+// the coordination matrix source (resolve_issue_matrix_partition).
+func completenessGate(root, primaryDir string, blocking bool) GateResult {
+	const name = "issue_matrix_completeness"
+	fail := func(err error) GateResult {
+		return GateResult{name, "fail", "Could not evaluate issue-matrix completeness: " + err.Error(), blocking}
+	}
+	refs, err := issuematrix.DiscoverReferences(primaryDir)
+	if err != nil {
+		return fail(err)
+	}
 	gating := map[string]bool{}
-	refs, refErr := issuematrix.DiscoverReferences(primaryDir)
 	for _, r := range refs {
 		if r.Gating() {
 			gating[fmt.Sprintf("#%d", r.Number)] = true
 		}
 	}
-	nothing := "No gating issue references discovered — nothing to enforce"
-	switch {
-	case refErr != nil:
-		out = append(out, GateResult{"issue_matrix_completeness", "fail", "Could not evaluate issue-matrix completeness: " + refErr.Error(), blocking})
-	case len(gating) == 0:
-		out = append(out, GateResult{"issue_matrix_completeness", "pass", nothing, false})
-	default:
-		have := map[string]bool{}
-		if rows := issuematrix.LoadRows(matrixDir); rows != nil {
-			for _, k := range rows.Order {
-				have[k] = true
-			}
-		}
-		var missing []string
-		for k := range gating {
-			if !have[k] {
-				missing = append(missing, k)
-			}
-		}
-		sort.Strings(missing)
-		if len(missing) > 0 {
-			out = append(out, GateResult{"issue_matrix_completeness", "fail", "Issue-matrix is missing rows for referenced issue(s): " + strings.Join(missing, ", "), blocking})
-		} else {
-			out = append(out, GateResult{"issue_matrix_completeness", "pass", fmt.Sprintf("All %d referenced issue(s) have matrix rows", len(gating)), false})
+	if len(gating) == 0 {
+		return GateResult{name, "pass", "No gating issue references discovered — nothing to enforce", false}
+	}
+	part, err := issuematrix.ResolvePartition(root, primaryDir)
+	if err != nil {
+		return fail(err)
+	}
+	have := map[string]bool{}
+	for _, row := range part.Rows() {
+		have[row.Issue] = true
+	}
+	var missing []string
+	for k := range gating {
+		if !have[k] {
+			missing = append(missing, k)
 		}
 	}
-	return append(out, terminalityGate(primaryDir, matrixDir, blocking))
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		return GateResult{name, "fail", "Issue-matrix is missing rows for referenced issue(s): " + strings.Join(missing, ", "), blocking}
+	}
+	return GateResult{name, "pass", fmt.Sprintf("All %d referenced issue(s) have matrix rows", len(gating)), false}
 }
 
 // terminalityGate is _evaluate_issue_matrix_verdict_terminality_gate. #6653:
 // discovery no longer short-circuits it: every existing row is judged at
 // done, cited or not, and a present matrix is judged even with zero gating
 // references; only a missing matrix with zero gating references is nothing
-// to enforce. #6711: issuematrix.DoneOutcome is the one authority for the
-// verdict, and a PASS names what it judged.
-func terminalityGate(primaryDir, matrixDir string, blocking bool) GateResult {
-	msg, judged := issuematrix.DoneOutcome(matrixDir, primaryDir, nil)
+// to enforce. The verdicts come from the coordination partition (a
+// materialized coordination dir, else the placement ref's content); #6711:
+// an ISSUE_MATRIX_NOT_AUTHORED ref reads as an absent matrix, and
+// issuematrix.DoneOutcome alone decides what that means. A PASS names what
+// it judged.
+func terminalityGate(root, primaryDir string, blocking bool) GateResult {
+	part, err := issuematrix.ResolvePartition(root, primaryDir)
+	if issuematrix.IsNotAuthored(err) {
+		empty := ""
+		part, err = issuematrix.Partition{PrimaryDir: primaryDir, MatrixDir: primaryDir, Content: &empty}, nil
+	}
+	if err != nil {
+		return GateResult{"issue_matrix_verdict_terminality", "fail", "Could not evaluate issue-matrix verdict terminality: " + err.Error(), blocking}
+	}
+	// feature_dir is decorative on the content arm (error-prefix naming).
+	blockerDir := part.MatrixDir
+	if part.Content != nil {
+		blockerDir = primaryDir
+	}
+	msg, judged := issuematrix.DoneOutcome(blockerDir, primaryDir, part.Content)
 	if msg != "" {
 		return GateResult{"issue_matrix_verdict_terminality", "fail", msg, blocking}
 	}

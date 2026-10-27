@@ -2,6 +2,7 @@ package closeout
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/consolidate"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
 	"github.com/spec-kitty/go-kitty3/internal/gitx"
+	"github.com/spec-kitty/go-kitty3/internal/issuematrix"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/rich"
@@ -170,7 +172,7 @@ func runReview(ctx *cli.Context) error {
 	issuePresent := "not_applicable"
 	exceptionPresent := "not_applicable"
 	if mode == "post-merge" {
-		say(w, "  [green]✓[/green]  Issue matrix: not_applicable (mission declares zero gating issue references)")
+		issuePresent = reviewIssueMatrix(w, root, dir, &findings)
 		if _, err := os.Stat(filepath.Join(dir, "mission-exception.md")); err == nil {
 			exceptionPresent = "true"
 		} else {
@@ -220,6 +222,58 @@ func runReview(ctx *cli.Context) error {
 	return nil
 }
 
+// reviewIssueMatrix is the post-merge gate 4 of review_mission
+// (_evaluate_issue_matrix): a mission without gating issue references
+// (discovered on the primary dir) is not_applicable; otherwise the matrix is
+// read from the coordination partition (resolve_issue_matrix_partition: a
+// materialized coordination dir, the coord-less primary dir, or the
+// placement ref's content) and validated. It returns the report's
+// issue_matrix_present value.
+func reviewIssueMatrix(w io.Writer, root, dir string, findings *[]finding) string {
+	refs, _ := issuematrix.DiscoverReferences(dir)
+	gating := false
+	for _, r := range refs {
+		gating = gating || r.Gating()
+	}
+	if !gating {
+		say(w, "  [green]✓[/green]  Issue matrix: not_applicable (mission declares zero gating issue references)")
+		return "not_applicable"
+	}
+	violation := func(code, msg string) {
+		*findings = append(*findings, finding{"type": "issue_matrix_violation", "diagnostic_code": code, "message": msg})
+	}
+	part, err := issuematrix.ResolvePartition(root, dir)
+	if err != nil {
+		msg := "could not resolve the coordination issue-matrix source: " + err.Error()
+		say(w, "  [red]✗[/red]  Issue matrix: "+issuematrix.DiagRefReadFailed+": "+msg)
+		violation(issuematrix.DiagRefReadFailed, msg)
+		return "false"
+	}
+	present := issuematrix.ArtifactPresent(part.MatrixDir)
+	if part.Content != nil {
+		present = strings.TrimSpace(*part.Content) != ""
+	}
+	if !present {
+		say(w, "  [red]✗[/red]  Issue matrix: "+issuematrix.DiagMissing+": issue-matrix not found (required in post-merge mode when canonical issue references exist)")
+		violation(issuematrix.DiagMissing, "issue-matrix is required in post-merge mode when canonical issue references exist")
+		return "false"
+	}
+	matrixDir := part.MatrixDir
+	if part.Content != nil {
+		matrixDir = dir
+	}
+	res := issuematrix.Validate(filepath.Join(matrixDir, issuematrix.MDFile), part.Content)
+	if !res.Passed {
+		for _, d := range res.Diagnostics {
+			say(w, fmt.Sprintf("  [red]✗[/red]  Issue matrix: %s: %s", d.Code, d.Message))
+			violation(d.Code, d.Message)
+		}
+	} else {
+		say(w, fmt.Sprintf("  [green]✓[/green]  Issue matrix: %d row(s) validated", len(res.Rows)))
+	}
+	return "true"
+}
+
 func mustGetAny(o *jsonx.Object, k string) any { v, _ := o.Get(k); return v }
 
 func nonNil(v any) any {
@@ -256,6 +310,8 @@ func formatFinding(f finding) string {
 		return fmt.Sprintf("- **dead_code_baseline_missing** `%s`: %s", get("diagnostic_code", "unknown"), get("remediation", "unknown"))
 	case "dead_code_undeterminable":
 		return fmt.Sprintf("- **dead_code_undeterminable** `%s`: %s; remediation=`%s`", get("diagnostic_code", "unknown"), get("reason", "unknown"), get("remediation", "unknown"))
+	case "issue_matrix_violation":
+		return fmt.Sprintf("- **issue_matrix_violation** `%s`: %s", get("diagnostic_code", "unknown"), get("message", "unknown"))
 	case "dead_code_not_applicable":
 		ext := f["unsupported_extensions"]
 		if ext == "" {
@@ -289,7 +345,18 @@ func isTestOnly(p string) bool {
 	return strings.HasSuffix(name, ".py") && (strings.HasPrefix(stem, "test_") || strings.HasSuffix(stem, "_test"))
 }
 
-func isPy(p string) bool { return strings.ToLower(path.Ext(p)) == ".py" }
+func isPy(p string) bool { return strings.ToLower(pySuffix(p)) == ".py" }
+
+// pySuffix is PurePosixPath(p).suffix: the last dot of the final component
+// starts it only when it is neither the first nor the last character (a
+// dotfile such as .gitkeep has none).
+func pySuffix(p string) string {
+	name := path.Base(p)
+	if i := strings.LastIndexByte(name, '.'); i > 0 && i < len(name)-1 {
+		return name[i:]
+	}
+	return ""
+}
 
 var excludedParts = map[string]bool{".git": true, ".nox": true, ".pytest_cache": true, ".tox": true, ".venv": true, ".worktrees": true, "node_modules": true, "venv": true}
 
@@ -365,7 +432,7 @@ func scanDeadCode(w interface{ Write([]byte) (int, error) }, root, baseline stri
 		if isPy(e.path) {
 			excludedTests++
 		} else {
-			x := strings.ToLower(path.Ext(e.path))
+			x := strings.ToLower(pySuffix(e.path))
 			if x == "" {
 				x = "(no extension)"
 			}

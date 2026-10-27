@@ -189,7 +189,7 @@ func RunLaneMerge(root string, o LaneMergeOptions) error {
 		}
 	}
 	var blocking []string
-	for _, g := range EvaluateGates(root, sf.PrimaryDir, sf.StatusDir(), sf.StatusDir(), gateWPs, LoadGatePolicy(root)) {
+	for _, g := range EvaluateGates(root, sf.PrimaryDir, sf.StatusDir(), gateWPs, LoadGatePolicy(root)) {
 		if g.Blocking {
 			blocking = append(blocking, g.Details)
 		}
