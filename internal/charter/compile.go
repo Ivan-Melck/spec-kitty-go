@@ -1,6 +1,7 @@
 package charter
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,9 @@ import (
 	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/kittify"
+	"github.com/spec-kitty/go-kitty3/internal/pydantic"
+	"github.com/spec-kitty/go-kitty3/internal/pyjson"
+	"github.com/spec-kitty/go-kitty3/internal/pyyaml"
 	"github.com/spec-kitty/go-kitty3/internal/yamlx"
 )
 
@@ -535,7 +539,38 @@ func WriteCompiled(root string, c *Compiled) ([]string, error) {
 	if err := ProvisionMissionTypes(root); err != nil {
 		return nil, err
 	}
+	// #6366: charter.yaml just changed -- keep the synthesis manifest's
+	// bundle_content_hash in parity. An unreadable manifest fails here,
+	// after charter.yaml is written, exactly as upstream's restamp does.
+	if err := RestampBundleHash(root); err != nil {
+		return nil, &ManifestRestampError{Err: err}
+	}
 	return []string{"charter.yaml"}, nil
+}
+
+// ManifestRestampError is an exception restamp_bundle_hash raised from
+// write_compiled_charter: the synthesis manifest could not be loaded
+// (ruamel YAML error, OSError, pydantic ValidationError, ...).
+type ManifestRestampError struct{ Err error }
+
+func (e *ManifestRestampError) Error() string { return e.Err.Error() }
+func (e *ManifestRestampError) Unwrap() error { return e.Err }
+
+// IsValueError reports whether the manifest load failure is a Python
+// ValueError or RuntimeError (pydantic ValidationError, UnicodeDecodeError,
+// a constructor ValueError): the exceptions charter generate renders as
+// "Error:" rather than as an unexpected error.
+func (e *ManifestRestampError) IsValueError() bool {
+	var ve *pydantic.ValidationError
+	var ue *pyjson.UnicodeError
+	var pe *pyyaml.PyError
+	switch {
+	case errors.As(e.Err, &ve), errors.As(e.Err, &ue):
+		return true
+	case errors.As(e.Err, &pe):
+		return pe.Type == "ValueError" || pe.Type == "NotImplementedError"
+	}
+	return false
 }
 
 // ProvisionMissionTypes seeds mission_type_activations from the built-in

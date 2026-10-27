@@ -129,6 +129,13 @@ func runCharterGenerate(ctx *cli.Context) error {
 	}
 	files, err := charter.WriteCompiled(root, c)
 	if err != nil {
+		var re *charter.ManifestRestampError
+		if errors.As(err, &re) && !re.IsValueError() && !jsonMode {
+			// A YAML/OS error from the manifest restamp is not a
+			// ValueError: generate's `except Exception` renders str(exc).
+			cprint(w, "[red]Unexpected error:[/red] %s", uconsoleEscape(err.Error()))
+			return cli.Exit(1)
+		}
 		return fail(err.Error())
 	}
 	if source == "defaults" {
