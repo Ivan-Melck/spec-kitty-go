@@ -179,7 +179,21 @@ var reDigitSHA = regexp.MustCompile(`\b[0-9]{7}(?:[0-9]{3})?\b`)
 
 // (all-letter short SHAs are masked by testkit.Normalize itself)
 func digitSHA(s string) string {
-	return reDigitSHA.ReplaceAllString(s, "<SHORTSHA>")
+	return maskWrappedMid8(reDigitSHA.ReplaceAllString(s, "<SHORTSHA>"))
+}
+
+// reWrappedMid8 is a mid8 that rich wrapped across two lines of a long
+// path, which testkit.Normalize cannot see as one token.
+var reWrappedMid8 = regexp.MustCompile(`-([0-9A-HJKMNP-TV-Z]{1,7})([ \t]*\n[ \t]*)([0-9A-HJKMNP-TV-Z]{1,7})-`)
+
+func maskWrappedMid8(s string) string {
+	return reWrappedMid8.ReplaceAllStringFunc(s, func(m string) string {
+		g := reWrappedMid8.FindStringSubmatch(m)
+		if len(g[1])+len(g[3]) != 8 {
+			return m
+		}
+		return "-<MID8a>" + g[2] + "<MID8b>-"
+	})
 }
 
 // compareMissionTree compares kitty-specs (and optionally .worktrees),
