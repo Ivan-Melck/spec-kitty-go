@@ -1441,6 +1441,14 @@ func mActivateBuiltinMissionTypes() migrationImpl {
 			if !pathExists(kittify.ConfigPath(root)) {
 				return false
 			}
+			// _mission_types_present_in_write_target: once the key lives in the
+			// resolved activation write target (charter.yaml or the activation
+			// ledger), it is satisfied and never re-added to config.yaml.
+			if t, err := charter.LoadWriteTarget(root); err == nil {
+				if v, ok := t.Data.Get("mission_type_activations"); ok && pyjsonTruthy(v) {
+					return false
+				}
+			}
 			cfg := loadConfigSafe(root)
 			if cfg == nil {
 				return false
