@@ -334,6 +334,28 @@ var rowIssueRe = regexp.MustCompile(`Row for issue '([^']+)'`)
 // ApprovalBlocker is _issue_matrix_approval_blocker(feature_dir, target,
 // primary_feature_dir) ("" = not blocked).
 func ApprovalBlocker(featureDir, target, primaryDir string) string {
+	blocker, _ := blockerOutcome(featureDir, target, primaryDir, nil)
+	return blocker
+}
+
+// DoneOutcome is issue_matrix_done_outcome (#6711): the one authority for
+// the done verdict of the issue-matrix, as (blocker, judgedRows). judgedRows
+// is the number of rows the evaluation judged, or -1 when no matrix exists.
+// content is the coordination-ref content source (nil = read featureDir);
+// an empty content means the ref holds no matrix (ISSUE_MATRIX_NOT_AUTHORED)
+// and reads as an absent artifact.
+func DoneOutcome(featureDir, primaryDir string, content *string) (string, int) {
+	return blockerOutcome(featureDir, "done", primaryDir, content)
+}
+
+func artifactPresentIn(dir string, content *string) bool {
+	if content != nil {
+		return strings.TrimSpace(*content) != ""
+	}
+	return ArtifactPresent(dir)
+}
+
+func blockerOutcome(featureDir, target, primaryDir string, content *string) (string, int) {
 	specDir := featureDir
 	if primaryDir != "" {
 		if _, err := os.Stat(filepath.Join(primaryDir, "spec.md")); err == nil {
@@ -342,7 +364,7 @@ func ApprovalBlocker(featureDir, target, primaryDir string) string {
 	}
 	refs, err := DiscoverReferences(specDir)
 	if err != nil {
-		return fmt.Sprintf("%s could not be evaluated before approval.\nReason: %v\nFix the issue-matrix check before approving.", errorPrefix(featureDir), err)
+		return fmt.Sprintf("%s could not be evaluated before approval.\nReason: %v\nFix the issue-matrix check before approving.", errorPrefix(featureDir), err), -1
 	}
 	var gating []string
 	gset := map[string]bool{}
@@ -354,13 +376,17 @@ func ApprovalBlocker(featureDir, target, primaryDir string) string {
 		}
 	}
 	if len(gating) == 0 {
-		return ""
-	}
-	if !ArtifactPresent(featureDir) {
+		// #6653: with zero gating references nothing REQUIRES a matrix. At
+		// done a PRESENT matrix is still judged whole; a missing one (or any
+		// other target lane) is nothing to enforce.
+		if target != "done" || !artifactPresentIn(featureDir, content) {
+			return "", -1
+		}
+	} else if !artifactPresentIn(featureDir, content) {
 		return fmt.Sprintf("%s is required before approval.\nReferenced issues: %s\nFill verdicts before approving.\nThis file is normally scaffolded automatically. If it is missing, regenerate it: spec-kitty agent mission finalize-tasks --mission %s\n%s\nSchema and worked example: src/specify_cli/cli/commands/review/ERROR_CODES.md",
-			errorPrefix(featureDir), strings.Join(gating, ", "), filepath.Base(featureDir), remedy)
+			errorPrefix(featureDir), strings.Join(gating, ", "), filepath.Base(featureDir), remedy), -1
 	}
-	res := Validate(filepath.Join(featureDir, MDFile), nil)
+	res := Validate(filepath.Join(featureDir, MDFile), content)
 	inMatrix := map[string]bool{}
 	for _, row := range res.Rows {
 		inMatrix[row.Issue] = true
@@ -378,17 +404,30 @@ func ApprovalBlocker(featureDir, target, primaryDir string) string {
 	}
 	sort.Strings(missing)
 	if target == "done" {
+		// #6653: every in-mission row is unresolved at done, cited or not;
+		// cited rows come first, then uncited, each sorted.
 		for _, row := range res.Rows {
-			if row.Verdict == "in-mission" && gset[row.Issue] {
+			if row.Verdict == "in-mission" {
 				inMission = append(inMission, row.Issue)
 			}
 		}
-		sort.Strings(inMission)
+		sort.SliceStable(inMission, func(i, j int) bool {
+			ci, cj := gset[inMission[i]], gset[inMission[j]]
+			if ci != cj {
+				return ci
+			}
+			return inMission[i] < inMission[j]
+		})
 	}
+	judged := len(res.Rows)
 	if res.Passed && len(missing) == 0 && len(inMission) == 0 {
-		return ""
+		return "", judged
 	}
-	lines := []string{errorPrefix(featureDir) + " has unresolved entries. Fill in verdicts before approving."}
+	hint := "before approving"
+	if target == "done" {
+		hint = "before done"
+	}
+	lines := []string{errorPrefix(featureDir) + " has unresolved entries. Fill in verdicts " + hint + "."}
 	for _, d := range res.Diagnostics {
 		msg := d.Message
 		if d.Code == DiagSchemaDrift && d.Detail != "" {
@@ -400,10 +439,10 @@ func ApprovalBlocker(featureDir, target, primaryDir string) string {
 		lines = append(lines, "Missing rows: "+strings.Join(missing, ", "))
 	}
 	if len(inMission) > 0 {
-		lines = append(lines, "Still 'in-mission' (resolve to fixed / verified-already-fixed / deferred-with-followup before done): "+strings.Join(inMission, ", "))
+		lines = append(lines, "Still 'in-mission' (resolve to fixed / verified-already-fixed / deferred-with-followup before done, or not-applicable when this Mission owes the issue no work): "+strings.Join(inMission, ", "))
 	}
 	lines = append(lines, remedy)
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), judged
 }
 
 // RowsFromLegacy converts validated md rows into structured entries.

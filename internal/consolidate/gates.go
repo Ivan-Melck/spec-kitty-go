@@ -287,37 +287,51 @@ func EvaluateGates(root, primaryDir, statusDir, matrixDir string, wpIDs []string
 		}
 	}
 	nothing := "No gating issue references discovered — nothing to enforce"
-	if refErr != nil {
-		out = append(out, GateResult{"issue_matrix_completeness", "fail", "Could not evaluate issue-matrix completeness: " + refErr.Error(), blocking},
-			GateResult{"issue_matrix_verdict_terminality", "fail", "Could not evaluate issue-matrix verdict terminality: " + refErr.Error(), blocking})
-		return out
-	}
-	if len(gating) == 0 {
-		return append(out, GateResult{"issue_matrix_completeness", "pass", nothing, false},
-			GateResult{"issue_matrix_verdict_terminality", "pass", nothing, false})
-	}
-	have := map[string]bool{}
-	if rows := issuematrix.LoadRows(matrixDir); rows != nil {
-		for _, k := range rows.Order {
-			have[k] = true
+	switch {
+	case refErr != nil:
+		out = append(out, GateResult{"issue_matrix_completeness", "fail", "Could not evaluate issue-matrix completeness: " + refErr.Error(), blocking})
+	case len(gating) == 0:
+		out = append(out, GateResult{"issue_matrix_completeness", "pass", nothing, false})
+	default:
+		have := map[string]bool{}
+		if rows := issuematrix.LoadRows(matrixDir); rows != nil {
+			for _, k := range rows.Order {
+				have[k] = true
+			}
+		}
+		var missing []string
+		for k := range gating {
+			if !have[k] {
+				missing = append(missing, k)
+			}
+		}
+		sort.Strings(missing)
+		if len(missing) > 0 {
+			out = append(out, GateResult{"issue_matrix_completeness", "fail", "Issue-matrix is missing rows for referenced issue(s): " + strings.Join(missing, ", "), blocking})
+		} else {
+			out = append(out, GateResult{"issue_matrix_completeness", "pass", fmt.Sprintf("All %d referenced issue(s) have matrix rows", len(gating)), false})
 		}
 	}
-	var missing []string
-	for k := range gating {
-		if !have[k] {
-			missing = append(missing, k)
-		}
+	return append(out, terminalityGate(primaryDir, matrixDir, blocking))
+}
+
+// terminalityGate is _evaluate_issue_matrix_verdict_terminality_gate. #6653:
+// discovery no longer short-circuits it: every existing row is judged at
+// done, cited or not, and a present matrix is judged even with zero gating
+// references; only a missing matrix with zero gating references is nothing
+// to enforce. #6711: issuematrix.DoneOutcome is the one authority for the
+// verdict, and a PASS names what it judged.
+func terminalityGate(primaryDir, matrixDir string, blocking bool) GateResult {
+	msg, judged := issuematrix.DoneOutcome(matrixDir, primaryDir, nil)
+	if msg != "" {
+		return GateResult{"issue_matrix_verdict_terminality", "fail", msg, blocking}
 	}
-	sort.Strings(missing)
-	if len(missing) > 0 {
-		out = append(out, GateResult{"issue_matrix_completeness", "fail", "Issue-matrix is missing rows for referenced issue(s): " + strings.Join(missing, ", "), blocking})
-	} else {
-		out = append(out, GateResult{"issue_matrix_completeness", "pass", fmt.Sprintf("All %d referenced issue(s) have matrix rows", len(gating)), false})
+	detail := fmt.Sprintf("No unresolved (in-mission/unknown) rows among %d issue-matrix row(s)", judged)
+	switch {
+	case judged < 0:
+		detail = "No issue-matrix authored and no gating issue references — nothing to enforce"
+	case judged == 0:
+		detail = "issue-matrix present but has no rows; nothing to judge"
 	}
-	if msg := issuematrix.ApprovalBlocker(matrixDir, "done", primaryDir); msg != "" {
-		out = append(out, GateResult{"issue_matrix_verdict_terminality", "fail", msg, blocking})
-	} else {
-		out = append(out, GateResult{"issue_matrix_verdict_terminality", "pass", "No unresolved (in-mission/unknown) issue-matrix rows", false})
-	}
-	return out
+	return GateResult{"issue_matrix_verdict_terminality", "pass", detail, false}
 }

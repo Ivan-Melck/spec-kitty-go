@@ -68,3 +68,27 @@ func TestDiffMoveTaskApprovalFeedbackFile(t *testing.T) {
 	p.CompareTree(".worktrees", true)
 	compareGit(t, p)
 }
+
+// TestDiffMoveTaskDoneUncitedInMission covers #6653: approval ignores an
+// uncited in-mission issue-matrix row (no gating references), but
+// move-task --to done refuses it until it has a terminal verdict.
+func TestDiffMoveTaskDoneUncitedInMission(t *testing.T) {
+	p := newOraclePair(t)
+	g, o := oracleCalcMission(t, p)
+	comparePairSteps(t, p, g, o, [][]string{
+		{"agent", "issue-verdict", "--mission", "$M", "--issue", "#12", "--verdict", "in-mission", "--actor", "claude", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "claimed", "--mission", "$M", "--agent", "claude", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "in_progress", "--mission", "$M", "--agent", "claude", "--json"},
+		{"agent", "tasks", "mark-status", "T001", "T002", "T003", "--status", "done", "--mission", "$M", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "for_review", "--mission", "$M", "--agent", "claude", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "in_review", "--mission", "$M", "--agent", "rev", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "approved", "--mission", "$M", "--agent", "rev", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "done", "--done-override-reason", "hotfix", "--mission", "$M", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "done", "--done-override-reason", "hotfix", "--mission", "$M"},
+		{"agent", "issue-verdict", "--mission", "$M", "--issue", "#12", "--verdict", "not-applicable", "--evidence-ref", "context only", "--actor", "claude", "--json"},
+		{"agent", "tasks", "move-task", "WP01", "--to", "done", "--done-override-reason", "hotfix", "--mission", "$M", "--json"},
+	})
+	p.CompareTree("kitty-specs", true)
+	p.CompareTree(".worktrees", true)
+	compareGit(t, p)
+}
