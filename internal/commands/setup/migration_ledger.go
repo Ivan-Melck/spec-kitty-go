@@ -37,6 +37,15 @@ func migrationRecord(m migrationInfo, result, appliedAt string) migrationledger.
 		ContentHash: m.ContentHash, CLIVersion: app.Version, CloneLocal: m.CloneLocal}
 }
 
+// runnerMigrationRecord is the runner's _record_migration_result record: a
+// superseded substitute's own outcome carries its superseded_by note (#6629);
+// records copied from legacy history or seeded at init leave it empty.
+func runnerMigrationRecord(m migrationInfo, result string) migrationledger.Record {
+	record := migrationRecord(m, result, "")
+	record.SupersededBy = m.SupersededBy
+	return record
+}
+
 func readMigrationRecords(root string, cloneLocal bool) ([]migrationledger.Record, error) {
 	records, err := (migrationledger.Ledger{Root: root}).Read(cloneLocal)
 	if err != nil {

@@ -884,6 +884,9 @@ type CutoverResult struct {
 	// PlacementMismatch marks Error as _flip_phase's PlacementMismatchError
 	// (raised out of cutover_mission; cutover_repo records it).
 	PlacementMismatch bool
+	// Residue marks a kitty-specs/ child that is not a Mission (#6627): the
+	// run left it untouched and wrote nothing; not a failure.
+	Residue bool
 }
 
 // canonicalRootOf is resolve_canonical_root(dir): the main repository root
@@ -944,6 +947,15 @@ func isSnapshotAuthority(meta *jsonx.Object) bool {
 // CutoverMission is runtime_state_cutover.cutover_mission(feature_dir).
 func CutoverMission(dir string, dryRun bool) CutoverResult {
 	slug := filepath.Base(dir)
+	if IsKittySpecsResidueLazy(dir) {
+		// #6627: a residue directory is never seeded or given a meta.json stub by the flip.
+		return CutoverResult{Slug: slug, Residue: true}
+	}
+	return cutoverMission(dir, dryRun)
+}
+
+func cutoverMission(dir string, dryRun bool) CutoverResult {
+	slug := filepath.Base(dir)
 	seed, err := BackfillRuntimeState(dir, dryRun)
 	if err != nil {
 		return CutoverResult{Slug: slug, Error: strPtr(err.Error())}
@@ -992,8 +1004,14 @@ func CutoverRepo(root string, dryRun bool) []CutoverResult {
 		return nil
 	}
 	var out []CutoverResult
+	tracked := ProbeTrackedMissionPaths(root) // once per walk (#6669)
 	for _, n := range MissionDirs(root) {
-		out = append(out, CutoverMission(project.Specs(root, n), dryRun))
+		dir := project.Specs(root, n)
+		if IsKittySpecsResidue(dir, root, tracked) {
+			out = append(out, CutoverResult{Slug: n, Residue: true})
+			continue
+		}
+		out = append(out, cutoverMission(dir, dryRun))
 	}
 	return out
 }

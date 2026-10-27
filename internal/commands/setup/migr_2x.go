@@ -29,7 +29,7 @@ func init() {
 	migrationImpls["2.0.1_fix_generated_command_templates"] = mFixGeneratedCommandTemplates()
 	migrationImpls["2.0.1_tool_config_key_rename"] = mToolConfigKeyRename()
 	migrationImpls["2.0.2_charter_context_bootstrap"] = neverNeeded("Superseded by charter-rename migration")
-	migrationImpls["2.0.6_consistency_sweep"] = mConsistencySweep()
+	// 2.0.6_consistency_sweep is superseded by its residue-safe successor (migr_residue.go, #6669).
 	migrationImpls["2.0.7_fix_stale_overrides"] = mFixStaleOverrides()
 	migrationImpls["2.0.9_state_gitignore"] = mStateGitignore()
 	migrationImpls["2.0.11_install_skills"] = mInstallSkills()
@@ -653,7 +653,9 @@ func jsonEqual(a, b *jsonx.Object) bool {
 	return jsonx.Dumps(a, jsonx.Options{SortKeys: true}) == jsonx.Dumps(b, jsonx.Options{SortKeys: true})
 }
 
-func mConsistencySweep() migrationImpl {
+// consistencySweep is the 2.0.6 consistency sweep over the kitty-specs/
+// folders missions(root) yields (the residue-safe successor passes Missions only).
+func consistencySweep(missions func(root string) []string) migrationImpl {
 	return migrationImpl{
 		detect: func(root string) bool {
 			if staleLegacyAssets(root) {
@@ -662,7 +664,7 @@ func mConsistencySweep() migrationImpl {
 			if len(worktreeCleanupRoots(root)) > 0 {
 				return true
 			}
-			for _, f := range featureDirs(root) {
+			for _, f := range missions(root) {
 				if featureRequiresRepair(f, root) {
 					return true
 				}
@@ -749,7 +751,7 @@ func mConsistencySweep() migrationImpl {
 				}
 				ch = append(ch, fmt.Sprintf("%s %d worktree(s) with legacy command/script assets", verb, cleaned))
 			}
-			for _, f := range featureDirs(root) {
+			for _, f := range missions(root) {
 				c, w := repairFeature(f, root, dryRun)
 				ch = append(ch, c...)
 				warn = append(warn, w...)

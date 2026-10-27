@@ -1,7 +1,6 @@
 package setup
 
-// Charter activation / verdict provenance migrations:
-// unify_charter_activation_promote_answers, verdict_provenance_backfill.
+// Charter activation / verdict provenance migrations: verdict_provenance_backfill.
 
 import (
 	"fmt"
@@ -12,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/spec-kitty/go-kitty3/internal/charter"
-	dct "github.com/spec-kitty/go-kitty3/internal/doctrine"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/migrate"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -22,7 +19,8 @@ import (
 
 func init() {
 	migrationImpls["normalize_activation_absence"] = neverNeeded("Superseded by the charter-pack cutover")
-	migrationImpls["unify_charter_activation_promote_answers"] = mPromoteAnswers()
+	// unify_charter_activation_promote_answers is superseded by
+	// 4.0.0rc8_promote_interview_selections (migr_promote_interview.go, #6629).
 	migrationImpls["verdict_provenance_backfill"] = mVerdictProvenance()
 }
 
@@ -32,191 +30,6 @@ var promotableKinds = [][2]string{{"directive", "directives"}, {"tactic", "tacti
 
 func answersPath(root string) string {
 	return filepath.Join(root, ".kittify", "charter", "interview", "answers.yaml")
-}
-
-// computePromotions is _compute_promotions: the answers-only stems per
-// activation key (resolve_selected_id_to_stem against the built-in
-// offering) plus the "<token>:<raw>" ids that resolve nowhere.
-func computePromotions(root string, answers, cfg *jsonx.Object) (*jsonx.Object, []string) {
-	promotions := &jsonx.Object{}
-	var unresolved []string
-	for _, k := range promotableKinds {
-		raw, _ := answers.Get("selected_" + k[1])
-		ids, _ := raw.([]any)
-		existing := map[string]bool{}
-		if cur, ok := cfg.Get("activated_" + k[1]); ok {
-			if l, isL := cur.([]any); isL {
-				for _, x := range l {
-					existing[pyStrValue(x)] = true
-				}
-			}
-		}
-		kind, kerr := dct.ParseKind(k[0])
-		var stems []any
-		seen := map[string]bool{}
-		for _, x := range ids {
-			id := pyStrValue(x)
-			stem := ""
-			if kerr == nil {
-				stem = charter.SelectedIDToStem(kind, id, nil, nil)
-			}
-			if stem == "" {
-				unresolved = append(unresolved, k[0]+":"+id)
-				continue
-			}
-			if !existing[stem] && !seen[stem] {
-				seen[stem] = true
-				stems = append(stems, stem)
-			}
-		}
-		if len(stems) > 0 {
-			promotions.Set("activated_"+k[1], stems)
-		}
-	}
-	return promotions, unresolved
-}
-
-// leftAbsentMessage is PromotionOutcome.left_absent_messages for one key.
-func leftAbsentMessage(key, reason string) string {
-	return fmt.Sprintf("%s was left absent and nothing was promoted into it: the effective set could not be resolved (%s).", key, reason)
-}
-
-func mPromoteAnswers() migrationImpl {
-	detect := func(root string) bool {
-		if !pathExists(kittify_ConfigPath(root)) || !pathExists(answersPath(root)) {
-			return false
-		}
-		cfg := loadYAMLMappingSafe(kittify_ConfigPath(root))
-		ans := loadYAMLMappingSafe(answersPath(root))
-		if cfg.Len() == 0 || ans.Len() == 0 {
-			return false
-		}
-		p, _ := computePromotions(root, ans, cfg)
-		return p.Len() > 0
-	}
-	return migrationImpl{
-		detect: detect,
-		canApply: func(root string) (bool, string) {
-			if detect(root) {
-				return ok()
-			}
-			return false, "no answers-only selections to promote"
-		},
-		apply: func(root string, dryRun bool) migrationResult {
-			if !pathExists(kittify_ConfigPath(root)) {
-				return migrationResult{Success: true, Changes: []string{"No .kittify/config.yaml found; nothing to promote"}}
-			}
-			if !pathExists(answersPath(root)) {
-				return migrationResult{Success: true, Changes: []string{"No answers.yaml found; nothing to promote"}}
-			}
-			cfg, err := loadConfigRoundTrip(root)
-			if err != nil {
-				return migrationResult{Errors: []string{fmt.Sprintf("Invalid .kittify/config.yaml: %v", err)}}
-			}
-			if cfg == nil {
-				return migrationResult{Errors: []string{".kittify/config.yaml root must be a mapping"}}
-			}
-			ans := loadYAMLMappingSafe(answersPath(root))
-			if ans.Len() == 0 {
-				return migrationResult{Success: true, Changes: []string{"answers.yaml is empty or has no selections; nothing to promote"}}
-			}
-			prom, unresolved := computePromotions(root, ans, cfg)
-			unresolvedWarn := func() []string {
-				if len(unresolved) == 0 {
-					return nil
-				}
-				return []string{"Unresolved answers-only ids skipped (not promoted): " + strings.Join(unresolved, ", ")}
-			}
-			if prom.Len() == 0 {
-				return migrationResult{Success: true, Changes: []string{"No answers-only selections to promote"}, Warnings: unresolvedWarn()}
-			}
-			// resolve_effective_sets for the absent keys (FR-015, #4400):
-			// an absent key is seeded from its effective set, or left
-			// absent and reported when that set is unresolved.
-			type effective struct {
-				ids    []string
-				reason string
-			}
-			sets := map[string]effective{}
-			for _, kv := range prom.Pairs() {
-				if cur, ok := cfg.Get(kv.Key); !ok || cur == nil {
-					tok := ""
-					for _, k := range promotableKinds {
-						if "activated_"+k[1] == kv.Key {
-							tok = k[0]
-						}
-					}
-					ids, reason := charter.EffectiveSet(root, tok)
-					sets[kv.Key] = effective{ids, reason}
-				}
-			}
-			if dryRun {
-				var parts, warns []string
-				for _, kv := range prom.Pairs() {
-					if e, ok := sets[kv.Key]; ok && e.reason != "" {
-						warns = append(warns, "dry-run: "+leftAbsentMessage(kv.Key, e.reason))
-						continue
-					}
-					parts = append(parts, fmt.Sprintf("%s: +%s", kv.Key, pyListAny(kv.Value.([]any))))
-				}
-				changes := []string{"dry-run: nothing would be promoted"}
-				if len(parts) > 0 {
-					changes = []string{"dry-run: would promote " + pyListStrs(parts)}
-				}
-				return migrationResult{Success: true, Changes: changes, Warnings: append(warns, unresolvedWarn()...)}
-			}
-			var ch, warns, leftAbsent []string
-			written := false
-			for _, kv := range prom.Pairs() {
-				var list []any
-				if e, absent := sets[kv.Key]; absent {
-					if e.reason != "" {
-						leftAbsent = append(leftAbsent, leftAbsentMessage(kv.Key, e.reason))
-						continue
-					}
-					seeded := append([]string(nil), e.ids...)
-					sort.Strings(seeded)
-					for _, id := range seeded {
-						list = append(list, id)
-					}
-					warns = append(warns, fmt.Sprintf("Key %s had no explicit activation set. Preserved %d effective entries before promotion (absent-key parity).", pyRepr(kv.Key), len(seeded)))
-				} else {
-					cur, _ := cfg.Get(kv.Key)
-					l, _ := cur.([]any)
-					list = append(list, l...)
-				}
-				var activated []any
-				for _, x := range kv.Value.([]any) {
-					found := false
-					for _, y := range list {
-						found = found || pyStrValue(y) == pyStrValue(x)
-					}
-					if found {
-						warns = append(warns, fmt.Sprintf("%s is already activated for key %s.", pyRepr(pyStrValue(x)), pyRepr(kv.Key)))
-						continue
-					}
-					list = append(list, x)
-					activated = append(activated, x)
-				}
-				if list == nil {
-					list = []any{}
-				}
-				cfg.Set(kv.Key, list)
-				written = true
-				if len(activated) > 0 {
-					ch = append(ch, fmt.Sprintf("Promoted %s into %s", pyListAny(activated), kv.Key))
-				}
-			}
-			if written {
-				writeConfigRoundTrip(root, cfg)
-			}
-			if len(ch) == 0 {
-				ch = []string{"No changes (all promotions already present)"}
-			}
-			warns = append(warns, leftAbsent...)
-			return migrationResult{Success: true, Changes: ch, Warnings: append(warns, unresolvedWarn()...)}
-		},
-	}
 }
 
 func pyListAny(xs []any) string {

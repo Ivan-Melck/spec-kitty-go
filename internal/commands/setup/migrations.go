@@ -18,6 +18,10 @@ type migrationInfo struct {
 	RunsFirst                                                 bool
 	CloneLocal, RequiresGit, LedgerAdoption, MainCheckoutOnly bool
 	Identity, ContentHash                                     string
+	// SupersededBy is a superseded substitute's superseded_by note
+	// (supersession.SUPERSEDED_MIGRATIONS and SupersededMigration): it is
+	// registered as a recorded no-op whose ledger record carries the note.
+	SupersededBy string
 }
 
 // migrationResult is upgrade.migrations.base.MigrationResult.
@@ -54,7 +58,15 @@ type migrationImpl struct {
 
 var migrationImpls = map[string]migrationImpl{}
 
-func (m migrationInfo) impl() migrationImpl { return migrationImpls[m.ID] }
+// impl is the registered migration: a superseded one is a recorded no-op
+// (SupersededMigration: never detected, refused by can_apply with its note),
+// whatever implementation the shipped id once had (supersession.py, #6589).
+func (m migrationInfo) impl() migrationImpl {
+	if m.SupersededBy != "" {
+		return neverNeeded(m.SupersededBy)
+	}
+	return migrationImpls[m.ID]
+}
 
 func (m migrationInfo) detect(root string) bool {
 	ok, _ := m.detectErr(root)
@@ -164,28 +176,64 @@ func applicableMigrations(from, to, root string) ([]migrationInfo, error) {
 		}
 	}
 	err := dct.LegacyActivationScope([]string{root}, func() error {
-		adopting := map[string]bool{}
-		for _, m := range declared {
-			if m.LedgerAdoption && !migrationSettled(root, m) {
-				plan, err := migrationAdoptionPlan(root)
-				if err != nil {
-					return err
-				}
-				for _, record := range plan {
-					if record.ID != m.ID && record.Result == "success" {
-						adopting[record.ID] = true
-					}
-				}
-			}
+		adopting, err := pendingAdoptionIDs(root, declared)
+		if err != nil {
+			return err
 		}
 		for _, m := range declared {
-			if (!migrationSettled(root, m) && !adopting[m.ID]) || m.reselectWhenRecorded(root) {
+			if !settledInView(root, m, adopting) || m.reselectWhenRecorded(root) {
 				selected = append(selected, m)
 			}
 		}
 		return nil
 	})
 	return selected, err
+}
+
+// pendingAdoptionIDs is registry.pending_adoption_ids: the ids an unsettled
+// ledger-adoption migration among migrations will settle when it applies.
+func pendingAdoptionIDs(root string, migrations []migrationInfo) (map[string]bool, error) {
+	adopting := map[string]bool{}
+	for _, m := range migrations {
+		if m.LedgerAdoption && !migrationSettled(root, m) {
+			plan, err := migrationAdoptionPlan(root)
+			if err != nil {
+				return nil, err
+			}
+			for _, record := range plan {
+				if record.ID != m.ID && record.Result == "success" {
+					adopting[record.ID] = true
+				}
+			}
+		}
+	}
+	return adopting, nil
+}
+
+// settledInView is registry._settled_in_view, the one selection-view
+// predicate: recorded as applied, or settled by a pending adoption (#6669).
+func settledInView(root string, m migrationInfo, adopting map[string]bool) bool {
+	return migrationSettled(root, m) || adopting[m.ID]
+}
+
+// settledInSelectionView is registry.settled_in_selection_view: whether
+// applicableMigrations would treat id as settled for root. An unknown id was
+// never recorded.
+func settledInSelectionView(root, id string) bool {
+	m, ok := migrationByID(id)
+	if !ok {
+		return false
+	}
+	settled := false
+	dct.LegacyActivationScope([]string{root}, func() error {
+		adopting, err := pendingAdoptionIDs(root, migrationCatalog)
+		if err != nil {
+			adopting = map[string]bool{}
+		}
+		settled = settledInView(root, m, adopting)
+		return nil
+	})
+	return settled
 }
 
 // detectProjectVersion is VersionDetector.detect_version.

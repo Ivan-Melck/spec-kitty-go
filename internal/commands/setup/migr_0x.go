@@ -61,8 +61,8 @@ func init() {
 	migrationImpls["0.7.3_update_scripts"] = mUpdateScripts()
 	migrationImpls["0.8.0_remove_active_mission"] = mRemoveActiveMission()
 	migrationImpls["0.8.0_worktree_agents_symlink"] = mWorktreeAgentsSymlink()
-	migrationImpls["0.9.0_frontmatter_only_lanes"] = mFrontmatterOnlyLanes()
-	migrationImpls["0.9.1_complete_migration"] = mCompleteLaneMigration()
+	// 0.9.0_frontmatter_only_lanes and 0.9.1_complete_migration are
+	// superseded by their residue-safe successors (migr_residue.go, #6669).
 	migrationImpls["0.9.2_research_mission_templates"] = mResearchMissionTemplates()
 	migrationImpls["0.10.0_python_only"] = mPythonOnly()
 	migrationImpls["0.10.1_populate_slash_commands"] = mPopulateSlashCommands()
@@ -588,16 +588,18 @@ func hasLaneDirs(feature string) bool {
 
 type laneFeature struct{ dir, label string }
 
-func featuresWithLanes(root string) []laneFeature {
+// featuresWithLanes is _find_features_to_migrate / _find_features_with_lanes
+// over the lane predicate of the migration.
+func featuresWithLanes(root string, laned func(string) bool) []laneFeature {
 	var out []laneFeature
 	for _, f := range subdirs(filepath.Join(root, "kitty-specs")) {
-		if hasLaneDirs(f) {
+		if laned(f) {
 			out = append(out, laneFeature{f, "main"})
 		}
 	}
 	for _, wt := range worktreeDirs(root) {
 		for _, f := range subdirs(filepath.Join(wt, "kitty-specs")) {
-			if hasLaneDirs(f) {
+			if laned(f) {
 				out = append(out, laneFeature{f, "worktree:" + filepath.Base(wt)})
 			}
 		}
@@ -654,8 +656,9 @@ func ensureLaneInFrontmatter(content, lane string) string {
 	return strings.Join(out, "\n")
 }
 
-func mFrontmatterOnlyLanes() migrationImpl {
-	isLegacy := func(feature string) bool { return hasLaneDirs(feature) }
+// frontmatterOnlyLanes is FrontmatterOnlyLanesMigration with isLegacy as its
+// _is_legacy_format (the residue-safe successor narrows it).
+func frontmatterOnlyLanes(isLegacy func(string) bool) migrationImpl {
 	return migrationImpl{
 		detect: func(root string) bool {
 			for _, f := range subdirs(filepath.Join(root, "kitty-specs")) {
@@ -675,7 +678,7 @@ func mFrontmatterOnlyLanes() migrationImpl {
 		canApply: func(string) (bool, string) { return ok() },
 		apply: func(root string, dryRun bool) migrationResult {
 			var ch, warn, errs []string
-			features := featuresWithLanes(root)
+			features := featuresWithLanes(root, isLegacy)
 			if len(features) == 0 {
 				return newResult(nil, []string{"No features need migration - all already use flat structure"}, nil)
 			}
@@ -748,17 +751,20 @@ func mFrontmatterOnlyLanes() migrationImpl {
 	}
 }
 
-func mCompleteLaneMigration() migrationImpl {
+// completeLaneMigration is CompleteLaneMigration with laned as its
+// _has_remaining_lane_dirs and mdFiles as the file collection of its
+// _normalize_all_frontmatter (the residue-safe successor narrows both).
+func completeLaneMigration(laned func(string) bool, mdFiles func(root string) []string) migrationImpl {
 	return migrationImpl{
 		detect: func(root string) bool {
 			for _, f := range subdirs(filepath.Join(root, "kitty-specs")) {
-				if hasLaneDirs(f) {
+				if laned(f) {
 					return true
 				}
 			}
 			for _, wt := range worktreeDirs(root) {
 				for _, f := range subdirs(filepath.Join(wt, "kitty-specs")) {
-					if hasLaneDirs(f) {
+					if laned(f) {
 						return true
 					}
 				}
@@ -777,7 +783,7 @@ func mCompleteLaneMigration() migrationImpl {
 		apply: func(root string, dryRun bool) migrationResult {
 			var ch, warn, errs []string
 			ch = append(ch, "=== Part 1: Complete Lane Migration ===")
-			features := featuresWithLanes(root)
+			features := featuresWithLanes(root, laned)
 			if len(features) > 0 {
 				migrated, removed := 0, 0
 				for _, f := range features {
@@ -860,7 +866,7 @@ func mCompleteLaneMigration() migrationImpl {
 			ch = append(ch, wc...)
 			errs = append(errs, we...)
 			ch = append(ch, "", "=== Part 3: Normalize Frontmatter ===")
-			fc, fw, fe := normalizeAllFrontmatter(root, dryRun)
+			fc, fw, fe := normalizeAllFrontmatter(root, mdFiles(root), dryRun)
 			ch = append(ch, fc...)
 			warn = append(warn, fw...)
 			errs = append(errs, fe...)
@@ -1002,8 +1008,9 @@ func frontmatterRead(p string) (*jsonx.Object, string, string, error) {
 	return front, body, content, nil
 }
 
-func normalizeAllFrontmatter(root string, dryRun bool) ([]string, []string, []string) {
-	var ch, warn, errs []string
+// kittySpecsMarkdown is the shipped file collection: every *.md under the
+// main and worktree kitty-specs/ trees.
+func kittySpecsMarkdown(root string) []string {
 	var files []string
 	if ks := filepath.Join(root, "kitty-specs"); pathExists(ks) {
 		files = append(files, rglobMD(ks)...)
@@ -1013,6 +1020,11 @@ func normalizeAllFrontmatter(root string, dryRun bool) ([]string, []string, []st
 			files = append(files, rglobMD(ws)...)
 		}
 	}
+	return files
+}
+
+func normalizeAllFrontmatter(root string, files []string, dryRun bool) ([]string, []string, []string) {
+	var ch, warn, errs []string
 	if len(files) == 0 {
 		return []string{"No markdown files found"}, nil, nil
 	}

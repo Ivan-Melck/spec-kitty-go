@@ -99,7 +99,7 @@ func runBackfillRuntimeState(ctx *cli.Context) error {
 			}
 		}
 		rows = append(rows, jsonx.NewObject("slug", r.Slug, "flipped", f, "already_migrated", r.AlreadyMigrated, "would_flip", wf,
-			"would_seed", r.Seeded > 0, "seeded_count", r.Seeded, "verify_ok", vok, "failed", fl, "mismatches", mism, "error", migrate.OptStr(r.Error)))
+			"would_seed", r.Seeded > 0, "seeded_count", r.Seeded, "verify_ok", vok, "failed", fl, "residue", r.Residue, "mismatches", mism, "error", migrate.OptStr(r.Error)))
 	}
 	if jsonOut {
 		printJSON(out, jsonx.NewObject("dry_run", dry, "summary", jsonx.NewObject("total", len(results), "flipped", flipped,

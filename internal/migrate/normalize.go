@@ -62,11 +62,20 @@ func NormalizeLifecycle(root string, dryRun bool, missionSlug *string) []*Normal
 		}
 		names = one
 	}
+	if len(names) == 0 {
+		return out
+	}
 	derived := project.Kittify(root, "derived")
+	tracked := ProbeTrackedMissionPaths(root)
 	for _, name := range names {
 		dir := project.Specs(root, name)
 		r := &NormalizeResult{Slug: name, Status: "skipped", Actions: []string{}, Warnings: []string{}}
 		out = append(out, r)
+		if IsKittySpecsResidue(dir, root, tracked) {
+			// #6627: residue (e.g. an untracked decisions/ leftover) is reported, never given an identity.
+			r.Warnings = append(r.Warnings, ResidueNotice(project.SpecsDir+"/"+name))
+			continue
+		}
 		fail := func(msg string) { r.Status = "error"; r.Error = &msg }
 		meta, err := LoadMetaFailClosed(dir)
 		if err != nil {

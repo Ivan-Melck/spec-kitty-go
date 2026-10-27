@@ -603,7 +603,7 @@ func RunAuditIn(root, scanRoot string, only *string) *AuditReport {
 		}
 		dir := filepath.Join(scanRoot, n)
 		if defaultScan && !isMissionDir(dir, n, tracked) {
-			results = append(results, &MissionAudit{Slug: n, Dir: dir, Findings: []Finding{fnd("RESIDUE_DIRECTORY", "info", ".", "directory holds no tracked spec.md or meta.json and no mission_id; not a Mission. If this is a Mission created before identity existed, run `spec-kitty migrate backfill-identity` (or commit its spec.md)")}})
+			results = append(results, &MissionAudit{Slug: n, Dir: dir, Findings: []Finding{fnd("RESIDUE_DIRECTORY", "info", ".", "directory holds no tracked spec.md or meta.json and no mission_id; not a Mission. To make it a Mission, commit a spec.md or meta.json (in a project outside git, adding one is enough), then run `spec-kitty upgrade`; or remove the folder")}})
 			continue
 		}
 		var fs []Finding
@@ -617,6 +617,10 @@ func RunAuditIn(root, scanRoot string, only *string) *AuditReport {
 		fs = append(fs, classifyWPFiles(dir)...)
 		if st, ok := byslug[n]; ok && st.State == "orphan" {
 			fs = append(fs, fnd("IDENTITY_MISSING", "error", "meta.json", "meta.json absent"))
+		}
+		if defaultScan {
+			// Fabricated identity needs the git-tracked set, so only in the repo scan (#6668).
+			fs = append(fs, fabricatedIdentityFindings(dir, root, tracked)...)
 		}
 		results = append(results, &MissionAudit{Slug: n, Dir: dir, Findings: fs})
 	}

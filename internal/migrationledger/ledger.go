@@ -36,9 +36,13 @@ func CanonicalID(id string) (string, bool) {
 	return id, false
 }
 
+// Record is one ledger line. SupersededBy is serialized only when set: the
+// runner marks a superseded substitute's own run with it, so its "skipped"
+// reads apart from a "skipped" the shipped migration recorded (#6629).
 type Record struct {
 	ID, AppliedAt, Result, Identity, ContentHash, CLIVersion string
 	CloneLocal                                               bool
+	SupersededBy                                             string
 }
 
 func (r Record) JSON() *jsonx.Object {
@@ -46,6 +50,9 @@ func (r Record) JSON() *jsonx.Object {
 		"identity", r.Identity, "content_hash", r.ContentHash, "cli_version", r.CLIVersion)
 	if r.CloneLocal {
 		o.Set("clone_local", true)
+	}
+	if r.SupersededBy != "" {
+		o.Set("superseded_by", r.SupersededBy)
 	}
 	return o
 }
@@ -103,7 +110,7 @@ func (l Ledger) Read(cloneLocal bool) ([]Record, error) {
 		if _, err := clock.ParseISO(at); err != nil {
 			continue
 		}
-		r := Record{ID: o.GetString("id"), AppliedAt: at, Result: o.GetString("result"), Identity: o.GetString("identity"), ContentHash: o.GetString("content_hash"), CLIVersion: o.GetString("cli_version"), CloneLocal: o.GetBool("clone_local")}
+		r := Record{ID: o.GetString("id"), AppliedAt: at, Result: o.GetString("result"), Identity: o.GetString("identity"), ContentHash: o.GetString("content_hash"), CLIVersion: o.GetString("cli_version"), CloneLocal: o.GetBool("clone_local"), SupersededBy: supersededBy(o)}
 		if !o.Has("identity") {
 			r.Identity = r.ID
 		}
@@ -151,3 +158,12 @@ func (l Ledger) AppendMany(records []Record) error {
 }
 
 func (l Ledger) Append(record Record) error { return l.AppendMany([]Record{record}) }
+
+// supersededBy is str(data.get("superseded_by", "")).
+func supersededBy(o *jsonx.Object) string {
+	v, ok := o.Get("superseded_by")
+	if !ok {
+		return ""
+	}
+	return pyjson.Str(v)
+}

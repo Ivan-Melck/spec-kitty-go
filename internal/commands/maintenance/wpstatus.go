@@ -162,7 +162,7 @@ func runBackfillWPStatus(ctx *cli.Context) error {
 			scope = &r.Slug
 		}
 	}
-	results, err := migrate.ApplyWPStatusBackfillRepo(root, scope, dry, manifest)
+	results, residue, err := migrate.ApplyWPStatusBackfillRepo(root, scope, dry, manifest)
 	if u, ok := err.(*migrate.UncaughtError); ok {
 		return uncaught(ctx, u.Type, u)
 	}
@@ -255,7 +255,7 @@ func runBackfillWPStatus(ctx *cli.Context) error {
 			summary.Set(k, sum[k])
 		}
 		emitJSON(out, jsonx.NewObject("dry_run", dry, "result", result, "mission", missionArg, "summary", summary,
-			"manifest", jsonx.NewObject("path", manifestPath, "entries", len(manifest), "unused", unused), "missions", rows))
+			"manifest", jsonx.NewObject("path", manifestPath, "entries", len(manifest), "unused", unused), "residue_directories", strList(residue), "missions", rows))
 	} else {
 		title := "backfill-wp-status summary"
 		if dry {
@@ -304,6 +304,9 @@ func runBackfillWPStatus(ctx *cli.Context) error {
 			if len(r.Malformed) > 0 {
 				cprintf(out, "  [yellow]malformed[/yellow] %s: %s (skipped)", esc(r.Slug), strings.Join(r.Malformed, ", "))
 			}
+		}
+		for _, name := range residue {
+			cprintf(out, "[yellow]skipped[/yellow] %s", esc(migrate.ResidueNotice("kitty-specs/"+name)))
 		}
 		for _, u := range unusedPairs {
 			cprintf(out, "[yellow]WARNING:[/yellow] evidence manifest entry for %s had no effect (%s).", esc(u[0]), u[1])
