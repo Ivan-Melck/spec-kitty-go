@@ -78,11 +78,30 @@ Each issue was reproduced on the previous port before it was fixed.
 
 ## Known gaps
 
-These upstream behaviors are not yet ported:
+The nine gaps recorded for this pin were reproduced against the oracle and
+closed on branch `parity/upstream-main-581b5c4-gaps`. One was already closed:
+the archive and encoding-provenance appends already took the event-log lock,
+and only their torn-tail refusals differed. These narrower differences were
+found while closing them and remain:
 
-- Merge gates do not read the issue matrix from the coordination ref. This
-  gap predates this pin.
-- `accept` does not handle a WP file without frontmatter.
+- `review` with the coordination worktree removed: upstream raises
+  `CoordinationWorktreeUnmaterialized` (traceback, exit 1) before gate 4, while
+  Go continues.
+- `consolidate` with the coordination branch deleted or only on the remote:
+  upstream aborts with `CoordinationBranchDeleted` or a remote-only remedy,
+  while Go reads the primary checkout.
+- `agent tasks list-tasks` on a WP whose frontmatter block is invalid YAML:
+  upstream extracts fields with a regex and never fails, while Go errors.
+  Strict WP readers word a missing block as "no frontmatter found", not
+  "File has no frontmatter: <path>". No differing command output was observed.
+- A `next` run-cursor lock timeout reports "Runtime engine error: …" on every
+  path. Upstream's commit path refuses with a different blocked reason.
+- The archive traceback for refusals other than a torn tail stops at the
+  `append_archive_record` frame. Upstream also shows the `event_log_lock`
+  frames and a chained `LockAcquireTimeout`.
+- `state.json` `template_path` for built-in missions is pack-relative in Go
+  and an absolute site-packages path in Python. This is by design: Go has no
+  Python install path.
 
 `next` prompt construction falls back to the compact governance block when
 charter context fails with `SYNTHESIS_MEMBERSHIP_UNREADABLE`. This is upstream's
