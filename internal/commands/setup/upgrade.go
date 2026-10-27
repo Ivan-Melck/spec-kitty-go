@@ -560,6 +560,9 @@ type upgradeOutcome struct {
 	driftedPaths            []string
 	driftedReasons          map[string]string
 	projectRoot             string
+	// residueSeen holds the resolved residue folders already named in this
+	// run's warnings (#6669, FR-008).
+	residueSeen map[string]bool
 }
 
 // collectManualReviewPaths is upgrade._collect_manual_review_paths.
@@ -577,9 +580,6 @@ func (o *upgradeOutcome) collectManualReviewPaths() {
 
 func (o *upgradeOutcome) reasons() []string {
 	var r []string
-	if !o.success {
-		r = append(r, "migration_failed")
-	}
 	if len(o.activationErrors) > 0 {
 		r = append(r, "activation_error")
 	}
@@ -597,6 +597,11 @@ func (o *upgradeOutcome) reasons() []string {
 	}
 	if len(o.driftedPaths) > 0 {
 		r = append(r, "surface_drift")
+	}
+	// An error no other reason explains fails the run as a failed migration
+	// (#5746): an error shown above a success closing line is the defect.
+	if !o.success || len(o.errors) > 0 && len(r) == 0 {
+		r = append([]string{"migration_failed"}, r...)
 	}
 	return r
 }
@@ -748,7 +753,7 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 	if err != nil {
 		return err
 	}
-	o := &upgradeOutcome{from: current, to: target, dryRun: opt.dryRun, success: true, results: map[string]migrationResult{}, mergeDriverConfig: "skipped", projectRoot: root}
+	o := &upgradeOutcome{from: current, to: target, dryRun: opt.dryRun, success: true, results: map[string]migrationResult{}, mergeDriverConfig: "skipped", projectRoot: root, residueSeen: map[string]bool{}}
 	now := clock.NowUTCISO()
 	stamp := kittify.VersionStamp{}
 	if !opt.dryRun {
@@ -763,7 +768,7 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 			kittify.StampSchemaVersion(root)
 		}
 		if !opt.noWorktrees && current == target {
-			wr := upgradeWorktrees(root, target, nil, opt.dryRun, wtAutoCommit)
+			wr := upgradeWorktrees(root, target, nil, opt.dryRun, wtAutoCommit, o.residueSeen)
 			o.warnings = append(o.warnings, wr.warnings...)
 			if len(wr.errors) > 0 {
 				o.warnings = append(o.warnings, wr.errors...)
@@ -812,7 +817,7 @@ func runProjectUpgrade(ctx *cli.Context, root, target string, opt upgradeOptions
 		}
 		runMigrations(root, target, migrations, o, now)
 		if !opt.noWorktrees {
-			wr := upgradeWorktrees(root, target, migrations, opt.dryRun, wtAutoCommit)
+			wr := upgradeWorktrees(root, target, migrations, opt.dryRun, wtAutoCommit, o.residueSeen)
 			o.warnings = append(o.warnings, wr.warnings...)
 			if len(wr.errors) > 0 {
 				o.errors = append(o.errors, wr.errors...)
@@ -914,7 +919,7 @@ func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOu
 				return
 			}
 		}
-		if err := (migrationledger.Ledger{Root: root}).Append(migrationRecord(m, result, "")); err != nil {
+		if err := (migrationledger.Ledger{Root: root}).Append(runnerMigrationRecord(m, result)); err != nil {
 			recordErr = err
 			return
 		}
@@ -996,7 +1001,7 @@ func runMigrations(root, target string, migrations []migrationInfo, o *upgradeOu
 			res.Errors = append(res.Errors, recordErr.Error())
 			status = "failed"
 		}
-		o.warnings = append(o.warnings, res.Warnings...)
+		o.warnings = appendResidueAwareWarnings(o.warnings, res.Warnings, root, o.residueSeen)
 		if _, seen := o.results[m.ID]; !seen {
 			o.resultOrder = append(o.resultOrder, m.ID)
 		}

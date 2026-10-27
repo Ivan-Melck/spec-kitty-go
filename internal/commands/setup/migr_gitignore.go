@@ -17,7 +17,6 @@ import (
 func init() {
 	migrationImpls["3.2.4_runtime_dirs_gitignore_backfill"] = mRuntimeDirsGitignore()
 	migrationImpls["3.2.4_derived_mission_views_gitignore_backfill"] = mDerivedViewsGitignore()
-	migrationImpls["3.2.5_agents_skills_gitignore_backfill"] = mAgentsSkillsGitignore()
 	migrationImpls["3.2.6rc3_lint_report_gitignore_backfill"] = mLintReportGitignore()
 	migrationImpls["3.2.6rc3_worktrees_gitignore_backfill"] = mWorktreesGitignore()
 }
@@ -113,49 +112,6 @@ func mDerivedViewsGitignore() migrationImpl {
 				return migrationResult{Success: true, Changes: []string{"gitignore entry already present"}}, nil
 			}
 			return migrationResult{Success: true, Changes: []string{"Added gitignore entry: .kittify/derived/"}}, nil
-		},
-	}
-}
-
-func mAgentsSkillsGitignore() migrationImpl {
-	equiv := [][]string{{".agents/skills/", ".agents/skills", ".agents/", ".agents"}, {".kittify/skills-manifest.json"}}
-	return migrationImpl{
-		detectE: func(root string) (bool, error) {
-			p, err := gitignoreEntrySet(root)
-			if err != nil {
-				return false, err
-			}
-			return len(missingEquivalents(p, equiv)) > 0, nil
-		},
-		canApply: projectPathCanApply,
-		applyE: func(root string, dryRun bool) (migrationResult, error) {
-			p, err := gitignoreEntrySet(root)
-			if err != nil {
-				return migrationResult{}, err
-			}
-			missing := missingEquivalents(p, equiv)
-			if dryRun {
-				var ch []string
-				for _, e := range missing {
-					ch = append(ch, "Would add "+e+" to .gitignore")
-				}
-				return migrationResult{Success: true, Changes: ch}, nil
-			}
-			if len(missing) == 0 {
-				return migrationResult{Success: true, Changes: []string{"gitignore entries already present"}}, nil
-			}
-			if _, err := agents.EnsureGitignoreEntries(root, missing, false); err != nil {
-				return migrationResult{}, err
-			}
-			untracked := untrackTrackedPaths(root, missing)
-			var ch []string
-			for _, e := range missing {
-				ch = append(ch, "Added gitignore entry: "+e)
-			}
-			for _, u := range untracked {
-				ch = append(ch, "Untracked previously-tracked path: "+u)
-			}
-			return migrationResult{Success: true, Changes: ch}, nil
 		},
 	}
 }

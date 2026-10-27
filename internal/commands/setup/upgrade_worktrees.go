@@ -54,7 +54,10 @@ func worktreesToUpgrade(root string) []string {
 	return out
 }
 
-func upgradeWorktrees(root, target string, migrations []migrationInfo, dryRun, autoCommit bool) worktreeRun {
+func upgradeWorktrees(root, target string, migrations []migrationInfo, dryRun, autoCommit bool, residueSeen map[string]bool) worktreeRun {
+	if residueSeen == nil {
+		residueSeen = map[string]bool{}
+	}
 	var res worktreeRun
 	var wtMigs []migrationInfo
 	for _, m := range migrations {
@@ -110,7 +113,7 @@ func upgradeWorktrees(root, target string, migrations []migrationInfo, dryRun, a
 					return false
 				}
 			}
-			if err := (migrationledger.Ledger{Root: wt}).Append(migrationRecord(m, result, "")); err != nil {
+			if err := (migrationledger.Ledger{Root: wt}).Append(runnerMigrationRecord(m, result)); err != nil {
 				res.errors = append(res.errors, prefix+err.Error())
 				errored = true
 				return false
@@ -129,7 +132,10 @@ func upgradeWorktrees(root, target string, migrations []migrationInfo, dryRun, a
 			needed, derr := m.detectErr(wt)
 			if derr != nil {
 				errored = true
-				res.errors = append(res.errors, fmt.Sprintf("%sCannot safely detect %s: %s", prefix, m.ID, derr))
+				// Fatal like a failed apply(): a migration never evaluated is not a success (#5746).
+				msg := fmt.Sprintf("%sCannot safely detect %s: %s", prefix, m.ID, derr)
+				res.errors = append(res.errors, msg)
+				res.failures = append(res.failures, msg)
 				n := "Cannot safely detect: " + derr.Error()
 				if record(m.ID, "failed", &n) {
 					dirty = true
@@ -150,7 +156,9 @@ func upgradeWorktrees(root, target string, migrations []migrationInfo, dryRun, a
 			r, aerr := m.applyErr(wt, dryRun)
 			if aerr != nil {
 				errored = true
-				res.errors = append(res.errors, fmt.Sprintf("%sCannot apply %s: %s", prefix, m.ID, aerr))
+				msg := fmt.Sprintf("%sCannot apply %s: %s", prefix, m.ID, aerr)
+				res.errors = append(res.errors, msg)
+				res.failures = append(res.failures, msg)
 				continue
 			}
 			if r.ManualReview {
@@ -167,9 +175,11 @@ func upgradeWorktrees(root, target string, migrations []migrationInfo, dryRun, a
 				if record(m.ID, "success", notes) {
 					dirty = true
 				}
+				var prefixed []string
 				for _, w := range r.Warnings {
-					res.warnings = append(res.warnings, prefix+w)
+					prefixed = append(prefixed, prefix+w)
 				}
+				res.warnings = appendResidueAwareWarnings(res.warnings, prefixed, wt, residueSeen)
 			} else {
 				if !dryRun {
 					var notes *string
@@ -183,6 +193,12 @@ func upgradeWorktrees(root, target string, migrations []migrationInfo, dryRun, a
 				for _, e := range r.Errors {
 					res.errors = append(res.errors, prefix+e)
 					res.failures = append(res.failures, prefix+e)
+				}
+				if len(r.Errors) == 0 {
+					// A failure that gave no error of its own still needs one line (#5746).
+					msg := fmt.Sprintf("%sMigration %s failed", prefix, m.ID)
+					res.errors = append(res.errors, msg)
+					res.failures = append(res.failures, msg)
 				}
 			}
 		}

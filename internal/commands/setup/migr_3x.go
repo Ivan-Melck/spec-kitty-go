@@ -39,7 +39,7 @@ func init() {
 	migrationImpls["3.1.1_direct_canonical_commands"] = mDirectCanonicalCommands()
 	migrationImpls["3.1.1_event_log_merge_driver"] = mergeDriverMigration("Would install status.events.jsonl merge driver and .gitattributes entry",
 		[]driverSpec{{"spec-kitty-event-log", "Spec Kitty event log union merge", "spec-kitty merge-driver-event-log %O %A %B", "kitty-specs/**/status.events.jsonl"}})
-	migrationImpls["3.1.1_normalize_status_json"] = mNormalizeStatusJSON()
+	// 3.1.1_normalize_status_json is superseded by its residue-safe successor (migr_residue.go, #6669).
 	migrationImpls["3.1.2_globalize_commands"] = mSafeGlobalizeCommands()
 	migrationImpls["3.2.0a4_normalize_mission_lifecycle"] = mNormalizeMissionLifecycle()
 	migrationImpls["3.2.0a4_safe_globalize_commands"] = mSafeGlobalizeCommands()
@@ -179,7 +179,14 @@ func runCanonicalContext(root string, dryRun bool) migrationResult {
 	updateCanonicalGitignore(root)
 	// Step 8: derived files.
 	var moved []string
+	var tracked map[string]bool
+	if pathExists(filepath.Join(root, "kitty-specs")) {
+		tracked = migrate.ProbeTrackedMissionPaths(root) // once per walk (#6669)
+	}
 	for _, f := range featureDirs(root) {
+		if migrate.IsKittySpecsResidue(f, root, tracked) {
+			continue // residue is not a Mission: its status.json is never moved (#6669)
+		}
 		sj := filepath.Join(f, "status.json")
 		if !pathExists(sj) {
 			continue
@@ -1145,10 +1152,12 @@ func statusNeedsNormalisation(feature string) bool {
 	return actual.GetString("materialized_at") != snap.MaterializedAt || !actual.Has("materialized_at")
 }
 
-func mNormalizeStatusJSON() migrationImpl {
+// normalizeStatusJSON is the 3.1.1 status.json normalisation over the
+// kitty-specs/ folders missions(root) yields.
+func normalizeStatusJSON(missions func(root string) []string) migrationImpl {
 	return migrationImpl{
 		detect: func(root string) bool {
-			for _, f := range featureDirs(root) {
+			for _, f := range missions(root) {
 				if statusNeedsNormalisation(f) {
 					return true
 				}
@@ -1163,7 +1172,7 @@ func mNormalizeStatusJSON() migrationImpl {
 		},
 		apply: func(root string, dryRun bool) migrationResult {
 			var ch []string
-			for _, f := range featureDirs(root) {
+			for _, f := range missions(root) {
 				sp := filepath.Join(f, status.SnapshotFile)
 				if !pathExists(sp) || !statusNeedsNormalisation(f) {
 					continue
