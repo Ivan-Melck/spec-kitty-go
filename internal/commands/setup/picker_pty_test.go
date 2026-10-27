@@ -325,12 +325,17 @@ var reSpaces = regexp.MustCompile(" {2,}")
 // Cursor and SGR codes are compared as written.
 func initColourTranscript(out string, s *testkit.Sandbox) string {
 	clean := collapseLive(strings.ReplaceAll(out, "\r", ""))
+	// A wrap inside Base leaves its last component ("001", "002", ...: it
+	// differs per sandbox) at the start of the next line.
+	tail := filepath.Base(s.Base) + "/proj"
 	var lines []string
 	for _, l := range strings.Split(clean, "\n") {
 		if strings.Contains(l, s.Base) {
 			// A path wrapped in a panel may split anywhere after Base.
 			l = strings.ReplaceAll(strings.ReplaceAll(l, s.Dir, "<D>"), s.Base, "<B>")
 			l = reSpaces.ReplaceAllString(l, "  ")
+		} else if strings.Contains(l, tail) {
+			l = reSpaces.ReplaceAllString(strings.ReplaceAll(l, tail, "<B-tail>/proj"), "  ")
 		}
 		lines = append(lines, l)
 	}
