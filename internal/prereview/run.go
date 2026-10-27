@@ -106,7 +106,7 @@ func RunRaw(command []string, o RunOptions) (string, *Raw, string) {
 		cmd := exec.Command(command[0], command[1:]...)
 		cmd.Dir = o.Dir
 		cmd.Env = gateEnv()
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		ownProcessGroup(cmd)
 		var out, errb bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errb
 		if err := cmd.Start(); err != nil {
@@ -168,18 +168,13 @@ func RunRaw(command []string, o RunOptions) (string, *Raw, string) {
 }
 
 func terminate(cmd *exec.Cmd, done chan error) {
-	pid := cmd.Process.Pid
-	if syscall.Kill(-pid, syscall.SIGTERM) != nil {
-		cmd.Process.Signal(syscall.SIGTERM)
-	}
+	signalProcessTree(cmd, false)
 	select {
 	case <-done:
 		return
 	case <-time.After(terminateGrace):
 	}
-	if syscall.Kill(-pid, syscall.SIGKILL) != nil {
-		cmd.Process.Kill()
-	}
+	signalProcessTree(cmd, true)
 	select {
 	case <-done:
 	case <-time.After(terminateGrace):

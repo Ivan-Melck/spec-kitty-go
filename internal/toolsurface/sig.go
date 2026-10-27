@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"syscall"
 )
 
 // nodeSig is the exact observation upstream retains for a recheck: kind,
@@ -24,9 +23,7 @@ func observeSig(p string, withDirMtime, withIdentity bool) nodeSig {
 	}
 	s := nodeSig{mode: int(info.Mode().Perm())}
 	if withIdentity {
-		if st, ok := info.Sys().(*syscall.Stat_t); ok {
-			s.dev, s.ino = uint64(st.Dev), uint64(st.Ino)
-		}
+		s.dev, s.ino = nodeIdentity(p, info)
 	}
 	switch {
 	case info.Mode()&os.ModeSymlink != 0:
