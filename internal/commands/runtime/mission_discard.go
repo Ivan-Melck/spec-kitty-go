@@ -161,13 +161,15 @@ var (
 	derivedViewRe = regexp.MustCompile(`(?:^|/)\.kittify/derived/[^/]+/`)
 	opRecordRe    = regexp.MustCompile(`(?:^|/)kitty-ops/[0-9A-HJKMNP-TV-Z]{26}\.jsonl$`)
 	dossierSnapRe = regexp.MustCompile(`(?:^|/)\.kittify/dossiers/[^/]+/snapshot-latest\.json$`)
+	decisionsLkRe = regexp.MustCompile(`(?:^|/)kitty-specs/[^/]+/decisions/index\.json\.lock$`)
 )
 
 // selfBookkeeping is coherence.is_self_bookkeeping_churn.
 func selfBookkeeping(p string) bool {
 	n := strings.TrimRight(filepath.ToSlash(p), "/")
 	return ownedMetaRe.MatchString(n) || legacyMetaRe.MatchString(n) || strings.HasSuffix(n, ".kittify/encoding-provenance/global.jsonl") ||
-		auditRe.MatchString(n) || derivedViewRe.MatchString(n) || dossierSnapRe.MatchString(n) || opRecordRe.MatchString(n)
+		auditRe.MatchString(n) || derivedViewRe.MatchString(n) || dossierSnapRe.MatchString(n) || opRecordRe.MatchString(n) ||
+		decisionsLkRe.MatchString(n)
 }
 
 // worktreeLocalState lists the entries a `worktree remove --force` would

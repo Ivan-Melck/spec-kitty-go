@@ -324,13 +324,22 @@ var (
 	reEncProv     = regexp.MustCompile(`\.kittify/encoding-provenance/global\.jsonl$`)
 	reDerivedView = regexp.MustCompile(`(?:^|/)\.kittify/derived/[^/]+/[^/]+$`)
 	reDossier     = regexp.MustCompile(`(?:^|/)\.kittify/dossiers/.+/snapshot-latest\.json$`)
+	reDecisionsLk = regexp.MustCompile(`(?:^|/)kitty-specs/[^/]+/decisions/index\.json\.lock$`)
 )
+
+// IsDecisionsRuntimeLock is coherence.is_decisions_runtime_lock (#6628): the
+// decision service's kitty-specs/<mission>/decisions/index.json.lock, kept on
+// disk untracked on purpose, is spec-kitty's own bookkeeping (depth-exact).
+func IsDecisionsRuntimeLock(p string) bool {
+	return reDecisionsLk.MatchString(strings.TrimRight(filepath.ToSlash(p), "/"))
+}
 
 // IsSelfBookkeeping is coherence.is_self_bookkeeping_churn.
 func IsSelfBookkeeping(p string) bool {
 	n := strings.TrimRight(filepath.ToSlash(p), "/")
 	return reMissionMeta.MatchString(n) || reLegacyMeta.MatchString(n) || reOpRecord.MatchString(n) ||
-		reStateAudit.MatchString(n) || reEncProv.MatchString(n) || reDerivedView.MatchString(n) || reDossier.MatchString(n)
+		reStateAudit.MatchString(n) || reEncProv.MatchString(n) || reDerivedView.MatchString(n) || reDossier.MatchString(n) ||
+		reDecisionsLk.MatchString(n)
 }
 
 // isAcceptOwnWrite is _is_accept_pipeline_own_write.

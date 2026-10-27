@@ -284,7 +284,8 @@ func ResidualCommit(root, slug string) *Outcome {
 	prim := dirtyTracked(root, "kitty-specs/"+slug+"/")
 	if entries, err := StatusEntries(root); err == nil {
 		for _, e := range entries {
-			if isMissionLedger(e, slug) {
+			// #6628: the decisions runtime lock is never committed.
+			if isMissionLedger(e, slug) && !IsDecisionsRuntimeLock(e.Path) {
 				found := false
 				for _, p := range prim {
 					if p == e.Path {

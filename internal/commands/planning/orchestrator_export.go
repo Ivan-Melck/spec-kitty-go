@@ -49,7 +49,7 @@ func RecordAnalysisDirtyPreflight(root, slug string) *jsonx.Object {
 	return jsonx.NewObject("success", false, "error_code", "DIRTY_WORKTREE",
 		"error", "Refusing to record analysis report with pre-existing dirty working tree.",
 		"dirty_paths", strList(dirty),
-		"remediation", strList([]string{"Commit or stash existing changes, then rerun /spec-kitty.analyze."}))
+		"remediation", strList(dirtyWorktreeRemediation))
 }
 
 // ParseAnalysisVerdict is parse_structured_findings reduced to the verdict:
