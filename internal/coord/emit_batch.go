@@ -27,6 +27,13 @@ func (s *Surface) EmitTransitionBatch(reqs []*status.TransitionRequest) ([]*stat
 	if err != nil {
 		return nil, err
 	}
+	// One Mission lock acquisition covers the single from-lane derivation,
+	// the whole batch's append and its commit (FR-018).
+	lock, err := lockStatus(dir, transactional)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Release()
 	stream, err := status.ReadStream(dir, "")
 	if err != nil {
 		return nil, err
@@ -72,6 +79,7 @@ func (s *Surface) EmitTransitionBatch(reqs []*status.TransitionRequest) ([]*stat
 			return events, err
 		}
 	}
+	lock.Release()
 	status.RefreshDerivedViews(dir, s.Root)
 	return events, nil
 }
@@ -93,6 +101,11 @@ func (s *Surface) AppendAnnotationUncommitted(wpID string, delta status.Delta, a
 	if err != nil {
 		return nil, "", err
 	}
+	lock, err := lockStatus(dir, false)
+	if err != nil {
+		return nil, "", err
+	}
+	defer lock.Release()
 	if err := status.AppendEvents(dir, a); err != nil {
 		return nil, "", err
 	}

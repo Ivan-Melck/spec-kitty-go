@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/spec-kitty/go-kitty3/internal/eventlog"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 )
 
@@ -22,6 +23,14 @@ func AppendEvent(root, missionID string, event *jsonx.Object) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	// The append, and any repair, run under the interim event-log lock
+	// (#6606), so the torn-tail check is not racy against a second writer.
+	return eventlog.WithLock(path, eventlog.DefaultTimeout, func() error {
+		return appendLocked(path, event)
+	})
+}
+
+func appendLocked(path string, event *jsonx.Object) error {
 	if torn, err := tornTail(path); err != nil {
 		return err
 	} else if torn {

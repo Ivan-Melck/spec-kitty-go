@@ -25,14 +25,14 @@ func runtimeActor(id, typ string) *jsonx.Object {
 
 // requestDecisionInput records an input-keyed decision in pending_decisions
 // (first occurrence only) and appends DecisionInputRequested.
-func requestDecisionInput(ref *RunRef, s *Snapshot, p planned, agent string) {
+func requestDecisionInput(ref *RunRef, s *Snapshot, p planned, agent string) error {
 	pd := s.Obj.GetObject("pending_decisions")
 	if pd == nil {
 		pd = &jsonx.Object{}
 		s.Obj.Set("pending_decisions", pd)
 	}
 	if pd.Has(p.DecisionID) {
-		return
+		return nil
 	}
 	opts := []any{}
 	for _, o := range p.Options {
@@ -42,11 +42,14 @@ func requestDecisionInput(ref *RunRef, s *Snapshot, p planned, agent string) {
 	if p.InputKey != "" {
 		inputKey = p.InputKey
 	}
-	appendRunEvent(ref.RunDir, "DecisionInputRequested", jsonx.NewObject("actor", agentActor(agent), "decision_id", p.DecisionID,
+	if err := appendRunEvent(ref.RunDir, "DecisionInputRequested", jsonx.NewObject("actor", agentActor(agent), "decision_id", p.DecisionID,
 		"input_key", inputKey, "mission_id", nil, "mission_slug", nil, "options", opts, "question", p.Question,
-		"run_id", ref.RunID, "step_id", p.StepID))
+		"run_id", ref.RunID, "step_id", p.StepID)); err != nil {
+		return err
+	}
 	pd.Set(p.DecisionID, jsonx.NewObject("decision_id", p.DecisionID, "options", opts, "question", p.Question,
 		"requested_at", pydanticNow(), "requested_by", agentActor(agent), "step_id", p.StepID))
+	return nil
 }
 
 // NoPendingDecisionError / AmbiguousPendingDecisionError are the
@@ -125,9 +128,8 @@ func ProvideDecisionAnswer(ref *RunRef, decisionID, answer, actorID string) erro
 	if err := writeSnapshot(ref.RunDir, s); err != nil {
 		return err
 	}
-	appendRunEvent(ref.RunDir, "DecisionInputAnswered", jsonx.NewObject("actor", actor, "answer", answer,
+	return appendRunEvent(ref.RunDir, "DecisionInputAnswered", jsonx.NewObject("actor", actor, "answer", answer,
 		"decision_id", decisionID, "mission_id", nil, "mission_slug", nil, "run_id", s.Obj.GetString("run_id")))
-	return nil
 }
 
 // AnswerDecision is next_cmd._handle_answer after argument validation:

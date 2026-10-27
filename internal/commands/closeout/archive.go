@@ -10,6 +10,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/app"
 	"github.com/spec-kitty/go-kitty3/internal/cli"
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/eventlog"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/status"
@@ -165,13 +166,10 @@ func runArchiveCreate(ctx *cli.Context) error {
 	rec := jsonx.NewObject("mission_id", id, "archived_by", strings.TrimSpace(by), "archived_at", clock.NowUTCISO(),
 		"reason", strings.TrimSpace(reason), "terminal_state_at_archive", terminal)
 	p := archiveRegistry(root)
-	os.MkdirAll(filepath.Dir(p), 0o755)
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
+	// append_archive_record through the interim locked append (#6606).
+	if err := eventlog.Append(p, []string{jsonx.Dumps(rec, jsonx.Line)}, eventlog.Options{CreateParents: true}); err != nil {
 		return err
 	}
-	fmt.Fprintln(f, jsonx.Dumps(rec, jsonx.Line))
-	f.Close()
 	if jsonMode {
 		// console.print(json.dumps(...)): markup, repr highlighting, wrapping.
 		say(ctx.Stdout, jsonx.Dumps(jsonx.NewObject("record", rec, "cleared_deferrals", cleared), sortedPretty))

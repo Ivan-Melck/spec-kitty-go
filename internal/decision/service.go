@@ -12,9 +12,11 @@ import (
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
 	"github.com/spec-kitty/go-kitty3/internal/coord"
+	"github.com/spec-kitty/go-kitty3/internal/filelock"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
 	"github.com/spec-kitty/go-kitty3/internal/project"
+	"github.com/spec-kitty/go-kitty3/internal/status"
 	"github.com/spec-kitty/go-kitty3/internal/ulid"
 )
 
@@ -231,20 +233,16 @@ func (c *Context) appendEvent(eventType string, payload *jsonx.Object, at time.T
 	}
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	row := jsonx.NewObject("event_id", ulid.New(), "at", ISO(at), "event_type", eventType, "payload", payload)
-	line := jsonx.Dumps(row, jsonx.Line) + "\n"
-	existing, _ := os.ReadFile(path)
-	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
-		line = "\n" + line
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	// _append_raw_event: append_raw_rows_atomic under the Mission status lock,
+	// with the Lamport-proxy line count read under the same acquisition.
+	lock, err := status.LockMission(filepath.Dir(path), "", filelock.Forever)
 	if err != nil {
 		return 0, err
 	}
-	if _, err := f.WriteString(line); err != nil {
-		f.Close()
+	defer lock.Release()
+	if err := status.AppendRows(path, row); err != nil {
 		return 0, err
 	}
-	f.Close()
 	b, _ := os.ReadFile(path)
 	n := 0
 	for _, l := range strings.Split(string(b), "\n") {

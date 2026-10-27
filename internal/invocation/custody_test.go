@@ -3,12 +3,13 @@ package invocation
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spec-kitty/go-kitty3/internal/eventlog"
 )
 
 func gitT(t *testing.T, dir string, args ...string) {
@@ -38,7 +39,7 @@ func repoWithWorktree(t *testing.T) (r, p string) {
 func TestEventLogLockPathAndTornTail(t *testing.T) {
 	r, p := repoWithWorktree(t)
 	anchor := filepath.Join(p, EventsDir)
-	got, err := eventLogLockPath(anchor)
+	got, err := eventlog.LockPath(anchor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,15 +61,14 @@ func TestEventLogLockPathAndTornTail(t *testing.T) {
 	}
 	os.WriteFile(log, []byte(`{"a": 1}`+"\n"+`{"b"`), 0o600)
 	err = appendNoFollow(log, `{"c": 3}`)
-	var el *EventLogError
-	if !errors.As(err, &el) || el.Code != EventLogTornTail || !strings.HasSuffix(err.Error(), " Error code: EVENT_LOG_TORN_TAIL.") {
+	if !eventlog.IsCode(err, eventlog.CodeTornTail) || !strings.HasSuffix(err.Error(), " Error code: EVENT_LOG_TORN_TAIL.") {
 		t.Fatalf("torn tail: %v", err)
 	}
 	if b, _ := os.ReadFile(log); string(b) != `{"a": 1}`+"\n"+`{"b"` {
 		t.Fatalf("torn log changed: %q", b)
 	}
 	os.Symlink(log, filepath.Join(anchor, "link.jsonl"))
-	if err := appendNoFollow(filepath.Join(anchor, "link.jsonl"), "{}"); !errors.As(err, &el) || el.Code != EventLogSymlink {
+	if err := appendNoFollow(filepath.Join(anchor, "link.jsonl"), "{}"); !eventlog.IsCode(err, eventlog.CodeSymlink) {
 		t.Fatalf("symlink: %v", err)
 	}
 }

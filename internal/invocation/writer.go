@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
+	"github.com/spec-kitty/go-kitty3/internal/eventlog"
 	"github.com/spec-kitty/go-kitty3/internal/glossary"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 )
@@ -54,7 +55,7 @@ func RecordPath(root, id string) (string, error) {
 // owner-only append (line has no terminator) that never follows a final
 // symlink and refuses a torn last line.
 func appendNoFollow(path, line string) error {
-	return appendEventLogLine(path, line, appendOptions{noFollow: true, mode: recordMode})
+	return eventlog.Append(path, []string{line}, eventlog.Options{NoFollow: true, Mode: recordMode})
 }
 
 // WriteStarted creates kitty-ops/<id>.jsonl exclusively (owner-only, under
@@ -111,17 +112,16 @@ func appendValidated(root, p, id, line string, refuseIfCompleted bool) error {
 		}
 		return nil
 	}
-	err := appendEventLogLine(p, line, appendOptions{lockAnchor: filepath.Join(root, EventsDir), noCreate: true,
-		noFollow: true, mode: recordMode, precondition: check})
-	var el *EventLogError
+	err := eventlog.Append(p, []string{line}, eventlog.Options{LockAnchor: filepath.Join(root, EventsDir), NoCreate: true,
+		NoFollow: true, Mode: recordMode, Precondition: check})
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, os.ErrNotExist):
 		return &Error{"Invocation record not found: " + id}
-	case errors.As(err, &el) && el.Code == EventLogSymlink:
+	case eventlog.IsCode(err, eventlog.CodeSymlink):
 		return &WriteError{"Failed to open invocation record safely: " + err.Error()}
-	case errors.As(err, &el) && el.Code == EventLogTornTail:
+	case eventlog.IsCode(err, eventlog.CodeTornTail):
 		return &Error{fmt.Sprintf("Invocation record is unreadable: %s (%v)", id, err)}
 	}
 	return err
