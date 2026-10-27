@@ -1,6 +1,7 @@
 package consolidate
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -496,6 +497,15 @@ func (r *run) execute() error {
 			rich.PrintPlain(r.w, w)
 		}
 	}
+	// _resolve_run_status_dir: the run's status dir comes from the WRITE
+	// accessor, which materializes an unmaterialized coordination worktree
+	// whose branch exists locally, so status and the coordination issue
+	// matrix are read from the coordination surface, never the primary
+	// residue. (A deleted coordination branch keeps the primary read.)
+	if err := r.sf.EnsureWorktree(); err != nil && !errors.Is(err, coord.ErrNoCoordBranch) {
+		sayErr(r.w, err.Error())
+		return exit(1)
+	}
 	if err := r.warnOnMaterializationDrift(); err != nil {
 		return err
 	}
@@ -640,7 +650,7 @@ func (r *run) execute() error {
 		say(r.w, "  [dim]Planning-artifact-only mission: target branch already contains deliverables; branch merge steps will be skipped.[/dim]")
 	}
 	gatesPass := true
-	for _, g := range EvaluateGates(r.root, r.sf.PrimaryDir, r.sf.StatusDir(), r.sf.StatusDir(), r.wps, LoadGatePolicy(r.root)) {
+	for _, g := range EvaluateGates(r.root, r.sf.PrimaryDir, r.sf.StatusDir(), r.wps, LoadGatePolicy(r.root)) {
 		icon := "[green]✓[/green]"
 		if g.Verdict != "pass" {
 			icon = "[yellow]⚠[/yellow]"

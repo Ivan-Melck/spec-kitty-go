@@ -44,6 +44,7 @@ const (
 	DiagMultiTable       = "MISSION_REVIEW_ISSUE_MATRIX_MULTI_TABLE"
 	DiagEvidenceEmpty    = "MISSION_REVIEW_ISSUE_MATRIX_EVIDENCE_REF_EMPTY"
 	DiagDeferredNoHandle = "MISSION_REVIEW_ISSUE_MATRIX_DEFERRED_WITHOUT_HANDLE"
+	DiagRefReadFailed    = "MISSION_REVIEW_ISSUE_MATRIX_REF_READ_FAILED"
 )
 
 // Occurrence is one (file, line) mention of an issue.

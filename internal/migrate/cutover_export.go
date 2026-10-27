@@ -21,3 +21,12 @@ func MissionNeedsCutover(dir string) bool {
 	}
 	return false
 }
+
+// LegacyRuntimeReadError is the seed phase's legacy-runtime read of
+// cutover_mission: a tasks/WP*.md the frontmatter reader cannot parse
+// (LegacyRuntimeReadError upstream) fails the seed, so the cutover never
+// flips status_phase.
+func LegacyRuntimeReadError(dir string) error {
+	_, err := readLegacyRuntime(dir)
+	return err
+}
