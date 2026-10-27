@@ -1,6 +1,7 @@
 package closeout
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/spec-kitty/go-kitty3/internal/eventlog"
 	"github.com/spec-kitty/go-kitty3/internal/jsonx"
 	"github.com/spec-kitty/go-kitty3/internal/mission"
+	"github.com/spec-kitty/go-kitty3/internal/rich"
 	"github.com/spec-kitty/go-kitty3/internal/status"
 )
 
@@ -168,6 +170,16 @@ func runArchiveCreate(ctx *cli.Context) error {
 	p := archiveRegistry(root)
 	// append_archive_record through the interim locked append (#6606).
 	if err := eventlog.Append(p, []string{jsonx.Dumps(rec, jsonx.Line)}, eventlog.Options{CreateParents: true}); err != nil {
+		// The CLI does not catch a refusal: typer prints the traceback.
+		var re *eventlog.Error
+		if errors.As(err, &re) {
+			frames := []rich.Frame{{Name: "create", Line: 85}, {Name: "archive_mission", Line: 356}, {Name: "append_archive_record", Line: 254}}
+			if re.Code == eventlog.CodeTornTail {
+				frames = append(frames, rich.Frame{Name: "append_event_log_lines", Line: 220}, rich.Frame{Name: "_check_existing", Line: 251})
+			}
+			rich.PrintTraceback(ctx.Stderr, &rich.Exception{Type: re.PyClass(), Value: re.Error(), Frames: frames})
+			return cli.Exit(1)
+		}
 		return err
 	}
 	if jsonMode {

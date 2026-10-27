@@ -152,6 +152,47 @@ func TestDiffCharterNonUTF8Answers(t *testing.T) {
 	}
 }
 
+// TestDiffTornProvenanceLog: a torn centralized provenance log refuses every
+// append (EVENT_LOG_TORN_TAIL, nothing written); ingest goes on, and the
+// CLI logging bootstrap prints one "Failed to write encoding provenance"
+// warning per refused record in human mode and none under --json.
+func TestDiffTornProvenanceLog(t *testing.T) {
+	t.Parallel()
+	const torn = `{"torn": `
+	p := missionfx.NewOraclePair(t)
+	p.Both(func(s *testkit.Sandbox) {
+		if r := s.RunOracle("charter", "interview", "--defaults", "--json"); r.Code != 0 {
+			t.Fatalf("interview: %s", r.Stderr)
+		}
+		s.RunOracle("charter", "generate", "--json")
+		s.WriteFile(".kittify/encoding-provenance/global.jsonl", torn)
+	})
+	for _, args := range [][]string{
+		{"charter", "context", "--action", "implement"},
+		{"charter", "context", "--action", "implement", "--json"},
+	} {
+		g := p.Go.Run(args...)
+		o := p.Oracle.RunOracle(args...)
+		if g.Code != o.Code {
+			t.Errorf("%v: exit go=%d oracle=%d", args, g.Code, o.Code)
+		}
+		// stdout lists built-in pack paths (an embedded pack cache vs
+		// site-packages), so only the refusal's stderr and file are compared.
+		ge, oe := p.Go.Normalize(g.Stderr), p.Oracle.Normalize(o.Stderr)
+		if !strings.Contains(strings.Join(args, " "), "--json") && !strings.Contains(oe, "Failed to write encoding provenance") {
+			t.Fatalf("%v: the oracle no longer warns about the torn log:\n%s", args, o.Stderr)
+		}
+		if gw, ow := strings.Join(strings.Fields(ge), " "), strings.Join(strings.Fields(oe), " "); gw != ow {
+			t.Errorf("%v: stderr differs\n oracle: %s\n go:     %s", args, ow, gw)
+		}
+		for _, s := range []*testkit.Sandbox{p.Go, p.Oracle} {
+			if got := s.ReadFile(".kittify/encoding-provenance/global.jsonl"); got != torn {
+				t.Errorf("%v: the torn log was appended to: %q", args, got)
+			}
+		}
+	}
+}
+
 func lastLines(s string, n int) string {
 	l := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	if len(l) > n {

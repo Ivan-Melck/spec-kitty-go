@@ -78,6 +78,24 @@ func (e *Error) Unwrap() error { return e.Cause }
 // ErrorCode is the refusal's code.
 func (e *Error) ErrorCode() string { return e.Code }
 
+// PyClass is the upstream exception class of the refusal (what an uncaught
+// refusal's traceback names).
+func (e *Error) PyClass() string {
+	switch e.Code {
+	case CodeTornTail:
+		return "EventLogTornTailError"
+	case CodeLockTimeout:
+		return "EventLogLockTimeoutError"
+	case CodeLockUnavailable:
+		return "EventLogLockUnavailableError"
+	case CodeSymlink:
+		return "EventLogSymlinkError"
+	case CodeShortWrite:
+		return "EventLogShortWriteError"
+	}
+	return "EventLogAppendError"
+}
+
 // IsCode reports whether err is a refusal with code.
 func IsCode(err error, code string) bool {
 	var e *Error
