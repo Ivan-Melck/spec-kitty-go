@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/spec-kitty/go-kitty3/internal/clock"
@@ -279,21 +282,47 @@ func dirtyTracked(checkout, prefix string) []string {
 	return out
 }
 
+// reDecisionsRuntimeLock is coherence.is_decisions_runtime_lock (#6628): the
+// decision service's runtime lock, kept on disk untracked on purpose.
+var reDecisionsRuntimeLock = regexp.MustCompile(`(?:^|/)kitty-specs/[^/]+/decisions/index\.json\.lock$`)
+
+// missionLedgerFiles is ledger_dirt.mission_decision_ledger_files: the dirty
+// (modified or untracked) decision-ledger files of the mission, a collapsed
+// untracked directory expanded to its files. The decision service's runtime
+// lock is never listed: it feeds accept's residual commit, and the lock is
+// kept out of every commit.
+func missionLedgerFiles(entries []StatusEntry, root, slug string) []string {
+	var out []string
+	for _, e := range entries {
+		files := []string{e.Path}
+		if e.IsDir {
+			files = nil
+			filepath.WalkDir(filepath.Join(root, e.Path), func(p string, d os.DirEntry, err error) error {
+				if err == nil && d.Type().IsRegular() {
+					if rel, rerr := filepath.Rel(root, p); rerr == nil {
+						files = append(files, filepath.ToSlash(rel))
+					}
+				}
+				return nil
+			})
+			sort.Strings(files)
+		}
+		for _, p := range files {
+			if isMissionLedger(StatusEntry{Path: p}, slug) && !reDecisionsRuntimeLock.MatchString(p) && !slices.Contains(out, p) {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
 // ResidualCommit is _run_residual_acceptance_commit (nil when clean).
 func ResidualCommit(root, slug string) *Outcome {
 	prim := dirtyTracked(root, "kitty-specs/"+slug+"/")
 	if entries, err := StatusEntries(root); err == nil {
-		for _, e := range entries {
-			if isMissionLedger(e, slug) {
-				found := false
-				for _, p := range prim {
-					if p == e.Path {
-						found = true
-					}
-				}
-				if !found {
-					prim = append(prim, e.Path)
-				}
+		for _, p := range missionLedgerFiles(entries, root, slug) {
+			if !slices.Contains(prim, p) {
+				prim = append(prim, p)
 			}
 		}
 	}
