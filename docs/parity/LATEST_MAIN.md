@@ -141,6 +141,13 @@ uses the campaign's `TMPDIR`:
 | `closeout` `TestDiffConsolidateAttestApproved` | A test artifact. Rich wrapped the coordination worktree's mid8 across two lines, so normalization did not mask it. | `cb02833b` |
 | `setup` `TestInitColourOutputMatchesOracle` | A test artifact. A panel wrapped the sandbox base path, leaving its per-sandbox last component (`001` or `002`) on the next line. | `b5c3b358` |
 
+After the gap fixes were merged, the campaign was run again on 2026-10-27
+against a frozen executable built from `fba91773`. That is the head of
+`parity/upstream-main-581b5c4-gaps`, with `TMPDIR=/var/tmp/sk-campaign2/tmp`
+and otherwise the same command. It took just under two hours and recorded
+1,159 passing test/subtest results, 14 skipped tests and no failures. All 75
+packages with tests passed; 26 packages have no test files.
+
 The final tree passes these checks:
 
 ```sh
